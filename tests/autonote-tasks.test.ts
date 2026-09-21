@@ -43,7 +43,9 @@ const draft = {
     },
   ],
 };
-async function fixture() {
+async function fixture(
+  review?: (url: string, body: unknown) => Response | Promise<Response>,
+) {
   let secret: Uint8Array | undefined,
     denied = false;
   const meeting = {
@@ -83,23 +85,25 @@ async function fixture() {
         return true;
       },
     },
-    async (url) =>
-      String(url).endsWith("/exchange")
-        ? Response.json(grant)
-        : denied
-          ? new Response("denied", { status: 403 })
-          : Response.json({
-              contractVersion: "1.0.0",
-              grantId: grant.grantId,
-              subjectId: grant.subjectId,
-              workspaceId: grant.workspaceId,
-              policyRevision: grant.policyRevision,
-              meeting,
-              projectionHash: createHash("sha256")
-                .update(JSON.stringify(meeting))
-                .digest("hex"),
-              publication: { mode: "autonote_review_only", directCrm: false },
-            }),
+    async (url, init) =>
+      String(url).includes("/review-") && review
+        ? review(String(url), JSON.parse(String(init?.body)))
+        : String(url).endsWith("/exchange")
+          ? Response.json(grant)
+          : denied
+            ? new Response("denied", { status: 403 })
+            : Response.json({
+                contractVersion: "1.0.0",
+                grantId: grant.grantId,
+                subjectId: grant.subjectId,
+                workspaceId: grant.workspaceId,
+                policyRevision: grant.policyRevision,
+                meeting,
+                projectionHash: createHash("sha256")
+                  .update(JSON.stringify(meeting))
+                  .digest("hex"),
+                publication: { mode: "autonote_review_only", directCrm: false },
+              }),
   );
   const start = await connector.begin();
   await connector.finish(start.id, "a".repeat(64));
@@ -603,5 +607,223 @@ test("disconnect cancellation is scoped to the active source app", async () => {
   } finally {
     finish?.();
     store.close();
+  }
+});
+
+test("AutoNote operations survive encrypted restart and reconcile a saved receipt after lost responses without resubmission", async () => {
+  const { AutoNoteReviews } =
+      await import("../modules/connectors/autonote-reviews.js"),
+    { mkdtempSync, readFileSync, rmSync } = await import("node:fs"),
+    { tmpdir } = await import("node:os"),
+    { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "autonote-reviews-")),
+    path = join(dir, "tasks.db"),
+    vault = new Vault(randomBytes(32));
+  let store = new Store(path, vault),
+    sends = 0,
+    reconciles = 0,
+    proposal: any,
+    receipt: any = null;
+  const reviewId = randomUUID(),
+    expiresAt = new Date(Date.now() + 600000).toISOString();
+  const reply = () => ({
+    reviewId,
+    digest: createHash("sha256").update(JSON.stringify(proposal)).digest("hex"),
+    expiresAt,
+    receipt,
+  });
+  const f = await fixture((url, body) => {
+    assert.equal(store.db.inTransaction, false);
+    if (url.endsWith("review-status"))
+      return Response.json({
+        grantId: f.grant.grantId,
+        meetingId: f.meeting.id,
+        enabled: true,
+        expiresAt: f.grant.expiresAt,
+      });
+    if (url.endsWith("review-prepare")) {
+      sends++;
+      proposal = body;
+      throw Error("lost staging response");
+    }
+    reconciles++;
+    assert.deepEqual(body, { operationId: proposal.operationId });
+    return Response.json({ ...reply(), deleted: false });
+  });
+  try {
+    const task = await f.adapter.create(store, input, f.meeting.id, "durable");
+    await worker(store, f, async () => JSON.stringify(draft)).runOnce();
+    let service = new AutoNoteReviews(store, owner, f.connector, f.adapter);
+    const operationId = randomUUID(),
+      reserved = await service.reserve(task.id, { operationId });
+    assert.equal(
+      (await service.reserve(task.id, { operationId })).id,
+      operationId,
+    );
+    await assert.rejects(
+      service.reserve(task.id, { operationId: randomUUID() }),
+      /CONFLICT/,
+    );
+    assert.equal(reserved.state, "local");
+    assert.equal("citations" in reserved.proposal.summary[0]!, false);
+    assert.equal("status" in reserved.proposal.actions[0]!, false);
+    await assert.rejects(
+      service.reserve(task.id, { operationId, approved: true }),
+    );
+    await assert.rejects(service.reconcile(operationId), /INVALID_INPUT/);
+    await assert.rejects(service.prepare(operationId), /SOURCE_UNAVAILABLE/);
+    assert.equal(store.autoNoteReview(owner, operationId).state, "uncertain");
+    assert.throws(
+      () => store.autoNoteReview({ ...owner, userId: "other" }, operationId),
+      /NOT_FOUND/,
+    );
+    store.close();
+    assert.equal(readFileSync(path).includes("Prepare a draft"), false);
+    assert.equal(readFileSync(path).includes(f.grant.grantId), false);
+    store = new Store(path, vault);
+    service = new AutoNoteReviews(store, owner, f.connector, f.adapter);
+    assert.equal(store.autoNoteReview(owner, operationId).state, "uncertain");
+    assert.equal((await service.reconcile(operationId)).state, "prepared");
+    assert.equal(sends, 1);
+    f.meeting.version++;
+    receipt = { meetingId: f.meeting.id, version: 2, operationId };
+    assert.equal((await service.reconcile(operationId)).state, "saved");
+    assert.deepEqual(
+      (await service.reconcile(operationId)).response?.receipt,
+      receipt,
+    );
+    assert.equal(reconciles, 2);
+    assert.equal(sends, 1);
+    assert.throws(
+      () =>
+        store.settleAutoNoteReview(
+          owner,
+          operationId,
+          store.autoNoteReview(owner, operationId).revision,
+          { uncertain: true },
+        ),
+      /CONFLICT/,
+    );
+    store.deleteAll(owner);
+    assert.equal(
+      (store.db.prepare("SELECT count(*) n FROM autonote_reviews").get() as any)
+        .n,
+      0,
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("AutoNote dispatch records uncertainty before a receipt storage failure and preserves immutable operation identity", async () => {
+  const { AutoNoteReviews } =
+    await import("../modules/connectors/autonote-reviews.js");
+  const store = new Store(":memory:", new Vault(randomBytes(32)));
+  let proposal: any,
+    called = 0;
+  const reviewId = randomUUID(),
+    expiresAt = new Date(Date.now() + 600000).toISOString();
+  const f = await fixture((url, body) => {
+    if (url.endsWith("review-status"))
+      return Response.json({
+        grantId: f.grant.grantId,
+        meetingId: f.meeting.id,
+        enabled: true,
+        expiresAt: f.grant.expiresAt,
+      });
+    if (url.endsWith("review-prepare")) {
+      called++;
+      proposal = body;
+      assert.equal(
+        store.autoNoteReview(owner, proposal.operationId).state,
+        "uncertain",
+      );
+    }
+    return Response.json({
+      reviewId,
+      digest: createHash("sha256")
+        .update(JSON.stringify(proposal))
+        .digest("hex"),
+      expiresAt,
+      receipt: null,
+      ...(url.endsWith("review-receipt") ? { deleted: false } : {}),
+    });
+  });
+  try {
+    const task = await f.adapter.create(
+      store,
+      input,
+      f.meeting.id,
+      "storage-failure",
+    );
+    await worker(store, f, async () => JSON.stringify(draft)).runOnce();
+    const service = new AutoNoteReviews(store, owner, f.connector, f.adapter),
+      operationId = randomUUID();
+    const local = await service.reserve(task.id, { operationId });
+    assert.throws(
+      () =>
+        store.reserveAutoNoteReview(owner, task.id, {
+          ...local.proposal,
+          summary: [{ text: "changed", evidence: ["s1"] }],
+        }),
+      /CONFLICT/,
+    );
+    assert.throws(
+      () =>
+        store.reserveAutoNoteReview(owner, task.id, {
+          ...local.proposal,
+          operationId: randomUUID(),
+          meetingId: randomUUID(),
+        }),
+      /INVALID_INPUT/,
+    );
+    store.db.exec(
+      "CREATE TRIGGER fail_review_receipt BEFORE UPDATE ON autonote_reviews WHEN NEW.revision=3 BEGIN SELECT RAISE(ABORT,'synthetic disk failure'); END",
+    );
+    await assert.rejects(
+      service.prepare(operationId),
+      /synthetic disk failure/,
+    );
+    assert.equal(store.autoNoteReview(owner, operationId).state, "uncertain");
+    assert.equal(service.busy, false);
+    store.db.exec("DROP TRIGGER fail_review_receipt");
+    assert.equal((await service.reconcile(operationId)).state, "prepared");
+    assert.equal(called, 1);
+    const current = store.autoNoteReview(owner, operationId);
+    assert.throws(
+      () =>
+        store.settleAutoNoteReview(owner, operationId, 1, { uncertain: true }),
+      /CONFLICT/,
+    );
+    assert.throws(
+      () =>
+        store.settleAutoNoteReview(owner, operationId, current.revision, {
+          response: { ...current.response, reviewId: randomUUID() },
+        }),
+      /CONFLICT/,
+    );
+  } finally {
+    store.close();
+  }
+});
+test("schema six migration preserves tasks and adds the AutoNote operation ledger", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs"),
+    { tmpdir } = await import("node:os"),
+    { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "ai-schema7-")),
+    path = join(dir, "tasks.db"),
+    vault = new Vault(randomBytes(32));
+  let store = new Store(path, vault);
+  try {
+    const task = store.create(owner, input, "preserved");
+    store.db.exec("DROP TABLE autonote_reviews; PRAGMA user_version=6");
+    store.close();
+    store = new Store(path, vault);
+    assert.deepEqual(store.get(owner, task.id), task);
+    assert.deepEqual(store.autoNoteReviews(owner, task.id), []);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 7);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
