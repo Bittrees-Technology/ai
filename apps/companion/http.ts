@@ -5,9 +5,12 @@ import { Store, StoreError, type Owner } from "../../modules/storage/store.js";
 import { requestSchema } from "../../modules/contracts/index.js";
 import { MemoryStore } from "../../modules/memory/store.js";
 import { Ollama, ModelError } from "../../modules/models/ollama.js";
+import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
+import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   crm?: CrmConnector;
+  sources?: CrmTasks;
   store: Store;
   owner: Owner;
   token: string;
@@ -25,6 +28,7 @@ export function localApi({
   runtime,
   cancelRun,
   crm,
+  sources,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
   const app = express();
@@ -84,6 +88,26 @@ export function localApi({
       res.status(204).end();
     });
   }
+  const concealed = (task: Task) =>
+    task.input.sourceRefs.length
+      ? {
+          ...task,
+          input: { ...task.input, sourceRefs: [] },
+          result: null,
+          sourceAccess: "unavailable",
+        }
+      : task;
+  const project = async (task: Task) => {
+    if (!task.input.sourceRefs.length) return task;
+    try {
+      const binding = store.sourceBinding(owner, task.id);
+      if (!binding || !sources) return concealed(task);
+      await sources.validate(binding);
+      return { ...task, sourceAccess: "current" };
+    } catch {
+      return concealed(task);
+    }
+  };
   app.post("/v1/requests", (req, res) => {
     const body = requestSchema.parse(req.body);
     // Source adapters and delegation revalidation are not implemented in this increment.
@@ -98,21 +122,27 @@ export function localApi({
       .json(store.create(owner, body, req.header("Idempotency-Key") ?? ""));
   });
   app.get("/v1/requests", (_req, res) =>
-    res.json({ items: store.list(owner) }),
+    res.json({ items: store.list(owner).map(concealed) }),
   );
-  app.get("/v1/requests/:id", (req, res) =>
-    res.json(store.get(owner, req.params.id)),
+  app.get("/v1/requests/:id", async (req, res) =>
+    res.json(await project(store.get(owner, req.params.id))),
   );
-  app.post("/v1/requests/:id/commands", (req, res) => {
+  app.post("/v1/requests/:id/commands", async (req, res) => {
     const task = store.command(owner, req.params.id, req.body);
     if (task.status === "cancelled" || task.status === "paused")
       cancelRun?.(task.id);
-    res.json(task);
+    res.json(await project(task));
   });
-  app.get("/v1/requests/:id/runs", (req, res) =>
-    res.json({ items: store.runHistory(owner, req.params.id) }),
-  );
-  app.post("/v1/requests/:id/model", (req, res) => {
+  app.get("/v1/requests/:id/runs", async (req, res) => {
+    const task = await project(store.get(owner, req.params.id));
+    res.json({
+      items:
+        "sourceAccess" in task && task.sourceAccess === "unavailable"
+          ? []
+          : store.runHistory(owner, req.params.id),
+    });
+  });
+  app.post("/v1/requests/:id/model", async (req, res) => {
     const body = z
       .strictObject({
         profileId: z.string(),
@@ -126,7 +156,7 @@ export function localApi({
       body.expectedRevision,
     );
     cancelRun?.(task.id);
-    res.json(task);
+    res.json(await project(task));
   });
   app.get("/v1/models", async (_req, res) => {
     if (!runtime) throw new ModelError("MODEL_UNAVAILABLE");
@@ -290,7 +320,7 @@ export function localApi({
   );
   app.get("/v1/export", async (_req, res) =>
     res.json({
-      tasks: store.export(owner),
+      tasks: store.export(owner).map(concealed),
       messages: store.exportMessages(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),

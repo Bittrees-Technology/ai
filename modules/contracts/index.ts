@@ -43,6 +43,22 @@ export const sourceRefSchema = z.strictObject({
   resourceId: id,
   revision: id,
 });
+export const sourceBindingSchema = z
+  .strictObject({
+    authority: authoritySchema,
+    refs: z.array(sourceRefSchema).min(1).max(100),
+    expiresAt: timestamp,
+    projectionHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .refine(
+    (b) =>
+      b.authority.sourceApp === "crm" &&
+      b.refs.every(
+        (r) => r.app === "crm" && r.tenantId === b.authority.tenantId,
+      ) &&
+      new Set(b.refs.map((r) => r.resourceId)).size === b.refs.length,
+  );
+export type SourceBinding = z.infer<typeof sourceBindingSchema>;
 export const requestSchema = z.strictObject({
   conversationId: id,
   kind: z.enum(["query", "summarize", "draft"]),
@@ -143,6 +159,7 @@ export const modelProfileSchema = z.strictObject({
 });
 export const schemas = {
   authority: authoritySchema,
+  sourceBinding: sourceBindingSchema,
   request: requestSchema,
   sourceRef: sourceRefSchema,
   inbox: inboxSchema,

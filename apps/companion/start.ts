@@ -1,3 +1,4 @@
+import { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import {
   CrmConnector,
   crmKeychainEntry,
@@ -61,7 +62,12 @@ const memory = new MemoryStore(
   new Vault(key),
   localMemoryAccess(store),
 );
-const runtime = new Ollama(),
+const crm = new CrmConnector(
+    JSON.stringify(owner),
+    crmKeychainEntry("personal"),
+  ),
+  sources = new CrmTasks(crm, owner, "personal"),
+  runtime = new Ollama(),
   worker = new LocalWorker(
     store,
     owner,
@@ -69,6 +75,7 @@ const runtime = new Ollama(),
     (id) => store.profile(owner, id),
     "personal",
     memory,
+    sources,
   );
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
@@ -79,7 +86,8 @@ server.on(
     store,
     memory,
     owner,
-    crm: new CrmConnector(JSON.stringify(owner), crmKeychainEntry("personal")),
+    crm,
+    sources,
     runtime,
     port,
     token,
