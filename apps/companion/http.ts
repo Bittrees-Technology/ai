@@ -1,3 +1,4 @@
+import { AutoNoteReviews } from "../../modules/connectors/autonote-reviews.js";
 import type { AutoNoteConnector } from "../../modules/connectors/autonote.js";
 import type { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
 import { SourceTasks } from "../../modules/connectors/source-tasks.js";
@@ -50,6 +51,10 @@ export function localApi({
   const publications =
     crm && sources
       ? new CrmPublications(store, owner, crm, sources)
+      : undefined;
+  const autoReviews =
+    autonote && autonoteSources
+      ? new AutoNoteReviews(store, owner, autonote, autonoteSources)
       : undefined;
   const sourceRouter = new SourceTasks(sources, autonoteSources);
   const app = express();
@@ -290,6 +295,45 @@ export function localApi({
       res.json(summary(await publications.publish(req.params.id)));
     });
   }
+  if (autoReviews) {
+    const summary = (
+      item: import("../../modules/storage/store.js").AutoNoteReview,
+    ) => ({
+      id: item.id,
+      state: item.state,
+      review: item.response
+        ? {
+            expiresAt: item.response.expiresAt,
+            reviewUrl:
+              "https://autonote.bittrees.org/connect/ai?review=" +
+              item.response.reviewId,
+          }
+        : null,
+      receipt: item.response?.receipt ?? null,
+    });
+    app.get("/v1/requests/:id/autonote-reviews", (req, res) =>
+      res.json({
+        items: store.autoNoteReviews(owner, req.params.id).map(summary),
+      }),
+    );
+    app.post("/v1/requests/:id/autonote-reviews", async (req, res) =>
+      res
+        .status(201)
+        .json(summary(await autoReviews.reserve(req.params.id, req.body))),
+    );
+    app.get("/v1/autonote-reviews/:id/content", async (req, res) => {
+      const item = store.autoNoteReview(owner, req.params.id),
+        binding = store.sourceBinding(owner, item.taskId);
+      if (!binding) throw new ConnectorError("SOURCE_DENIED");
+      await autonoteSources!.validate(binding);
+      res.json({ proposal: item.proposal });
+    });
+    for (const action of ["prepare", "reconcile"] as const)
+      app.post(`/v1/autonote-reviews/:id/${action}`, async (req, res) => {
+        z.strictObject({}).parse(req.body);
+        res.json(summary(await autoReviews[action](req.params.id)));
+      });
+  }
   app.get("/v1/requests/:id/export", async (req, res) => {
     const task = await project(store.get(owner, req.params.id));
     if ("sourceAccess" in task && task.sourceAccess === "unavailable")
@@ -298,6 +342,7 @@ export function localApi({
       task,
       runs: store.runHistory(owner, req.params.id),
       publications: store.publications(owner, req.params.id),
+      autonoteReviews: store.autoNoteReviews(owner, req.params.id),
     });
   });
   app.post("/v1/requests", (req, res) => {
@@ -522,7 +567,8 @@ export function localApi({
   app.delete("/v1/data", (req, res) => {
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");
-    if (publications?.busy) throw new StoreError("CONFLICT");
+    if (publications?.busy || autoReviews?.busy)
+      throw new StoreError("CONFLICT");
     memory?.deleteAll(owner);
     store.deleteAll(owner);
     res.status(204).end();

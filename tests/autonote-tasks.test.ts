@@ -827,3 +827,177 @@ test("schema six migration preserves tasks and adds the AutoNote operation ledge
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("AutoNote submission HTTP controls gate content, reject approval and retain history during in-flight deletion", async () => {
+  const { createServer } = await import("node:http"),
+    { localApi } = await import("../apps/companion/http.js");
+  const store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  let proposal: any,
+    receipt: any = null,
+    dispatches = 0,
+    started!: () => void,
+    release!: () => void;
+  const beginning = new Promise<void>((r) => {
+      started = r;
+    }),
+    hold = new Promise<void>((r) => {
+      release = r;
+    }),
+    reviewId = randomUUID(),
+    expiresAt = new Date(Date.now() + 600000).toISOString();
+  const f = await fixture(async (url, body) => {
+    if (url.endsWith("review-status"))
+      return Response.json({
+        grantId: f.grant.grantId,
+        meetingId: f.meeting.id,
+        enabled: true,
+        expiresAt: f.grant.expiresAt,
+      });
+    if (url.endsWith("review-prepare")) {
+      dispatches++;
+      proposal = body;
+      started();
+      await hold;
+    }
+    return Response.json({
+      reviewId,
+      digest: createHash("sha256")
+        .update(JSON.stringify(proposal))
+        .digest("hex"),
+      expiresAt,
+      receipt,
+      ...(url.endsWith("review-receipt") ? { deleted: false } : {}),
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "local-credential".repeat(4);
+  server.on(
+    "request",
+    localApi({
+      store,
+      owner,
+      port,
+      token,
+      autonote: f.connector,
+      autonoteSources: f.adapter,
+    }),
+  );
+  const call = (
+    path: string,
+    method = "GET",
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  try {
+    const task = await f.adapter.create(
+      store,
+      input,
+      f.meeting.id,
+      "http-submission",
+    );
+    await worker(store, f, async () => JSON.stringify(draft)).runOnce();
+    const path = "/v1/requests/" + task.id,
+      operationId = randomUUID();
+    assert.equal(
+      (
+        await call(path + "/autonote-reviews", "POST", {
+          operationId,
+          approved: true,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          path + "/autonote-reviews",
+          "POST",
+          { operationId },
+          { Authorization: "" },
+        )
+      ).status,
+      401,
+    );
+    const reserved = await call(path + "/autonote-reviews", "POST", {
+      operationId,
+    });
+    assert.equal(reserved.status, 201);
+    assert.equal((await reserved.text()).includes("Review the plan"), false);
+    assert.equal(
+      (
+        await call(path + "/autonote-reviews", "POST", {
+          operationId: randomUUID(),
+        })
+      ).status,
+      409,
+    );
+    const op = "/v1/autonote-reviews/" + operationId;
+    assert.equal(
+      ((await (await call(op + "/content")).json()) as any).proposal.summary[0]
+        .text,
+      draft.summary[0]!.text,
+    );
+    assert.equal(
+      ((await (await call(path + "/export")).json()) as any).autonoteReviews[0]
+        .id,
+      operationId,
+    );
+    assert.equal(
+      (await call(op + "/prepare", "POST", { approved: true })).status,
+      400,
+    );
+    const preparing = call(op + "/prepare", "POST", {});
+    await beginning;
+    assert.equal(
+      (
+        await call("/v1/data", "DELETE", undefined, {
+          "X-Confirm-Delete": "all-local-task-data",
+        })
+      ).status,
+      409,
+    );
+    assert.equal((await call(op + "/prepare", "POST", {})).status, 409);
+    assert.equal(store.autoNoteReview(owner, operationId).state, "uncertain");
+    release();
+    assert.equal((await preparing).status, 200);
+    f.meeting.version++;
+    receipt = { meetingId: f.meeting.id, version: 2, operationId };
+    assert.equal((await call(op + "/content")).status, 400);
+    assert.equal((await call(path + "/export")).status, 400);
+    const summary = await (await call(path + "/autonote-reviews")).text();
+    assert.equal(summary.includes(draft.summary[0]!.text), false);
+    assert.equal(summary.includes(f.grant.token), false);
+    const recovered = (await (
+      await call(op + "/reconcile", "POST", {})
+    ).json()) as any;
+    assert.equal(recovered.state, "saved");
+    assert.deepEqual(recovered.receipt, receipt);
+    assert.equal((await call(op + "/reconcile", "POST", {})).status, 200);
+    assert.equal(dispatches, 1);
+    assert.equal(
+      (
+        await call("/v1/data", "DELETE", undefined, {
+          "X-Confirm-Delete": "all-local-task-data",
+        })
+      ).status,
+      204,
+    );
+    assert.equal((await call(op + "/content")).status, 404);
+  } finally {
+    release?.();
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
