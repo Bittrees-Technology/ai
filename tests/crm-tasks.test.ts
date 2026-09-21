@@ -546,6 +546,7 @@ test("publication ledger recovers lost prepare/publish responses across restart 
     path = join(directory, "tasks.db"),
     vault = new Vault(randomBytes(32));
   let store = new Store(path, vault);
+  const permissionEpoch = randomUUID();
   let preparations = 0,
     publications = 0;
   const requests: unknown[] = [];
@@ -564,7 +565,7 @@ test("publication ledger recovers lost prepare/publish responses across restart 
     if (url.endsWith("/status"))
       return Response.json({
         grantId: f.grant.grantId,
-        epoch: randomUUID(),
+        epoch: permissionEpoch,
         targetId: f.record.id,
         targetName: "Synthetic project",
         kinds: ["notes"],
@@ -603,6 +604,8 @@ test("publication ledger recovers lost prepare/publish responses across restart 
     const edit = {
       operationId: randomUUID(),
       kind: "notes",
+      targetId: f.record.id,
+      permissionEpoch,
       name: "PROPOSAL_PRIVATE_SENTINEL",
       description: "Exact reviewed content",
       dueDate: "",
@@ -682,5 +685,209 @@ test("schema five migration adds the publication ledger without changing existin
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("publication HTTP controls require exact scope, keep content gated and retain receipts during overlapping deletion", async () => {
+  const { createServer } = await import("node:http"),
+    { localApi } = await import("../apps/companion/http.js");
+  const store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  const epoch = randomUUID(),
+    prepared = {
+      reviewId: randomUUID(),
+      digest: "e".repeat(64),
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    };
+  const receipt = {
+    recordId: randomUUID(),
+    state: "published",
+    existing: false,
+  };
+  let approved = false,
+    publishCount = 0,
+    release!: () => void,
+    started!: () => void;
+  const pending = new Promise<void>((r) => {
+      started = r;
+    }),
+    hold = new Promise<void>((r) => {
+      release = r;
+    });
+  const f = await fixture(async (url) => {
+    if (url.endsWith("/status"))
+      return Response.json({
+        grantId: f.grant.grantId,
+        epoch,
+        targetId: f.record.id,
+        targetName: "Private destination",
+        kinds: ["notes"],
+        expiresAt: f.grant.expiresAt,
+      });
+    if (url.endsWith("/prepare")) return Response.json(prepared);
+    if (!approved)
+      return new Response("private source denial", { status: 403 });
+    publishCount++;
+    started();
+    await hold;
+    return Response.json(receipt);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "test-local-credential".repeat(4);
+  server.on(
+    "request",
+    localApi({
+      store,
+      owner,
+      token,
+      port,
+      crm: f.connector,
+      sources: f.adapter,
+    }),
+  );
+  const call = (
+    path: string,
+    method = "GET",
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  try {
+    const task = await f.adapter.create(
+      store,
+      input,
+      [f.record.id],
+      "http-publication",
+    );
+    await new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async () => "PRIVATE_DRAFT",
+      },
+      () => profile,
+      "worker",
+      undefined,
+      f.adapter,
+    ).runOnce();
+    const prefix = `/v1/requests/${task.id}`;
+    const scope = (await (
+      await call(prefix + "/write-permission", "POST", {})
+    ).json()) as any;
+    assert.equal(scope.targetId, f.record.id);
+    const body = {
+      operationId: randomUUID(),
+      targetId: scope.targetId,
+      permissionEpoch: scope.epoch,
+      kind: "notes",
+      name: "PRIVATE_PROPOSAL",
+      description: "PRIVATE_CONTENT",
+      dueDate: "",
+    };
+    assert.equal(
+      (
+        await call(prefix + "/publications", "POST", {
+          ...body,
+          permissionEpoch: randomUUID(),
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await call(prefix + "/publications", "POST", {
+          ...body,
+          targetId: randomUUID(),
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await call(prefix + "/publications", "POST", {
+          ...body,
+          approved: true,
+        })
+      ).status,
+      400,
+    );
+    const saved = await call(prefix + "/publications", "POST", body);
+    assert.equal(saved.status, 201);
+    const savedText = await saved.text();
+    assert.equal(savedText.includes("PRIVATE_"), false);
+    const operation = `/v1/publications/${body.operationId}`;
+    assert.equal((await call(operation + "/prepare", "POST", {})).status, 200);
+    const staged = (await (await call(prefix + "/publications")).json()) as any;
+    assert.equal(
+      staged.items[0].prepared.reviewUrl,
+      "https://crm.bittrees.org/connect/ai?review=" + prepared.reviewId,
+    );
+    assert.equal(
+      (await call(operation + "/publish", "POST", { approved: true })).status,
+      400,
+    );
+    assert.equal((await call(operation + "/publish", "POST", {})).status, 400);
+    assert.equal(publishCount, 0);
+    const exported = (await (await call(prefix + "/export")).json()) as any;
+    assert.equal(
+      exported.publications[0].proposal.description,
+      body.description,
+    );
+    f.deny();
+    assert.equal((await call(prefix + "/export")).status, 400);
+    const hidden = await (await call(prefix + "/publications")).text();
+    assert.equal(hidden.includes("PRIVATE_"), false);
+    assert.equal(
+      (await call(prefix + "/write-permission", "POST", {})).status,
+      400,
+    );
+    approved = true; // The synthetic source owns approval; local requests cannot provide it.
+    const publishing = call(operation + "/publish", "POST", {});
+    await pending;
+    assert.equal(
+      (
+        await call("/v1/data", "DELETE", undefined, {
+          "X-Confirm-Delete": "all-local-task-data",
+        })
+      ).status,
+      409,
+    );
+    assert.equal(store.publications(owner, task.id).length, 1);
+    assert.equal((await call(operation + "/publish", "POST", {})).status, 409);
+    release();
+    assert.equal((await publishing).status, 200);
+    assert.deepEqual(
+      store.publication(owner, body.operationId).receipt,
+      receipt,
+    );
+    assert.equal((await call(operation + "/publish", "POST", {})).status, 200);
+    assert.equal(publishCount, 1);
+    assert.equal(
+      (
+        await call("/v1/data", "DELETE", undefined, {
+          "X-Confirm-Delete": "all-local-task-data",
+        })
+      ).status,
+      204,
+    );
+    assert.throws(
+      () => store.publication(owner, body.operationId),
+      /NOT_FOUND/,
+    );
+  } finally {
+    release?.();
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
   }
 });

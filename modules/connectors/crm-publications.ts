@@ -5,6 +5,8 @@ import { CrmTasks } from "./crm-tasks.js";
 import type { CrmPrepared, CrmReceipt } from "./crm-write-contracts.js";
 const editSchema = z.strictObject({
   operationId: z.uuid(),
+  targetId: z.uuid(),
+  permissionEpoch: z.uuid(),
   kind: z.enum(["notes", "tasks"]),
   name: z.string().trim().min(1).max(200),
   description: z.string().max(4000),
@@ -31,6 +33,12 @@ export class CrmPublications {
       this.active.delete(id);
     }
   }
+  async permission(taskId: string) {
+    const binding = this.store.sourceBinding(this.owner, taskId);
+    if (!binding) throw new StoreError("INVALID_INPUT");
+    await this.sources.validate(binding);
+    return this.connector.writeStatus(binding.authority.grantId);
+  }
   async reserve(taskId: string, raw: unknown) {
     const edit = editSchema.parse(raw);
     return this.exclusive(edit.operationId, async () => {
@@ -40,10 +48,16 @@ export class CrmPublications {
       const permission = await this.connector.writeStatus(
         binding.authority.grantId,
       );
+      if (
+        permission.targetId !== edit.targetId ||
+        permission.epoch !== edit.permissionEpoch
+      )
+        throw new StoreError("CONFLICT");
       if (!permission.kinds.includes(edit.kind))
         throw new StoreError("INVALID_INPUT");
+      const { permissionEpoch: _epoch, ...proposal } = edit;
       return this.store.reservePublication(this.owner, taskId, {
-        ...edit,
+        ...proposal,
         targetId: permission.targetId,
         sources: binding.refs.map((r) => ({
           id: r.resourceId,
