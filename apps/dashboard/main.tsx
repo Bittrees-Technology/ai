@@ -1,3 +1,4 @@
+import { Connections } from "./connections.js";
 import { Inbox } from "./inbox.js";
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
@@ -18,6 +19,18 @@ type Memory = {
 };
 type Profile = { id: string; model: string };
 const explanations: Record<string, string> = {
+  CONNECTION_REQUIRED: "Connect CRM first.",
+  CONNECTION_EXPIRED:
+    "This connection expired. Revoke it in CRM, then connect again.",
+  CONNECTION_BUSY: "A connection change is still running. Wait a moment.",
+  INVALID_CONNECTION:
+    "This connection could not be completed. Begin again with a fresh code.",
+  SOURCE_UNAVAILABLE:
+    "CRM did not respond. If a code exchange failed, begin again with a fresh code.",
+  SOURCE_DENIED:
+    "CRM denied access. Check the source grant and your current permissions.",
+  INVALID_SOURCE:
+    "CRM returned an unexpected response. No source content was accepted.",
   UNAUTHORIZED: "Pair this browser to continue.",
   CONFLICT: "This item changed. Refresh and try again.",
   MODEL_UNAVAILABLE: "Start Ollama and check your installed models.",
@@ -688,21 +701,7 @@ function App() {
             <div hidden={page !== "Inbox"}>
               <Inbox key={epoch.current} api={api} onError={fail} />
             </div>
-            {page === "Connections" && (
-              <section className="content">
-                <h2>Connect only what you choose</h2>
-                <p>
-                  App access is not enabled in this development build. Your
-                  Bittrees apps keep their own permissions.
-                </p>
-                {["CRM", "AutoNote", "Roles", "Mail", "News"].map((name) => (
-                  <div className="row" key={name}>
-                    <h3>{name}</h3>
-                    <span>Not connected</span>
-                  </div>
-                ))}
-              </section>
-            )}
+            {page === "Connections" && <Connections api={api} onError={fail} />}
             {page === "Device" && (
               <section className="content">
                 <h2>This Mac</h2>

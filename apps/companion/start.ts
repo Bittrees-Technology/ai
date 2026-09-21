@@ -1,3 +1,7 @@
+import {
+  CrmConnector,
+  crmKeychainEntry,
+} from "../../modules/connectors/crm.js";
 import { createServer } from "node:http";
 import { mkdir, stat, writeFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -75,6 +79,7 @@ server.on(
     store,
     memory,
     owner,
+    crm: new CrmConnector(JSON.stringify(owner), crmKeychainEntry("personal")),
     runtime,
     port,
     token,
