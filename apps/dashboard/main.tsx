@@ -1,9 +1,11 @@
+import { SourceDraftDetail } from "./crm-drafts.js";
 import { Connections } from "./connections.js";
 import { Inbox } from "./inbox.js";
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 type Task = {
+  sourceBound?: boolean;
   id: string;
   status: string;
   revision: number;
@@ -160,6 +162,10 @@ function App() {
   }, [paired]);
   useEffect(() => {
     let active = true;
+    if (task?.sourceBound) {
+      setRuns([]);
+      return;
+    }
     if (selected && paired)
       api("/v1/requests/" + selected + "/runs")
         .then((r) => {
@@ -169,7 +175,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [selected, task?.revision, paired]);
+  }, [selected, task?.revision, task?.sourceBound, paired]);
   useEffect(() => {
     if (page === "Models" && paired)
       api("/v1/models")
@@ -455,6 +461,14 @@ function App() {
                           </button>
                         )}
                       </div>
+                      {task.sourceBound && (
+                        <SourceDraftDetail
+                          key={task.id}
+                          id={task.id}
+                          api={api}
+                          onError={fail}
+                        />
+                      )}
                       {task.result?.text && (
                         <>
                           <h3>Draft result</h3>
@@ -701,7 +715,18 @@ function App() {
             <div hidden={page !== "Inbox"}>
               <Inbox key={epoch.current} api={api} onError={fail} />
             </div>
-            {page === "Connections" && <Connections api={api} onError={fail} />}
+            {page === "Connections" && (
+              <Connections
+                api={api}
+                onError={fail}
+                profiles={profiles}
+                onCreated={(id) => {
+                  setSelected(id);
+                  setPage("Tasks");
+                  void refresh().catch(fail);
+                }}
+              />
+            )}
             {page === "Device" && (
               <section className="content">
                 <h2>This Mac</h2>

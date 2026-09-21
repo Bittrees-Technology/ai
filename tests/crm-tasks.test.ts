@@ -356,3 +356,181 @@ test("version-four migration preserves local tasks while adding protected source
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("CRM HTTP workflow loads only allowed choices, creates idempotent drafts, gates export and interrupts disconnect", async () => {
+  const { createServer } = await import("node:http"),
+    { localApi } = await import("../apps/companion/http.js");
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  store.addProfile(owner, profile);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "test-credential".repeat(5);
+  let stopped = 0;
+  server.on(
+    "request",
+    localApi({
+      store,
+      owner,
+      token,
+      port,
+      crm: f.connector,
+      sources: f.adapter,
+      cancelSourceRun: () => {
+        stopped++;
+      },
+    }),
+  );
+  const call = (
+    path: string,
+    method = "GET",
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch("http://127.0.0.1:" + port + path, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  try {
+    const choices = (await (
+      await call("/v1/connections/crm/records", "POST", {})
+    ).json()) as any;
+    assert.deepEqual(choices.items, [
+      { id: f.record.id, kind: "projects", name: f.record.data.name },
+    ]);
+    assert.equal(
+      JSON.stringify(choices).includes("Record instructions"),
+      false,
+    );
+    const body = {
+      conversationId: randomUUID(),
+      recordIds: [f.record.id],
+      prompt: input.prompt,
+      modelProfileId: profile.id,
+    };
+    assert.equal(
+      (
+        await call(
+          "/v1/connections/crm/drafts",
+          "POST",
+          { ...body, subjectId: randomUUID() },
+          { "Idempotency-Key": "a" },
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          "/v1/connections/crm/drafts",
+          "POST",
+          { ...body, recordIds: [randomUUID()] },
+          { "Idempotency-Key": "a" },
+        )
+      ).status,
+      400,
+    );
+    const response = await call("/v1/connections/crm/drafts", "POST", body, {
+      "Idempotency-Key": "a",
+    });
+    assert.equal(response.status, 202);
+    const task = (await response.json()) as any;
+    assert.equal(task.sourceBound, true);
+    assert.equal(task.result, null);
+    assert.equal(
+      (
+        (await (
+          await call("/v1/connections/crm/drafts", "POST", body, {
+            "Idempotency-Key": "a",
+          })
+        ).json()) as any
+      ).id,
+      task.id,
+    );
+    const worker = new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async () => "SYNTHETIC_BRIEF",
+      },
+      () => profile,
+      "worker",
+      undefined,
+      f.adapter,
+    );
+    await worker.runOnce();
+    const exported = (await (
+      await call("/v1/requests/" + task.id + "/export")
+    ).json()) as any;
+    assert.equal(exported.task.result.text, "SYNTHETIC_BRIEF");
+    assert.equal(exported.runs.length, 1);
+    assert.equal(JSON.stringify(exported).includes(f.grant.token), false);
+    f.deny();
+    const denied = await call("/v1/requests/" + task.id + "/export");
+    assert.equal(denied.status, 400);
+    assert.equal((await denied.text()).includes("SYNTHETIC_BRIEF"), false);
+    assert.equal(
+      (
+        await call("/v1/connections/crm/local", "DELETE", undefined, {
+          "X-Confirm-Delete": "local-crm-credential",
+        })
+      ).status,
+      204,
+    );
+    assert.equal(stopped, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("source disconnect interrupts active generation without committing a late draft", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  let started!: () => void;
+  const beginning = new Promise<void>((r) => {
+    started = r;
+  });
+  try {
+    const task = await f.adapter.create(
+      store,
+      input,
+      [f.record.id],
+      "interrupt",
+    );
+    const worker = new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async (_p, _text, signal) =>
+          new Promise<string>((resolve) => {
+            signal!.addEventListener("abort", () => resolve("late"), {
+              once: true,
+            });
+            started();
+          }),
+      },
+      () => profile,
+      "worker",
+      undefined,
+      f.adapter,
+    );
+    const running = worker.runOnce();
+    await beginning;
+    worker.cancelSource();
+    await running;
+    assert.equal(store.get(owner, task.id).status, "failed");
+    assert.equal(store.get(owner, task.id).result, null);
+  } finally {
+    store.close();
+  }
+});

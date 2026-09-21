@@ -11,6 +11,7 @@ import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   crm?: CrmConnector;
   sources?: CrmTasks;
+  cancelSourceRun?: () => void;
   store: Store;
   owner: Owner;
   token: string;
@@ -29,6 +30,7 @@ export function localApi({
   cancelRun,
   crm,
   sources,
+  cancelSourceRun,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
   const app = express();
@@ -78,12 +80,14 @@ export function localApi({
     });
     app.post("/v1/connections/crm/disconnect", async (req, res) => {
       z.strictObject({}).parse(req.body);
+      cancelSourceRun?.();
       await crm.disconnect();
       res.status(204).end();
     });
     app.delete("/v1/connections/crm/local", async (req, res) => {
       if (req.header("X-Confirm-Delete") !== "local-crm-credential")
         throw new StoreError("INVALID_INPUT");
+      cancelSourceRun?.();
       await crm.forgetLocal();
       res.status(204).end();
     });
@@ -95,6 +99,7 @@ export function localApi({
           input: { ...task.input, sourceRefs: [] },
           result: null,
           sourceAccess: "unavailable",
+          sourceBound: true,
         }
       : task;
   const project = async (task: Task) => {
@@ -103,14 +108,56 @@ export function localApi({
       const binding = store.sourceBinding(owner, task.id);
       if (!binding || !sources) return concealed(task);
       await sources.validate(binding);
-      return { ...task, sourceAccess: "current" };
+      return { ...task, sourceAccess: "current", sourceBound: true };
     } catch {
       return concealed(task);
     }
   };
+  if (sources) {
+    app.post("/v1/connections/crm/records", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json({ items: await sources.choices() });
+    });
+    app.post("/v1/connections/crm/drafts", async (req, res) => {
+      const body = z
+        .strictObject({
+          conversationId: z.uuid(),
+          recordIds: z
+            .array(z.uuid())
+            .min(1)
+            .max(100)
+            .refine((ids) => new Set(ids).size === ids.length),
+          prompt: z.string().min(1).max(32000),
+          modelProfileId: z.string().min(1).max(128),
+        })
+        .parse(req.body);
+      store.profile(owner, body.modelProfileId);
+      const task = await sources.create(
+        store,
+        {
+          conversationId: body.conversationId,
+          kind: "draft",
+          prompt: body.prompt,
+          modelProfileId: body.modelProfileId,
+          dependencies: [],
+          priority: "normal",
+          tags: [],
+        },
+        body.recordIds,
+        req.header("Idempotency-Key") ?? "",
+      );
+      res.status(202).json(concealed(task));
+    });
+  }
+  app.get("/v1/requests/:id/export", async (req, res) => {
+    const task = await project(store.get(owner, req.params.id));
+    if ("sourceAccess" in task && task.sourceAccess === "unavailable")
+      throw new ConnectorError("SOURCE_DENIED");
+    res.json({ task, runs: store.runHistory(owner, req.params.id) });
+  });
   app.post("/v1/requests", (req, res) => {
     const body = requestSchema.parse(req.body);
-    // Source adapters and delegation revalidation are not implemented in this increment.
+    // Source authority is constructed only through the dedicated trusted adapter.
     if (body.sourceRefs.length)
       return res
         .status(403)

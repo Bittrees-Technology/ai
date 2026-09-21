@@ -94,6 +94,7 @@ server.on(
     pairCode,
     assets: resolve("dist/dashboard"),
     cancelRun: (id) => worker.cancel(id),
+    cancelSourceRun: () => worker.cancelSource(),
   }),
 );
 let stopping = false,

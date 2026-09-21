@@ -11,6 +11,23 @@ export class CrmTasks {
     private readonly owner: Owner,
     private readonly deviceId: string,
   ) {}
+  async choices() {
+    const status = await this.connector.status();
+    if (!status || status.state !== "stored")
+      throw new ConnectorError("CONNECTION_REQUIRED");
+    const snapshot = await this.connector.read(status.recordIds);
+    if (
+      snapshot.grantId !== status.grantId ||
+      snapshot.subjectId !== status.subjectId ||
+      snapshot.workspaceId !== status.workspaceId
+    )
+      throw new ConnectorError("INVALID_SOURCE");
+    return snapshot.records.map(({ id, kind, data }) => ({
+      id,
+      kind,
+      name: data.name,
+    }));
+  }
   async create(
     store: Store,
     input: Omit<TaskInput, "sourceRefs" | "memoryIds">,
