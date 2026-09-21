@@ -11,7 +11,7 @@ type Connection = {
   workspaceId: string;
   recordIds: string[];
   expiresAt: string;
-  state: "stored" | "expired";
+  state: "stored" | "expired" | "disconnect_pending";
 };
 export function Connections({
   api,
@@ -78,9 +78,11 @@ export function Connections({
         ) : current.connection ? (
           <>
             <p>
-              {current.connection.state === "expired"
-                ? "Credential expired"
-                : "Credential saved on this Mac"}
+              {current.connection.state === "disconnect_pending"
+                ? "Disconnect pending — reads are paused; retry to confirm revocation"
+                : current.connection.state === "expired"
+                  ? "Credential expired"
+                  : "Credential saved on this Mac"}
               . Current access is checked with CRM on every read.
             </p>
             <dl>
@@ -101,6 +103,35 @@ export function Connections({
               >
                 Review or revoke access in CRM
               </a>
+            </p>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  if (
+                    !confirm(
+                      "Revoke this CRM grant and remove its credential from this Mac?",
+                    )
+                  )
+                    return;
+                  try {
+                    await api("/v1/connections/crm/disconnect", "POST", {});
+                  } finally {
+                    setCurrent(await api("/v1/connections/crm"));
+                  }
+                  setPending(null);
+                  setCode("");
+                })
+              }
+            >
+              {current.connection.state === "disconnect_pending"
+                ? "Retry disconnect"
+                : "Disconnect CRM"}
+            </button>
+            <p>
+              Disconnect revokes the source grant before removing the
+              credential. If CRM is unavailable, reads stay paused until you
+              retry.
             </p>
             <p>
               Remove the local credential after revoking in CRM. Local removal

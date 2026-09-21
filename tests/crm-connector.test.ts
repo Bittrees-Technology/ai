@@ -370,3 +370,76 @@ test("local connection API requires authentication and never exports the source 
     store.close();
   }
 });
+
+test("disconnect keeps reads suspended across restart after an uncertain response and safely retries", async () => {
+  const f = fixture();
+  await connect(f);
+  f.setResponse(async () => {
+    throw Error("response lost after revocation");
+  });
+  await assert.rejects(f.connector.disconnect(), /SOURCE_UNAVAILABLE/);
+  assert.equal((await f.connector.status())?.state, "disconnect_pending");
+  const count = f.requests.length;
+  await assert.rejects(f.connector.read(f.grant.recordIds), /CONNECTION_BUSY/);
+  assert.equal(f.requests.length, count);
+  let sent = 0;
+  const restored = new CrmConnector("personal", f.secret, async (url, init) => {
+    sent++;
+    assert.equal(
+      String(url),
+      "https://crm.bittrees.org/api/integrations/ai/disconnect",
+    );
+    assert.deepEqual(JSON.parse(init!.body as string), {});
+    assert.equal(
+      (init!.headers as Record<string, string>).Authorization,
+      "Bearer " + f.grant.token,
+    );
+    return Response.json({ ok: true });
+  });
+  assert.equal((await restored.status())?.state, "disconnect_pending");
+  await assert.rejects(restored.read(f.grant.recordIds), /CONNECTION_BUSY/);
+  await restored.disconnect();
+  assert.equal(await restored.status(), null);
+  assert.equal(await f.secret.getSecret(), undefined);
+  await restored.disconnect();
+  assert.equal(sent, 1);
+});
+test("disconnect fences an in-flight read before receiving the source acknowledgement", async () => {
+  const f = fixture();
+  await connect(f);
+  let release!: (response: Response) => void, started!: () => void;
+  const beginning = new Promise<void>((r) => {
+    started = r;
+  });
+  f.setResponse(() => {
+    started();
+    return new Promise((r) => {
+      release = r;
+    });
+  });
+  const reading = f.connector.read(f.grant.recordIds);
+  await beginning;
+  f.setResponse(async () => Response.json({ ok: true }));
+  await f.connector.disconnect();
+  release(Response.json(f.snapshot));
+  await assert.rejects(reading, /CONNECTION_EXPIRED/);
+  assert.equal(await f.connector.status(), null);
+});
+test("expired credentials can revoke; malformed acknowledgement or keychain deletion failure remains pending", async () => {
+  const f = fixture();
+  await connect(f);
+  f.setTime(now + 86_400_001);
+  f.setResponse(async () => Response.json({ ok: false }));
+  await assert.rejects(f.connector.disconnect(), /INVALID_SOURCE/);
+  assert.equal((await f.connector.status())?.state, "disconnect_pending");
+  f.setResponse(async () => Response.json({ ok: true }));
+  const original = f.secret.deleteCredential;
+  f.secret.deleteCredential = async () => {
+    throw Error("keychain unavailable");
+  };
+  await assert.rejects(f.connector.disconnect(), /keychain unavailable/);
+  assert.equal((await f.connector.status())?.state, "disconnect_pending");
+  f.secret.deleteCredential = original;
+  await f.connector.disconnect();
+  assert.equal(await f.connector.status(), null);
+});

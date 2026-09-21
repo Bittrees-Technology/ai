@@ -72,6 +72,11 @@ export function localApi({
         .parse(req.body);
       res.json(await crm.finish(body.id, body.code));
     });
+    app.post("/v1/connections/crm/disconnect", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      await crm.disconnect();
+      res.status(204).end();
+    });
     app.delete("/v1/connections/crm/local", async (req, res) => {
       if (req.header("X-Confirm-Delete") !== "local-crm-credential")
         throw new StoreError("INVALID_INPUT");

@@ -21,6 +21,7 @@ const grantSchema = z.strictObject({
 const savedSchema = z.strictObject({
   owner: z.string().min(1).max(256),
   grant: grantSchema,
+  disconnectPending: z.boolean().optional(),
 });
 const text = z.string().max(4000),
   short = z.string().max(200);
@@ -120,7 +121,10 @@ export class CrmConnector {
         JSON.parse(Buffer.from(raw).toString("utf8")),
       );
       if (saved.owner !== this.owner) throw new Error();
-      return saved.grant;
+      return {
+        ...saved.grant,
+        disconnectPending: saved.disconnectPending === true,
+      };
     } catch {
       throw new ConnectorError("INVALID_CONNECTION");
     }
@@ -130,8 +134,9 @@ export class CrmConnector {
       const { token: _token, ...grant } = await this.saved();
       return {
         ...grant,
-        state:
-          Date.parse(grant.expiresAt) <= this.now()
+        state: grant.disconnectPending
+          ? ("disconnect_pending" as const)
+          : Date.parse(grant.expiresAt) <= this.now()
             ? ("expired" as const)
             : ("stored" as const),
         manageUrl: origin + "/connect/ai",
@@ -163,7 +168,11 @@ export class CrmConnector {
       this.busy = false;
     }
   }
-  private async post(path: "exchange" | "read", body: unknown, token?: string) {
+  private async post(
+    path: "exchange" | "read" | "disconnect",
+    body: unknown,
+    token?: string,
+  ) {
     try {
       const response = await this.transport(
         origin + "/api/integrations/ai/" + path,
@@ -254,10 +263,12 @@ export class CrmConnector {
     }
   }
   async read(recordIds: string[]) {
+    if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     const chosen = ids.safeParse(recordIds);
     if (!chosen.success) throw new ConnectorError("INVALID_CONNECTION");
     const generation = this.generation,
       grant = await this.saved();
+    if (grant.disconnectPending) throw new ConnectorError("CONNECTION_BUSY");
     if (Date.parse(grant.expiresAt) <= this.now())
       throw new ConnectorError("CONNECTION_EXPIRED");
     if (recordIds.some((id) => !grant.recordIds.includes(id)))
@@ -291,6 +302,44 @@ export class CrmConnector {
     )
       throw new ConnectorError("CONNECTION_EXPIRED");
     return result;
+  }
+  async disconnect() {
+    if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
+    this.busy = true;
+    this.pending = undefined;
+    this.generation++;
+    try {
+      let grant;
+      try {
+        grant = await this.saved();
+      } catch (e) {
+        if (e instanceof ConnectorError && e.code === "CONNECTION_REQUIRED")
+          return;
+        throw e;
+      }
+      const { disconnectPending: _pending, ...credential } = grant;
+      // Persist suspension before network dispatch; uncertain revoke remains retryable after restart.
+      const value = Buffer.from(
+        JSON.stringify({
+          owner: this.owner,
+          grant: grantSchema.parse(credential),
+          disconnectPending: true,
+        }),
+      );
+      await this.secret.setSecret(value);
+      const verified = await this.secret.getSecret();
+      if (!verified || !value.equals(Buffer.from(verified)))
+        throw new ConnectorError("INVALID_CONNECTION");
+      const reply = z
+        .strictObject({ ok: z.literal(true) })
+        .safeParse(await this.post("disconnect", {}, grant.token));
+      if (!reply.success) throw new ConnectorError("INVALID_SOURCE");
+      await this.secret.deleteCredential();
+      if (await this.secret.getSecret())
+        throw new ConnectorError("INVALID_CONNECTION");
+    } finally {
+      this.busy = false;
+    }
   }
   /** Local removal only. The source consent page must revoke the source grant. */
   async forgetLocal() {
