@@ -362,3 +362,98 @@ test("unsupported runtime architecture is a controlled failure without exposing 
     await f.clean();
   }
 });
+
+test("cancellation covers verification and concurrent commits cannot race the reservation", async () => {
+  const f = await fixture();
+  let calls = 0;
+  const importer = new ModelImports(
+    join(f.root, "imports"),
+    "http://127.0.0.1:11434",
+    async () => {
+      calls++;
+      throw Error("must not reach runtime");
+    },
+  );
+  try {
+    const review = await importer.prepare([f.file], license);
+    const committing = importer.commit(review.id, review.reviewDigest);
+    const rejected = assert.rejects(committing, { name: "AbortError" });
+    await assert.rejects(
+      importer.commit(review.id, review.reviewDigest),
+      /IMPORT_BUSY/,
+    );
+    await importer.cancel(review.id);
+    await rejected;
+    assert.equal(calls, 0);
+    assert.equal((await importer.status(review.id)).state, "staged");
+    assert.deepEqual(await importer.cancel(review.id), {
+      needsReconciliation: false,
+    });
+    assert.deepEqual(await readdir(join(f.root, "imports")), []);
+  } finally {
+    await f.clean();
+  }
+});
+
+test("cancel during runtime creation remains uncertain and reconciles after restart without a duplicate create", async () => {
+  const f = await fixture();
+  let model = "",
+    creates = 0,
+    started!: () => void;
+  const beginning = new Promise<void>((r) => {
+    started = r;
+  });
+  const fetcher: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (init?.method === "HEAD") return new Response(null, { status: 200 });
+    if (path === "/api/create") {
+      creates++;
+      model = JSON.parse(String(init?.body)).model;
+      return new Promise((_resolve, reject) => {
+        init!.signal!.addEventListener(
+          "abort",
+          () => reject(init!.signal!.reason),
+          { once: true },
+        );
+        started();
+      });
+    }
+    if (path === "/api/tags")
+      return Response.json({
+        models: [{ name: model, digest: "a".repeat(64), size: 32 }],
+      });
+    return Response.json({ details: { family: "synthetic" } });
+  };
+  let importer = new ModelImports(
+    join(f.root, "imports"),
+    "http://127.0.0.1:11434",
+    fetcher,
+  );
+  try {
+    const review = await importer.prepare([f.file], license);
+    const committing = importer.commit(review.id, review.reviewDigest);
+    const rejected = assert.rejects(committing, { name: "AbortError" });
+    await beginning;
+    assert.deepEqual(await importer.cancel(review.id), {
+      needsReconciliation: true,
+    });
+    await rejected;
+    assert.equal(
+      (await importer.status(review.id)).state,
+      "needs_reconciliation",
+    );
+    importer = new ModelImports(
+      join(f.root, "imports"),
+      "http://127.0.0.1:11434",
+      fetcher,
+    );
+    assert.equal((await importer.reconcile(review.id)).state, "installed");
+    await assert.rejects(
+      importer.commit(review.id, review.reviewDigest),
+      /EEXIST/,
+    );
+    assert.equal(creates, 1);
+  } finally {
+    await f.clean();
+  }
+});

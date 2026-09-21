@@ -66,7 +66,7 @@ Data lives in ~/Library/Application Support/Bittrees AI/; its storage key stays 
 
 The dashboard implements task creation and detail/history, pause/resume/cancel, model profiles/defaults/switching, memory candidates/review/edit/pin/forget, explicit memory selection, export and local deletion. It labels unfinished model imports and app connections. Refreshing the browser loses unsent text; failed submissions retain it while the page remains open and reuse the same idempotency key for an unchanged retry. Retained task content is not automatically shared with any external app.
 
-This is a development build, not a signed installer or public release. Update by stopping the companion, backing up the data and original key, checking out a reviewed release, reinstalling exact lockfile dependencies and rebuilding. Do not downgrade a store schema without a compatible backup. Installer signing, automatic update integrity, visual/keyboard acceptance, device resource display and remaining P3 features are still pending.
+This is a development build, not a signed installer or public release. Update by stopping the companion, backing up the data and original key, checking out a reviewed release, reinstalling exact lockfile dependencies and rebuilding. Do not downgrade a store schema without a compatible backup. Installer signing, automatic update integrity, visual/keyboard acceptance and remaining P3 features are still pending. Device resource display is described below.
 
 
 ## Personal Inbox
@@ -123,3 +123,10 @@ Each CRM draft now includes a publication panel. Enable a separate write grant o
 The proposal list exposes only operation/review/receipt metadata, even if source content has changed or become unavailable. View saved content and draft editing require current source access; sensitive views clear on focus loss and revalidate every 15 seconds. Unsent proposal editor content clears on focus loss, so save locally before switching to CRM. Saved proposals are immutable; changed content needs a new proposal and approval. Reconcile uncertain publications before making replacements.
 
 Local task deletion is rejected while reservation, preparation or publication is in flight, so it cannot discard a pending receipt. After completion, deletion removes local proposals but does not revoke grants or erase independently staged/published CRM content. Confirmed local receipts report historical outcomes, not current access or ongoing record existence. Full HTTP tests cover scope changes, forged local approval, source denial, content-gated export, duplicate submission, receipt recovery and overlapping deletion. Browser/keyboard acceptance and a real-source user pilot remain pending; production activation remains disabled by default.
+
+
+## Local device resources and import cancellation
+
+Device now reads an authenticated, no-store `/v1/device` snapshot every ten seconds while visible. It shows platform/architecture, processor count, total/free physical memory, the companion process memory (excluding Ollama), free space on the data volume and the actual import file/total limits. Missing disk information is shown as unavailable. It does not return hostnames, account names, local paths or network interfaces. Memory and disk snapshots are advisory; model context and runtime copies can require more resources.
+
+Model import commits reserve their active slot before asynchronous review/file verification, so duplicate commits and cancellation are handled throughout that phase. Cancellation during runtime creation remains uncertain; reconciliation inspects the unique model name after restart and never blindly creates another model. Synthetic tests cover pre-dispatch cancellation, overlapping commits, active-create cancellation and recovery. User-facing reviewed import controls and browser/keyboard acceptance remain pending.

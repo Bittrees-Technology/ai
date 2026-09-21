@@ -1,3 +1,4 @@
+import { deviceStatus } from "./device.js";
 import { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import {
   CrmConnector,
@@ -83,6 +84,7 @@ const codePath = join(directory, "pairing-code.txt");
 server.on(
   "request",
   dashboardServer({
+    deviceStatus: () => deviceStatus(directory),
     store,
     memory,
     owner,

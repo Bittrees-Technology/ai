@@ -10,6 +10,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   crm?: CrmConnector;
   sources?: CrmTasks;
   cancelSourceRun?: () => void;
@@ -32,6 +33,7 @@ export function localApi({
   crm,
   sources,
   cancelSourceRun,
+  deviceStatus,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
   const publications =
@@ -63,6 +65,8 @@ export function localApi({
     next();
   });
   app.use(express.json({ limit: "64kb", strict: true }));
+  if (deviceStatus)
+    app.get("/v1/device", async (_req, res) => res.json(await deviceStatus()));
   app.get("/v1/health", (_req, res) =>
     res.json({ status: "ok", mode: "local", connectorsEnabled: !!crm }),
   );
