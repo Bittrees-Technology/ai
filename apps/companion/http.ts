@@ -1,3 +1,6 @@
+import type { AutoNoteConnector } from "../../modules/connectors/autonote.js";
+import type { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
+import { SourceTasks } from "../../modules/connectors/source-tasks.js";
 import { ImportError } from "../../modules/models/imports.js";
 import type { ImportJobs } from "../../modules/models/jobs.js";
 import { CrmPublications } from "../../modules/connectors/crm-publications.js";
@@ -16,7 +19,9 @@ export interface LocalApiOptions {
   imports?: ImportJobs;
   crm?: CrmConnector;
   sources?: CrmTasks;
-  cancelSourceRun?: () => void;
+  autonote?: AutoNoteConnector;
+  autonoteSources?: AutoNoteTasks;
+  cancelSourceRun?: (app?: "crm" | "autonote") => void;
   store: Store;
   owner: Owner;
   token: string;
@@ -35,6 +40,8 @@ export function localApi({
   cancelRun,
   crm,
   sources,
+  autonote,
+  autonoteSources,
   cancelSourceRun,
   deviceStatus,
   imports,
@@ -44,6 +51,7 @@ export function localApi({
     crm && sources
       ? new CrmPublications(store, owner, crm, sources)
       : undefined;
+  const sourceRouter = new SourceTasks(sources, autonoteSources);
   const app = express();
   app.disable("x-powered-by");
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -102,38 +110,50 @@ export function localApi({
     });
   }
   app.get("/v1/health", (_req, res) =>
-    res.json({ status: "ok", mode: "local", connectorsEnabled: !!crm }),
+    res.json({
+      status: "ok",
+      mode: "local",
+      connectorsEnabled: !!crm || !!autonote,
+    }),
   );
-  app.get("/v1/connections/crm", async (_req, res) => {
-    res.json({ available: !!crm, connection: crm ? await crm.status() : null });
-  });
-  if (crm) {
-    app.post("/v1/connections/crm/begin", async (req, res) => {
-      z.strictObject({}).parse(req.body);
-      res.json(await crm.begin());
+  for (const [name, connector] of [
+    ["crm", crm],
+    ["autonote", autonote],
+  ] as const) {
+    app.get(`/v1/connections/${name}`, async (_req, res) => {
+      res.json({
+        available: !!connector,
+        connection: connector ? await connector.status() : null,
+      });
     });
-    app.post("/v1/connections/crm/finish", async (req, res) => {
-      const body = z
-        .strictObject({
-          id: z.uuid(),
-          code: z.string().regex(/^[a-f0-9]{64}$/),
-        })
-        .parse(req.body);
-      res.json(await crm.finish(body.id, body.code));
-    });
-    app.post("/v1/connections/crm/disconnect", async (req, res) => {
-      z.strictObject({}).parse(req.body);
-      cancelSourceRun?.();
-      await crm.disconnect();
-      res.status(204).end();
-    });
-    app.delete("/v1/connections/crm/local", async (req, res) => {
-      if (req.header("X-Confirm-Delete") !== "local-crm-credential")
-        throw new StoreError("INVALID_INPUT");
-      cancelSourceRun?.();
-      await crm.forgetLocal();
-      res.status(204).end();
-    });
+    if (connector) {
+      app.post(`/v1/connections/${name}/begin`, async (req, res) => {
+        z.strictObject({}).parse(req.body);
+        res.json(await connector.begin());
+      });
+      app.post(`/v1/connections/${name}/finish`, async (req, res) => {
+        const body = z
+          .strictObject({
+            id: z.uuid(),
+            code: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .parse(req.body);
+        res.json(await connector.finish(body.id, body.code));
+      });
+      app.post(`/v1/connections/${name}/disconnect`, async (req, res) => {
+        z.strictObject({}).parse(req.body);
+        cancelSourceRun?.(name);
+        await connector.disconnect();
+        res.status(204).end();
+      });
+      app.delete(`/v1/connections/${name}/local`, async (req, res) => {
+        if (req.header("X-Confirm-Delete") !== `local-${name}-credential`)
+          throw new StoreError("INVALID_INPUT");
+        cancelSourceRun?.(name);
+        await connector.forgetLocal();
+        res.status(204).end();
+      });
+    }
   }
   const concealed = (task: Task) =>
     task.input.sourceRefs.length
@@ -143,15 +163,21 @@ export function localApi({
           result: null,
           sourceAccess: "unavailable",
           sourceBound: true,
+          sourceApp: task.input.sourceRefs[0]?.app,
         }
       : task;
   const project = async (task: Task) => {
     if (!task.input.sourceRefs.length) return task;
     try {
       const binding = store.sourceBinding(owner, task.id);
-      if (!binding || !sources) return concealed(task);
-      await sources.validate(binding);
-      return { ...task, sourceAccess: "current", sourceBound: true };
+      if (!binding) return concealed(task);
+      await sourceRouter.validate(binding);
+      return {
+        ...task,
+        sourceAccess: "current",
+        sourceBound: true,
+        sourceApp: binding.authority.sourceApp,
+      };
     } catch {
       return concealed(task);
     }
@@ -187,6 +213,38 @@ export function localApi({
           tags: [],
         },
         body.recordIds,
+        req.header("Idempotency-Key") ?? "",
+      );
+      res.status(202).json(concealed(task));
+    });
+  }
+  if (autonoteSources) {
+    app.post("/v1/connections/autonote/meetings", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json({ items: await autonoteSources.choices() });
+    });
+    app.post("/v1/connections/autonote/drafts", async (req, res) => {
+      const body = z
+        .strictObject({
+          conversationId: z.uuid(),
+          meetingId: z.uuid(),
+          prompt: z.string().min(1).max(32000),
+          modelProfileId: z.string().min(1).max(128),
+        })
+        .parse(req.body);
+      store.profile(owner, body.modelProfileId);
+      const task = await autonoteSources.create(
+        store,
+        {
+          conversationId: body.conversationId,
+          kind: "summarize",
+          prompt: body.prompt,
+          modelProfileId: body.modelProfileId,
+          dependencies: [],
+          priority: "normal",
+          tags: [],
+        },
+        body.meetingId,
         req.header("Idempotency-Key") ?? "",
       );
       res.status(202).json(concealed(task));

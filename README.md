@@ -144,11 +144,11 @@ Tests cover separate download/install approval, wrong digest, encrypted history/
 
 ## AutoNote credential and transcript foundation
 
-The AutoNote connector module supports one explicitly approved meeting per personal profile, using source-owned consent and a single-use PKCE code. Its separate `org.bittrees.ai.connector.autonote` macOS Keychain entry stores the credential; status never returns the token. Requests use only the fixed AutoNote HTTPS origin with redirects disabled, bounded responses and a timeout. This module is not yet wired into Connections or local task generation.
+The AutoNote connector module supports one explicitly approved meeting per personal profile, using source-owned consent and a single-use PKCE code. Its separate `org.bittrees.ai.connector.autonote` macOS Keychain entry stores the credential; status never returns the token. Requests use only the fixed AutoNote HTTPS origin with redirects disabled, bounded responses and a timeout. The launcher and Connections workflow now use this module for selected-meeting drafts.
 
 Reads validate the saved account/workspace/grant, selected meeting, policy, transcript version, unique segment IDs and finite timestamp bounds. The companion independently recomputes the source projection hash and enforces the one-MiB transcript limit. Unexpected fields, recording keys, notes and integration credentials are rejected. The module has no CRM or AutoNote write methods; reviewed saves and meeting publication must follow the AutoNote-owned path in a later increment.
 
-Disconnect persists a suspended state before contacting the source, survives restart after an uncertain response, and deletes the local credential only after acknowledgement. Explicit local removal is separate from source revocation. Pending reads cannot return after either operation invalidates their connection. Source activation, dashboard integration, cited generation, reviewed saves and end-to-end pilot acceptance remain pending.
+Disconnect persists a suspended state before contacting the source, survives restart after an uncertain response, and deletes the local credential only after acknowledgement. Explicit local removal is separate from source revocation. Pending reads cannot return after either operation invalidates their connection. Source activation, reviewed saves and end-to-end pilot acceptance remain pending.
 
 ## AutoNote trusted draft engine
 
@@ -156,4 +156,11 @@ Disconnect persists a suspended state before contacting the source, survives res
 
 AutoNote output must be bounded JSON containing summary claims and suggested actions, each referencing existing segment IDs. The companion resolves timestamps from the validated transcript and labels all action owners/deadlines as unconfirmed suggestions. Malformed output, unknown citations and model-supplied approval/timestamp fields fail without a saved result. Citation membership does not prove factual correctness: drafts still require human review. Existing local model context/output limits apply; oversized transcripts fail rather than silently truncating evidence.
 
-CRM adapters and the CRM publication ledger explicitly reject AutoNote bindings. Meeting saves/publication remain AutoNote-owned. The engine is tested independently; launcher, HTTP and dashboard integration remain pending. `npx tsx scripts/autonote-local-check.ts` runs a synthetic-only check against the installed local Qwen model, without connecting to a source app or publishing. This check verifies one small example, not general meeting-summary quality.
+CRM adapters and the CRM publication ledger explicitly reject AutoNote bindings. Meeting saves/publication remain AutoNote-owned. The launcher, HTTP and dashboard now integrate the engine as described below. `npx tsx scripts/autonote-local-check.ts` runs a synthetic-only check against the installed local Qwen model, without connecting to a source app or publishing. This check verifies one small example, not general meeting-summary quality.
+
+
+## AutoNote companion workflow
+
+Connections → AutoNote starts separate source consent, accepts its one-time code, and reports the saved account/workspace/expiry. Load permitted meeting returns only the approved meeting label and version; an explicit action creates a cited local summary with the selected model profile. Meeting labels clear when the window loses focus. App-specific controls distinguish source revocation from local credential removal. Disconnect interrupts only generation associated with that app.
+
+Source task detail and individual exports use the matching adapter for fresh access/content checks. Lists and bulk exports conceal source-derived results; denied individual exports fail instead of returning partial content. The source detail clears on focus loss and revalidates every 15 seconds while visible. AutoNote tasks show unconfirmed suggestions and do not offer the separate CRM publication controls. Reviewed saves to AutoNote remain pending; this release does not activate production source access. HTTP integration is tested, while browser/keyboard and real-source pilot acceptance remain open.
