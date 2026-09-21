@@ -27,7 +27,9 @@ const input = {
   priority: "normal" as const,
   tags: [],
 };
-async function fixture() {
+async function fixture(
+  write?: (url: string, body: unknown) => Response | Promise<Response>,
+) {
   let secret: Uint8Array | undefined;
   const id = randomUUID(),
     grant = {
@@ -76,19 +78,21 @@ async function fixture() {
         return true;
       },
     },
-    async (url) =>
-      String(url).endsWith("/exchange")
-        ? Response.json(grant)
-        : denied
-          ? new Response("private error", { status: 403 })
-          : Response.json({
-              contractVersion: "1.0.0",
-              grantId: grant.grantId,
-              subjectId: grant.subjectId,
-              workspaceId: grant.workspaceId,
-              policyRevision: grant.policyRevision,
-              records: [record],
-            }),
+    async (url, init) =>
+      String(url).includes("/writes/") && write
+        ? write(String(url), JSON.parse(String(init?.body)))
+        : String(url).endsWith("/exchange")
+          ? Response.json(grant)
+          : denied
+            ? new Response("private error", { status: 403 })
+            : Response.json({
+                contractVersion: "1.0.0",
+                grantId: grant.grantId,
+                subjectId: grant.subjectId,
+                workspaceId: grant.workspaceId,
+                policyRevision: grant.policyRevision,
+                records: [record],
+              }),
   );
   const pending = await connector.begin();
   await connector.finish(pending.id, "b".repeat(64));
@@ -350,7 +354,7 @@ test("version-four migration preserves local tasks while adding protected source
     store = new Store(path, vault);
     assert.equal(store.get(owner, task.id).input.prompt, input.prompt);
     assert.equal(store.sourceBinding(owner, task.id), null);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 5);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 6);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -532,5 +536,151 @@ test("source disconnect interrupts active generation without committing a late d
     assert.equal(store.get(owner, task.id).result, null);
   } finally {
     store.close();
+  }
+});
+
+test("publication ledger recovers lost prepare/publish responses across restart without changing operation identity", async () => {
+  const { CrmPublications } =
+    await import("../modules/connectors/crm-publications.js");
+  const directory = mkdtempSync(join(tmpdir(), "crm-publications-")),
+    path = join(directory, "tasks.db"),
+    vault = new Vault(randomBytes(32));
+  let store = new Store(path, vault);
+  let preparations = 0,
+    publications = 0;
+  const requests: unknown[] = [];
+  const prepared = {
+    reviewId: randomUUID(),
+    digest: "d".repeat(64),
+    expiresAt: new Date(Date.now() + 300000).toISOString(),
+  };
+  const receipt = {
+    recordId: randomUUID(),
+    state: "published",
+    existing: true,
+  };
+  const f = await fixture((url, body) => {
+    assert.equal(store.db.inTransaction, false);
+    if (url.endsWith("/status"))
+      return Response.json({
+        grantId: f.grant.grantId,
+        epoch: randomUUID(),
+        targetId: f.record.id,
+        targetName: "Synthetic project",
+        kinds: ["notes"],
+        expiresAt: f.grant.expiresAt,
+      });
+    requests.push(body);
+    if (url.endsWith("/prepare")) {
+      if (++preparations === 1)
+        throw new Error("lost response after source saved review");
+      return Response.json(prepared);
+    }
+    if (++publications === 1)
+      throw new Error("lost response after source committed record");
+    return Response.json(receipt);
+  });
+  try {
+    const task = await f.adapter.create(
+      store,
+      input,
+      [f.record.id],
+      "publication",
+    );
+    await new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async () => "Synthetic draft",
+      },
+      () => profile,
+      "worker",
+      undefined,
+      f.adapter,
+    ).runOnce();
+    let service = new CrmPublications(store, owner, f.connector, f.adapter);
+    const edit = {
+      operationId: randomUUID(),
+      kind: "notes",
+      name: "PROPOSAL_PRIVATE_SENTINEL",
+      description: "Exact reviewed content",
+      dueDate: "",
+    };
+    const item = await service.reserve(task.id, edit);
+    assert.equal((await service.reserve(task.id, edit)).id, item.id);
+    await assert.rejects(
+      service.reserve(task.id, { ...edit, description: "changed" }),
+      /CONFLICT/,
+    );
+    await assert.rejects(
+      service.reserve(task.id, {
+        ...edit,
+        operationId: randomUUID(),
+        kind: "tasks",
+      }),
+      /INVALID_INPUT/,
+    );
+    assert.throws(
+      () => store.publication({ ...owner, userId: "other" }, item.id),
+      /NOT_FOUND/,
+    );
+    await assert.rejects(service.publish(item.id), /INVALID_INPUT/);
+    await assert.rejects(service.prepare(item.id), /SOURCE_UNAVAILABLE/);
+    assert.equal(store.publication(owner, item.id).state, "uncertain");
+    assert.equal(service.busy, false);
+    store.close();
+    assert.equal(readFileSync(path).includes(edit.name), false);
+    store = new Store(path, vault);
+    service = new CrmPublications(store, owner, f.connector, f.adapter);
+    assert.deepEqual((await service.prepare(item.id)).prepared, prepared);
+    assert.deepEqual(requests[0], requests[1]);
+    assert.throws(
+      () => store.settlePublication(owner, item.id, 1, { uncertain: true }),
+      /CONFLICT/,
+    );
+    await assert.rejects(service.publish(item.id), /SOURCE_UNAVAILABLE/);
+    assert.equal(store.publication(owner, item.id).state, "uncertain");
+    store.close();
+    store = new Store(path, vault);
+    service = new CrmPublications(store, owner, f.connector, f.adapter);
+    f.record.version++; // Receipt reconciliation must survive a later source edit.
+    assert.deepEqual((await service.publish(item.id)).receipt, receipt);
+    assert.deepEqual(requests[2], requests[3]);
+    assert.deepEqual((await service.publish(item.id)).receipt, receipt);
+    assert.equal(publications, 2);
+    assert.equal(preparations, 2);
+    assert.equal(store.publications(owner, task.id).length, 1);
+    store.deleteAll(owner);
+    assert.equal(
+      (
+        store.db
+          .prepare("SELECT count(*) AS n FROM publication_intents")
+          .get() as any
+      ).n,
+      0,
+    );
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("schema five migration adds the publication ledger without changing existing task data", () => {
+  const directory = mkdtempSync(join(tmpdir(), "crm-schema6-")),
+    path = join(directory, "tasks.db"),
+    vault = new Vault(randomBytes(32));
+  let store = new Store(path, vault);
+  try {
+    const task = store.create(owner, input, "preserved");
+    store.db.exec("DROP TABLE publication_intents; PRAGMA user_version=5");
+    store.close();
+    store = new Store(path, vault);
+    assert.deepEqual(store.get(owner, task.id), task);
+    assert.deepEqual(store.publications(owner, task.id), []);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 6);
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

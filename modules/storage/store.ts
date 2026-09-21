@@ -1,3 +1,11 @@
+import {
+  crmProposalSchema,
+  crmPreparedSchema,
+  crmReceiptSchema,
+  type CrmProposal,
+  type CrmPrepared,
+  type CrmReceipt,
+} from "../connectors/crm-write-contracts.js";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { Vault } from "./vault.js";
@@ -61,6 +69,17 @@ export interface Task {
   input: TaskInput;
   result: unknown;
 }
+export interface Publication {
+  id: string;
+  taskId: string;
+  grantId: string;
+  taskRevision: number;
+  proposal: CrmProposal;
+  state: "pending" | "prepared" | "uncertain" | "published" | "deleted";
+  prepared: CrmPrepared | null;
+  receipt: CrmReceipt | null;
+  revision: number;
+}
 export interface Claim {
   task: Task;
   workerId: string;
@@ -81,7 +100,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 5) {
+    if (version > 6) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -132,7 +151,10 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS task_sources(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL)",
         );
-        this.db.pragma("user_version = 5");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS publication_intents(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL,revision INTEGER NOT NULL DEFAULT 1)",
+        );
+        this.db.pragma("user_version = 6");
       })();
     } catch (error) {
       this.db.close();
@@ -286,6 +308,135 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
       )
       .run(eid, id, r.revision, type, this.now());
     this.db.prepare("INSERT INTO outbox(event_id) VALUES(?)").run(eid);
+  }
+  publication(owner: Owner, id: string): Publication {
+    const row = this.db
+      .prepare(
+        "SELECT p.* FROM publication_intents p JOIN tasks t ON t.id=p.task_id WHERE p.id=? AND t.user_id=? AND t.tenant_id=?",
+      )
+      .get(id, owner.userId, owner.tenantId) as
+      { payload: Buffer; revision: number } | undefined;
+    if (!row) throw new StoreError("NOT_FOUND");
+    return {
+      ...this.vault.open<Omit<Publication, "revision">>(
+        row.payload,
+        "publication:" + id,
+      ),
+      revision: row.revision,
+    };
+  }
+  publications(owner: Owner, taskId: string): Publication[] {
+    this.row(owner, taskId);
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM publication_intents WHERE task_id=? ORDER BY rowid",
+        )
+        .all(taskId) as { id: string }[]
+    ).map((row) => this.publication(owner, row.id));
+  }
+  reservePublication(owner: Owner, taskId: string, raw: unknown): Publication {
+    const proposal = crmProposalSchema.parse(raw);
+    return this.db
+      .transaction(() => {
+        const task = this.get(owner, taskId),
+          binding = this.sourceBinding(owner, taskId);
+        if (
+          task.status !== "completed" ||
+          !binding ||
+          proposal.projectionHash !== binding.projectionHash ||
+          JSON.stringify(proposal.sources) !==
+            JSON.stringify(
+              binding.refs.map((r) => ({
+                id: r.resourceId,
+                version: Number(r.revision),
+              })),
+            )
+        )
+          throw new StoreError("INVALID_INPUT");
+        const prior = this.db
+          .prepare("SELECT id FROM publication_intents WHERE id=?")
+          .get(proposal.operationId);
+        if (prior) {
+          const saved = this.publication(owner, proposal.operationId);
+          if (
+            saved.taskId !== taskId ||
+            this.vault.fingerprint(saved.proposal) !==
+              this.vault.fingerprint(proposal) ||
+            saved.grantId !== binding.authority.grantId
+          )
+            throw new StoreError("CONFLICT");
+          return saved;
+        }
+        if (
+          (
+            this.db
+              .prepare(
+                "SELECT count(*) AS n FROM publication_intents WHERE task_id=?",
+              )
+              .get(taskId) as { n: number }
+          ).n >= 100
+        )
+          throw new StoreError("CAPACITY");
+        const value: Omit<Publication, "revision"> = {
+          id: proposal.operationId,
+          taskId,
+          grantId: binding.authority.grantId,
+          taskRevision: task.revision,
+          proposal,
+          state: "pending",
+          prepared: null,
+          receipt: null,
+        };
+        this.db
+          .prepare(
+            "INSERT INTO publication_intents(id,task_id,payload) VALUES(?,?,?)",
+          )
+          .run(
+            value.id,
+            taskId,
+            this.vault.seal(value, "publication:" + value.id),
+          );
+        return this.publication(owner, value.id);
+      })
+      .immediate();
+  }
+  settlePublication(
+    owner: Owner,
+    id: string,
+    expectedRevision: number,
+    update:
+      { prepared: CrmPrepared } | { receipt: CrmReceipt } | { uncertain: true },
+  ): Publication {
+    return this.db
+      .transaction(() => {
+        const current = this.publication(owner, id);
+        if (current.revision !== expectedRevision || current.receipt)
+          throw new StoreError("CONFLICT");
+        const { revision: _revision, ...value } = current;
+        if ("prepared" in update) {
+          const prepared = crmPreparedSchema.parse(update.prepared);
+          if (
+            current.prepared &&
+            this.vault.fingerprint(prepared) !==
+              this.vault.fingerprint(current.prepared)
+          )
+            throw new StoreError("CONFLICT");
+          value.prepared = prepared;
+          value.state = "prepared";
+        } else if ("receipt" in update) {
+          if (!current.prepared) throw new StoreError("INVALID_INPUT");
+          value.receipt = crmReceiptSchema.parse(update.receipt);
+          value.state = value.receipt.state;
+        } else value.state = "uncertain";
+        this.db
+          .prepare(
+            "UPDATE publication_intents SET payload=?,revision=revision+1 WHERE id=?",
+          )
+          .run(this.vault.seal(value, "publication:" + id), id);
+        return this.publication(owner, id);
+      })
+      .immediate();
   }
   sourceBinding(owner: Owner, id: string): SourceBinding | null {
     this.row(owner, id);

@@ -1,3 +1,10 @@
+import {
+  crmProposalSchema,
+  crmWriteStatusSchema,
+  crmPreparedSchema,
+  crmDecisionSchema,
+  crmReceiptSchema,
+} from "./crm-write-contracts.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AsyncEntry } from "@napi-rs/keyring";
 import { z } from "zod";
@@ -94,12 +101,14 @@ export class ConnectorError extends Error {
       | "INVALID_CONNECTION"
       | "SOURCE_UNAVAILABLE"
       | "SOURCE_DENIED"
+      | "SOURCE_CONFLICT"
+      | "SOURCE_CAPACITY"
       | "INVALID_SOURCE",
   ) {
     super(code);
   }
 }
-/** One explicit source identity per personal profile. No inference, writes or automatic reconnect. */
+/** One explicit source identity per personal profile. No inference, source approval or automatic reconnect. */
 export class CrmConnector {
   private pending?: { id: string; verifier: string; expires: number };
   private busy = false;
@@ -169,7 +178,13 @@ export class CrmConnector {
     }
   }
   private async post(
-    path: "exchange" | "read" | "disconnect",
+    path:
+      | "exchange"
+      | "read"
+      | "disconnect"
+      | "writes/status"
+      | "writes/prepare"
+      | "writes/publish",
     body: unknown,
     token?: string,
   ) {
@@ -192,9 +207,13 @@ export class CrmConnector {
       if (!response.ok) {
         await response.body?.cancel();
         throw new ConnectorError(
-          [401, 403, 404].includes(response.status)
-            ? "SOURCE_DENIED"
-            : "SOURCE_UNAVAILABLE",
+          response.status === 409
+            ? "SOURCE_CONFLICT"
+            : response.status === 429
+              ? "SOURCE_CAPACITY"
+              : [401, 403, 404].includes(response.status)
+                ? "SOURCE_DENIED"
+                : "SOURCE_UNAVAILABLE",
         );
       }
       if (
@@ -302,6 +321,83 @@ export class CrmConnector {
     )
       throw new ConnectorError("CONNECTION_EXPIRED");
     return result;
+  }
+  private async withWriteGrant<T>(
+    expectedGrantId: string,
+    operation: (grant: z.infer<typeof grantSchema>) => Promise<T>,
+  ): Promise<T> {
+    z.uuid().parse(expectedGrantId);
+    if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
+    this.busy = true;
+    try {
+      const grant = await this.saved();
+      if (grant.disconnectPending) throw new ConnectorError("CONNECTION_BUSY");
+      if (Date.parse(grant.expiresAt) <= this.now())
+        throw new ConnectorError("CONNECTION_EXPIRED");
+      if (grant.grantId !== expectedGrantId)
+        throw new ConnectorError("SOURCE_DENIED");
+      // Hold local credential mutations until the source response is captured. A confirmed receipt
+      // must not be discarded because an overlapping disconnect removed its credential.
+      return await operation(grant);
+    } finally {
+      this.busy = false;
+    }
+  }
+  async writeStatus(expectedGrantId: string) {
+    return this.withWriteGrant(expectedGrantId, async (grant) => {
+      const parsed = crmWriteStatusSchema.safeParse(
+        await this.post("writes/status", {}, grant.token),
+      );
+      if (
+        !parsed.success ||
+        parsed.data.grantId !== grant.grantId ||
+        !grant.recordIds.includes(parsed.data.targetId) ||
+        Date.parse(parsed.data.expiresAt) > Date.parse(grant.expiresAt)
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      if (Date.parse(parsed.data.expiresAt) <= this.now())
+        throw new ConnectorError("CONNECTION_EXPIRED");
+      return parsed.data;
+    });
+  }
+  async prepareWrite(expectedGrantId: string, raw: unknown) {
+    const proposal = crmProposalSchema.parse(raw);
+    return this.withWriteGrant(expectedGrantId, async (grant) => {
+      if (
+        !grant.recordIds.includes(proposal.targetId) ||
+        proposal.sources.some((r) => !grant.recordIds.includes(r.id))
+      )
+        throw new ConnectorError("SOURCE_DENIED");
+      const parsed = crmPreparedSchema.safeParse(
+        await this.post("writes/prepare", proposal, grant.token),
+      );
+      if (
+        !parsed.success ||
+        Date.parse(parsed.data.expiresAt) >
+          Math.min(Date.parse(grant.expiresAt), this.now() + 11 * 60_000)
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      // An idempotent retry may legitimately return an expired review. Preserve it; never mint
+      // a new operation automatically to bypass that expiry or an uncertain source response.
+      return {
+        ...parsed.data,
+        reviewUrl: origin + "/connect/ai?review=" + parsed.data.reviewId,
+      };
+    });
+  }
+  async publishWrite(expectedGrantId: string, raw: unknown) {
+    const decision = crmDecisionSchema.parse(raw);
+    return this.withWriteGrant(expectedGrantId, async (grant) => {
+      const parsed = crmReceiptSchema.safeParse(
+        await this.post("writes/publish", decision, grant.token),
+      );
+      if (
+        !parsed.success ||
+        (parsed.data.state === "deleted" && !parsed.data.existing)
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      return parsed.data;
+    });
   }
   async disconnect() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
