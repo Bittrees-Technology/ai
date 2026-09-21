@@ -344,6 +344,8 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
         if (
           task.status !== "completed" ||
           !binding ||
+          binding.authority.sourceApp !== "crm" ||
+          binding.refs.some((r) => r.app !== "crm") ||
           proposal.projectionHash !== binding.projectionHash ||
           JSON.stringify(proposal.sources) !==
             JSON.stringify(
