@@ -1,3 +1,9 @@
+import {
+  AutoNoteConnector,
+  autonoteKeychainEntry,
+} from "../../modules/connectors/autonote.js";
+import { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
+import { SourceTasks } from "../../modules/connectors/source-tasks.js";
 import { ImportJobs } from "../../modules/models/jobs.js";
 import { pickModelFiles } from "./model-picker.js";
 import { deviceStatus } from "./device.js";
@@ -74,6 +80,11 @@ const crm = new CrmConnector(
     crmKeychainEntry("personal"),
   ),
   sources = new CrmTasks(crm, owner, "personal"),
+  autonote = new AutoNoteConnector(
+    JSON.stringify(owner),
+    autonoteKeychainEntry("personal"),
+  ),
+  autonoteSources = new AutoNoteTasks(autonote, owner, "personal"),
   runtime = new Ollama(),
   worker = new LocalWorker(
     store,
@@ -82,7 +93,7 @@ const crm = new CrmConnector(
     (id) => store.profile(owner, id),
     "personal",
     memory,
-    sources,
+    new SourceTasks(sources, autonoteSources),
   );
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
@@ -97,13 +108,15 @@ server.on(
     owner,
     crm,
     sources,
+    autonote,
+    autonoteSources,
     runtime,
     port,
     token,
     pairCode,
     assets: resolve("dist/dashboard"),
     cancelRun: (id) => worker.cancel(id),
-    cancelSourceRun: () => worker.cancelSource(),
+    cancelSourceRun: (app) => worker.cancelSource(app),
   }),
 );
 let stopping = false,

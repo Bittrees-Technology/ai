@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 type Task = {
   sourceBound?: boolean;
+  sourceApp?: string;
   id: string;
   status: string;
   revision: number;
@@ -478,6 +479,7 @@ function App() {
                         <SourceDraftDetail
                           key={task.id}
                           id={task.id}
+                          sourceApp={task.sourceApp}
                           api={api}
                           onError={fail}
                         />

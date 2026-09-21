@@ -28,8 +28,10 @@ export class LocalWorker {
   stop() {
     this.active?.abort.abort();
   }
-  cancelSource() {
-    if (this.active && this.store.sourceBinding(this.owner, this.active.id))
+  cancelSource(app?: "crm" | "autonote") {
+    if (!this.active) return;
+    const binding = this.store.sourceBinding(this.owner, this.active.id);
+    if (binding && (!app || binding.authority.sourceApp === app))
       this.active.abort.abort();
   }
   cancel(id: string) {

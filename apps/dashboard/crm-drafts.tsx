@@ -172,7 +172,8 @@ export function SourceDraftDetail({
   api,
   onError,
   id,
-}: Props & { id: string }) {
+  sourceApp,
+}: Props & { id: string; sourceApp?: string }) {
   const [detail, setDetail] = useState<any>(null),
     [busy, setBusy] = useState(false);
   const epoch = useRef(0);
@@ -215,7 +216,7 @@ export function SourceDraftDetail({
   }, [id]);
   return (
     <section>
-      <h3>CRM draft</h3>
+      <h3>{sourceApp === "autonote" ? "AutoNote" : "CRM"} draft</h3>
       <p>
         Access is checked when opened and every 15 seconds while visible.
         Previously displayed or exported copies cannot be retracted.
@@ -224,8 +225,8 @@ export function SourceDraftDetail({
         <p role="status">Checking current source access…</p>
       ) : detail.unavailable ? (
         <p role="status">
-          Source access or record versions could not be confirmed. Reconnect or
-          create a fresh draft after reviewing the current records.
+          Source access or content versions could not be confirmed. Reconnect or
+          create a fresh draft after reviewing the current source content.
         </p>
       ) : (
         <>
@@ -236,7 +237,9 @@ export function SourceDraftDetail({
           )}
           <p>
             Unreviewed draft. Verify citations and claims before use.
-            Publication status is shown separately below.
+            {sourceApp === "crm"
+              ? "Publication status is shown separately below."
+              : "Proposed owners and deadlines are unconfirmed. Reviewed AutoNote saves are not enabled yet."}
           </p>
           <details>
             <summary>Source references and run history</summary>
@@ -261,7 +264,10 @@ export function SourceDraftDetail({
                   ),
                   a = document.createElement("a");
                 a.href = url;
-                a.download = "bittrees-crm-draft.json";
+                a.download =
+                  "bittrees-" +
+                  (sourceApp === "autonote" ? "autonote" : "crm") +
+                  "-draft.json";
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
               } catch (e) {
@@ -276,7 +282,9 @@ export function SourceDraftDetail({
           </button>
         </>
       )}
-      <CrmPublicationControls key={id} id={id} api={api} onError={onError} />
+      {sourceApp === "crm" && (
+        <CrmPublicationControls key={id} id={id} api={api} onError={onError} />
+      )}
     </section>
   );
 }

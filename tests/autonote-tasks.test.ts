@@ -350,3 +350,258 @@ test("AutoNote bindings cannot enter the CRM adapter or CRM publication ledger",
     store.close();
   }
 });
+
+test("AutoNote HTTP flow isolates consent, hides derived bulk data, guards individual exports and rejects CRM publication", async () => {
+  const { createServer } = await import("node:http"),
+    { localApi } = await import("../apps/companion/http.js");
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  store.addProfile(owner, profile);
+  await f.connector.forgetLocal();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "synthetic-local-credential".repeat(3);
+  const stopped: unknown[] = [];
+  const crm = new CrmConnector("other-app", {
+    getSecret: async () => undefined,
+    setSecret: async () => {},
+    deleteCredential: async () => true,
+  });
+  server.on(
+    "request",
+    localApi({
+      store,
+      owner,
+      port,
+      token,
+      autonote: f.connector,
+      autonoteSources: f.adapter,
+      crm,
+      sources: new CrmTasks(crm, owner, "device"),
+      cancelSourceRun: (app) => {
+        stopped.push(app);
+      },
+    }),
+  );
+  const call = (
+    path: string,
+    method = "GET",
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const base = "/v1/connections/autonote";
+  try {
+    assert.equal(
+      (await call(base, "GET", undefined, { Authorization: "" })).status,
+      401,
+    );
+    assert.equal(
+      (
+        await call(
+          base + "/begin",
+          "POST",
+          {},
+          { Origin: "https://evil.invalid" },
+        )
+      ).status,
+      403,
+    );
+    const start = (await (
+      await call(base + "/begin", "POST", {})
+    ).json()) as any;
+    assert.equal(
+      new URL(start.consentUrl).origin,
+      "https://autonote.bittrees.org",
+    );
+    assert.equal(
+      (
+        await call(base + "/finish", "POST", {
+          id: start.id,
+          code: "a".repeat(64),
+          subjectId: randomUUID(),
+        })
+      ).status,
+      400,
+    );
+    const finished = await call(base + "/finish", "POST", {
+      id: start.id,
+      code: "a".repeat(64),
+    });
+    assert.equal(finished.status, 200);
+    assert.equal((await finished.text()).includes(f.grant.token), false);
+    const choices = (await (
+      await call(base + "/meetings", "POST", {})
+    ).json()) as any;
+    assert.deepEqual(choices.items, [
+      { id: f.meeting.id, title: f.meeting.title, version: 1 },
+    ]);
+    assert.equal(JSON.stringify(choices).includes("PRIVATE_TRANSCRIPT"), false);
+    const body = {
+        conversationId: randomUUID(),
+        meetingId: f.meeting.id,
+        prompt: input.prompt,
+        modelProfileId: profile.id,
+      },
+      headers = { "Idempotency-Key": "http" };
+    assert.equal(
+      (
+        await call(
+          base + "/drafts",
+          "POST",
+          { ...body, grantId: f.grant.grantId },
+          headers,
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          base + "/drafts",
+          "POST",
+          { ...body, meetingId: randomUUID() },
+          headers,
+        )
+      ).status,
+      400,
+    );
+    const created = await call(base + "/drafts", "POST", body, headers);
+    assert.equal(created.status, 202);
+    const task = (await created.json()) as any;
+    assert.equal(task.sourceApp, "autonote");
+    assert.equal(task.sourceBound, true);
+    assert.equal(
+      (
+        (await (
+          await call(base + "/drafts", "POST", body, headers)
+        ).json()) as any
+      ).id,
+      task.id,
+    );
+    assert.equal(
+      (
+        await call(
+          "/v1/requests",
+          "POST",
+          { ...input, sourceRefs: store.sourceBinding(owner, task.id)!.refs },
+          headers,
+        )
+      ).status,
+      403,
+    );
+    await worker(store, f, async () => JSON.stringify(draft)).runOnce();
+    for (const path of ["/v1/export", "/v1/requests"]) {
+      const text = await (await call(path)).text();
+      assert.equal(text.includes("Review the plan"), false);
+      assert.equal(text.includes(f.grant.token), false);
+    }
+    const prefix = "/v1/requests/" + task.id;
+    const exported = (await (await call(prefix + "/export")).json()) as any;
+    assert.equal(exported.task.result.autonote.meetingId, f.meeting.id);
+    assert.equal(exported.runs.length, 1);
+    assert.deepEqual(exported.publications, []);
+    assert.equal(
+      (await call(prefix + "/write-permission", "POST", {})).status,
+      400,
+    );
+    f.deny();
+    assert.equal((await call(prefix + "/export")).status, 400);
+    const hidden = (await (await call(prefix)).json()) as any;
+    assert.equal(hidden.result, null);
+    assert.deepEqual(hidden.input.sourceRefs, []);
+    assert.equal(hidden.sourceApp, "autonote");
+    assert.deepEqual(
+      ((await (await call(prefix + "/runs")).json()) as any).items,
+      [],
+    );
+    assert.equal(
+      (
+        await call(base + "/local", "DELETE", undefined, {
+          "X-Confirm-Delete": "local-crm-credential",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(base + "/local", "DELETE", undefined, {
+          "X-Confirm-Delete": "local-autonote-credential",
+        })
+      ).status,
+      204,
+    );
+    assert.deepEqual(stopped, ["autonote"]);
+    assert.equal(await f.connector.status(), null);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("disconnect cancellation is scoped to the active source app", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  let started!: () => void, finish!: () => void;
+  const beginning = new Promise<void>((r) => {
+      started = r;
+    }),
+    hold = new Promise<void>((r) => {
+      finish = r;
+    });
+  let aborted = false;
+  try {
+    const task = await f.adapter.create(
+      store,
+      input,
+      f.meeting.id,
+      "scoped-cancel",
+    );
+    const running = new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async (_p, _prompt, signal) => {
+          signal!.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              finish();
+            },
+            { once: true },
+          );
+          started();
+          await hold;
+          return JSON.stringify(draft);
+        },
+      },
+      () => profile,
+      "worker",
+      undefined,
+      f.sources,
+    );
+    const work = running.runOnce();
+    await beginning;
+    running.cancelSource("crm");
+    assert.equal(aborted, false);
+    running.cancelSource("autonote");
+    await work;
+    assert.equal(aborted, true);
+    assert.equal(store.get(owner, task.id).result, null);
+    assert.equal(store.get(owner, task.id).status, "failed");
+  } finally {
+    finish?.();
+    store.close();
+  }
+});
