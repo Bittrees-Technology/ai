@@ -145,6 +145,8 @@ export const errorSchema = z.strictObject({
     "INVALID_CONNECTION",
     "SOURCE_UNAVAILABLE",
     "SOURCE_DENIED",
+    "SOURCE_CONFLICT",
+    "SOURCE_CAPACITY",
     "INVALID_SOURCE",
   ]),
   correlationId: id,

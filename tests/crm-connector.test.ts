@@ -443,3 +443,121 @@ test("expired credentials can revoke; malformed acknowledgement or keychain dele
   await f.connector.disconnect();
   assert.equal(await f.connector.status(), null);
 });
+
+test("write transport validates scope/receipts and keeps approval and credentials out of review URLs", async () => {
+  const f = fixture();
+  await connect(f);
+  const status = {
+    grantId: f.grant.grantId,
+    epoch: randomUUID(),
+    targetId: f.record.id,
+    targetName: "Project",
+    kinds: ["notes"],
+    expiresAt: f.grant.expiresAt,
+  };
+  f.setResponse(async () => Response.json(status));
+  assert.deepEqual(await f.connector.writeStatus(f.grant.grantId), status);
+  f.setResponse(async () =>
+    Response.json({ ...status, grantId: randomUUID() }),
+  );
+  await assert.rejects(
+    f.connector.writeStatus(f.grant.grantId),
+    /INVALID_SOURCE/,
+  );
+  const count = f.requests.length;
+  await assert.rejects(f.connector.writeStatus(randomUUID()), /SOURCE_DENIED/);
+  assert.equal(f.requests.length, count);
+  const proposal = {
+    operationId: randomUUID(),
+    targetId: f.record.id,
+    kind: "notes",
+    name: "Synthetic",
+    description: "Exact text",
+    dueDate: "",
+    sources: [{ id: f.record.id, version: 1 }],
+    projectionHash: "c".repeat(64),
+  };
+  const prepared = {
+    reviewId: randomUUID(),
+    digest: "d".repeat(64),
+    expiresAt: new Date(now + 600_000).toISOString(),
+  };
+  f.setResponse(async () => Response.json(prepared));
+  const result = await f.connector.prepareWrite(f.grant.grantId, proposal);
+  assert.equal(
+    result.reviewUrl,
+    "https://crm.bittrees.org/connect/ai?review=" + prepared.reviewId,
+  );
+  assert.equal(result.reviewUrl.includes(f.grant.token), false);
+  await assert.rejects(
+    f.connector.prepareWrite(f.grant.grantId, {
+      ...proposal,
+      targetId: randomUUID(),
+    }),
+    /SOURCE_DENIED/,
+  );
+  const receipt = {
+    recordId: randomUUID(),
+    state: "published",
+    existing: false,
+  };
+  f.setResponse(async () => Response.json(receipt));
+  assert.deepEqual(
+    await f.connector.publishWrite(f.grant.grantId, {
+      reviewId: prepared.reviewId,
+      digest: prepared.digest,
+    }),
+    receipt,
+  );
+  f.setResponse(async () => Response.json({ ...receipt, state: "deleted" }));
+  await assert.rejects(
+    f.connector.publishWrite(f.grant.grantId, {
+      reviewId: prepared.reviewId,
+      digest: prepared.digest,
+    }),
+    /INVALID_SOURCE/,
+  );
+  f.setResponse(async () => new Response("PRIVATE", { status: 409 }));
+  await assert.rejects(
+    f.connector.publishWrite(f.grant.grantId, {
+      reviewId: prepared.reviewId,
+      digest: prepared.digest,
+    }),
+    /SOURCE_CONFLICT/,
+  );
+  f.setResponse(async () => new Response("PRIVATE", { status: 429 }));
+  await assert.rejects(
+    f.connector.writeStatus(f.grant.grantId),
+    /SOURCE_CAPACITY/,
+  );
+});
+test("confirmed publication receipt is captured before an overlapping credential mutation", async () => {
+  const f = fixture();
+  await connect(f);
+  let release!: (v: Response) => void, started!: () => void;
+  const beginning = new Promise<void>((r) => {
+    started = r;
+  });
+  f.setResponse(() => {
+    started();
+    return new Promise((r) => {
+      release = r;
+    });
+  });
+  const pending = f.connector.publishWrite(f.grant.grantId, {
+    reviewId: randomUUID(),
+    digest: "d".repeat(64),
+  });
+  await beginning;
+  await assert.rejects(f.connector.disconnect(), /CONNECTION_BUSY/);
+  await assert.rejects(f.connector.forgetLocal(), /CONNECTION_BUSY/);
+  const receipt = {
+    recordId: randomUUID(),
+    state: "published",
+    existing: true,
+  };
+  release(Response.json(receipt));
+  assert.deepEqual(await pending, receipt);
+  await f.connector.forgetLocal();
+  assert.equal(await f.connector.status(), null);
+});

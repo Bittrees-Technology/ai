@@ -27,6 +27,10 @@ const explanations: Record<string, string> = {
   CONNECTION_BUSY: "A connection change is still running. Wait a moment.",
   INVALID_CONNECTION:
     "This connection could not be completed. Begin again with a fresh code.",
+  SOURCE_CONFLICT:
+    "The source or review changed. Inspect the existing operation before creating a new proposal.",
+  SOURCE_CAPACITY:
+    "CRM has too many pending requests. Wait or clear pending reviews before trying again.",
   SOURCE_UNAVAILABLE:
     "CRM did not respond. If a code exchange failed, begin again with a fresh code.",
   SOURCE_DENIED:

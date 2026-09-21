@@ -153,7 +153,11 @@ export function localApi({
     const task = await project(store.get(owner, req.params.id));
     if ("sourceAccess" in task && task.sourceAccess === "unavailable")
       throw new ConnectorError("SOURCE_DENIED");
-    res.json({ task, runs: store.runHistory(owner, req.params.id) });
+    res.json({
+      task,
+      runs: store.runHistory(owner, req.params.id),
+      publications: store.publications(owner, req.params.id),
+    });
   });
   app.post("/v1/requests", (req, res) => {
     const body = requestSchema.parse(req.body);
