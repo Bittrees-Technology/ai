@@ -364,7 +364,7 @@ test("expired credentials can revoke; malformed acknowledgement or keychain dele
   assert.equal(await f.connector.status(), null);
 });
 
-test("AutoNote refuses another app's grant and does not expose write operations", async () => {
+test("AutoNote refuses another app's grant and does not expose CRM publication operations", async () => {
   const f = fixture();
   const connector = new AutoNoteConnector("personal", f.secret, async () =>
     Response.json({
@@ -381,4 +381,181 @@ test("AutoNote refuses another app's grant and does not expose write operations"
   assert.equal(await f.secret.getSecret(), undefined);
   for (const method of ["writeStatus", "prepareWrite", "publishWrite"])
     assert.equal(method in connector, false);
+});
+
+function reviewFixture(f: ReturnType<typeof fixture>) {
+  const proposal = {
+    operationId: randomUUID(),
+    meetingId: f.grant.meetingId,
+    version: 1,
+    projectionHash: f.snapshot.projectionHash,
+    summary: [{ text: "Synthetic summary", evidence: ["segment-1"] }],
+    actions: [
+      {
+        text: "Proposed action",
+        evidence: ["segment-1"],
+        owner: null,
+        dueDate: null,
+      },
+    ],
+  };
+  const prepared = {
+    reviewId: randomUUID(),
+    digest: createHash("sha256").update(JSON.stringify(proposal)).digest("hex"),
+    expiresAt: new Date(now + 600000).toISOString(),
+    receipt: null,
+  };
+  const receipt = {
+    meetingId: proposal.meetingId,
+    operationId: proposal.operationId,
+    version: 2,
+  };
+  return { proposal, prepared, receipt };
+}
+test("AutoNote review transport validates permission, exact proposal digest and metadata-only receipt recovery", async () => {
+  const f = fixture();
+  await connect(f);
+  const r = reviewFixture(f);
+  f.setResponse(async () =>
+    Response.json({
+      grantId: f.grant.grantId,
+      meetingId: f.grant.meetingId,
+      enabled: true,
+      expiresAt: f.grant.expiresAt,
+    }),
+  );
+  assert.equal((await f.connector.reviewStatus(f.grant.grantId)).enabled, true);
+  f.setResponse(async () => Response.json(r.prepared));
+  const staged = await f.connector.prepareReview(f.grant.grantId, r.proposal);
+  assert.equal(
+    staged.reviewUrl,
+    "https://autonote.bittrees.org/connect/ai?review=" + r.prepared.reviewId,
+  );
+  const request = f.requests.at(-1)!;
+  assert.equal(
+    request.url,
+    "https://autonote.bittrees.org/api/integrations/ai/review-prepare",
+  );
+  assert.deepEqual(JSON.parse(String(request.init.body)), r.proposal);
+  assert.equal(request.init.redirect, "error");
+  assert.equal(staged.reviewUrl.includes(f.grant.token), false);
+  f.setResponse(async () =>
+    Response.json({ ...r.prepared, receipt: r.receipt, deleted: false }),
+  );
+  const recovered = await f.connector.reconcileReview(
+    f.grant.grantId,
+    r.proposal,
+  );
+  assert.deepEqual(recovered.receipt, r.receipt);
+  assert.deepEqual(JSON.parse(String(f.requests.at(-1)!.init.body)), {
+    operationId: r.proposal.operationId,
+  });
+  assert.equal(
+    f.requests.at(-1)!.url,
+    "https://autonote.bittrees.org/api/integrations/ai/review-receipt",
+  );
+  assert.equal("saveReview" in f.connector, false);
+  assert.equal("allowReviews" in f.connector, false);
+});
+test("AutoNote rejects wrong review scope, modified payload receipts, approval fields and contradictory deletion", async () => {
+  const f = fixture();
+  await connect(f);
+  const r = reviewFixture(f);
+  const count = f.requests.length;
+  await assert.rejects(
+    f.connector.prepareReview(f.grant.grantId, {
+      ...r.proposal,
+      approved: true,
+    }),
+    /INVALID_CONNECTION/,
+  );
+  await assert.rejects(
+    f.connector.prepareReview(f.grant.grantId, {
+      ...r.proposal,
+      meetingId: randomUUID(),
+    }),
+    /SOURCE_DENIED/,
+  );
+  await assert.rejects(f.connector.reviewStatus(randomUUID()), /SOURCE_DENIED/);
+  assert.equal(f.requests.length, count);
+  for (const reply of [
+    { ...r.prepared, digest: "0".repeat(64) },
+    { ...r.prepared, expiresAt: new Date(now + 3600000).toISOString() },
+    { ...r.prepared, receipt: { ...r.receipt, meetingId: randomUUID() } },
+    { ...r.prepared, receipt: { ...r.receipt, operationId: randomUUID() } },
+    { ...r.prepared, receipt: { ...r.receipt, version: 3 } },
+    { ...r.prepared, receipt: r.receipt, token: "PRIVATE" },
+  ]) {
+    f.setResponse(async () => Response.json(reply));
+    await assert.rejects(
+      f.connector.prepareReview(f.grant.grantId, r.proposal),
+      /INVALID_SOURCE/,
+    );
+  }
+  f.setResponse(async () =>
+    Response.json({ ...r.prepared, receipt: r.receipt, deleted: true }),
+  );
+  await assert.rejects(
+    f.connector.reconcileReview(f.grant.grantId, r.proposal),
+    /INVALID_SOURCE/,
+  );
+  f.setResponse(async () =>
+    Response.json({
+      grantId: f.grant.grantId,
+      meetingId: randomUUID(),
+      enabled: true,
+      expiresAt: f.grant.expiresAt,
+    }),
+  );
+  await assert.rejects(
+    f.connector.reviewStatus(f.grant.grantId),
+    /INVALID_SOURCE/,
+  );
+  f.setResponse(async () =>
+    Response.json({
+      ...r.prepared,
+      expiresAt: new Date(now - 1).toISOString(),
+    }),
+  );
+  assert.equal(
+    (await f.connector.prepareReview(f.grant.grantId, r.proposal)).receipt,
+    null,
+  );
+});
+test("AutoNote captures uncertain review responses without automatic resubmission or overlapping credential loss", async () => {
+  const f = fixture();
+  await connect(f);
+  const r = reviewFixture(f);
+  let started!: () => void, release!: (value: Response) => void;
+  const beginning = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  f.setResponse(() => {
+    started();
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  });
+  const preparing = f.connector.prepareReview(f.grant.grantId, r.proposal);
+  await beginning;
+  await assert.rejects(f.connector.disconnect(), /CONNECTION_BUSY/);
+  await assert.rejects(f.connector.forgetLocal(), /CONNECTION_BUSY/);
+  release(Response.json(r.prepared));
+  assert.equal((await preparing).reviewId, r.prepared.reviewId);
+  f.setResponse(async () => {
+    throw Error("PRIVATE_RESPONSE_LOST");
+  });
+  const count = f.requests.length;
+  await assert.rejects(
+    f.connector.prepareReview(f.grant.grantId, r.proposal),
+    /SOURCE_UNAVAILABLE/,
+  );
+  assert.equal(f.requests.length, count + 1);
+  f.setResponse(async () =>
+    Response.json({ ...r.prepared, receipt: r.receipt, deleted: false }),
+  );
+  assert.deepEqual(
+    (await f.connector.reconcileReview(f.grant.grantId, r.proposal)).receipt,
+    r.receipt,
+  );
 });

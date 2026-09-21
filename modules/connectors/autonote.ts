@@ -1,3 +1,10 @@
+import {
+  autoNoteProposalSchema,
+  autoNotePreparedSchema,
+  autoNoteReviewStatusSchema,
+  autoNoteReconciledSchema,
+  type AutoNoteProposal,
+} from "./autonote-review-contracts.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AsyncEntry } from "@napi-rs/keyring";
 import { z } from "zod";
@@ -128,7 +135,13 @@ export class AutoNoteConnector {
     }
   }
   private async post(
-    path: "exchange" | "read" | "disconnect",
+    path:
+      | "exchange"
+      | "read"
+      | "disconnect"
+      | "review-status"
+      | "review-prepare"
+      | "review-receipt",
     body: unknown,
     token?: string,
   ) {
@@ -258,6 +271,112 @@ export class AutoNoteConnector {
     )
       throw new ConnectorError("CONNECTION_EXPIRED");
     return result;
+  }
+  private async withReviewGrant<T>(
+    expectedGrantId: string,
+    operation: (grant: z.infer<typeof grantSchema>) => Promise<T>,
+  ): Promise<T> {
+    if (!z.uuid().safeParse(expectedGrantId).success)
+      throw new ConnectorError("INVALID_CONNECTION");
+    if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
+    this.busy = true;
+    try {
+      const grant = await this.saved();
+      if (grant.disconnectPending) throw new ConnectorError("CONNECTION_BUSY");
+      if (Date.parse(grant.expiresAt) <= this.now())
+        throw new ConnectorError("CONNECTION_EXPIRED");
+      if (grant.grantId !== expectedGrantId)
+        throw new ConnectorError("SOURCE_DENIED");
+      return await operation(grant);
+    } finally {
+      this.busy = false;
+    }
+  }
+  async reviewStatus(expectedGrantId: string) {
+    return this.withReviewGrant(expectedGrantId, async (grant) => {
+      const parsed = autoNoteReviewStatusSchema.safeParse(
+        await this.post("review-status", {}, grant.token),
+      );
+      if (
+        !parsed.success ||
+        parsed.data.grantId !== grant.grantId ||
+        parsed.data.meetingId !== grant.meetingId ||
+        Date.parse(parsed.data.expiresAt) > Date.parse(grant.expiresAt)
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      if (Date.parse(parsed.data.expiresAt) <= this.now())
+        throw new ConnectorError("CONNECTION_EXPIRED");
+      return parsed.data;
+    });
+  }
+  private proposal(raw: unknown): AutoNoteProposal {
+    const parsed = autoNoteProposalSchema.safeParse(raw);
+    if (
+      !parsed.success ||
+      Buffer.byteLength(JSON.stringify(parsed.data)) > 64000
+    )
+      throw new ConnectorError("INVALID_CONNECTION");
+    return parsed.data;
+  }
+  private matches(
+    proposal: AutoNoteProposal,
+    reply: z.infer<typeof autoNotePreparedSchema>,
+  ) {
+    if (
+      reply.digest !==
+        createHash("sha256").update(JSON.stringify(proposal)).digest("hex") ||
+      (reply.receipt &&
+        (reply.receipt.meetingId !== proposal.meetingId ||
+          reply.receipt.operationId !== proposal.operationId ||
+          reply.receipt.version !== proposal.version + 1))
+    )
+      throw new ConnectorError("INVALID_SOURCE");
+  }
+  async prepareReview(expectedGrantId: string, raw: unknown) {
+    const proposal = this.proposal(raw);
+    return this.withReviewGrant(expectedGrantId, async (grant) => {
+      if (proposal.meetingId !== grant.meetingId)
+        throw new ConnectorError("SOURCE_DENIED");
+      const parsed = autoNotePreparedSchema.safeParse(
+        await this.post("review-prepare", proposal, grant.token),
+      );
+      if (
+        !parsed.success ||
+        Date.parse(parsed.data.expiresAt) >
+          Math.min(Date.parse(grant.expiresAt), this.now() + 11 * 60000)
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      this.matches(proposal, parsed.data);
+      // An idempotent retry may return an expired review or a previously committed receipt.
+      return {
+        ...parsed.data,
+        reviewUrl: origin + "/connect/ai?review=" + parsed.data.reviewId,
+      };
+    });
+  }
+  async reconcileReview(expectedGrantId: string, raw: unknown) {
+    const proposal = this.proposal(raw);
+    return this.withReviewGrant(expectedGrantId, async (grant) => {
+      if (proposal.meetingId !== grant.meetingId)
+        throw new ConnectorError("SOURCE_DENIED");
+      const parsed = autoNoteReconciledSchema.safeParse(
+        await this.post(
+          "review-receipt",
+          { operationId: proposal.operationId },
+          grant.token,
+        ),
+      );
+      if (
+        !parsed.success ||
+        Date.parse(parsed.data.expiresAt) > Date.parse(grant.expiresAt)
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      this.matches(proposal, parsed.data);
+      return {
+        ...parsed.data,
+        reviewUrl: origin + "/connect/ai?review=" + parsed.data.reviewId,
+      };
+    });
   }
   async disconnect() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
