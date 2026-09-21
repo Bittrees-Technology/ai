@@ -358,3 +358,50 @@ test("startup classifies interrupted work without dispatch and rejects a wrong s
     await f.clean();
   }
 });
+
+test("a failed outcome write remains uncertain and cancel cannot hide a completed runtime creation", async () => {
+  const { default: Database } = await import("better-sqlite3"),
+    f = await fixture();
+  let model = "",
+    creates = 0;
+  const runtime: typeof fetch = async (url, init) => {
+    if (init?.method === "HEAD") return new Response(null, { status: 200 });
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/create") {
+      creates++;
+      model = JSON.parse(String(init?.body)).model;
+      const db = new Database(join(f.root, "jobs.db"));
+      db.exec(
+        "CREATE TRIGGER fail_update BEFORE UPDATE ON jobs BEGIN SELECT RAISE(FAIL,'fixture write failure'); END;",
+      );
+      db.close();
+      return Response.json({ status: "success" });
+    }
+    if (path === "/api/tags")
+      return Response.json({
+        models: [{ name: model, digest: "a".repeat(64), size: 32 }],
+      });
+    return Response.json({ details: { family: "synthetic" } });
+  };
+  const jobs = new ImportJobs(f.root, f.vault, async () => [f.file], runtime);
+  try {
+    let job = await settled(
+      jobs,
+      jobs.local({ license: "test", promptFormat: "runtime_default" }).id,
+    );
+    jobs.install(job.id, job.review!.reviewDigest);
+    job = await settled(jobs, job.id);
+    assert.equal(job.state, "uncertain");
+    assert.equal((await jobs.cancel(job.id)).state, "uncertain");
+    const db = new Database(join(f.root, "jobs.db"));
+    db.exec("DROP TRIGGER fail_update");
+    db.close();
+    jobs.reconcile(job.id);
+    job = await settled(jobs, job.id);
+    assert.equal(job.state, "installed");
+    assert.equal(creates, 1);
+  } finally {
+    await jobs.stop();
+    await f.clean();
+  }
+});
