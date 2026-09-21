@@ -129,3 +129,66 @@ test("messages reject wrong conversation request links and cross-conversation re
     s.close();
   }
 });
+
+test("inbox discovery, conversation previews and paginated messages stay owner-scoped", () => {
+  const s = new Store(":memory:", new Vault(randomBytes(32))),
+    other = { ...owner, userId: "bob" };
+  try {
+    for (const o of [owner, other])
+      s.createInbox(o, {
+        id: "personal",
+        tenantId: o.tenantId,
+        ownerType: "user",
+        ownerId: o.userId,
+        memberUserIds: [o.userId],
+      });
+    s.appendMessage(
+      other,
+      {
+        ...message,
+        recipientInboxId: "personal",
+        content: "OTHER_USER_SENTINEL",
+      },
+      "other",
+    );
+    for (let i = 0; i < 101; i++)
+      s.appendMessage(
+        owner,
+        {
+          ...message,
+          recipientInboxId: "personal",
+          content: "Message " + i,
+          replyExpected: false,
+        },
+        "m" + i,
+      );
+    assert.equal(s.inboxes(owner)[0]!.ownerId, "alice");
+    assert.equal(
+      s.inboxConversations(owner, "personal")[0]!.preview,
+      "Message 100",
+    );
+    assert.equal(
+      JSON.stringify(s.inboxConversations(owner, "personal")).includes(
+        "OTHER_USER_SENTINEL",
+      ),
+      false,
+    );
+    const first = s.messages(owner, "personal", "c");
+    assert.equal(first.length, 100);
+    const next = s.messages(owner, "personal", "c", first.at(-1)!.sequence);
+    assert.equal(next.length, 1);
+    s.receipt(owner, next[0]!.id, "acknowledged");
+    assert.deepEqual(
+      s.message(owner, next[0]!.id).receipts.map((r) => r.kind),
+      ["acknowledged"],
+    );
+    assert.throws(() => s.receipt(other, next[0]!.id, "read"), /NOT_FOUND/);
+    assert.equal(
+      s.exportMessages(owner).find((m) => m.id === next[0]!.id)!.receipts[0]
+        ?.kind,
+      "acknowledged",
+    );
+  } finally {
+    s.close();
+  }
+});
