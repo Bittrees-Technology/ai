@@ -4,6 +4,7 @@ import { Vault } from "./vault.js";
 import {
   requestSchema,
   commandSchema,
+  modelProfileSchema,
   inboxSchema,
   inboxMessageSchema,
   type TaskInput,
@@ -78,7 +79,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 3) {
+    if (version > 4) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -123,12 +124,112 @@ CREATE TABLE IF NOT EXISTS checkins(id TEXT PRIMARY KEY,message_id TEXT NOT NULL
         }
         if (version < 3)
           this.db.exec("ALTER TABLE runs ADD COLUMN model_snapshot BLOB");
-        this.db.pragma("user_version = 3");
+        this.db
+          .exec(`CREATE TABLE IF NOT EXISTS model_profiles(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,payload BLOB NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(id,user_id,tenant_id));
+CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,profile_id TEXT NOT NULL,PRIMARY KEY(user_id,tenant_id),FOREIGN KEY(profile_id,user_id,tenant_id) REFERENCES model_profiles(id,user_id,tenant_id));`);
+        this.db.pragma("user_version = 4");
       })();
     } catch (error) {
       this.db.close();
       throw error;
     }
+  }
+  addProfile(owner: Owner, raw: unknown) {
+    const profile = modelProfileSchema.parse(raw);
+    if (profile.maxOutputTokens + 256 >= profile.contextTokens)
+      throw new StoreError("INVALID_INPUT");
+    const old = this.db
+      .prepare(
+        "SELECT id FROM model_profiles WHERE id=? AND user_id=? AND tenant_id=?",
+      )
+      .get(profile.id, owner.userId, owner.tenantId);
+    if (old) throw new StoreError("CONFLICT");
+    this.db
+      .prepare("INSERT INTO model_profiles VALUES(?,?,?,?,?)")
+      .run(
+        profile.id,
+        owner.userId,
+        owner.tenantId,
+        this.vault.seal(
+          profile,
+          "profile:" + owner.tenantId + ":" + owner.userId + ":" + profile.id,
+        ),
+        this.now(),
+      );
+    return profile;
+  }
+  profile(owner: Owner, id: string) {
+    const row = this.db
+      .prepare(
+        "SELECT payload FROM model_profiles WHERE id=? AND user_id=? AND tenant_id=?",
+      )
+      .get(id, owner.userId, owner.tenantId) as { payload: Buffer } | undefined;
+    if (!row) throw new StoreError("NOT_FOUND");
+    return this.vault.open<ReturnType<typeof modelProfileSchema.parse>>(
+      row.payload,
+      "profile:" + owner.tenantId + ":" + owner.userId + ":" + id,
+    );
+  }
+  profiles(owner: Owner) {
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM model_profiles WHERE user_id=? AND tenant_id=? ORDER BY created_at,id",
+        )
+        .all(owner.userId, owner.tenantId) as { id: string }[]
+    ).map((p) => this.profile(owner, p.id));
+  }
+  setDefaultProfile(owner: Owner, id: string) {
+    this.profile(owner, id);
+    this.db
+      .prepare(
+        "INSERT INTO model_defaults VALUES(?,?,?) ON CONFLICT(user_id,tenant_id) DO UPDATE SET profile_id=excluded.profile_id",
+      )
+      .run(owner.userId, owner.tenantId, id);
+  }
+  defaultProfile(owner: Owner) {
+    const row = this.db
+      .prepare(
+        "SELECT profile_id FROM model_defaults WHERE user_id=? AND tenant_id=?",
+      )
+      .get(owner.userId, owner.tenantId) as { profile_id: string } | undefined;
+    return row ? this.profile(owner, row.profile_id) : null;
+  }
+  switchModel(
+    owner: Owner,
+    id: string,
+    profileId: string,
+    expectedRevision: number,
+  ) {
+    this.profile(owner, profileId);
+    return this.db
+      .transaction(() => {
+        const row = this.row(owner, id);
+        if (
+          row.revision !== expectedRevision ||
+          !["queued", "running", "paused"].includes(row.status)
+        )
+          throw new StoreError("CONFLICT");
+        const input = { ...this.task(row).input, modelProfileId: profileId };
+        this.db
+          .prepare(
+            "UPDATE runs SET finished_at=?,outcome='model_switched' WHERE task_id=? AND finished_at IS NULL",
+          )
+          .run(this.now(), id);
+        this.db
+          .prepare(
+            "UPDATE tasks SET input=?,status=?,generation=generation+1,revision=revision+1,lease_until=NULL,worker_id=NULL,updated_at=? WHERE id=?",
+          )
+          .run(
+            this.vault.seal(input, "task:" + id),
+            row.status === "paused" ? "paused" : "queued",
+            this.now(),
+            id,
+          );
+        this.event(id, "model_switched");
+        return this.get(owner, id);
+      })
+      .immediate();
   }
   private row(owner: Owner, id: string): Row {
     const row = this.db
@@ -400,7 +501,16 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     return (
       this.db
         .prepare("SELECT * FROM runs WHERE task_id=? ORDER BY generation")
-        .all(id) as { generation: number; model_snapshot: Buffer | null }[]
+        .all(id) as {
+        id: string;
+        task_id: string;
+        worker_id: string;
+        generation: number;
+        started_at: number;
+        finished_at: number | null;
+        outcome: string | null;
+        model_snapshot: Buffer | null;
+      }[]
     ).map(({ model_snapshot, ...row }) => ({
       ...row,
       model: model_snapshot
@@ -659,6 +769,12 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   deleteAll(owner: Owner) {
     this.db
       .transaction(() => {
+        this.db
+          .prepare("DELETE FROM model_defaults WHERE user_id=? AND tenant_id=?")
+          .run(owner.userId, owner.tenantId);
+        this.db
+          .prepare("DELETE FROM model_profiles WHERE user_id=? AND tenant_id=?")
+          .run(owner.userId, owner.tenantId);
         this.db
           .prepare("DELETE FROM inboxes WHERE user_id=? AND tenant_id=?")
           .run(owner.userId, owner.tenantId);
