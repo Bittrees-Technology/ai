@@ -1,3 +1,4 @@
+import { ModelImportControls } from "./imports.js";
 import { DeviceResources } from "./device.js";
 import { SourceDraftDetail } from "./crm-drafts.js";
 import { Connections } from "./connections.js";
@@ -22,6 +23,12 @@ type Memory = {
 };
 type Profile = { id: string; model: string };
 const explanations: Record<string, string> = {
+  IMPORT_BUSY:
+    "Another model import operation is still running. Wait or cancel it first.",
+  REVIEW_MISMATCH:
+    "The saved review does not match this action. Refresh the import list.",
+  REVIEW_EXPIRED:
+    "This review expired. Delete the staged import and begin a fresh review.",
   CONNECTION_REQUIRED: "Connect CRM first.",
   CONNECTION_EXPIRED:
     "This connection expired. Revoke it in CRM, then connect again.",
@@ -622,9 +629,15 @@ function App() {
                     </button>
                   </div>
                 ))}
-                <p className="hint">
-                  The reviewed file-import interface is still being built.
-                </p>
+                <ModelImportControls
+                  api={api}
+                  onError={fail}
+                  onInstalled={() => {
+                    void api("/v1/models")
+                      .then((r) => setModels(r.items))
+                      .catch(fail);
+                  }}
+                />
               </section>
             )}
             {page === "Memory" && (
