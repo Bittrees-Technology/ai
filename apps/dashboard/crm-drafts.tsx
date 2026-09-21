@@ -1,3 +1,4 @@
+import { CrmPublicationControls } from "./crm-publications.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (
   path: string,
@@ -234,8 +235,8 @@ export function SourceDraftDetail({
             <p>No result yet. Task status: {detail.task.status}.</p>
           )}
           <p>
-            Unreviewed draft. Verify citations and claims before use. Nothing
-            has been published.
+            Unreviewed draft. Verify citations and claims before use.
+            Publication status is shown separately below.
           </p>
           <details>
             <summary>Source references and run history</summary>
@@ -275,6 +276,7 @@ export function SourceDraftDetail({
           </button>
         </>
       )}
+      <CrmPublicationControls key={id} id={id} api={api} onError={onError} />
     </section>
   );
 }

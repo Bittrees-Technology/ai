@@ -1,3 +1,4 @@
+import { CrmPublications } from "../../modules/connectors/crm-publications.js";
 import express, { type ErrorRequestHandler } from "express";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z, ZodError } from "zod";
@@ -33,6 +34,10 @@ export function localApi({
   cancelSourceRun,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
+  const publications =
+    crm && sources
+      ? new CrmPublications(store, owner, crm, sources)
+      : undefined;
   const app = express();
   app.disable("x-powered-by");
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -147,6 +152,46 @@ export function localApi({
         req.header("Idempotency-Key") ?? "",
       );
       res.status(202).json(concealed(task));
+    });
+  }
+  if (publications) {
+    // Receipt metadata is available for reconciliation even when current source content is hidden.
+    const summary = (
+      item: import("../../modules/storage/store.js").Publication,
+    ) => ({
+      id: item.id,
+      state: item.state,
+      prepared: item.prepared
+        ? {
+            expiresAt: item.prepared.expiresAt,
+            reviewUrl:
+              "https://crm.bittrees.org/connect/ai?review=" +
+              item.prepared.reviewId,
+          }
+        : null,
+      receipt: item.receipt,
+    });
+    app.get("/v1/requests/:id/publications", (req, res) => {
+      res.json({
+        items: store.publications(owner, req.params.id).map(summary),
+      });
+    });
+    app.post("/v1/requests/:id/write-permission", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await publications.permission(req.params.id));
+    });
+    app.post("/v1/requests/:id/publications", async (req, res) => {
+      res
+        .status(201)
+        .json(summary(await publications.reserve(req.params.id, req.body)));
+    });
+    app.post("/v1/publications/:id/prepare", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(summary(await publications.prepare(req.params.id)));
+    });
+    app.post("/v1/publications/:id/publish", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(summary(await publications.publish(req.params.id)));
     });
   }
   app.get("/v1/requests/:id/export", async (req, res) => {
@@ -381,6 +426,7 @@ export function localApi({
   app.delete("/v1/data", (req, res) => {
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");
+    if (publications?.busy) throw new StoreError("CONFLICT");
     memory?.deleteAll(owner);
     store.deleteAll(owner);
     res.status(204).end();

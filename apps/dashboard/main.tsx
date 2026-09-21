@@ -34,11 +34,12 @@ const explanations: Record<string, string> = {
   SOURCE_UNAVAILABLE:
     "CRM did not respond. If a code exchange failed, begin again with a fresh code.",
   SOURCE_DENIED:
-    "CRM denied access. Check the source grant and your current permissions.",
+    "CRM denied this request. Check the grant and current permissions; publishing also requires exact approval on CRM.",
   INVALID_SOURCE:
     "CRM returned an unexpected response. No source content was accepted.",
   UNAUTHORIZED: "Pair this browser to continue.",
-  CONFLICT: "This item changed. Refresh and try again.",
+  CONFLICT:
+    "This item changed or an operation is still running. Wait for it to finish, then refresh and try again.",
   MODEL_UNAVAILABLE: "Start Ollama and check your installed models.",
   CAPACITY: "Shorten the request or choose a larger model context.",
   PAIRING_DENIED:
