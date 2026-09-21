@@ -1,4 +1,10 @@
 import {
+  autoNoteProposalSchema,
+  autoNoteReconciledSchema,
+  type AutoNoteProposal,
+} from "../connectors/autonote-review-contracts.js";
+import type { z } from "zod";
+import {
   crmProposalSchema,
   crmPreparedSchema,
   crmReceiptSchema,
@@ -7,7 +13,7 @@ import {
   type CrmReceipt,
 } from "../connectors/crm-write-contracts.js";
 import Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { Vault } from "./vault.js";
 import {
   requestSchema,
@@ -80,6 +86,16 @@ export interface Publication {
   receipt: CrmReceipt | null;
   revision: number;
 }
+export interface AutoNoteReview {
+  id: string;
+  taskId: string;
+  grantId: string;
+  taskRevision: number;
+  proposal: AutoNoteProposal;
+  state: "local" | "uncertain" | "prepared" | "saved" | "deleted";
+  response: z.infer<typeof autoNoteReconciledSchema> | null;
+  revision: number;
+}
 export interface Claim {
   task: Task;
   workerId: string;
@@ -100,7 +116,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 6) {
+    if (version > 7) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -154,7 +170,10 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS publication_intents(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL,revision INTEGER NOT NULL DEFAULT 1)",
         );
-        this.db.pragma("user_version = 6");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS autonote_reviews(id TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL,revision INTEGER NOT NULL DEFAULT 1)",
+        );
+        this.db.pragma("user_version = 7");
       })();
     } catch (error) {
       this.db.close();
@@ -437,6 +456,148 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
           )
           .run(this.vault.seal(value, "publication:" + id), id);
         return this.publication(owner, id);
+      })
+      .immediate();
+  }
+  autoNoteReview(owner: Owner, id: string): AutoNoteReview {
+    const row = this.db
+      .prepare(
+        "SELECT p.payload,p.revision FROM autonote_reviews p JOIN tasks t ON t.id=p.task_id WHERE p.id=? AND t.user_id=? AND t.tenant_id=?",
+      )
+      .get(id, owner.userId, owner.tenantId) as
+      { payload: Buffer; revision: number } | undefined;
+    if (!row) throw new StoreError("NOT_FOUND");
+    return {
+      ...this.vault.open<Omit<AutoNoteReview, "revision">>(
+        row.payload,
+        "autonote-review:" + id,
+      ),
+      revision: row.revision,
+    };
+  }
+  autoNoteReviews(owner: Owner, taskId: string): AutoNoteReview[] {
+    this.row(owner, taskId);
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM autonote_reviews WHERE task_id=? ORDER BY rowid",
+        )
+        .all(taskId) as { id: string }[]
+    ).map((row) => this.autoNoteReview(owner, row.id));
+  }
+  reserveAutoNoteReview(
+    owner: Owner,
+    taskId: string,
+    raw: unknown,
+  ): AutoNoteReview {
+    const proposal = autoNoteProposalSchema.parse(raw);
+    if (Buffer.byteLength(JSON.stringify(proposal)) > 64000)
+      throw new StoreError("CAPACITY");
+    return this.db
+      .transaction(() => {
+        const task = this.get(owner, taskId),
+          binding = this.sourceBinding(owner, taskId);
+        if (
+          task.status !== "completed" ||
+          !binding ||
+          binding.authority.sourceApp !== "autonote" ||
+          binding.refs.length !== 1 ||
+          binding.refs[0]!.app !== "autonote" ||
+          binding.refs[0]!.resourceId !== proposal.meetingId ||
+          binding.refs[0]!.revision !== String(proposal.version) ||
+          binding.projectionHash !== proposal.projectionHash
+        )
+          throw new StoreError("INVALID_INPUT");
+        if (
+          this.db
+            .prepare("SELECT id FROM autonote_reviews WHERE id=?")
+            .get(proposal.operationId)
+        ) {
+          const old = this.autoNoteReview(owner, proposal.operationId);
+          if (
+            old.taskId !== taskId ||
+            old.grantId !== binding.authority.grantId ||
+            this.vault.fingerprint(old.proposal) !==
+              this.vault.fingerprint(proposal)
+          )
+            throw new StoreError("CONFLICT");
+          return old;
+        }
+        // A completed draft has one immutable submission identity, even if a client loses its key.
+        if (
+          this.db
+            .prepare("SELECT id FROM autonote_reviews WHERE task_id=?")
+            .get(taskId)
+        )
+          throw new StoreError("CONFLICT");
+        const value: Omit<AutoNoteReview, "revision"> = {
+          id: proposal.operationId,
+          taskId,
+          grantId: binding.authority.grantId,
+          taskRevision: task.revision,
+          proposal,
+          state: "local",
+          response: null,
+        };
+        this.db
+          .prepare(
+            "INSERT INTO autonote_reviews(id,task_id,payload) VALUES(?,?,?)",
+          )
+          .run(
+            value.id,
+            taskId,
+            this.vault.seal(value, "autonote-review:" + value.id),
+          );
+        return this.autoNoteReview(owner, value.id);
+      })
+      .immediate();
+  }
+  settleAutoNoteReview(
+    owner: Owner,
+    id: string,
+    expectedRevision: number,
+    update: { uncertain: true } | { response: unknown },
+  ): AutoNoteReview {
+    return this.db
+      .transaction(() => {
+        const current = this.autoNoteReview(owner, id);
+        if (
+          current.revision !== expectedRevision ||
+          ["saved", "deleted"].includes(current.state)
+        )
+          throw new StoreError("CONFLICT");
+        const { revision: _revision, ...value } = current;
+        if ("uncertain" in update) value.state = "uncertain";
+        else {
+          const response = autoNoteReconciledSchema.parse(update.response);
+          if (
+            response.digest !==
+              createHash("sha256")
+                .update(JSON.stringify(value.proposal))
+                .digest("hex") ||
+            (response.receipt &&
+              (response.receipt.meetingId !== value.proposal.meetingId ||
+                response.receipt.operationId !== id ||
+                response.receipt.version !== value.proposal.version + 1)) ||
+            (value.response &&
+              (value.response.reviewId !== response.reviewId ||
+                value.response.digest !== response.digest ||
+                value.response.expiresAt !== response.expiresAt))
+          )
+            throw new StoreError("CONFLICT");
+          value.response = response;
+          value.state = response.receipt
+            ? "saved"
+            : response.deleted
+              ? "deleted"
+              : "prepared";
+        }
+        this.db
+          .prepare(
+            "UPDATE autonote_reviews SET payload=?,revision=revision+1 WHERE id=?",
+          )
+          .run(this.vault.seal(value, "autonote-review:" + id), id);
+        return this.autoNoteReview(owner, id);
       })
       .immediate();
   }

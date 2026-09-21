@@ -171,3 +171,11 @@ Source task detail and individual exports use the matching adapter for fresh acc
 The connector can check the source review permission, stage an immutable bounded proposal, and recover metadata-only review/receipt status using the existing AutoNote credential. It cannot enable review uploads or approve a save. Source-session review remains on AutoNote’s private page.
 
 Proposal validation matches the source’s canonical field order and limits. Responses must match the exact proposal digest, meeting, operation ID and resulting version; contradictory deleted/saved states and unexpected fields are rejected. The connector holds credential mutations until an in-flight response is captured, uses only fixed AutoNote endpoints and never automatically resubmits uncertain requests. Expired idempotent reviews remain expired rather than creating replacements. Durable companion operation history, staging/reconcile controls and source review deep-link handling remain pending.
+
+## Durable AutoNote submission ledger
+
+Schema 7 adds encrypted AutoNote operation history tied to each completed source-bound task. Each draft has one immutable submission identity, preventing a changed retry key from reserving a duplicate submission. Reservation derives the payload from the validated generated result, strips companion-only citation/status fields, and requires current source permission. It does not send anything.
+
+Explicit preparation records uncertainty before network dispatch. A lost response or failed local receipt write therefore remains uncertain after restart. Explicit reconciliation asks AutoNote for the original operation's receipt without resending the draft or requiring the old transcript version; saving into AutoNote itself changes that version. Responses must retain the same review identity, digest and expiry. Saved/deleted outcomes are terminal, and source approval remains outside the companion.
+
+Task backups include this ledger, and local task deletion cascades to its local operation history. A compatible backup is required when rolling back to binaries that understand only schema 6. The service exposes an in-flight guard for upcoming deletion controls; HTTP/dashboard staging, guarded operation export and source deep-link integration remain pending. This backend increment does not enable source permissions or add automatic sends.
