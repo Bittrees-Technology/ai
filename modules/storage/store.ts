@@ -78,7 +78,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 2) {
+    if (version > 3) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -121,7 +121,9 @@ CREATE TABLE IF NOT EXISTS checkins(id TEXT PRIMARY KEY,message_id TEXT NOT NULL
             .prepare("INSERT INTO vault_meta VALUES(1,?)")
             .run(this.vault.seal("bittrees-ai", "vault-verifier"));
         }
-        this.db.pragma("user_version = 2");
+        if (version < 3)
+          this.db.exec("ALTER TABLE runs ADD COLUMN model_snapshot BLOB");
+        this.db.pragma("user_version = 3");
       })();
     } catch (error) {
       this.db.close();
@@ -369,6 +371,42 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           .run(this.now() + leaseMs, id);
       })
       .immediate();
+  }
+  recordModel(
+    owner: Owner,
+    id: string,
+    worker: string,
+    generation: number,
+    snapshot: unknown,
+  ) {
+    this.db
+      .transaction(() => {
+        this.validClaim(owner, id, worker, generation);
+        const changed = this.db
+          .prepare(
+            "UPDATE runs SET model_snapshot=? WHERE task_id=? AND generation=? AND model_snapshot IS NULL",
+          )
+          .run(
+            this.vault.seal(snapshot, "run:" + id + ":" + generation),
+            id,
+            generation,
+          );
+        if (changed.changes !== 1) throw new StoreError("CONFLICT");
+      })
+      .immediate();
+  }
+  runHistory(owner: Owner, id: string) {
+    this.row(owner, id);
+    return (
+      this.db
+        .prepare("SELECT * FROM runs WHERE task_id=? ORDER BY generation")
+        .all(id) as { generation: number; model_snapshot: Buffer | null }[]
+    ).map(({ model_snapshot, ...row }) => ({
+      ...row,
+      model: model_snapshot
+        ? this.vault.open(model_snapshot, "run:" + id + ":" + row.generation)
+        : null,
+    }));
   }
   complete(
     owner: Owner,

@@ -2,7 +2,7 @@
 
 Local AI execution for explicitly authorized Bittrees app data.
 
-Status: local foundation under development. Contracts, an encrypted SQLite task/inbox store and an authenticated Express API factory are implemented and tested. No packaged launcher, deployed dashboard, production connectors, model execution or remote encryption is available yet. Repository creation does not activate any app permissions.
+Status: local foundation under development. Contracts, an encrypted SQLite task/inbox store and an authenticated Express API factory are implemented and tested. A local Ollama adapter and serial model worker are implemented. No packaged launcher, deployed dashboard, production connectors or remote encryption is available yet. Repository creation does not activate any app permissions.
 
 ## Development
 
@@ -25,3 +25,9 @@ Licensed under MIT. Imported models retain their own licenses.
 Prompts and results use AES-256-GCM with record-bound authenticated data. Input fingerprints use a keyed HMAC. IDs, status and timing metadata remain visible in SQLite; this is not full database encryption. The macOS Keychain adapter loads or creates the storage key and refuses to replace a missing key for existing data. A packaged launcher is still pending. Whole-file encrypted backup/restore is available for snapshots up to 32 MiB; restore refuses to overwrite an existing database. Keep the original key separately available: backups contain no key. An older backup can retain deleted content.
 
 A task blocked on a failed prerequisite remains queued until cancelled; automatic dependency-failure propagation and configurable capacity are pending. Messages, read/delivery/acknowledgement receipts and due/closed/overdue check-ins are persisted. Messages and tasks share conversation sequencing; receipts do not complete tasks. Personal-device inboxes may name an agent or manager but cannot add another user. No source-app side effects are attempted or retried by this foundation.
+
+## Model execution
+
+`LocalWorker` runs one local task at a time outside database transactions, renews its lease, saves the model profile/digest for each run and refuses stale/cancelled results. Outputs remain unreviewed drafts; no tool call is executed. The Ollama adapter uses only a literal loopback endpoint, rejects redirects and known remote models, checks the selected digest before and after generation, bounds responses, and supports abort signals. The separately installed runtime is trusted software; these checks are not an OS network sandbox.
+
+The adapter supports installed local models. Automatic Hugging Face/local-file import, resource scheduling, persistent profile editing, LM Studio and memory retrieval remain pending. Synthetic HTTP tests cover pin changes, cloud-model rejection, cancellation and no tool exposure.
