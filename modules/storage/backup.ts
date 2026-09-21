@@ -13,7 +13,7 @@ import { Store } from "./store.js";
 // Pilot bound keeps whole-file authenticated encryption out of unbounded memory use.
 const maxBytes = 32 * 1024 * 1024;
 export async function encryptedBackup(
-  store: Store,
+  store: Pick<Store, "backup">,
   vault: Vault,
   destination: string,
 ) {
