@@ -196,6 +196,24 @@ export function localApi({
       throw new StoreError("INVALID_INPUT");
     res.json({ items: store.events(owner, after) });
   });
+
+  app.get("/v1/inboxes", (_req, res) =>
+    res.json({ items: store.inboxes(owner) }),
+  );
+  app.post("/v1/inboxes/personal", (_req, res) =>
+    res.status(201).json(
+      store.createInbox(owner, {
+        id: "personal",
+        tenantId: owner.tenantId,
+        ownerId: owner.userId,
+        ownerType: "user",
+        memberUserIds: [owner.userId],
+      }),
+    ),
+  );
+  app.get("/v1/inboxes/:id/conversations", (req, res) =>
+    res.json({ items: store.inboxConversations(owner, req.params.id) }),
+  );
   app.post("/v1/inboxes", (req, res) =>
     res.status(201).json(store.createInbox(owner, req.body)),
   );

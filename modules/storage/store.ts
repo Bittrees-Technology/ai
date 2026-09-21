@@ -629,6 +629,54 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
       );
     return inbox;
   }
+
+  inboxes(owner: Owner) {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,definition FROM inboxes WHERE user_id=? AND tenant_id=? ORDER BY id",
+        )
+        .all(owner.userId, owner.tenantId) as {
+        id: string;
+        definition: Buffer;
+      }[]
+    ).map((row) =>
+      this.vault.open<ReturnType<typeof inboxSchema.parse>>(
+        row.definition,
+        "inbox:" + owner.tenantId + ":" + owner.userId + ":" + row.id,
+      ),
+    );
+  }
+  inboxConversations(owner: Owner, inboxId: string) {
+    const rows = this.db
+      .prepare(
+        "SELECT conversation_id,MAX(sequence) AS sequence,MAX(created_at) AS updated_at FROM messages WHERE user_id=? AND tenant_id=? AND inbox_id=? GROUP BY conversation_id ORDER BY updated_at DESC,conversation_id LIMIT 100",
+      )
+      .all(owner.userId, owner.tenantId, inboxId) as {
+      conversation_id: string;
+      sequence: number;
+      updated_at: number;
+    }[];
+    return rows.map((row) => {
+      const latest = this.db
+        .prepare(
+          "SELECT id FROM messages WHERE user_id=? AND tenant_id=? AND inbox_id=? AND conversation_id=? AND sequence=?",
+        )
+        .get(
+          owner.userId,
+          owner.tenantId,
+          inboxId,
+          row.conversation_id,
+          row.sequence,
+        ) as { id: string };
+      const message = this.message(owner, latest.id);
+      return {
+        id: row.conversation_id,
+        updatedAt: row.updated_at,
+        preview: message.input.content.slice(0, 100),
+      };
+    });
+  }
   appendMessage(owner: Owner, raw: unknown, key: string) {
     const input = inboxMessageSchema.parse(raw);
     if (!/^[A-Za-z0-9:_-]{1,128}$/.test(key))
@@ -723,6 +771,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
       id: row.id,
       sequence: row.sequence,
       createdAt: row.created_at,
+      receipts: this.db
+        .prepare(
+          "SELECT kind,recorded_at AS recordedAt FROM receipts WHERE message_id=? AND user_id=? ORDER BY recorded_at,kind",
+        )
+        .all(row.id, owner.userId) as { kind: string; recordedAt: number }[],
       input: this.vault.open<ReturnType<typeof inboxMessageSchema.parse>>(
         row.content,
         "message:" + id,
@@ -753,7 +806,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   checkins(owner: Owner) {
     return this.db
       .prepare(
-        "SELECT c.id,c.message_id,c.due_at,c.closed_at,CASE WHEN c.closed_at IS NOT NULL THEN 'closed' WHEN c.due_at<=? THEN 'overdue' ELSE 'open' END AS status FROM checkins c JOIN messages m ON m.id=c.message_id WHERE m.user_id=? AND m.tenant_id=? ORDER BY c.due_at LIMIT 100",
+        "SELECT c.id,c.message_id,c.due_at,c.closed_at,CASE WHEN c.closed_at IS NOT NULL THEN 'closed' WHEN c.due_at<=? THEN 'overdue' ELSE 'open' END AS status FROM checkins c JOIN messages m ON m.id=c.message_id WHERE m.user_id=? AND m.tenant_id=? ORDER BY (c.closed_at IS NOT NULL),c.due_at,c.id LIMIT 100",
       )
       .all(this.now(), owner.userId, owner.tenantId);
   }

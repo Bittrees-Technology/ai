@@ -64,6 +64,13 @@ On macOS with Node 24 and Ollama installed, run npm ci, npm run build, then npm 
 
 Data lives in ~/Library/Application Support/Bittrees AI/; its storage key stays in macOS Keychain. The service reserves its loopback port before accessing the key/store, so a second instance cannot replace pairing or initialize competing keys. Stop with Ctrl+C. Shutdown stops the worker, drains HTTP requests and removes the pairing-code file; restarting invalidates prior browser sessions. Interrupted generations are not automatically resumed as though completed.
 
-The dashboard implements task creation and detail/history, pause/resume/cancel, model profiles/defaults/switching, memory candidates/review/edit/pin/forget, explicit memory selection, export and local deletion. It labels unfinished inbox composition, model imports and app connections. Refreshing the browser loses unsent text; failed submissions retain it while the page remains open and reuse the same idempotency key for an unchanged retry. Retained task content is not automatically shared with any external app.
+The dashboard implements task creation and detail/history, pause/resume/cancel, model profiles/defaults/switching, memory candidates/review/edit/pin/forget, explicit memory selection, export and local deletion. It labels unfinished model imports and app connections. Refreshing the browser loses unsent text; failed submissions retain it while the page remains open and reuse the same idempotency key for an unchanged retry. Retained task content is not automatically shared with any external app.
 
 This is a development build, not a signed installer or public release. Update by stopping the companion, backing up the data and original key, checking out a reviewed release, reinstalling exact lockfile dependencies and rebuilding. Do not downgrade a store schema without a compatible backup. Installer signing, automatic update integrity, visual/keyboard acceptance, device resource display and remaining P3 features are still pending.
+
+
+## Personal Inbox
+
+The local Inbox supports inbox discovery, recent conversation previews, bounded message pages, local messages and replies, optional reply deadlines, explicit read/acknowledgement receipts and open/overdue/closed check-ins. Personal inbox creation derives its user and tenant on the server. Every query and receipt remains owner-scoped; reading does not complete tasks, and only a saved reply closes its parent check-in. Open check-ins are prioritized over closed ones.
+
+Messages are local records, not outbound mail or implicit model tasks. Unsent text survives switching dashboard sections while the page remains open, but not a reload. An unchanged failed save reuses its idempotency key. The conversation list currently shows the 100 most recent conversations; full export retains all records. Browser visual/keyboard acceptance remains pending.

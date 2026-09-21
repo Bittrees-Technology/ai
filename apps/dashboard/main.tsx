@@ -1,3 +1,4 @@
+import { Inbox } from "./inbox.js";
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
@@ -684,15 +685,9 @@ function App() {
                 ))}
               </section>
             )}
-            {page === "Inbox" && (
-              <section className="content">
-                <h2>Conversations and check-ins</h2>
-                <p>
-                  The local message store is ready. Inbox composition and reply
-                  controls are still being connected.
-                </p>
-              </section>
-            )}
+            <div hidden={page !== "Inbox"}>
+              <Inbox key={epoch.current} api={api} onError={fail} />
+            </div>
             {page === "Connections" && (
               <section className="content">
                 <h2>Connect only what you choose</h2>
@@ -757,6 +752,7 @@ function App() {
                         await api("/v1/data", "DELETE", undefined, {
                           "X-Confirm-Delete": "all-local-task-data",
                         });
+                        epoch.current++;
                         setDeleteText("");
                         setSelected("");
                         setMemoryIds([]);

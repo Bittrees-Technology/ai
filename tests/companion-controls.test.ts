@@ -89,6 +89,14 @@ test("authenticated controls create reviewed local memories, switch profiles and
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   try {
+    assert.equal((await call("/v1/inboxes/personal", "POST", {})).status, 201);
+    const inboxes = (await (await call("/v1/inboxes")).json()) as any;
+    assert.equal(inboxes.items[0].ownerId, owner.userId);
+    assert.deepEqual(
+      ((await (await call("/v1/inboxes/personal/conversations")).json()) as any)
+        .items,
+      [],
+    );
     assert.equal((await call("/v1/profiles", "POST", profile)).status, 201);
     assert.equal(
       (await call("/v1/profiles/default", "PUT", { profileId: "p" })).status,
