@@ -111,6 +111,8 @@ export function localApi({ store, owner, token, port }: LocalApiOptions) {
     res.json({
       tasks: store.export(owner),
       messages: store.exportMessages(owner),
+      profiles: store.profiles(owner),
+      defaultProfile: store.defaultProfile(owner),
     }),
   );
   app.delete("/v1/data", (req, res) => {

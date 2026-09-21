@@ -30,7 +30,17 @@ A task blocked on a failed prerequisite remains queued until cancelled; automati
 
 `LocalWorker` runs one local task at a time outside database transactions, renews its lease, saves the model profile/digest for each run and refuses stale/cancelled results. Outputs remain unreviewed drafts; no tool call is executed. The Ollama adapter uses only a literal loopback endpoint, rejects redirects and known remote models, checks the selected digest before and after generation, bounds responses, and supports abort signals. The separately installed runtime is trusted software; these checks are not an OS network sandbox.
 
-The adapter supports installed local models. Automatic Hugging Face/local-file import, resource scheduling, persistent profile editing, LM Studio and memory retrieval remain pending. Synthetic HTTP tests cover pin changes, cloud-model rejection, cancellation and no tool exposure.
+The adapter supports installed local models. Encrypted saved profiles are immutable; editing creates a new profile. Changing a default leaves existing tasks unchanged. Explicit switching fences the previous attempt and retains its model/run history. Synthetic HTTP tests cover pin changes, cloud-model rejection, cancellation and no tool exposure. Resource scheduling, LM Studio and memory retrieval remain pending.
+
+## Reviewed model imports
+
+`ModelImports` stages GGUF or Safetensors files selected by trusted local application code. Review binds file hashes, sizes, provenance, license and a selected prompt format before installation. It rejects pickle/code files, symlinks, repository execution hooks, mixed weight formats and excessive disk/memory estimates. Safetensors conversion depends on the installed Ollama version; unsupported architectures return a controlled error. Prompt templates are fixed reviewed options, not code downloaded from a model repository. These validations do not sandbox the runtime's native model parser.
+
+`HuggingFaceDownloads` downloads explicitly selected files at an exact commit, verifies available LFS hashes and sizes, restricts HTTPS redirects to approved hosts, and never forwards the Hub token to a CDN. Download review and installation review are separate steps. Imports do not authorize tools or app access, including for abliterated models. Capability and quality testing remain separate from successful installation.
+
+Interrupted creation is reconciled by inspecting its unique model name; it is never blindly retried. Partial downloads are removed, while staged imports and receipts remain until explicitly cleaned up. The importer currently exposes trusted module APIs only; file picker, progress UI, profile management UI and automatic staging cleanup are pending. Do not expose arbitrary filesystem paths through HTTP.
+
+Synthetic local GGUF import and generation passed with Qwen3 1.7B. A commit-pinned SmolLM2 135M Safetensors import converted and generated text on Ollama 0.15.5, but failed an exact-response quality check. Qwen3 Safetensors conversion is unsupported by this runtime version; its GGUF path works.
 
 ## Private memory module
 
