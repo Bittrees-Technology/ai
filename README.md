@@ -31,3 +31,9 @@ A task blocked on a failed prerequisite remains queued until cancelled; automati
 `LocalWorker` runs one local task at a time outside database transactions, renews its lease, saves the model profile/digest for each run and refuses stale/cancelled results. Outputs remain unreviewed drafts; no tool call is executed. The Ollama adapter uses only a literal loopback endpoint, rejects redirects and known remote models, checks the selected digest before and after generation, bounds responses, and supports abort signals. The separately installed runtime is trusted software; these checks are not an OS network sandbox.
 
 The adapter supports installed local models. Automatic Hugging Face/local-file import, resource scheduling, persistent profile editing, LM Studio and memory retrieval remain pending. Synthetic HTTP tests cover pin changes, cloud-model rejection, cancellation and no tool exposure.
+
+## Private memory module
+
+`MemoryStore` stores encrypted, owner-scoped candidates in a separate SQLite file. Only reviewed, unexpired and currently authorized records enter a temporary in-memory full-text index. Ranking reports relevance, freshness, bounded user feedback and pinned status. Model-derived statements remain unverified; retrieval does not change feedback. The trusted source adapter supplies access checks and must exclude private CRM owner notes before ingestion.
+
+Review/edit, pin, forget, source invalidation and permission-filtered export are implemented at module level. Memory is not yet connected to the HTTP API, UI or worker prompts. Each owner is limited to 1,000 entries in this pilot. Search indexing is ephemeral; memory database backups use the same encrypted backup helper with the memory store's key. Old backups retain their own lifecycle. Cross-app memory is not enabled by this module.
