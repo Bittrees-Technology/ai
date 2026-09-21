@@ -19,6 +19,9 @@ export class LocalWorker {
     private workerId = "local-worker",
     private memory?: MemoryStore,
   ) {}
+  stop() {
+    this.active?.abort.abort();
+  }
   cancel(id: string) {
     if (this.active?.id === id) this.active.abort.abort();
   }

@@ -2,7 +2,7 @@
 
 Local AI execution for explicitly authorized Bittrees app data.
 
-Status: local foundation under development. Contracts, an encrypted SQLite task/inbox store and an authenticated Express API factory are implemented and tested. A local Ollama adapter and serial model worker are implemented. No packaged launcher, deployed dashboard, production connectors or remote encryption is available yet. Repository creation does not activate any app permissions.
+Status: local foundation under development. Contracts, an encrypted SQLite task/inbox store and an authenticated Express API factory are implemented and tested. A local Ollama adapter and serial model worker are implemented. A development macOS launcher and local dashboard are available. Signed distribution, production connectors and remote encryption remain pending. Repository creation does not activate any app permissions.
 
 ## Development
 
@@ -22,7 +22,7 @@ Licensed under MIT. Imported models retain their own licenses.
 
 `Store` provides owner-scoped tasks, serial conversation claims, explicit dependencies, fencing generations, heartbeat leases, bounded transient retries, cancellation, event/outbox transactions, export and deletion. Inference and network actions must run outside its synchronous transactions. `localApi` authenticates every route, rejects untrusted Host/Origin headers and currently rejects all source references. Worker claims are internal and are not exposed as user HTTP routes.
 
-Prompts and results use AES-256-GCM with record-bound authenticated data. Input fingerprints use a keyed HMAC. IDs, status and timing metadata remain visible in SQLite; this is not full database encryption. The macOS Keychain adapter loads or creates the storage key and refuses to replace a missing key for existing data. A packaged launcher is still pending. Whole-file encrypted backup/restore is available for snapshots up to 32 MiB; restore refuses to overwrite an existing database. Keep the original key separately available: backups contain no key. An older backup can retain deleted content.
+Prompts and results use AES-256-GCM with record-bound authenticated data. Input fingerprints use a keyed HMAC. IDs, status and timing metadata remain visible in SQLite; this is not full database encryption. The macOS Keychain adapter loads or creates the storage key and refuses to replace a missing key for existing data. The development launcher uses this key-store adapter; signed packaging is pending. Whole-file encrypted backup/restore is available for snapshots up to 32 MiB; restore refuses to overwrite an existing database. Keep the original key separately available: backups contain no key. An older backup can retain deleted content.
 
 A task blocked on a failed prerequisite remains queued until cancelled; automatic dependency-failure propagation and configurable capacity are pending. Messages, read/delivery/acknowledgement receipts and due/closed/overdue check-ins are persisted. Messages and tasks share conversation sequencing; receipts do not complete tasks. Personal-device inboxes may name an agent or manager but cannot add another user. No source-app side effects are attempted or retried by this foundation.
 
@@ -55,4 +55,15 @@ Authenticated loopback routes expose installed models (`GET /v1/models`), immuta
 
 Memory routes are enabled only when a trusted `MemoryStore` is supplied to `localApi`. `POST /v1/requests/:id/memories` accepts a user-written candidate attached to that completed local task, never caller-selected source authority. `PATCH /v1/memories/:id` requires the current revision. Search and feedback use POST to keep text out of request URLs. Combined export includes authorized memories; deleting all local task data also deletes owner memory before tasks. Separate memory deletion requires `X-Confirm-Delete: all-local-memory`. Existing older exports/backups retain their separate lifecycle.
 
-The API remains a factory, pending the launcher and dashboard. Generated OpenAPI currently documents only the initial request/message/command subset; the routes above are implemented and covered by integration tests. No public HTTP service is enabled by importing this module.
+The launcher connects this API to the local dashboard. Generated OpenAPI currently documents only the initial request/message/command subset; the routes above are implemented and covered by integration tests. No public HTTP service is enabled by importing this module.
+
+
+## Development launcher and dashboard
+
+On macOS with Node 24 and Ollama installed, run npm ci, npm run build, then npm start from this repository. Open http://127.0.0.1:43127. Enter the one-time code from the private file whose location is printed by the launcher. Codes expire after ten minutes and ten failed attempts; restart to pair again. The browser receives an HttpOnly, SameSite=Strict session cookie, valid for at most eight hours. Tokens are not passed in URLs or exposed to client JavaScript. Locking revokes the session. The service accepts mutations only from its exact local origin; browser pairing grants no source-app permissions.
+
+Data lives in ~/Library/Application Support/Bittrees AI/; its storage key stays in macOS Keychain. The service reserves its loopback port before accessing the key/store, so a second instance cannot replace pairing or initialize competing keys. Stop with Ctrl+C. Shutdown stops the worker, drains HTTP requests and removes the pairing-code file; restarting invalidates prior browser sessions. Interrupted generations are not automatically resumed as though completed.
+
+The dashboard implements task creation and detail/history, pause/resume/cancel, model profiles/defaults/switching, memory candidates/review/edit/pin/forget, explicit memory selection, export and local deletion. It labels unfinished inbox composition, model imports and app connections. Refreshing the browser loses unsent text; failed submissions retain it while the page remains open and reuse the same idempotency key for an unchanged retry. Retained task content is not automatically shared with any external app.
+
+This is a development build, not a signed installer or public release. Update by stopping the companion, backing up the data and original key, checking out a reviewed release, reinstalling exact lockfile dependencies and rebuilding. Do not downgrade a store schema without a compatible backup. Installer signing, automatic update integrity, visual/keyboard acceptance, device resource display and remaining P3 features are still pending.

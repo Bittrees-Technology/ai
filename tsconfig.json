@@ -11,12 +11,18 @@
     "skipLibCheck": true,
     "types": [
       "node"
+    ],
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2023",
+      "DOM"
     ]
   },
   "include": [
     "modules/**/*.ts",
     "apps/**/*.ts",
     "scripts/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "apps/**/*.tsx"
   ]
 }
