@@ -5,7 +5,9 @@ import { Store, StoreError, type Owner } from "../../modules/storage/store.js";
 import { requestSchema } from "../../modules/contracts/index.js";
 import { MemoryStore } from "../../modules/memory/store.js";
 import { Ollama, ModelError } from "../../modules/models/ollama.js";
+import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  crm?: CrmConnector;
   store: Store;
   owner: Owner;
   token: string;
@@ -22,6 +24,7 @@ export function localApi({
   memory,
   runtime,
   cancelRun,
+  crm,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
   const app = express();
@@ -50,8 +53,32 @@ export function localApi({
   });
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/health", (_req, res) =>
-    res.json({ status: "ok", mode: "local", connectorsEnabled: false }),
+    res.json({ status: "ok", mode: "local", connectorsEnabled: !!crm }),
   );
+  app.get("/v1/connections/crm", async (_req, res) => {
+    res.json({ available: !!crm, connection: crm ? await crm.status() : null });
+  });
+  if (crm) {
+    app.post("/v1/connections/crm/begin", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await crm.begin());
+    });
+    app.post("/v1/connections/crm/finish", async (req, res) => {
+      const body = z
+        .strictObject({
+          id: z.uuid(),
+          code: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .parse(req.body);
+      res.json(await crm.finish(body.id, body.code));
+    });
+    app.delete("/v1/connections/crm/local", async (req, res) => {
+      if (req.header("X-Confirm-Delete") !== "local-crm-credential")
+        throw new StoreError("INVALID_INPUT");
+      await crm.forgetLocal();
+      res.status(204).end();
+    });
+  }
   app.post("/v1/requests", (req, res) => {
     const body = requestSchema.parse(req.body);
     // Source adapters and delegation revalidation are not implemented in this increment.
@@ -279,7 +306,9 @@ export function localApi({
   );
   const errors: ErrorRequestHandler = (err, _req, res, _next) => {
     const code =
-      err instanceof StoreError || err instanceof ModelError
+      err instanceof StoreError ||
+      err instanceof ModelError ||
+      err instanceof ConnectorError
         ? err.code
         : err instanceof ZodError || err instanceof SyntaxError
           ? "INVALID_INPUT"

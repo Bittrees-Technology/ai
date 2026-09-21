@@ -123,6 +123,13 @@ export const errorSchema = z.strictObject({
     "MODEL_CHANGED",
     "REMOTE_MODEL_DENIED",
     "INVALID_OUTPUT",
+    "CONNECTION_REQUIRED",
+    "CONNECTION_EXPIRED",
+    "CONNECTION_BUSY",
+    "INVALID_CONNECTION",
+    "SOURCE_UNAVAILABLE",
+    "SOURCE_DENIED",
+    "INVALID_SOURCE",
   ]),
   correlationId: id,
 });

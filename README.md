@@ -74,3 +74,14 @@ This is a development build, not a signed installer or public release. Update by
 The local Inbox supports inbox discovery, recent conversation previews, bounded message pages, local messages and replies, optional reply deadlines, explicit read/acknowledgement receipts and open/overdue/closed check-ins. Personal inbox creation derives its user and tenant on the server. Every query and receipt remains owner-scoped; reading does not complete tasks, and only a saved reply closes its parent check-in. Open check-ins are prioritized over closed ones.
 
 Messages are local records, not outbound mail or implicit model tasks. Unsent text survives switching dashboard sections while the page remains open, but not a reload. An unchanged failed save reuses its idempotency key. The conversation list currently shows the 100 most recent conversations; full export retains all records. Browser visual/keyboard acceptance remains pending.
+
+
+## CRM connection pilot
+
+The Connections panel can initiate source-owned CRM consent using a one-time PKCE challenge. The user selects records, reviews read-only scope and expiry in CRM, then pastes the short-lived code into the companion. Source activation remains disabled by default in CRM; this release does not enable it. A source operator must separately enable that pilot. No automatic record reads, draft execution, writes or external-source memory are wired yet.
+
+One CRM identity is stored per personal macOS profile in the separate org.bittrees.ai.connector.crm Keychain entry. Tokens never enter browser responses, exports, prompts or URLs. The panel reports stored/expired credentials, not an unverified claim of current access. Source subject/workspace and exact selected record count are visible; no SSO or identity match is inferred.
+
+The module restricts requests to https://crm.bittrees.org, rejects redirects, uses a 15-second deadline and a 2 MB response bound, validates strict read responses and exact identity/resource scope, and checks local expiry/removal before releasing source data. Every read reaches the source for current permission checks. Network errors are sanitized. A failed/uncertain one-time exchange requires new consent; it is never blindly replayed.
+
+Revoke the grant on CRM's private consent page, then remove the local credential in Connections. Local removal alone does not revoke the source grant. Task/memory deletion and export do not manage connector credentials; Connections owns that separate control. Removing the credential fences pending module reads. A future source-supported disconnect endpoint will support a combined revoke flow. UI visual acceptance and selected-record draft integration remain pending.
