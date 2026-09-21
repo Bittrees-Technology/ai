@@ -224,3 +224,38 @@ test("authenticated encryption binds content to its record and rejects wrong key
   cipher[cipher.length - 1]! ^= 1;
   assert.throws(() => v.open(cipher, "record:1"));
 });
+
+test("independent database connections cannot claim the same live task", () => {
+  const f = fixture();
+  const second = new Store(f.path, f.vault, () => 1000);
+  try {
+    const a = f.store.create(alice, input(), "k");
+    const claim = f.store.claim(alice, "first");
+    assert.equal(claim?.task.id, a.id);
+    assert.equal(second.claim(alice, "second"), null);
+  } finally {
+    second.close();
+    f.close();
+  }
+});
+test("version-one migration preserves encrypted tasks and refuses a wrong key", () => {
+  const f = fixture();
+  try {
+    const a = f.store.create(alice, input(), "k");
+    f.store.db.exec(
+      "DROP TABLE checkins; DROP TABLE receipts; DROP TABLE messages; DROP TABLE inboxes; DROP TABLE vault_meta; ALTER TABLE runs DROP COLUMN model_snapshot; PRAGMA user_version=1;",
+    );
+    f.reopen();
+    assert.equal(
+      f.store.get(alice, a.id).input.prompt,
+      "SENTINEL_PRIVATE_PROMPT",
+    );
+    assert.throws(
+      () => new Store(f.path, new Vault(randomBytes(32))),
+      /authenticate|authenticat|decrypt/i,
+    );
+    assert.equal(f.store.get(alice, a.id).id, a.id);
+  } finally {
+    f.close();
+  }
+});
