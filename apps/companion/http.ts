@@ -1,15 +1,28 @@
 import express, { type ErrorRequestHandler } from "express";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { Store, StoreError, type Owner } from "../../modules/storage/store.js";
 import { requestSchema } from "../../modules/contracts/index.js";
+import { MemoryStore } from "../../modules/memory/store.js";
+import { Ollama, ModelError } from "../../modules/models/ollama.js";
 export interface LocalApiOptions {
   store: Store;
   owner: Owner;
   token: string;
   port: number;
+  memory?: MemoryStore;
+  runtime?: Pick<Ollama, "listModels" | "pin">;
+  cancelRun?: (id: string) => void;
 }
-export function localApi({ store, owner, token, port }: LocalApiOptions) {
+export function localApi({
+  store,
+  owner,
+  token,
+  port,
+  memory,
+  runtime,
+  cancelRun,
+}: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
   const app = express();
   app.disable("x-powered-by");
@@ -46,6 +59,8 @@ export function localApi({ store, owner, token, port }: LocalApiOptions) {
       return res
         .status(403)
         .json({ error: "FORBIDDEN", correlationId: res.locals.correlationId });
+    if (body.memoryIds?.length && !memory)
+      throw new StoreError("INVALID_INPUT");
     res
       .status(202)
       .json(store.create(owner, body, req.header("Idempotency-Key") ?? ""));
@@ -56,9 +71,125 @@ export function localApi({ store, owner, token, port }: LocalApiOptions) {
   app.get("/v1/requests/:id", (req, res) =>
     res.json(store.get(owner, req.params.id)),
   );
-  app.post("/v1/requests/:id/commands", (req, res) =>
-    res.json(store.command(owner, req.params.id, req.body)),
+  app.post("/v1/requests/:id/commands", (req, res) => {
+    const task = store.command(owner, req.params.id, req.body);
+    if (task.status === "cancelled" || task.status === "paused")
+      cancelRun?.(task.id);
+    res.json(task);
+  });
+  app.get("/v1/requests/:id/runs", (req, res) =>
+    res.json({ items: store.runHistory(owner, req.params.id) }),
   );
+  app.post("/v1/requests/:id/model", (req, res) => {
+    const body = z
+      .strictObject({
+        profileId: z.string(),
+        expectedRevision: z.number().int().positive(),
+      })
+      .parse(req.body);
+    const task = store.switchModel(
+      owner,
+      req.params.id,
+      body.profileId,
+      body.expectedRevision,
+    );
+    cancelRun?.(task.id);
+    res.json(task);
+  });
+  app.get("/v1/models", async (_req, res) => {
+    if (!runtime) throw new ModelError("MODEL_UNAVAILABLE");
+    res.json({ items: await runtime.listModels() });
+  });
+  app.get("/v1/profiles", (_req, res) =>
+    res.json({
+      items: store.profiles(owner),
+      defaultProfile: store.defaultProfile(owner),
+    }),
+  );
+  app.post("/v1/profiles", async (req, res) => {
+    if (!runtime) throw new ModelError("MODEL_UNAVAILABLE");
+    const pinned = await runtime.pin(req.body);
+    res.status(201).json(store.addProfile(owner, pinned.profile));
+  });
+  app.put("/v1/profiles/default", (req, res) => {
+    const body = z.strictObject({ profileId: z.string() }).parse(req.body);
+    store.setDefaultProfile(owner, body.profileId);
+    res.status(204).end();
+  });
+  if (memory) {
+    app.get("/v1/memories", async (_req, res) =>
+      res.json({ items: await memory.export(owner) }),
+    );
+    app.post("/v1/memories/search", async (req, res) => {
+      const body = z
+        .strictObject({ query: z.string().max(512) })
+        .parse(req.body);
+      res.json({ items: await memory.search(owner, body.query) });
+    });
+    app.post("/v1/requests/:id/memories", async (req, res) => {
+      const body = z
+        .strictObject({
+          text: z.string().min(1).max(16000),
+          type: z.enum([
+            "preference",
+            "fact",
+            "decision",
+            "outcome",
+            "procedure",
+          ]),
+        })
+        .parse(req.body);
+      const task = store.get(owner, req.params.id);
+      if (task.status !== "completed" || task.input.sourceRefs.length)
+        throw new StoreError("CONFLICT");
+      res.status(201).json(
+        await memory.add(owner, {
+          ...body,
+          origin: "user",
+          sources: [
+            {
+              app: "local",
+              tenantId: owner.tenantId,
+              resourceId: task.id,
+              revision: String(task.revision),
+            },
+          ],
+        }),
+      );
+    });
+    app.patch("/v1/memories/:id", async (req, res) => {
+      const body = z
+        .strictObject({
+          revision: z.number().int().positive(),
+          approve: z.boolean().optional(),
+          text: z.string().min(1).max(16000).optional(),
+          pinned: z.boolean().optional(),
+        })
+        .parse(req.body);
+      const { revision, ...change } = body;
+      res.json(await memory.review(owner, req.params.id, revision, change));
+    });
+    app.delete("/v1/memories/:id", (req, res) => {
+      memory.forget(owner, req.params.id);
+      res.status(204).end();
+    });
+    app.post("/v1/memories/:id/feedback", async (req, res) => {
+      const body = z
+        .strictObject({
+          id: z.string(),
+          outcome: z.enum(["accepted", "edited", "rejected"]),
+        })
+        .parse(req.body);
+      await memory.feedback(owner, req.params.id, body.id, body.outcome);
+      res.status(204).end();
+    });
+    app.delete("/v1/memories", (req, res) => {
+      if (req.header("X-Confirm-Delete") !== "all-local-memory")
+        throw new StoreError("INVALID_INPUT");
+      memory.deleteAll(owner);
+      res.status(204).end();
+    });
+  }
   app.get("/v1/events", (req, res) => {
     const after = Number(req.query.after ?? 0);
     if (!Number.isSafeInteger(after) || after < 0)
@@ -107,17 +238,19 @@ export function localApi({ store, owner, token, port }: LocalApiOptions) {
   app.get("/v1/checkins", (_req, res) =>
     res.json({ items: store.checkins(owner) }),
   );
-  app.get("/v1/export", (_req, res) =>
+  app.get("/v1/export", async (_req, res) =>
     res.json({
       tasks: store.export(owner),
       messages: store.exportMessages(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
+      memories: memory ? await memory.export(owner) : [],
     }),
   );
   app.delete("/v1/data", (req, res) => {
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");
+    memory?.deleteAll(owner);
     store.deleteAll(owner);
     res.status(204).end();
   });
@@ -128,19 +261,21 @@ export function localApi({ store, owner, token, port }: LocalApiOptions) {
   );
   const errors: ErrorRequestHandler = (err, _req, res, _next) => {
     const code =
-      err instanceof StoreError
+      err instanceof StoreError || err instanceof ModelError
         ? err.code
         : err instanceof ZodError || err instanceof SyntaxError
           ? "INVALID_INPUT"
           : "INTERNAL";
     const status =
-      code === "NOT_FOUND"
-        ? 404
-        : code === "CONFLICT" || code === "STALE_CLAIM"
-          ? 409
-          : code === "INTERNAL"
-            ? 500
-            : 400;
+      code === "MODEL_UNAVAILABLE"
+        ? 503
+        : code === "NOT_FOUND"
+          ? 404
+          : code === "CONFLICT" || code === "STALE_CLAIM"
+            ? 409
+            : code === "INTERNAL"
+              ? 500
+              : 400;
     // Do not echo parser errors, submitted content, headers or secrets into responses/logs.
     res
       .status(status)
