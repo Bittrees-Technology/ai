@@ -1,3 +1,5 @@
+import { ImportError } from "../../modules/models/imports.js";
+import type { ImportJobs } from "../../modules/models/jobs.js";
 import { CrmPublications } from "../../modules/connectors/crm-publications.js";
 import express, { type ErrorRequestHandler } from "express";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -11,6 +13,7 @@ import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
+  imports?: ImportJobs;
   crm?: CrmConnector;
   sources?: CrmTasks;
   cancelSourceRun?: () => void;
@@ -34,6 +37,7 @@ export function localApi({
   sources,
   cancelSourceRun,
   deviceStatus,
+  imports,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
   const publications =
@@ -67,6 +71,36 @@ export function localApi({
   app.use(express.json({ limit: "64kb", strict: true }));
   if (deviceStatus)
     app.get("/v1/device", async (_req, res) => res.json(await deviceStatus()));
+  if (imports) {
+    app.get("/v1/imports", (_req, res) => res.json({ items: imports.list() }));
+    app.post("/v1/imports/local", (req, res) =>
+      res.status(202).json(imports.local(req.body)),
+    );
+    app.post("/v1/imports/huggingface", (req, res) =>
+      res.status(202).json(imports.huggingface(req.body)),
+    );
+    for (const action of ["download", "install"] as const)
+      app.post(`/v1/imports/:id/${action}`, (req, res) => {
+        const { digest } = z
+          .strictObject({ digest: z.string().regex(/^[a-f0-9]{64}$/) })
+          .parse(req.body);
+        res.status(202).json(imports[action](req.params.id, digest));
+      });
+    app.post("/v1/imports/:id/reconcile", (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.status(202).json(imports.reconcile(req.params.id));
+    });
+    app.post("/v1/imports/:id/cancel", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await imports.cancel(req.params.id));
+    });
+    app.delete("/v1/imports/:id", async (req, res) => {
+      if (req.header("X-Confirm-Delete") !== "local-import-record-and-files")
+        throw new StoreError("INVALID_INPUT");
+      await imports.remove(req.params.id);
+      res.status(204).end();
+    });
+  }
   app.get("/v1/health", (_req, res) =>
     res.json({ status: "ok", mode: "local", connectorsEnabled: !!crm }),
   );
@@ -442,6 +476,7 @@ export function localApi({
   );
   const errors: ErrorRequestHandler = (err, _req, res, _next) => {
     const code =
+      err instanceof ImportError ||
       err instanceof StoreError ||
       err instanceof ModelError ||
       err instanceof ConnectorError

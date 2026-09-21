@@ -1,3 +1,5 @@
+import { ImportJobs } from "../../modules/models/jobs.js";
+import { pickModelFiles } from "./model-picker.js";
 import { deviceStatus } from "./device.js";
 import { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import {
@@ -54,10 +56,14 @@ const exists = async (path: string) => {
 const key = await loadStorageKey(
   macKeychainEntry("personal"),
   (await exists(join(directory, "tasks.db"))) ||
-    (await exists(join(directory, "memory.db"))),
+    (await exists(join(directory, "memory.db"))) ||
+    (await exists(join(directory, "model-imports", "jobs.db"))),
 );
 const store = new Store(join(directory, "tasks.db"), new Vault(key)),
   owner = { userId: "local-owner", tenantId: "personal" };
+const importDirectory = join(directory, "model-imports");
+await mkdir(importDirectory, { recursive: true, mode: 0o700 });
+const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
 const memory = new MemoryStore(
   join(directory, "memory.db"),
   new Vault(key),
@@ -85,6 +91,7 @@ server.on(
   "request",
   dashboardServer({
     deviceStatus: () => deviceStatus(directory),
+    imports,
     store,
     memory,
     owner,
@@ -116,8 +123,10 @@ async function stop() {
   worker.stop();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
+  await imports.shutdown();
   await running?.catch(() => {});
   await closed;
+  imports.close();
   memory.close();
   store.close();
   if (started) await rm(codePath, { force: true });
