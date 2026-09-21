@@ -57,6 +57,7 @@ export class ImportJobs {
     { abort: AbortController; done: Promise<void> }
   >();
   private stopped = false;
+  private ready = false;
   constructor(
     private root: string,
     private vault: Vault,
@@ -92,6 +93,7 @@ export class ImportJobs {
             error: "INTERRUPTED",
           });
         }
+      this.ready = true;
     } catch (error) {
       this.db.close();
       throw error;
@@ -125,7 +127,29 @@ export class ImportJobs {
       .prepare("SELECT payload FROM jobs WHERE id=?")
       .get(id) as { payload: Buffer } | undefined;
     if (!row) throw new ImportError("REVIEW_MISMATCH");
-    return this.vault.open<ImportJob>(row.payload, "import-job:" + id);
+    const job = this.vault.open<ImportJob>(row.payload, "import-job:" + id);
+    // If saving an outcome failed, never present a dead operation as still running or
+    // let cancel erase uncertainty about a runtime request that may have committed.
+    if (
+      this.ready &&
+      !this.active.has(id) &&
+      [
+        "selecting",
+        "reviewing",
+        "downloading",
+        "installing",
+        "reconciling",
+      ].includes(job.state)
+    ) {
+      return {
+        ...job,
+        state: (["installing", "reconciling"].includes(job.state)
+          ? "uncertain"
+          : "interrupted") as State,
+        error: "INTERRUPTED",
+      };
+    }
+    return job;
   }
   list(): ImportJob[] {
     return (
