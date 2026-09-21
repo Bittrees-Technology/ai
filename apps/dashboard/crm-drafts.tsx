@@ -1,3 +1,4 @@
+import { AutoNoteReviewControls } from "./autonote-reviews.js";
 import { CrmPublicationControls } from "./crm-publications.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (
@@ -239,7 +240,7 @@ export function SourceDraftDetail({
             Unreviewed draft. Verify citations and claims before use.
             {sourceApp === "crm"
               ? "Publication status is shown separately below."
-              : "Proposed owners and deadlines are unconfirmed. Reviewed AutoNote saves are not enabled yet."}
+              : "Proposed owners and deadlines are unconfirmed. Send for AutoNote review using the controls below."}
           </p>
           <details>
             <summary>Source references and run history</summary>
@@ -281,6 +282,9 @@ export function SourceDraftDetail({
             Export this task with current permission
           </button>
         </>
+      )}
+      {sourceApp === "autonote" && (
+        <AutoNoteReviewControls key={id} id={id} api={api} onError={onError} />
       )}
       {sourceApp === "crm" && (
         <CrmPublicationControls key={id} id={id} api={api} onError={onError} />

@@ -257,7 +257,7 @@ function ConnectionCard({
       <p>
         {app === "crm"
           ? "Drafts stay local until you explicitly send a proposal for CRM review."
-          : "Drafts remain local. Reviewed saves to AutoNote are not enabled yet."}{" "}
+          : "Drafts stay local until you explicitly send them for review in AutoNote."}{" "}
         Cross-app memory is not enabled.
       </p>
     </article>
