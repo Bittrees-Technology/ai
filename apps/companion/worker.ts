@@ -24,6 +24,10 @@ export class LocalWorker {
   stop() {
     this.active?.abort.abort();
   }
+  cancelSource() {
+    if (this.active && this.store.sourceBinding(this.owner, this.active.id))
+      this.active.abort.abort();
+  }
   cancel(id: string) {
     if (this.active?.id === id) this.active.abort.abort();
   }

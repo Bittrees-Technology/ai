@@ -96,3 +96,12 @@ The worker fetches current selected records before inference and revalidates the
 Source-bound detail and run-history APIs revalidate access before returning derived content. List and bulk export conservatively conceal derived results and references; they are not complete exports of source-derived content. Source outages also conceal results. Existing independent exports cannot be retracted. Current task storage retains encrypted results until deletion, but this is not authority to expose them after revoke.
 
 The launcher wires the source adapter, worker and guarded read projection. User-facing selected-record task creation and permission-aware detailed views/exports are still being integrated; the generic create endpoint remains local-only. This is an engine increment, not complete CRM pilot acceptance. Schema 5 cannot be opened by earlier binaries; use a compatible encrypted backup for rollback.
+
+
+## Selected-record CRM draft workflow
+
+Connections → CRM now loads the permitted record names on demand, lets the user select a subset and a local model profile, and creates an idempotent local draft request. The trusted adapter derives authority and source revisions; the browser cannot submit them. No destination writes are performed. The source feature still requires separate operator activation.
+
+Source task details refresh their access-checked result/history every 15 seconds while focused. Losing focus clears the source view and record-choice list; late choice responses cannot restore a cleared view. This is periodic revalidation, not instantaneous revocation of already displayed data. Disconnect/local credential removal signals active source generation to abort.
+
+Export this task uses GET /v1/requests/:id/export and revalidates current source authority before returning its complete task/result and run history. The bulk export continues to conceal source-derived results; export an authorized source task individually. A denied or offline source returns an error instead of a partial success. The synthetic HTTP workflow is tested; actual browser/keyboard acceptance, real-source/local-model pilot quality, reviewed CRM writes and external memory remain pending.

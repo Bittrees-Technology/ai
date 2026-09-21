@@ -1,3 +1,4 @@
+import { CrmDrafts } from "./crm-drafts.js";
 import React, { useEffect, useState } from "react";
 type Api = (
   path: string,
@@ -16,7 +17,11 @@ type Connection = {
 export function Connections({
   api,
   onError,
+  profiles,
+  onCreated,
 }: {
+  profiles: { id: string; model: string }[];
+  onCreated: (id: string) => void;
   api: Api;
   onError: (e: unknown) => void;
 }) {
@@ -85,6 +90,14 @@ export function Connections({
                   : "Credential saved on this Mac"}
               . Current access is checked with CRM on every read.
             </p>
+            {current.connection.state === "stored" && (
+              <CrmDrafts
+                api={api}
+                onError={onError}
+                profiles={profiles}
+                onCreated={onCreated}
+              />
+            )}
             <dl>
               <dt>Source user</dt>
               <dd>{current.connection.subjectId}</dd>
@@ -235,8 +248,8 @@ export function Connections({
           </>
         )}
         <p>
-          CRM drafts and reviewed writes are still being integrated. No
-          automatic reads or cross-app memory are enabled.
+          Drafts remain local. Reviewed writes and cross-app memory are not
+          enabled.
         </p>
       </article>
       {["AutoNote", "Roles", "Mail", "News"].map((name) => (
