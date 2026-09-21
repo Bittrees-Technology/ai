@@ -1,3 +1,4 @@
+import { DeviceResources } from "./device.js";
 import { SourceDraftDetail } from "./crm-drafts.js";
 import { Connections } from "./connections.js";
 import { Inbox } from "./inbox.js";
@@ -739,6 +740,7 @@ function App() {
                   The companion runs locally. Remote access and shared-device
                   execution are disabled.
                 </p>
+                <DeviceResources api={api} />
                 <h3>Your data</h3>
                 <p>
                   Tasks and memory stay until you delete them. Your key is

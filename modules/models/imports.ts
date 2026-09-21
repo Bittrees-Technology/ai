@@ -5,8 +5,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename, join, resolve } from "node:path";
 import { z } from "zod";
 
-const maxFileBytes = 16 * 1024 ** 3;
-const maxTotalBytes = 24 * 1024 ** 3;
+export const maxFileBytes = 16 * 1024 ** 3;
+export const maxTotalBytes = 24 * 1024 ** 3;
 const jsonFiles = new Set([
   "config.json",
   "tokenizer.json",
@@ -86,6 +86,7 @@ export interface ImportReview {
 export class ImportError extends Error {
   constructor(
     public code:
+      | "IMPORT_BUSY"
       | "UNSUPPORTED_FILE"
       | "INVALID_ARTIFACT"
       | "CAPACITY"
@@ -439,6 +440,29 @@ export class ModelImports {
     return { state: "installed" as const, ...metadata };
   }
   async commit(id: string, reviewDigest: string, signal?: AbortSignal) {
+    this.folder(id);
+    if (this.active.has(id)) throw new ImportError("IMPORT_BUSY");
+    const abort = new AbortController();
+    this.active.set(id, abort);
+    try {
+      return await this.commitOnce(
+        id,
+        reviewDigest,
+        AbortSignal.any([
+          abort.signal,
+          AbortSignal.timeout(30 * 60_000),
+          ...(signal ? [signal] : []),
+        ]),
+      );
+    } finally {
+      this.active.delete(id);
+    }
+  }
+  private async commitOnce(
+    id: string,
+    reviewDigest: string,
+    requestSignal: AbortSignal,
+  ) {
     const folder = this.folder(id);
     const review = JSON.parse(
       await readFile(join(folder, "review.json"), "utf8"),
@@ -447,12 +471,6 @@ export class ModelImports {
     if (stored !== reviewDigest || stored !== reviewHash(rest))
       throw new ImportError("REVIEW_MISMATCH");
     if (review.expiresAt <= this.now()) throw new ImportError("REVIEW_EXPIRED");
-    const abort = new AbortController();
-    const requestSignal = AbortSignal.any([
-      abort.signal,
-      AbortSignal.timeout(30 * 60_000),
-      ...(signal ? [signal] : []),
-    ]);
     const files: Record<string, string> = {};
     for (const file of review.files) {
       const path = join(folder, fileName.parse(file.name));
@@ -464,7 +482,6 @@ export class ModelImports {
     // Reserve this import exactly once. On ambiguous runtime completion, inspect this unique model name before retrying.
     const lock = await open(join(folder, "committing"), "wx", 0o600);
     await lock.close();
-    this.active.set(id, abort);
     try {
       for (const file of review.files) {
         requestSignal.throwIfAborted();
@@ -565,8 +582,6 @@ export class ModelImports {
         { mode: 0o600 },
       );
       throw error;
-    } finally {
-      this.active.delete(id);
     }
   }
 }
