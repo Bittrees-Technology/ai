@@ -71,6 +71,144 @@
       ],
       "additionalProperties": false
     },
+    "sourceBinding": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "authority": {
+          "type": "object",
+          "properties": {
+            "userId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            },
+            "subjectId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            },
+            "tenantId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            },
+            "deviceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            },
+            "agentId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            },
+            "sourceApp": {
+              "type": "string",
+              "enum": [
+                "local",
+                "crm",
+                "autonote",
+                "roles",
+                "mail",
+                "news",
+                "mcp"
+              ]
+            },
+            "grantId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            },
+            "policyRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            }
+          },
+          "required": [
+            "userId",
+            "subjectId",
+            "tenantId",
+            "deviceId",
+            "sourceApp",
+            "grantId",
+            "policyRevision"
+          ],
+          "additionalProperties": false
+        },
+        "refs": {
+          "minItems": 1,
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "crm",
+                  "autonote",
+                  "roles",
+                  "mail",
+                  "news",
+                  "mcp"
+                ]
+              },
+              "tenantId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9:_-]+$"
+              },
+              "resourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9:_-]+$"
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9:_-]+$"
+              }
+            },
+            "required": [
+              "app",
+              "tenantId",
+              "resourceId",
+              "revision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "projectionHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "authority",
+        "refs",
+        "expiresAt",
+        "projectionHash"
+      ],
+      "additionalProperties": false
+    },
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

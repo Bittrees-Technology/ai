@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Vault } from "./vault.js";
 import {
   requestSchema,
+  sourceBindingSchema,
+  type SourceBinding,
   commandSchema,
   modelProfileSchema,
   inboxSchema,
@@ -79,7 +81,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 4) {
+    if (version > 5) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -127,7 +129,10 @@ CREATE TABLE IF NOT EXISTS checkins(id TEXT PRIMARY KEY,message_id TEXT NOT NULL
         this.db
           .exec(`CREATE TABLE IF NOT EXISTS model_profiles(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,payload BLOB NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(id,user_id,tenant_id));
 CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,profile_id TEXT NOT NULL,PRIMARY KEY(user_id,tenant_id),FOREIGN KEY(profile_id,user_id,tenant_id) REFERENCES model_profiles(id,user_id,tenant_id));`);
-        this.db.pragma("user_version = 4");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS task_sources(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL)",
+        );
+        this.db.pragma("user_version = 5");
       })();
     } catch (error) {
       this.db.close();
@@ -282,13 +287,40 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
       .run(eid, id, r.revision, type, this.now());
     this.db.prepare("INSERT INTO outbox(event_id) VALUES(?)").run(eid);
   }
-  create(owner: Owner, raw: unknown, key: string): Task {
+  sourceBinding(owner: Owner, id: string): SourceBinding | null {
+    this.row(owner, id);
+    const row = this.db
+      .prepare("SELECT payload FROM task_sources WHERE task_id=?")
+      .get(id) as { payload: Buffer } | undefined;
+    return row
+      ? sourceBindingSchema.parse(this.vault.open(row.payload, "source:" + id))
+      : null;
+  }
+  /** The fourth argument is constructed only by a trusted source adapter, never HTTP input. */
+  create(
+    owner: Owner,
+    raw: unknown,
+    key: string,
+    source?: SourceBinding,
+  ): Task {
     const input = requestSchema.parse(raw);
+    const binding = source ? sourceBindingSchema.parse(source) : undefined;
+    if (
+      binding
+        ? binding.authority.userId !== owner.userId ||
+          JSON.stringify(binding.refs) !== JSON.stringify(input.sourceRefs) ||
+          input.memoryIds?.length ||
+          Date.parse(binding.expiresAt) <= this.now()
+        : input.sourceRefs.length
+    )
+      throw new StoreError("INVALID_INPUT");
     if (!/^[A-Za-z0-9:_-]{1,128}$/.test(key))
       throw new StoreError("INVALID_INPUT");
     return this.db
       .transaction(() => {
-        const hash = this.vault.fingerprint(input);
+        const hash = this.vault.fingerprint(
+          binding ? { input, binding } : input,
+        );
         const previous = this.db
           .prepare(
             "SELECT hash,task_id FROM idempotency WHERE user_id=? AND tenant_id=? AND key=?",
@@ -336,6 +368,10 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
             this.vault.seal(input, "task:" + id),
             hash,
           );
+        if (binding)
+          this.db
+            .prepare("INSERT INTO task_sources VALUES(?,?)")
+            .run(id, this.vault.seal(binding, "source:" + id));
         for (const dep of new Set(input.dependencies))
           this.db.prepare("INSERT INTO dependencies VALUES(?,?)").run(id, dep);
         this.db
