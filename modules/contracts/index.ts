@@ -52,9 +52,12 @@ export const sourceBindingSchema = z
   })
   .refine(
     (b) =>
-      b.authority.sourceApp === "crm" &&
+      ["crm", "autonote"].includes(b.authority.sourceApp) &&
+      (b.authority.sourceApp !== "autonote" || b.refs.length === 1) &&
       b.refs.every(
-        (r) => r.app === "crm" && r.tenantId === b.authority.tenantId,
+        (r) =>
+          r.app === b.authority.sourceApp &&
+          r.tenantId === b.authority.tenantId,
       ) &&
       new Set(b.refs.map((r) => r.resourceId)).size === b.refs.length,
   );

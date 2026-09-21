@@ -1,13 +1,11 @@
-import { createHash } from "node:crypto";
-import { CrmConnector, ConnectorError } from "./crm.js";
+import { ConnectorError } from "./crm.js";
+import { AutoNoteConnector } from "./autonote.js";
 import type { SourceBinding, TaskInput } from "../contracts/index.js";
 import { Store, type Owner } from "../storage/store.js";
-const fingerprint = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
 /** Server-side source adapter. Never accepts caller-selected subject, grant, revision or authority. */
-export class CrmTasks {
+export class AutoNoteTasks {
   constructor(
-    private readonly connector: CrmConnector,
+    private readonly connector: AutoNoteConnector,
     private readonly owner: Owner,
     private readonly deviceId: string,
   ) {}
@@ -15,54 +13,59 @@ export class CrmTasks {
     const status = await this.connector.status();
     if (!status || status.state !== "stored")
       throw new ConnectorError("CONNECTION_REQUIRED");
-    const snapshot = await this.connector.read(status.recordIds);
+    const snapshot = await this.connector.read(status.meetingId);
     if (
       snapshot.grantId !== status.grantId ||
       snapshot.subjectId !== status.subjectId ||
       snapshot.workspaceId !== status.workspaceId
     )
       throw new ConnectorError("INVALID_SOURCE");
-    return snapshot.records.map(({ id, kind, data }) => ({
-      id,
-      kind,
-      name: data.name,
-    }));
+    return [
+      {
+        id: snapshot.meeting.id,
+        title: snapshot.meeting.title,
+        version: snapshot.meeting.version,
+      },
+    ];
   }
+
   async create(
     store: Store,
     input: Omit<TaskInput, "sourceRefs" | "memoryIds">,
-    recordIds: string[],
+    meetingId: string,
     key: string,
   ) {
     const status = await this.connector.status();
     if (!status || status.state !== "stored")
       throw new ConnectorError("CONNECTION_REQUIRED");
-    const snapshot = await this.connector.read(recordIds);
+    const snapshot = await this.connector.read(meetingId);
     if (
       snapshot.grantId !== status.grantId ||
       snapshot.subjectId !== status.subjectId ||
       snapshot.workspaceId !== status.workspaceId
     )
       throw new ConnectorError("INVALID_SOURCE");
-    const refs = snapshot.records.map((r) => ({
-      app: "crm" as const,
-      tenantId: snapshot.workspaceId,
-      resourceId: r.id,
-      revision: String(r.version),
-    }));
+    const refs = [
+      {
+        app: "autonote" as const,
+        tenantId: snapshot.workspaceId,
+        resourceId: snapshot.meeting.id,
+        revision: String(snapshot.meeting.version),
+      },
+    ];
     const binding: SourceBinding = {
       authority: {
         userId: this.owner.userId,
         subjectId: snapshot.subjectId,
         tenantId: snapshot.workspaceId,
         deviceId: this.deviceId,
-        sourceApp: "crm",
+        sourceApp: "autonote",
         grantId: snapshot.grantId,
         policyRevision: snapshot.policyRevision,
       },
       refs,
       expiresAt: status.expiresAt,
-      projectionHash: fingerprint(snapshot.records),
+      projectionHash: snapshot.projectionHash,
     };
     return store.create(
       this.owner,
@@ -73,9 +76,11 @@ export class CrmTasks {
   }
   async validate(binding: SourceBinding) {
     if (
-      binding.authority.sourceApp !== "crm" ||
+      binding.authority.sourceApp !== "autonote" ||
+      binding.refs.length !== 1 ||
       binding.refs.some(
-        (r) => r.app !== "crm" || r.tenantId !== binding.authority.tenantId,
+        (r) =>
+          r.app !== "autonote" || r.tenantId !== binding.authority.tenantId,
       ) ||
       binding.authority.userId !== this.owner.userId ||
       binding.authority.deviceId !== this.deviceId ||
@@ -92,23 +97,15 @@ export class CrmTasks {
       status.policyRevision !== binding.authority.policyRevision
     )
       throw new ConnectorError("SOURCE_DENIED");
-    const snapshot = await this.connector.read(
-      binding.refs.map((r) => r.resourceId),
-    );
+    const snapshot = await this.connector.read(binding.refs[0]!.resourceId);
     if (
       snapshot.grantId !== binding.authority.grantId ||
       snapshot.subjectId !== binding.authority.subjectId ||
       snapshot.workspaceId !== binding.authority.tenantId ||
-      fingerprint(snapshot.records) !== binding.projectionHash
+      snapshot.projectionHash !== binding.projectionHash
     )
       throw new ConnectorError("SOURCE_DENIED");
-    if (
-      snapshot.records.some(
-        (r) =>
-          binding.refs.find((ref) => ref.resourceId === r.id)?.revision !==
-          String(r.version),
-      )
-    )
+    if (binding.refs[0]!.revision !== String(snapshot.meeting.version))
       throw new ConnectorError("SOURCE_DENIED");
     return snapshot;
   }
