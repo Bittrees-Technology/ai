@@ -2,7 +2,7 @@
 
 Local AI execution for explicitly authorized Bittrees app data.
 
-Status: local foundation under development. Contracts, an encrypted SQLite task queue and an authenticated Express API factory are implemented and tested. No packaged launcher, deployed dashboard, production connectors, model execution or remote encryption is available yet. Repository creation does not activate any app permissions.
+Status: local foundation under development. Contracts, an encrypted SQLite task/inbox store and an authenticated Express API factory are implemented and tested. No packaged launcher, deployed dashboard, production connectors, model execution or remote encryption is available yet. Repository creation does not activate any app permissions.
 
 ## Development
 
@@ -22,6 +22,6 @@ Licensed under MIT. Imported models retain their own licenses.
 
 `Store` provides owner-scoped tasks, serial conversation claims, explicit dependencies, fencing generations, heartbeat leases, bounded transient retries, cancellation, event/outbox transactions, export and deletion. Inference and network actions must run outside its synchronous transactions. `localApi` authenticates every route, rejects untrusted Host/Origin headers and currently rejects all source references. Worker claims are internal and are not exposed as user HTTP routes.
 
-Prompts and results use AES-256-GCM with record-bound authenticated data. Input fingerprints use a keyed HMAC. IDs, status and timing metadata remain visible in SQLite; this is not full database encryption. The caller currently supplies the storage key in memory: an OS-key-store launcher is still required before using personal content. SQLite online backups retain encrypted content but are not yet whole-file encrypted, and an older backup can retain deleted content.
+Prompts and results use AES-256-GCM with record-bound authenticated data. Input fingerprints use a keyed HMAC. IDs, status and timing metadata remain visible in SQLite; this is not full database encryption. The macOS Keychain adapter loads or creates the storage key and refuses to replace a missing key for existing data. A packaged launcher is still pending. Whole-file encrypted backup/restore is available for snapshots up to 32 MiB; restore refuses to overwrite an existing database. Keep the original key separately available: backups contain no key. An older backup can retain deleted content.
 
-A task blocked on a failed prerequisite remains queued until cancelled; automatic dependency-failure propagation and configurable capacity are pending. Message/inbox persistence is pending even though the v1 message schema exists. No source-app side effects are attempted or retried by this foundation.
+A task blocked on a failed prerequisite remains queued until cancelled; automatic dependency-failure propagation and configurable capacity are pending. Messages, read/delivery/acknowledgement receipts and due/closed/overdue check-ins are persisted. Messages and tasks share conversation sequencing; receipts do not complete tasks. Personal-device inboxes may name an agent or manager but cannot add another user. No source-app side effects are attempted or retried by this foundation.
