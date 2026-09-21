@@ -225,6 +225,16 @@
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9:_-]+$"
           },
+          "memoryIds": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9:_-]+$"
+            }
+          },
           "sourceRefs": {
             "default": [],
             "maxItems": 100,
@@ -634,7 +644,11 @@
               "STALE_CLAIM",
               "EXPIRED",
               "CAPACITY",
-              "INTERNAL"
+              "INTERNAL",
+              "MODEL_UNAVAILABLE",
+              "MODEL_CHANGED",
+              "REMOTE_MODEL_DENIED",
+              "INVALID_OUTPUT"
             ]
           },
           "correlationId": {

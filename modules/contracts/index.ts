@@ -48,6 +48,11 @@ export const requestSchema = z.strictObject({
   kind: z.enum(["query", "summarize", "draft"]),
   prompt: z.string().min(1).max(32_000),
   modelProfileId: id,
+  memoryIds: z
+    .array(id)
+    .max(8)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
   sourceRefs: z.array(sourceRefSchema).max(100).default([]),
   dependencies: z.array(id).max(32).default([]),
   priority: z.enum(["normal", "high"]).default("normal"),
@@ -114,6 +119,10 @@ export const errorSchema = z.strictObject({
     "EXPIRED",
     "CAPACITY",
     "INTERNAL",
+    "MODEL_UNAVAILABLE",
+    "MODEL_CHANGED",
+    "REMOTE_MODEL_DENIED",
+    "INVALID_OUTPUT",
   ]),
   correlationId: id,
 });
