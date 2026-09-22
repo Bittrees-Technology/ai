@@ -1,4 +1,8 @@
 import {
+  parseMemoryCandidates,
+  MemoryCandidateError,
+} from "../../modules/memory/candidates.js";
+import {
   attachmentPlan,
   summarizeAttachmentParts,
 } from "../../modules/connectors/mail-attachment-batches.js";
@@ -61,6 +65,10 @@ export class LocalWorker {
     }, 5000);
     heartbeat.unref();
     try {
+      const extraction = this.store.memoryExtractions.context(
+        this.owner,
+        claim.task.id,
+      );
       const binding = this.store.sourceBinding(this.owner, claim.task.id);
       if (claim.task.input.sourceRefs.length && (!binding || !this.sources))
         throw new Error("Source adapter unavailable");
@@ -92,6 +100,16 @@ export class LocalWorker {
           ...pinned,
           memories: memoryVersions,
           ...(binding ? { source: binding } : {}),
+          ...(extraction
+            ? {
+                extraction: {
+                  parentId: extraction.parentId,
+                  parentRevision: extraction.parentRevision,
+                  sourceHash: extraction.sourceHash,
+                  promptVersion: extraction.promptVersion,
+                },
+              }
+            : {}),
         },
       );
       const batched =
@@ -142,6 +160,16 @@ export class LocalWorker {
         (source ? sourceResult(source, text, claim.task.input.kind) : { text });
       if (binding) await this.sources!.validate(binding);
       if (abort.signal.aborted) throw abort.signal.reason;
+      const currentExtraction = extraction
+        ? this.store.memoryExtractions.context(this.owner, claim.task.id)!
+        : null;
+      const candidates = currentExtraction
+        ? parseMemoryCandidates(
+            text,
+            currentExtraction.source,
+            extraction!.sourceHash,
+          )
+        : null;
       this.store.complete(
         this.owner,
         claim.task.id,
@@ -152,6 +180,16 @@ export class LocalWorker {
           model: pinned,
           memories: memoryVersions,
           kind: "unreviewed_draft",
+          ...(candidates
+            ? {
+                ...candidates,
+                text: undefined,
+                kind: "memory_candidates",
+                sourceTaskId: extraction!.parentId,
+                sourceRevision: extraction!.parentRevision,
+                promptVersion: extraction!.promptVersion,
+              }
+            : {}),
           ...(binding ? { source: binding } : {}),
         },
       );
@@ -163,7 +201,8 @@ export class LocalWorker {
           this.workerId,
           claim.generation,
           error instanceof ModelError && error.code === "MODEL_UNAVAILABLE",
-          error instanceof ModelError && error.code === "INVALID_OUTPUT"
+          (error instanceof ModelError && error.code === "INVALID_OUTPUT") ||
+            error instanceof MemoryCandidateError
             ? "invalid_model_output"
             : undefined,
         );
