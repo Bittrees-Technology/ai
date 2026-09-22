@@ -10,15 +10,32 @@ const folder = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9 _-]{0,59}$/)
   .refine((v) => v === v.trim());
-const selection = z.strictObject({
-  id: hex,
-  folder,
-  metadataVersion: hex,
-  plainVersion: hex.optional(),
+const attachmentSelection = z.strictObject({
+  id: z
+    .string()
+    .max(80)
+    .regex(/^[1-9][0-9]*(?:\.[1-9][0-9]*){0,7}$/),
+  version: hex,
 });
+const selection = z
+  .strictObject({
+    id: hex,
+    folder,
+    metadataVersion: hex,
+    plainVersion: hex.optional(),
+    attachment: attachmentSelection.optional(),
+  })
+  .refine(
+    (s) =>
+      !s.attachment ||
+      !s.plainVersion ||
+      s.attachment.version === s.plainVersion,
+  );
 const scopes = z.union([
   z.tuple([z.literal("metadata")]),
   z.tuple([z.literal("metadata"), z.literal("plain")]),
+  z.tuple([z.literal("metadata"), z.literal("attachment")]),
+  z.tuple([z.literal("metadata"), z.literal("plain"), z.literal("attachment")]),
 ]);
 const grantSchema = z
   .strictObject({
@@ -29,9 +46,21 @@ const grantSchema = z
     selection,
     scopes,
     expiresAt: z.iso.datetime(),
-    policyRevision: z.literal("mail-ai-selected-v1"),
+    policyRevision: z.enum(["mail-ai-selected-v1", "mail-ai-selected-v2"]),
   })
-  .refine((g) => g.scopes.length === (g.selection.plainVersion ? 2 : 1));
+  .refine(
+    (g) =>
+      JSON.stringify(g.scopes) ===
+        JSON.stringify([
+          "metadata",
+          ...(g.selection.plainVersion ? ["plain"] : []),
+          ...(g.selection.attachment ? ["attachment"] : []),
+        ]) &&
+      g.policyRevision ===
+        (g.selection.attachment
+          ? "mail-ai-selected-v2"
+          : "mail-ai-selected-v1"),
+  );
 const savedSchema = z.strictObject({
   owner: z.string().min(1).max(256),
   grant: grantSchema,
@@ -45,6 +74,32 @@ const fields = {
   sourceVersion: hex,
   attachmentsIncluded: z.literal(false),
 };
+const attachmentText = z
+  .strictObject({
+    id: attachmentSelection.shape.id,
+    filename: z
+      .string()
+      .refine(
+        (v) =>
+          Buffer.byteLength(v) <= 128 &&
+          !/[\x00-\x1f\x7f/\\]/.test(v) &&
+          /\.(txt|csv|log)$/i.test(v),
+      ),
+    contentType: z.literal("text/plain"),
+    encodedBytes: z.number().int().min(0).max(524288),
+    supported: z.literal(true),
+    text: z
+      .string()
+      .refine(
+        (v) =>
+          Buffer.byteLength(v) <= 32768 &&
+          Buffer.from(v).toString("utf8") === v &&
+          !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(v),
+      ),
+    bytes: z.number().int().min(0).max(32768),
+    truncated: z.literal(false),
+  })
+  .refine((a) => Buffer.byteLength(a.text) === a.bytes);
 // Preserve canonical wire field order before independently verifying the source hash.
 const message = z.discriminatedUnion("mode", [
   z.strictObject({ id: hex, mode: z.literal("metadata"), ...fields }),
@@ -58,6 +113,13 @@ const message = z.discriminatedUnion("mode", [
       bodyTruncated: z.boolean(),
     })
     .refine((m) => m.bodyAvailable || (!m.text && !m.bodyTruncated)),
+  z.strictObject({
+    id: hex,
+    mode: z.literal("attachment-text"),
+    ...fields,
+    attachmentsIncluded: z.literal(true),
+    attachment: attachmentText,
+  }),
 ]);
 const readSchema = z.strictObject({
   grantId: hex,
@@ -66,7 +128,7 @@ const readSchema = z.strictObject({
   folder,
   scopes,
   expiresAt: z.iso.datetime(),
-  policyRevision: z.literal("mail-ai-selected-v1"),
+  policyRevision: z.enum(["mail-ai-selected-v1", "mail-ai-selected-v2"]),
   message,
   projectionHash: hex,
 });
@@ -246,8 +308,8 @@ export class MailConnector {
       this.busy = false;
     }
   }
-  async read(content: "metadata" | "plain" = "metadata") {
-    z.enum(["metadata", "plain"]).parse(content);
+  async read(content: "metadata" | "plain" | "attachment-text" = "metadata") {
+    z.enum(["metadata", "plain", "attachment-text"]).parse(content);
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     const generation = this.generation,
       grant = await this.saved();
@@ -255,6 +317,8 @@ export class MailConnector {
     if (Date.parse(grant.expiresAt) <= this.now())
       throw new ConnectorError("CONNECTION_EXPIRED");
     if (content === "plain" && !grant.selection.plainVersion)
+      throw new ConnectorError("SOURCE_DENIED");
+    if (content === "attachment-text" && !grant.selection.attachment)
       throw new ConnectorError("SOURCE_DENIED");
     const parsed = readSchema.safeParse(
       await this.post("read", { content }, grant.token),
@@ -268,13 +332,18 @@ export class MailConnector {
       result.wallet !== grant.wallet ||
       result.folder !== grant.selection.folder ||
       result.expiresAt !== grant.expiresAt ||
+      result.policyRevision !== grant.policyRevision ||
+      (m.mode === "attachment-text" &&
+        m.attachment.id !== grant.selection.attachment?.id) ||
       JSON.stringify(result.scopes) !== JSON.stringify(grant.scopes) ||
       m.mode !== content ||
       m.id !== grant.selection.id ||
       m.sourceVersion !==
         (content === "plain"
           ? grant.selection.plainVersion
-          : grant.selection.metadataVersion) ||
+          : content === "attachment-text"
+            ? grant.selection.attachment?.version
+            : grant.selection.metadataVersion) ||
       createHash("sha256").update(JSON.stringify(result)).digest("hex") !==
         projectionHash
     )
