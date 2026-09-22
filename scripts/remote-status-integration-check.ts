@@ -1,3 +1,4 @@
+import { checkRemoteMaintenance } from "./remote-maintenance-integration.js";
 import { checkRemoteControlScope } from "./remote-control-scope-integration.js";
 import { checkRemoteCommands } from "./remote-command-integration.js";
 // Isolated schema in an explicitly configured test PostgreSQL database; no live relay.
@@ -322,8 +323,18 @@ try {
   await checkRemoteHttp(pool);
   await checkRemoteCommands(pool);
   await checkRemoteControlScope(pool);
+  await pool.query(
+    await readFile(
+      new URL(
+        "../modules/remote/migrations/006-maintenance.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  await checkRemoteMaintenance(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue and bounded expiry maintenance checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();
