@@ -322,6 +322,15 @@ try {
     ),
   );
   await checkRemoteSessions(pool);
+  await pool.query(
+    await readFile(
+      new URL(
+        "../modules/remote/migrations/007-templates.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await checkRemoteHttp(pool);
   await checkRemoteCommands(pool);
   await checkRemoteControlScope(pool);
@@ -329,15 +338,6 @@ try {
     await readFile(
       new URL(
         "../modules/remote/migrations/006-maintenance.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-  );
-  await pool.query(
-    await readFile(
-      new URL(
-        "../modules/remote/migrations/007-templates.sql",
         import.meta.url,
       ),
       "utf8",
