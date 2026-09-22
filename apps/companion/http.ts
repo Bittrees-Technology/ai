@@ -1,3 +1,5 @@
+import type { MailConnector } from "../../modules/connectors/mail.js";
+import type { MailTasks } from "../../modules/connectors/mail-tasks.js";
 import type { RolesConnector } from "../../modules/connectors/roles.js";
 import { AutoNoteReviews } from "../../modules/connectors/autonote-reviews.js";
 import type { AutoNoteConnector } from "../../modules/connectors/autonote.js";
@@ -20,11 +22,13 @@ export interface LocalApiOptions {
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
   roles?: RolesConnector;
+  mail?: MailConnector;
+  mailSources?: MailTasks;
   crm?: CrmConnector;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
   autonoteSources?: AutoNoteTasks;
-  cancelSourceRun?: (app?: "crm" | "autonote") => void;
+  cancelSourceRun?: (app?: "crm" | "autonote" | "mail") => void;
   store: Store;
   owner: Owner;
   token: string;
@@ -43,6 +47,8 @@ export function localApi({
   cancelRun,
   crm,
   roles,
+  mail,
+  mailSources,
   sources,
   autonote,
   autonoteSources,
@@ -59,7 +65,7 @@ export function localApi({
     autonote && autonoteSources
       ? new AutoNoteReviews(store, owner, autonote, autonoteSources)
       : undefined;
-  const sourceRouter = new SourceTasks(sources, autonoteSources);
+  const sourceRouter = new SourceTasks(sources, autonoteSources, mailSources);
   const app = express();
   app.disable("x-powered-by");
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -121,13 +127,14 @@ export function localApi({
     res.json({
       status: "ok",
       mode: "local",
-      connectorsEnabled: !!crm || !!autonote || !!roles,
+      connectorsEnabled: !!crm || !!autonote || !!roles || !!mail,
     }),
   );
   for (const [name, connector] of [
     ["crm", crm],
     ["autonote", autonote],
     ["roles", roles],
+    ["mail", mail],
   ] as const) {
     app.get(`/v1/connections/${name}`, async (_req, res) => {
       res.json({
@@ -239,6 +246,49 @@ export function localApi({
           tags: [],
         },
         body.recordIds,
+        req.header("Idempotency-Key") ?? "",
+      );
+      res.status(202).json(concealed(task));
+    });
+  }
+  if (mail) {
+    app.post("/v1/connections/mail/selection", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      // Selection display reads metadata only; body scope is never exercised implicitly.
+      const source = await mail.read("metadata");
+      res.json({
+        mailbox: source.mailbox,
+        folder: source.folder,
+        scopes: source.scopes,
+        expiresAt: source.expiresAt,
+        message: source.message,
+      });
+    });
+  }
+  if (mailSources) {
+    app.post("/v1/connections/mail/drafts", async (req, res) => {
+      const body = z
+        .strictObject({
+          conversationId: z.uuid(),
+          kind: z.enum(["summarize", "draft"]),
+          content: z.enum(["metadata", "plain"]),
+          prompt: z.string().min(1).max(32000),
+          modelProfileId: z.string().min(1).max(128),
+        })
+        .parse(req.body);
+      store.profile(owner, body.modelProfileId);
+      const task = await mailSources.create(
+        store,
+        {
+          conversationId: body.conversationId,
+          kind: body.kind,
+          prompt: body.prompt,
+          modelProfileId: body.modelProfileId,
+          dependencies: [],
+          priority: "normal",
+          tags: [],
+        },
+        body.content,
         req.header("Idempotency-Key") ?? "",
       );
       res.status(202).json(concealed(task));

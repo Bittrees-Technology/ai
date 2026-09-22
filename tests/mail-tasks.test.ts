@@ -389,3 +389,233 @@ test("Mail bindings cannot enter CRM publication or AutoNote review adapters", a
     store.close();
   }
 });
+
+test("Mail authenticated HTTP controls guard selection, task creation, exports and local removal", async () => {
+  const { createServer } = await import("node:http"),
+    { localApi } = await import("../apps/companion/http.js"),
+    { randomUUID } = await import("node:crypto");
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  store.addProfile(owner, profile);
+  await f.connector.forgetLocal();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "local-credential".repeat(4),
+    stopped: unknown[] = [];
+  server.on(
+    "request",
+    localApi({
+      store,
+      owner,
+      port,
+      token,
+      mail: f.connector,
+      mailSources: f.adapter,
+      cancelSourceRun: (app) => {
+        stopped.push(app);
+      },
+    }),
+  );
+  const call = (
+    path: string,
+    method = "GET",
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const base = "/v1/connections/mail";
+  try {
+    assert.equal(
+      (await call(base, "GET", undefined, { Authorization: "" })).status,
+      401,
+    );
+    assert.equal(
+      (
+        await call(
+          base + "/begin",
+          "POST",
+          {},
+          { Origin: "https://evil.invalid" },
+        )
+      ).status,
+      403,
+    );
+    const start = (await (
+      await call(base + "/begin", "POST", {})
+    ).json()) as any;
+    assert.equal(new URL(start.consentUrl).origin, "https://mail.bittrees.org");
+    assert.equal(
+      (
+        await call(base + "/finish", "POST", {
+          id: start.id,
+          code: "a".repeat(64),
+          wallet: f.grant.wallet,
+        })
+      ).status,
+      400,
+    );
+    const finish = await call(base + "/finish", "POST", {
+      id: start.id,
+      code: "a".repeat(64),
+    });
+    assert.equal(finish.status, 200);
+    assert.equal((await finish.text()).includes(f.grant.token), false);
+    assert.equal(
+      (await call(base + "/selection", "POST", { content: "plain" })).status,
+      400,
+    );
+    const selection = await call(base + "/selection", "POST", {}),
+      text = await selection.text();
+    assert.equal(selection.status, 200);
+    assert.equal(selection.headers.get("cache-control"), "no-store");
+    assert.equal(text.includes("PRIVATE_BODY"), false);
+    assert.equal(text.includes(f.grant.token), false);
+    const body = {
+        conversationId: randomUUID(),
+        kind: "draft",
+        content: "plain",
+        prompt: input.prompt,
+        modelProfileId: "p",
+      },
+      headers = { "Idempotency-Key": "http" };
+    for (const extra of [
+      { sourceRefs: [] },
+      { wallet: f.grant.wallet },
+      { messageId: "b".repeat(64) },
+      { memoryIds: [] },
+      { send: true },
+    ])
+      assert.equal(
+        (await call(base + "/drafts", "POST", { ...body, ...extra }, headers))
+          .status,
+        400,
+      );
+    assert.equal(
+      (
+        await call(
+          base + "/drafts",
+          "POST",
+          { ...body, content: "metadata" },
+          headers,
+        )
+      ).status,
+      400,
+    );
+    const created = await call(base + "/drafts", "POST", body, headers);
+    assert.equal(created.status, 202);
+    const task = (await created.json()) as any;
+    assert.equal(task.sourceApp, "mail");
+    assert.deepEqual(task.input.sourceRefs, []);
+    assert.equal(
+      (
+        (await (
+          await call(base + "/drafts", "POST", body, headers)
+        ).json()) as any
+      ).id,
+      task.id,
+    );
+    await worker(store, f, async () => JSON.stringify(draft)).runOnce();
+    for (const path of ["/v1/export", "/v1/requests"])
+      assert.equal(
+        (await (await call(path)).text()).includes("Please review the plan"),
+        false,
+      );
+    const prefix = "/v1/requests/" + task.id;
+    const exported = (await (await call(prefix + "/export")).json()) as any;
+    assert.equal(exported.task.result.mail.sent, false);
+    assert.equal(exported.task.result.mail.messageId, f.grant.selection.id);
+    f.deny();
+    assert.equal((await call(prefix + "/export")).status, 400);
+    const hidden = (await (await call(prefix)).json()) as any;
+    assert.equal(hidden.result, null);
+    assert.deepEqual(hidden.input.sourceRefs, []);
+    assert.deepEqual(
+      ((await (await call(prefix + "/runs")).json()) as any).items,
+      [],
+    );
+    assert.equal(
+      (
+        await call(base + "/local", "DELETE", undefined, {
+          "X-Confirm-Delete": "local-crm-credential",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(base + "/local", "DELETE", undefined, {
+          "X-Confirm-Delete": "local-mail-credential",
+        })
+      ).status,
+      204,
+    );
+    assert.deepEqual(stopped, ["mail"]);
+    assert.equal(await f.connector.status(), null);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("Mail cancellation aborts its active inference without cancelling for another app", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  let started!: () => void,
+    release!: () => void,
+    aborted = false;
+  const beginning = new Promise<void>((r) => {
+      started = r;
+    }),
+    hold = new Promise<void>((r) => {
+      release = r;
+    });
+  try {
+    const task = await f.adapter.create(store, input, "plain", "cancel");
+    const runner = new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async (_p, _prompt, signal) => {
+          signal!.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              release();
+            },
+            { once: true },
+          );
+          started();
+          await hold;
+          return JSON.stringify(draft);
+        },
+      },
+      () => profile,
+      "worker",
+      undefined,
+      f.sources,
+    );
+    const work = runner.runOnce();
+    await beginning;
+    runner.cancelSource("autonote");
+    assert.equal(aborted, false);
+    runner.cancelSource("mail");
+    await work;
+    assert.equal(aborted, true);
+    assert.equal(store.get(owner, task.id).result, null);
+    assert.equal(store.get(owner, task.id).status, "failed");
+  } finally {
+    release?.();
+    store.close();
+  }
+});
