@@ -12,7 +12,8 @@
     "contracts": "tsx scripts/export-contracts.ts",
     "build": "tsc && vite build apps/dashboard --outDir ../../dist/dashboard --emptyOutDir",
     "format": "prettier --write modules apps scripts tests",
-    "start": "node dist/apps/companion/start.js"
+    "start": "node dist/apps/companion/start.js",
+    "recover": "node dist/apps/companion/recover-cli.js"
   },
   "dependencies": {
     "@napi-rs/keyring": "2.1.0",
