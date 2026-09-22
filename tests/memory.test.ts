@@ -362,3 +362,98 @@ test("worker does not send a stale approved memory to inference after an edit du
     store.close();
   }
 });
+
+test("duplicate copies cannot crowd distinct text beyond the old hundred-match shortlist", async () => {
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async () => true,
+    () => 1000,
+  );
+  try {
+    for (let i = 0; i < 105; i++) {
+      const item = await memory.add(alice, {
+        ...candidate,
+        text: "release build",
+        sources: [{ ...candidate.sources[0], resourceId: `copy-${i}` }],
+      });
+      await memory.review(alice, item.id, 1, { approve: true });
+    }
+    const texts = [
+      "release build requires source review",
+      "release build needs a tested backup",
+      "release build keeps task history",
+    ];
+    for (const text of texts) {
+      const item = await memory.add(alice, { ...candidate, text });
+      await memory.review(alice, item.id, 1, { approve: true });
+    }
+    const results = await memory.search(alice, "release build", 4);
+    assert.deepEqual(
+      new Set(results.map((r) => r.text)),
+      new Set(["release build", ...texts]),
+    );
+    assert.equal(results.length, 4);
+    assert.equal((await memory.export(alice)).length, 108);
+    assert.deepEqual(await memory.search(bob, "release build"), []);
+  } finally {
+    memory.close();
+  }
+});
+test("exact-text diversity retains different wording, negation, case, spacing and memory types", async () => {
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async () => true,
+  );
+  try {
+    const entries = [
+      { type: "fact", text: "release approved" },
+      { type: "fact", text: "release not approved" },
+      { type: "fact", text: "Release approved" },
+      { type: "fact", text: "release  approved" },
+      { type: "decision", text: "release approved" },
+    ];
+    for (const entry of entries) {
+      const item = await memory.add(alice, { ...candidate, ...entry });
+      await memory.review(alice, item.id, 1, { approve: true });
+    }
+    assert.equal(
+      (await memory.search(alice, "release", 8)).length,
+      entries.length,
+    );
+  } finally {
+    memory.close();
+  }
+});
+test("duplicate selection preserves only its own authorized provenance and falls back after revoked-copy access", async () => {
+  let denied = "",
+    finalChecks = 0,
+    revokeOnFinal = false;
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async (_owner, sources) => {
+      const id = sources[0]!.resourceId;
+      if (revokeOnFinal && ++finalChecks === 3) denied = id;
+      return id !== denied;
+    },
+  );
+  try {
+    for (const source of ["first", "second"]) {
+      const item = await memory.add(alice, {
+        ...candidate,
+        sources: [{ ...candidate.sources[0], resourceId: source }],
+      });
+      await memory.review(alice, item.id, 1, { approve: true });
+    }
+    revokeOnFinal = true;
+    const results = await memory.search(alice, "summaries");
+    assert.equal(results.length, 1);
+    assert.equal(results[0]!.sources.length, 1);
+    assert.notEqual(results[0]!.sources[0]!.resourceId, denied);
+    assert.equal(results[0]!.verified, false);
+  } finally {
+    memory.close();
+  }
+});

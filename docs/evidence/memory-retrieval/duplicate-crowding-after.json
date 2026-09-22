@@ -1,0 +1,13 @@
+{
+  "fixture": "duplicate-crowding-v1",
+  "syntheticOnly": true,
+  "retainedMemories": 110,
+  "query": "release build",
+  "requestedResults": 6,
+  "returnedResults": 6,
+  "distinctTexts": 6,
+  "distinctTextRecall": 1,
+  "duplicateSlots": 0,
+  "originalRecordsRemain": 110,
+  "expectations": "Six manually enumerated distinct texts should remain available despite 105 copies of the first text. This is not a general semantic-retrieval benchmark."
+}
