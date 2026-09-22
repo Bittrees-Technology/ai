@@ -1,3 +1,4 @@
+import { contentIdPattern, type retainedContent } from "./retained-content.js";
 import { MemoryCandidateError } from "../../modules/memory/candidates.js";
 import type { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
 import { shareTemplateSchema } from "../../modules/remote/template-client-state.js";
@@ -27,6 +28,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  retainedCopies?: ReturnType<typeof retainedContent>;
   backupDownload?: () => Promise<Buffer>;
   remote?: RemoteClient;
   receiver?: RemoteReceiver;
@@ -50,6 +52,7 @@ export interface LocalApiOptions {
   cancelRun?: (id: string) => void;
 }
 export function localApi({
+  retainedCopies,
   backupDownload,
   store,
   remote,
@@ -833,6 +836,24 @@ export function localApi({
   app.get("/v1/checkins", (_req, res) =>
     res.json({ items: store.checkins(owner) }),
   );
+  app.get("/v1/recovery-copies", async (req, res) => {
+    if (!retainedCopies) throw new StoreError("NOT_FOUND");
+    const { after } = z
+      .strictObject({ after: z.string().regex(contentIdPattern).optional() })
+      .parse(req.query);
+    res.json(await retainedCopies.list(after));
+  });
+  app.post("/v1/recovery-copies/delete", async (req, res) => {
+    if (!retainedCopies) throw new StoreError("NOT_FOUND");
+    const body = z
+      .strictObject({
+        id: z.string().regex(contentIdPattern),
+        review: z.string().regex(/^[a-f0-9]{64}$/),
+        confirmed: z.literal(true),
+      })
+      .parse(req.body);
+    res.json(await retainedCopies.remove(body.id, body.review));
+  });
   app.post("/v1/backup", async (req, res) => {
     z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
     if (!backupDownload) throw new StoreError("NOT_FOUND");
