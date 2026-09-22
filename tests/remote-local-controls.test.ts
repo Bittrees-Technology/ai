@@ -102,6 +102,22 @@ test("Local remote controls require consent, select owner tasks and protect in-f
       confirmed: true,
       tasks: [{ id: own.id, revision: own.revision }],
     };
+    for (const action of ["enable", "disable", "check"]) {
+      assert.equal(
+        (await post(`/v1/remote/controls/${action}`, { confirmed: false }))
+          .status,
+        400,
+      );
+      assert.equal(
+        (
+          await post(`/v1/remote/controls/${action}`, {
+            confirmed: true,
+            ownerId: "forged",
+          })
+        ).status,
+        400,
+      );
+    }
     assert.equal(
       (await post("/v1/remote/publish", { ...selection, confirmed: false }))
         .status,

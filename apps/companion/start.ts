@@ -89,10 +89,6 @@ const memory = new MemoryStore(
   new Vault(key),
   localMemoryAccess(store),
 );
-const remote =
-  process.env.BITTREES_REMOTE_STATUS === "1"
-    ? new RemoteClient(JSON.stringify(owner), remoteKeychainEntry("personal"))
-    : undefined;
 const crm = new CrmConnector(
     JSON.stringify(owner),
     crmKeychainEntry("personal"),
@@ -122,6 +118,23 @@ const crm = new CrmConnector(
     memory,
     new SourceTasks(sources, autonoteSources, mailSources),
   );
+const remote =
+  process.env.BITTREES_REMOTE_STATUS === "1"
+    ? new RemoteClient(
+        JSON.stringify(owner),
+        remoteKeychainEntry("personal"),
+        fetch,
+        Date.now,
+        {
+          allow: (binding) => store.allowRemoteControls(owner, binding),
+          allowed: (identity) => store.remoteControlsAllowed(owner, identity),
+          revoke: (deviceId) => store.revokeRemoteControls(owner, deviceId),
+          execute: (identity, command) =>
+            store.executeRemoteControl(owner, identity, command),
+          interrupt: (id) => worker.cancel(id),
+        },
+      )
+    : undefined;
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
 const codePath = join(directory, "pairing-code.txt");

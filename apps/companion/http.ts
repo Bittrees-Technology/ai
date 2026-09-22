@@ -150,6 +150,18 @@ export function localApi({
         }),
       );
     });
+    app.post("/v1/remote/controls/enable", async (req, res) => {
+      confirmed.parse(req.body);
+      res.json(await remote.enableControls());
+    });
+    app.post("/v1/remote/controls/disable", async (req, res) => {
+      confirmed.parse(req.body);
+      res.json(await remote.disableControls());
+    });
+    app.post("/v1/remote/controls/check", async (req, res) => {
+      confirmed.parse(req.body);
+      res.json(await remote.pollControls());
+    });
     app.post("/v1/remote/rotate", async (req, res) => {
       confirmed.parse(req.body);
       res.json(await remote.rotate());
