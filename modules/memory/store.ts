@@ -78,17 +78,33 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
   private input(r: Row) {
     return this.vault.open<MemoryInput>(r.payload, "memory:" + r.id);
   }
+  private unexpired(input: MemoryInput) {
+    return input.expiresAt === null || input.expiresAt > this.now();
+  }
+  private unchanged(owner: Owner, snapshot: Row) {
+    try {
+      const current = this.row(owner, snapshot.id);
+      return (
+        current.revision === snapshot.revision &&
+        current.state === snapshot.state &&
+        current.fingerprint === snapshot.fingerprint &&
+        this.unexpired(this.input(current))
+      );
+    } catch (error) {
+      if (error instanceof StoreError && error.code === "NOT_FOUND")
+        return false;
+      throw error;
+    }
+  }
   private visible(owner: Owner, input: MemoryInput) {
-    return (
-      (input.expiresAt === null || input.expiresAt > this.now()) &&
-      this.canRead(owner, input.sources)
-    );
+    return this.unexpired(input) && this.canRead(owner, input.sources);
   }
   async add(owner: Owner, raw: unknown) {
     const input = memorySchema.parse(raw);
     if (!(await this.visible(owner, input))) throw new StoreError("NOT_FOUND");
     return this.db
       .transaction(() => {
+        if (!this.unexpired(input)) throw new StoreError("NOT_FOUND");
         const fingerprint = this.vault.fingerprint(input);
         const old = this.db
           .prepare(
@@ -125,7 +141,8 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
   async get(owner: Owner, memoryId: string) {
     const r = this.row(owner, memoryId),
       input = this.input(r);
-    if (!(await this.visible(owner, input))) throw new StoreError("NOT_FOUND");
+    if (!(await this.visible(owner, input)) || !this.unchanged(owner, r))
+      throw new StoreError("NOT_FOUND");
     return {
       id: r.id,
       state: r.state,
@@ -157,6 +174,8 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     this.db
       .transaction(() => {
         const current = this.row(owner, memoryId);
+        if (!this.unexpired(this.input(current)))
+          throw new StoreError("NOT_FOUND");
         if (
           current.revision !== revision ||
           current.revision !== initial.revision
@@ -168,7 +187,9 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
           )
           .run(
             patch.approve === undefined
-              ? current.state
+              ? next.text !== input.text
+                ? "candidate"
+                : current.state
               : patch.approve
                 ? "approved"
                 : "candidate",
@@ -280,15 +301,18 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
       const output = [];
       for (const r of results) {
         if (output.length >= limit) break;
-        const current = this.row(owner, r.id);
+        const snapshot = eligible.get(r.id)!.row;
+        if (!this.unchanged(owner, snapshot)) continue;
         if (
-          current.revision !== eligible.get(r.id)!.row.revision ||
-          current.state !== "approved"
+          (await this.visible(owner, this.input(snapshot))) &&
+          this.unchanged(owner, snapshot)
         )
-          continue;
-        if (await this.visible(owner, this.input(current))) output.push(r);
+          output.push(r);
       }
-      return output;
+      // Later access checks may yield to edits/deletion of an earlier result.
+      return output.filter((r) =>
+        this.unchanged(owner, eligible.get(r.id)!.row),
+      );
     } finally {
       index.close();
     }
@@ -317,18 +341,21 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
   }
   async export(owner: Owner) {
     const rows = this.db
-      .prepare("SELECT id FROM memory WHERE user_id=? AND tenant_id=?")
-      .all(owner.userId, owner.tenantId) as { id: string }[];
+      .prepare("SELECT * FROM memory WHERE user_id=? AND tenant_id=?")
+      .all(owner.userId, owner.tenantId) as Row[];
     const output = [];
     for (const row of rows) {
       try {
-        output.push(await this.get(owner, row.id));
+        const value = await this.get(owner, row.id);
+        if (this.unchanged(owner, row)) output.push({ row, value });
       } catch (error) {
         if (!(error instanceof StoreError && error.code === "NOT_FOUND"))
           throw error;
       }
     }
-    return output;
+    return output
+      .filter((item) => this.unchanged(owner, item.row))
+      .map((item) => item.value);
   }
   deleteAll(owner: Owner) {
     this.db
