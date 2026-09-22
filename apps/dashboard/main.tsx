@@ -1,3 +1,4 @@
+import { RecoveryCopies } from "./recovery-copies.js";
 import { requestBackup } from "./backup-download.js";
 import { createLocalApi } from "./local-api.js";
 import { MemorySuggestions } from "./memory-suggestions.js";
@@ -888,6 +889,7 @@ function App() {
                 >
                   Export my local data
                 </button>
+                <RecoveryCopies api={api} onError={fail} />
                 <h3>Encrypted backup</h3>
                 <p>
                   Save this device's tasks and memories together. Restoring
@@ -926,6 +928,10 @@ function App() {
                 </button>
                 <div className="danger">
                   <h3>Delete local tasks, templates and memory</h3>
+                  <p>
+                    This clears the current copy. Delete older recovery copies
+                    above and backup files saved elsewhere separately.
+                  </p>
                   <label>
                     Type DELETE to confirm
                     <input

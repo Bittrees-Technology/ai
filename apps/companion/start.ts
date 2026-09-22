@@ -1,3 +1,4 @@
+import { retainedContent } from "./retained-content.js";
 import { resolveActiveContent } from "./active-content.js";
 import { localBackupDownload } from "./backup.js";
 import { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
@@ -164,6 +165,7 @@ const codePath = join(directory, "pairing-code.txt");
 server.on(
   "request",
   dashboardServer({
+    retainedCopies: retainedContent(directory, content.directory),
     backupDownload: localBackupDownload(store, memory, new Vault(key)),
     deviceStatus: () => deviceStatus(directory),
     imports,
