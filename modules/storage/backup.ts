@@ -13,12 +13,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Vault } from "./vault.js";
 import { Store } from "./store.js";
+import Database from "better-sqlite3";
+import { MemoryStore } from "../memory/store.js";
 // Pilot bound keeps whole-file authenticated encryption out of unbounded memory use.
 const maxBytes = 32 * 1024 * 1024;
-export async function encryptedBackup(
+async function writeSnapshot(
   store: Pick<Store, "backup">,
   vault: Vault,
   destination: string,
+  kind: "tasks" | "memory",
 ) {
   const dir = await mkdtemp(join(tmpdir(), "bittrees-ai-backup-"));
   await chmod(dir, 0o700);
@@ -28,7 +31,11 @@ export async function encryptedBackup(
     if ((await stat(file)).size > maxBytes)
       throw new Error("Backup exceeds pilot size limit");
     const envelope = vault.seal(
-      { version: 1, sqlite: (await readFile(file)).toString("base64") },
+      {
+        version: kind === "tasks" ? 1 : 2,
+        ...(kind === "memory" ? { kind } : {}),
+        sqlite: (await readFile(file)).toString("base64"),
+      },
       "backup:v1",
     );
     await writeFile(destination, envelope, { mode: 0o600, flag: "wx" });
@@ -36,18 +43,53 @@ export async function encryptedBackup(
     await rm(dir, { recursive: true, force: true });
   }
 }
+export async function encryptedBackup(
+  store: Pick<Store, "backup">,
+  vault: Vault,
+  destination: string,
+) {
+  return writeSnapshot(store, vault, destination, "tasks");
+}
+export async function encryptedMemoryBackup(
+  store: Pick<MemoryStore, "backup">,
+  vault: Vault,
+  destination: string,
+) {
+  return writeSnapshot(store, vault, destination, "memory");
+}
 export async function restoreBackup(
   source: string,
   vault: Vault,
   destination: string,
 ) {
+  return restoreSnapshot(source, vault, destination, "tasks");
+}
+export async function restoreMemoryBackup(
+  source: string,
+  vault: Vault,
+  destination: string,
+) {
+  return restoreSnapshot(source, vault, destination, "memory");
+}
+async function restoreSnapshot(
+  source: string,
+  vault: Vault,
+  destination: string,
+  kind: "tasks" | "memory",
+) {
   if ((await stat(source)).size > maxBytes * 1.5)
     throw new Error("Backup exceeds pilot size limit");
-  const envelope = vault.open<{ version: number; sqlite: string }>(
-    await readFile(source),
-    "backup:v1",
-  );
-  if (envelope.version !== 1 || typeof envelope.sqlite !== "string")
+  const envelope = vault.open<{
+    version: number;
+    kind?: string;
+    sqlite: string;
+  }>(await readFile(source), "backup:v1");
+  if (
+    (kind === "tasks"
+      ? envelope.version !== 1 || envelope.kind !== undefined
+      : envelope.version !== 2 || envelope.kind !== "memory") ||
+    typeof envelope.sqlite !== "string"
+  )
     throw new Error("Unsupported backup");
   const bytes = Buffer.from(envelope.sqlite, "base64");
   if (
@@ -72,21 +114,46 @@ export async function restoreBackup(
     throw new Error("EEXIST: restore destination or SQLite sidecar exists");
   }
   // A sibling staging directory keeps publication on the same filesystem.
-  // The destination never contains restored consent, even if preparation stops.
+  // Task control consent is removed before publication, even if preparation stops.
   const dir = await mkdtemp(
     join(dirname(destination), ".bittrees-ai-restore-"),
   );
-  let restored: Store | undefined;
+  let restored: Store | MemoryStore | undefined;
   try {
     await chmod(dir, 0o700);
     const staged = join(dir, "snapshot.db");
     await writeFile(staged, bytes, { mode: 0o600, flag: "wx" });
-    restored = new Store(staged, vault);
-    restored.db.prepare("DELETE FROM remote_control_bindings").run();
-    restored.db
-      .prepare("UPDATE remote_template_permissions SET payload=NULL")
-      .run();
-    restored.db.pragma("wal_checkpoint(TRUNCATE)");
+    const inspection = new Database(staged, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      const has = (table: string) =>
+        !!inspection
+          .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+          .get(table);
+      if (
+        kind === "memory"
+          ? !has("memory_meta") || !has("memory") || has("tasks")
+          : !has("tasks") || has("memory_meta")
+      )
+        throw new Error("Backup store kind mismatch");
+    } finally {
+      inspection.close();
+    }
+    if (kind === "tasks") {
+      const tasks = new Store(staged, vault);
+      restored = tasks;
+      tasks.db.prepare("DELETE FROM remote_control_bindings").run();
+      tasks.db
+        .prepare("UPDATE remote_template_permissions SET payload=NULL")
+        .run();
+      tasks.db.pragma("wal_checkpoint(TRUNCATE)");
+    } else {
+      // Recovery does not grant source access; the application must supply its
+      // current source validator when opening the published memory database.
+      restored = new MemoryStore(staged, vault, async () => false);
+    }
     restored.close();
     restored = undefined;
     const file = await open(staged, "r");
