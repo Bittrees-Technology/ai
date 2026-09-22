@@ -1,3 +1,4 @@
+import { requestBackup } from "./backup-download.js";
 import { createLocalApi } from "./local-api.js";
 import { MemorySuggestions } from "./memory-suggestions.js";
 import { MemorySearch } from "./memory-search.js";
@@ -100,6 +101,14 @@ function App() {
     [candidateType, setCandidateType] = useState("fact"),
     [deleteText, setDeleteText] = useState("");
   const epoch = useRef(0);
+  const backupUrl = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      epoch.current++;
+      if (backupUrl.current) URL.revokeObjectURL(backupUrl.current);
+    },
+    [],
+  );
   const submission = useRef<{
     fingerprint: string;
     key: string;
@@ -108,6 +117,8 @@ function App() {
   const task = tasks.find((t) => t.id === selected);
   function clear() {
     epoch.current++;
+    if (backupUrl.current) URL.revokeObjectURL(backupUrl.current);
+    backupUrl.current = null;
     submission.current = null;
     setProfiles([]);
     setModels([]);
@@ -876,6 +887,42 @@ function App() {
                   }
                 >
                   Export my local data
+                </button>
+                <h3>Encrypted backup</h3>
+                <p>
+                  Save this device's tasks and memories together. Restoring
+                  requires the original storage key from this Mac's Keychain.
+                  This file does not recover a lost key, app connections or
+                  model files. Restore controls are not available in this app
+                  yet.
+                </p>
+                <button
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      !confirm(
+                        "Create an encrypted task-and-memory backup? Keep the original storage key: this file alone cannot recover data after losing that key.",
+                      )
+                    )
+                      return;
+                    void action(async () => {
+                      const version = epoch.current;
+                      const blob = await requestBackup();
+                      if (version !== epoch.current) return;
+                      if (backupUrl.current)
+                        URL.revokeObjectURL(backupUrl.current);
+                      const url = URL.createObjectURL(blob),
+                        link = document.createElement("a");
+                      backupUrl.current = url;
+                      link.href = url;
+                      link.download = "bittrees-ai-content.aib";
+                      link.click();
+                      // Keep the URL while the native save sheet is open; release
+                      // on the next backup, session clear or component unmount.
+                    });
+                  }}
+                >
+                  Download encrypted backup
                 </button>
                 <div className="danger">
                   <h3>Delete local tasks, templates and memory</h3>
