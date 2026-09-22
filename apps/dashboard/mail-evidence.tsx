@@ -6,6 +6,7 @@ import {
 } from "../../modules/connectors/mail-evidence-contracts.js";
 import { MailEvidenceState, type EvidenceView } from "./mail-evidence-state.js";
 type Props = {
+  onUnavailable: () => void;
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
   task: {
     id: string;
@@ -13,7 +14,7 @@ type Props = {
     result: { text: string; mail: unknown };
   };
 };
-export function MailEvidenceReview({ api, task }: Props) {
+export function MailEvidenceReview({ api, task, onUnavailable }: Props) {
   const [view, setView] = useState<EvidenceView>({
     busy: false,
     selected: null,
@@ -23,7 +24,10 @@ export function MailEvidenceReview({ api, task }: Props) {
   const controller = useRef<MailEvidenceState | null>(null);
   const [activeClaim, setActiveClaim] = useState<string | null>(null);
   useEffect(() => {
-    const state = new MailEvidenceState(api, task.id, task.revision, setView);
+    const state = new MailEvidenceState(api, task.id, task.revision, (next) => {
+      setView(next);
+      if (next.unavailable) onUnavailable();
+    });
     controller.current = state;
     setView(state.view);
     const hide = () => state.hide();
@@ -35,7 +39,7 @@ export function MailEvidenceReview({ api, task }: Props) {
       window.removeEventListener("blur", hide);
       document.removeEventListener("visibilitychange", hide);
     };
-  }, [api, task.id, task.revision]);
+  }, [api, task.id, task.revision, onUnavailable]);
   const parsed = mailReviewSchema.safeParse(task.result.mail);
   if (!parsed.success) return <div className="result">{task.result.text}</div>;
   const mail = parsed.data;

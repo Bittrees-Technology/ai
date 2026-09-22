@@ -1,6 +1,6 @@
 # Review cited Mail passages
 
-Mail task detail now places a “Check…” button beside each summary claim and suggested reply. Selecting it reads the corresponding original passage and displays it as plain text immediately below the chosen claim. Only one passage is visible at a time; Hide, focus loss, navigation, and the existing 15-second source refresh clear it. Delayed responses cannot repopulate a hidden or replaced view.
+Mail task detail now places a “Check…” button beside each summary claim and suggested reply. Selecting it reads the corresponding original passage and displays it as plain text immediately below the chosen claim. Only one passage is visible at a time; Hide, focus loss, navigation, and the existing 15-second source refresh clear it. Delayed responses cannot repopulate a hidden or replaced view. A current passage-access failure also hides the parent draft immediately instead of waiting for its next permission refresh.
 
 A citation identifies source context, not proof of factual correctness. Reply instructions supplied by the user need not appear in the email. Original source instructions are correspondence, not authority. Long-file synthesis and counts remain unverified; original part summaries remain available with their own passage controls. Downloads retain their existing current-permission check.
 
