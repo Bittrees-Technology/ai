@@ -4,6 +4,7 @@ import {
   attachmentPlan,
   fitsLocalPrompt,
   summarizeAttachmentParts,
+  synthesizeAttachment,
 } from "../modules/connectors/mail-attachment-batches.js";
 const model = {
   profile: {
@@ -68,7 +69,7 @@ test("Attachment planning preserves full 32 KiB and Unicode/escaped data within 
     /CAPACITY/,
   );
 });
-test("Part summaries cite only their own source range and expose complete coverage without claiming synthesis", async () => {
+test("Part summaries cite only their own source range and retain original citations through unverified synthesis", async () => {
   const s = source("x".repeat(9000)),
     plan = attachmentPlan(s, "Summarize", model)!;
   let call = 0,
@@ -78,6 +79,22 @@ test("Part summaries cite only their own source range and expose complete covera
     "Summarize",
     model,
     async (prompt) => {
+      if (prompt.startsWith("Reconcile")) {
+        const groups = JSON.parse(
+          prompt.split("Ordered summaries:\n")[1]!.split("\nUser request:")[0]!,
+        );
+        return JSON.stringify({
+          summary: [
+            {
+              text: "Combined summary",
+              evidence: groups.flatMap((g: any) =>
+                g.flatMap((c: any) => c.evidence),
+              ),
+            },
+          ],
+          reply: null,
+        });
+      }
       assert.equal(prompt, plan[call]!.prompt);
       return answer(plan[call++]!.section.id);
     },
@@ -87,12 +104,12 @@ test("Part summaries cite only their own source range and expose complete covera
     new AbortController().signal,
   );
   assert.equal(call, plan.length);
-  assert.equal(checks, plan.length + 1);
-  assert.equal(result.mail.summary.length, plan.length);
+  assert.equal(checks, plan.length * 2);
+  assert.equal(result.mail.partSummaries.length, plan.length);
   assert.equal(result.mail.coverage.allPartsProcessed, true);
-  assert.equal(result.mail.coverage.crossPartSynthesis, false);
+  assert.equal(result.mail.coverage.crossPartSynthesis, "attempted-unverified");
   assert.equal(result.mail.summary.at(-1)!.citations[0]!.attachmentId, "1.2");
-  assert.match(result.text, /Cross-part/);
+  assert.match(result.text, /cross-part conclusions remain unverified/);
   await assert.rejects(
     summarizeAttachmentParts(
       s,
@@ -146,4 +163,56 @@ test("Attachment parts prefer complete records while preserving exact bytes", ()
     assert.match(p.section.text, /\n$/);
     assert.ok(fitsLocalPrompt(model, p.prompt));
   }
+});
+
+test("Synthesis cannot cite unseen parts or continue after revocation", async () => {
+  const s = source("x".repeat(9000));
+  const parts = ["attachment-offset-0", "attachment-offset-100"].map((id) => ({
+    mail: { summary: [{ text: "Part claim", evidence: [id] }] },
+  })) as any;
+  await assert.rejects(
+    synthesizeAttachment(
+      s,
+      "Summarize",
+      model,
+      parts,
+      async () => answer("attachment-offset-999"),
+      async () => {},
+      new AbortController().signal,
+    ),
+    /INVALID_OUTPUT/,
+  );
+  let called = false;
+  await assert.rejects(
+    synthesizeAttachment(
+      s,
+      "Summarize",
+      model,
+      parts,
+      async () => {
+        called = true;
+        return answer("attachment-offset-0");
+      },
+      async () => {
+        throw Error("revoked");
+      },
+      new AbortController().signal,
+    ),
+    /revoked/,
+  );
+  assert.equal(called, false);
+  await assert.rejects(
+    synthesizeAttachment(
+      s,
+      "x".repeat(32000),
+      model,
+      parts,
+      async () => {
+        throw Error("should not call");
+      },
+      async () => {},
+      new AbortController().signal,
+    ),
+    /CAPACITY/,
+  );
 });

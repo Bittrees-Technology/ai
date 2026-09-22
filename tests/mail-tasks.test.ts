@@ -828,6 +828,24 @@ test("Worker completes all attachment parts and discards every partial summary o
       );
       await worker(store, f, async (_p, prompt) => {
         calls++;
+        if (prompt.startsWith("Reconcile")) {
+          const groups = JSON.parse(
+            prompt
+              .split("Ordered summaries:\n")[1]!
+              .split("\nUser request:")[0]!,
+          );
+          return JSON.stringify({
+            summary: [
+              {
+                text: "Combined summary",
+                evidence: groups.flatMap((g: any) =>
+                  g.flatMap((c: any) => c.evidence),
+                ),
+              },
+            ],
+            reply: null,
+          });
+        }
         const section = JSON.parse(
           prompt.split("File data:\n")[1]!.split("\nUser request:")[0]!,
         ).section;
@@ -845,7 +863,11 @@ test("Worker completes all attachment parts and discards every partial summary o
         assert.equal(calls, 2);
       } else {
         assert.equal(taskResult.status, "completed");
-        assert.equal((taskResult.result as any).mail.coverage.parts, calls);
+        assert.equal(
+          (taskResult.result as any).mail.coverage.parts +
+            (taskResult.result as any).mail.coverage.synthesisCalls,
+          calls,
+        );
         assert.equal(
           (taskResult.result as any).mail.coverage.sourceBytes,
           10000,
