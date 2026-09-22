@@ -100,3 +100,46 @@ export function parseMemoryCandidates(
   });
   return { version: 1 as const, sourceHash: prepared.sourceHash, candidates };
 }
+
+/** Validate saved worker output without trusting stored excerpt offsets. */
+export function readMemoryCandidates(
+  raw: unknown,
+  source: unknown,
+  expectedHash: string,
+) {
+  const saved = z
+    .object({
+      version: z.literal(1),
+      sourceHash: z.literal(expectedHash),
+      candidates: z
+        .array(
+          candidateSchema.extend({
+            evidence: z.array(
+              z.object({
+                source: z.enum(["request", "result"]),
+                quote: z.string(),
+                start: z.number().int(),
+                end: z.number().int(),
+              }),
+            ),
+            origin: z.literal("model"),
+            state: z.literal("candidate"),
+            verified: z.literal(false),
+          }),
+        )
+        .max(8),
+    })
+    .parse(raw);
+  return parseMemoryCandidates(
+    JSON.stringify({
+      version: saved.version,
+      candidates: saved.candidates.map(({ type, text, evidence }) => ({
+        type,
+        text,
+        evidence: evidence.map(({ source, quote }) => ({ source, quote })),
+      })),
+    }),
+    source,
+    expectedHash,
+  );
+}

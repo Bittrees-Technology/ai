@@ -1,3 +1,4 @@
+import { MemoryCandidateError } from "../../modules/memory/candidates.js";
 import type { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
 import { shareTemplateSchema } from "../../modules/remote/template-client-state.js";
 import type { RemoteReceiver } from "../../modules/remote/receiver.js";
@@ -644,6 +645,49 @@ export function localApi({
     res.status(204).end();
   });
   if (memory) {
+    app.post("/v1/requests/:id/memory-suggestions", (req, res) => {
+      res
+        .status(201)
+        .json(store.memoryExtractions.create(owner, req.params.id, req.body));
+    });
+    app.get("/v1/requests/:id/memory-suggestions", (req, res) => {
+      res.json(store.memoryExtractions.review(owner, req.params.id));
+    });
+    app.post("/v1/requests/:id/memory-suggestions/save", async (req, res) => {
+      const body = z
+        .strictObject({
+          expectedRevision: z.number().int().positive(),
+          index: z.number().int().min(0).max(7),
+          confirmed: z.literal(true),
+        })
+        .parse(req.body);
+      const review = store.memoryExtractions.review(owner, req.params.id);
+      const selected = review.candidates[body.index];
+      if (review.revision !== body.expectedRevision || !selected)
+        throw new StoreError("CONFLICT");
+      const item = await memory.add(
+        owner,
+        {
+          type: selected.type,
+          text: selected.text,
+          origin: "model",
+          sources: [
+            {
+              app: "local",
+              tenantId: owner.tenantId,
+              resourceId: review.parentId,
+              revision: String(review.parentRevision),
+            },
+          ],
+        },
+        () => {
+          const current = store.memoryExtractions.review(owner, req.params.id);
+          if (JSON.stringify(current) !== JSON.stringify(review))
+            throw new StoreError("CONFLICT");
+        },
+      );
+      res.status(201).json(item);
+    });
     app.get("/v1/memories", async (_req, res) =>
       res.json({ items: await memory.export(owner) }),
     );
@@ -819,6 +863,7 @@ export function localApi({
     const code =
       err instanceof RemoteClientError ||
       err instanceof ImportError ||
+      err instanceof MemoryCandidateError ||
       err instanceof StoreError ||
       err instanceof ModelError ||
       err instanceof ConnectorError
