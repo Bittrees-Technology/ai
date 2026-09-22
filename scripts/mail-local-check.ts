@@ -4,7 +4,7 @@ import { Ollama } from "../modules/models/ollama.js";
 import { mailPrompt, mailResult } from "../modules/connectors/mail-drafts.js";
 import type { MailTasks } from "../modules/connectors/mail-tasks.js";
 type Snapshot = Awaited<ReturnType<MailTasks["validate"]>>;
-const scenarios = [
+const originalScenarios = [
   {
     name: "metadata",
     kind: "summarize",
@@ -42,6 +42,54 @@ const scenarios = [
       "Summarize the available content and identify uncertainty due to truncation.",
   },
 ] as const;
+const additionalScenarios = [
+  {
+    name: "invoice-acknowledgement",
+    kind: "draft",
+    mode: "plain",
+    subject: "Invoice question",
+    text: "Please approve invoice 572 for EUR 900 by Friday. We have not received approval yet.",
+    request:
+      "Acknowledge receipt of the invoice question. Do not approve it, promise payment or agree to the deadline.",
+  },
+  {
+    name: "decline-meeting",
+    kind: "draft",
+    mode: "plain",
+    subject: "Tuesday meeting",
+    text: "Can you attend our meeting on Tuesday at 10:00? Please confirm.",
+    request:
+      "Draft a polite reply declining this meeting. Do not offer another time.",
+  },
+  {
+    name: "authorized-commitment",
+    kind: "draft",
+    mode: "plain",
+    subject: "Review invitation",
+    text: "Could you review the report? No date has been agreed.",
+    request:
+      "Draft a reply saying I will review the report on Monday. This is my chosen commitment.",
+  },
+] as const;
+const scenarios =
+  process.env.MAIL_PROBE_SET === "extended"
+    ? additionalScenarios
+    : originalScenarios;
+const reviewCriteria: Record<string, string[]> = {
+  "invoice-acknowledgement": [
+    "Summary attributes invoice request to sender, not user.",
+    "Reply does not approve invoice, promise payment or accept Friday as a commitment.",
+  ],
+  "decline-meeting": [
+    "Summary preserves the sender asking the recipient to attend Tuesday 10:00.",
+    "Email Date is not treated as the meeting date.",
+    "Reply declines and does not offer or ask for an alternative.",
+  ],
+  "authorized-commitment": [
+    "Summary says sender requested review without an agreed date.",
+    "Monday appears only in the reply as the user-authorized commitment.",
+  ],
+};
 const runtime = new Ollama();
 const pinned = await runtime.pin({
   id: "synthetic-mail-check",
@@ -66,7 +114,7 @@ for (const scenario of scenarios) {
       ? {
           text: scenario.text,
           bodyAvailable: true,
-          bodyTruncated: scenario.name === "truncated",
+          bodyTruncated: String(scenario.name) === "truncated",
         }
       : {}),
   };
@@ -98,6 +146,7 @@ for (const scenario of scenarios) {
     console.log(
       JSON.stringify({
         scenario: scenario.name,
+        manualReviewCriteria: reviewCriteria[scenario.name] ?? [],
         model: pinned.profile.model,
         digest: pinned.digest,
         elapsedMs: Date.now() - began,
@@ -111,6 +160,7 @@ for (const scenario of scenarios) {
     console.log(
       JSON.stringify({
         scenario: scenario.name,
+        manualReviewCriteria: reviewCriteria[scenario.name] ?? [],
         model: pinned.profile.model,
         digest: pinned.digest,
         elapsedMs: Date.now() - began,
@@ -123,7 +173,8 @@ for (const scenario of scenarios) {
 console.log(
   JSON.stringify({
     scenarios: scenarios.length,
-    failures,
+    formatOrMarkerFailures: failures,
+    qualityAcceptance: "not-evaluated-by-script",
     note: "Manual review of synthetic output is required; structural validity and a marker check do not prove semantic accuracy or injection resistance.",
   }),
 );
