@@ -217,6 +217,74 @@ try {
     ).rows[0].count,
     "0",
   );
+  // Traverse more than two full pages through the public repository API.
+  const pagedDevice = randomUUID();
+  await pool.query(
+    "INSERT INTO remote_devices(id,owner_id,epoch,expires_at) VALUES($1,$2,1,$3)",
+    [pagedDevice, ownerId, now + 2 * 86400000],
+  );
+  const many = Array.from({ length: 205 }, () => ({
+    ...item,
+    id: randomUUID(),
+    deviceId: pagedDevice,
+    updatedAt: new Date(now).toISOString(),
+  }));
+  for (let offset = 0; offset < many.length; offset += 100) {
+    await store.publish(
+      { ownerId, deviceId: pagedDevice, epoch: 1 },
+      {
+        sequence: offset / 100 + 1,
+        items: many.slice(offset, offset + 100),
+      },
+    );
+  }
+  const first = await store.listPage(ownerId, pagedDevice);
+  assert.equal(first.items.length, 100);
+  assert.ok(first.nextCursor);
+  const second = await store.listPage(ownerId, pagedDevice, {
+    after: first.nextCursor,
+  });
+  const third = await store.listPage(ownerId, pagedDevice, {
+    after: second.nextCursor,
+  });
+  assert.equal(second.items.length, 100);
+  assert.equal(third.items.length, 5);
+  assert.equal(third.nextCursor, null);
+  assert.deepEqual(
+    [...first.items, ...second.items, ...third.items].map((x) => x.id),
+    many.map((x) => x.id).sort(),
+  );
+  const narrow = await store.listPage(ownerId, pagedDevice, { limit: 1 });
+  assert.equal(narrow.items.length, 1);
+  assert.equal(narrow.nextCursor, first.items[0]!.id);
+  for (const options of [
+    { limit: 0 },
+    { limit: 101 },
+    { limit: 1.5 },
+    { after: "invalid" },
+    { after: null },
+    { ownerId: otherOwner },
+  ]) {
+    await assert.rejects(
+      store.listPage(ownerId, pagedDevice, options),
+      /INVALID_INPUT/,
+    );
+  }
+  await assert.rejects(
+    store.listPage(otherOwner, pagedDevice, { after: first.nextCursor }),
+    /DENIED/,
+  );
+  // Cursor can be replayed but cannot bypass row expiry or device revocation.
+  now += 86400001;
+  assert.deepEqual(
+    await store.listPage(ownerId, pagedDevice, { after: first.nextCursor }),
+    { items: [], nextCursor: null },
+  );
+  await store.revoke(ownerId, pagedDevice);
+  await assert.rejects(
+    store.listPage(ownerId, pagedDevice, { after: first.nextCursor }),
+    /DENIED/,
+  );
   console.log(
     "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen and revocation checks passed. Synthetic schema only.",
   );

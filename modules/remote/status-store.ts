@@ -118,7 +118,19 @@ export class RemoteStatusStore {
       return { sequence: b.sequence, duplicate: false };
     });
   }
+  /** Compatibility helper: first page only. Use listPage to traverse a device queue. */
   async list(ownerId: string, deviceId: string) {
+    return (await this.listPage(ownerId, deviceId)).items;
+  }
+  /** Cursor is a position, never authority. Reauthorize every page. Live view, not a snapshot. */
+  async listPage(ownerId: string, deviceId: string, rawOptions: unknown = {}) {
+    const options = z
+      .strictObject({
+        after: z.uuid().optional(),
+        limit: z.number().int().min(1).max(100).default(100),
+      })
+      .safeParse(rawOptions);
+    if (!options.success) throw new RemoteStatusError("INVALID_INPUT");
     if (
       !z.uuid().safeParse(ownerId).success ||
       !z.uuid().safeParse(deviceId).success
@@ -140,13 +152,14 @@ export class RemoteStatusStore {
         throw new RemoteStatusError("DENIED");
       const rows = (
         await db.query(
-          "SELECT id,status,revision,updated_at,error_code FROM remote_status WHERE device_id=$1 AND expires_at>$2 ORDER BY id LIMIT 100",
-          [deviceId, now],
+          "SELECT id,status,revision,updated_at,error_code FROM remote_status WHERE device_id=$1 AND expires_at>$2 AND ($3::uuid IS NULL OR id>$3::uuid) ORDER BY id LIMIT $4",
+          [deviceId, now, options.data.after ?? null, options.data.limit + 1],
         )
       ).rows;
       if (Number(device.expires_at) <= this.now())
         throw new RemoteStatusError("DENIED");
-      return rows.map((r) =>
+      const hasMore = rows.length > options.data.limit;
+      const items = rows.slice(0, options.data.limit).map((r) =>
         remoteStatusSchema.parse({
           id: r.id,
           deviceId,
@@ -156,6 +169,7 @@ export class RemoteStatusStore {
           ...(r.error_code ? { errorCode: r.error_code } : {}),
         }),
       );
+      return { items, nextCursor: hasMore ? items.at(-1)!.id : null };
     });
   }
   async revoke(ownerId: string, deviceId: string) {
