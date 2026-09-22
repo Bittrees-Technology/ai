@@ -2,7 +2,7 @@ import Cocoa
 import WebKit
 
 // The native shell owns only its child engine. Source permissions remain in the engine.
-final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, NSMenuItemValidation {
     var window: NSWindow!
     var web: WKWebView!
     var engine: Process?
@@ -11,6 +11,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var ready = false
     var quitting = false
     var buffer = ""
+    var recovery = RecoveryLifecycle()
+    var recoveryProcess: Process?
+    var recoveryMessage: String?
     let home = URL(string: "http://127.0.0.1:43127/")!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -20,6 +23,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(withTitle: "About Bittrees AI", action: #selector(showBuildInfo), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Copy pairing code", action: #selector(copyPairingCode), keyEquivalent: "p")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Restore from backup…", action: #selector(chooseBackup), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Restore previous copy…", action: #selector(choosePrevious), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Bittrees AI", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         root.submenu = appMenu
@@ -32,14 +38,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         edit.submenu = edits
         menu.addItem(edit)
         NSApp.mainMenu = menu
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        web = WKWebView(frame: .zero, configuration: config)
-        web.navigationDelegate = self
-        web.uiDelegate = self
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 780), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Bittrees AI — Starting local engine"
-        window.contentView = web
+        replaceWebView()
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -63,7 +64,20 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window)
     }
+    func replaceWebView() {
+        web?.stopLoading()
+        web?.navigationDelegate = nil
+        web?.uiDelegate = nil
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        web = WKWebView(frame: .zero, configuration: config)
+        web.navigationDelegate = self
+        web.uiDelegate = self
+        window.contentView = web
+    }
     func startEngine() {
+        ready = false
+        buffer = ""
         guard let resources = Bundle.main.resourceURL else { fail(); return }
         let process = Process()
         process.executableURL = resources.appendingPathComponent("node")
@@ -82,24 +96,108 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             guard !data.isEmpty else { handle.readabilityHandler = nil; return }
             let text = String(decoding: data, as: UTF8.self)
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.engine === process, !self.recovery.busy, !self.quitting else { return }
                 self.buffer = String((self.buffer + text).suffix(4096))
                 if !self.ready && self.buffer.contains("Bittrees AI: http://127.0.0.1:43127") {
                     self.ready = true
                     self.window.title = "Bittrees AI — Local companion"
                     self.web.load(URLRequest(url: self.home))
+                    if let message = self.recoveryMessage {
+                        self.recoveryMessage = nil
+                        let alert = NSAlert()
+                        alert.messageText = "Recovery finished"
+                        alert.informativeText = message + "\n\nPair this window again using Copy pairing code in the app menu."
+                        alert.addButton(withTitle: "OK")
+                        alert.beginSheetModal(for: self.window)
+                    }
                 }
             }
         }
-        process.terminationHandler = { [weak self] _ in
+        process.terminationHandler = { [weak self] ended in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                if self.quitting { NSApp.reply(toApplicationShouldTerminate: true) }
+                guard let self = self, self.engine === ended else { return }
+                self.output?.fileHandleForReading.readabilityHandler = nil
+                self.output = nil
+                self.lifetime = nil
+                self.engine = nil
+                if self.recovery.busy {
+                    switch self.recovery.engineStopped() {
+                    case .recover: self.runRecovery()
+                    case .quit: NSApp.reply(toApplicationShouldTerminate: true)
+                    case .ignore: break
+                    }
+                }
+                else if self.quitting { NSApp.reply(toApplicationShouldTerminate: true) }
                 else { self.fail() }
             }
         }
         engine = process
         do { try process.run() } catch { fail() }
+    }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if [#selector(chooseBackup), #selector(choosePrevious), #selector(copyPairingCode)].contains(menuItem.action) {
+            return ready && engine?.isRunning == true && !recovery.busy && !quitting && window.attachedSheet == nil
+        }
+        return true
+    }
+    @objc func chooseBackup() {
+        guard ready, !recovery.busy, !quitting else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose an encrypted Bittrees AI backup"
+        panel.message = "Choose a coordinated .aib backup made by Bittrees AI. The original Keychain key is required."
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let file = panel.url else { return }
+            self?.confirmRecovery(backup: file)
+        }
+    }
+    @objc func choosePrevious() { confirmRecovery(backup: nil) }
+    func confirmRecovery(backup: URL?) {
+        guard ready, engine?.isRunning == true, !recovery.busy, !quitting else { return }
+        let alert = NSAlert()
+        alert.messageText = backup == nil ? "Restore the previous copy?" : "Restore this backup?"
+        alert.informativeText = "The app will finish stopping its local engine, restore a fresh copy of task and memory data, then restart. Current data is kept in a separate folder. Downloaded model files and connection credentials stay in place. Remote control permissions must be approved again.\n\nKeep a current encrypted backup before continuing. You will need to pair this window again. This does not downgrade the app or recover a missing Keychain key."
+        alert.addButton(withTitle: "Restore and restart")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self,
+                  let process = self.engine, process.isRunning, !self.quitting,
+                  self.recovery.begin(backup: backup) else { return }
+            self.ready = false
+            self.replaceWebView() // Discard the old session and pending browser requests.
+            self.window.title = "Bittrees AI — Finishing local work before recovery"
+            process.terminate() // Only the engine owned by this app; never Ollama or other apps.
+        }
+    }
+    func runRecovery() {
+        guard let resources = Bundle.main.resourceURL else { finishRecovery(success: false); return }
+        window.title = "Bittrees AI — Restoring a separate copy"
+        let process = Process()
+        process.executableURL = resources.appendingPathComponent("node")
+        process.currentDirectoryURL = resources.appendingPathComponent("engine")
+        process.arguments = ["dist/apps/companion/activate-cli.js"] + recovery.arguments
+        process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] ended in
+            DispatchQueue.main.async {
+                guard let self = self, self.recoveryProcess === ended else { return }
+                self.recoveryProcess = nil
+                self.finishRecovery(success: ended.terminationReason == .exit && ended.terminationStatus == 0)
+            }
+        }
+        recoveryProcess = process
+        do { try process.run() } catch { recoveryProcess = nil; finishRecovery(success: false) }
+    }
+    func finishRecovery(success: Bool) {
+        guard recovery.finished() else { NSApp.reply(toApplicationShouldTerminate: true); return }
+        recoveryMessage = success
+            ? "Your recovered copy is now selected. Earlier copies are retained; current source permissions still apply."
+            : "Recovery could not be confirmed. Your earlier data copies are retained. Check the chosen backup, original Keychain key and available space. For a previous-copy restore, an earlier selection must exist."
+        window.title = "Bittrees AI — Restarting local engine"
+        startEngine()
     }
     func fail() {
         web?.stopLoading()
@@ -150,6 +248,11 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if recovery.requestQuit() {
+            quitting = true
+            window.title = "Bittrees AI — Finishing recovery before quitting"
+            return .terminateLater
+        }
         guard let process = engine, process.isRunning else { return .terminateNow }
         quitting = true
         window.title = "Bittrees AI — Finishing local shutdown"
@@ -157,8 +260,13 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         return .terminateLater
     }
 }
-let app = NSApplication.shared
-let delegate = Companion()
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.run()
+@main
+struct CompanionMain {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = Companion()
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        app.run()
+    }
+}
