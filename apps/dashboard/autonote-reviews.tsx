@@ -198,7 +198,7 @@ export function AutoNoteReviewControls({
               </a>{" "}
               · Review expires{" "}
               {new Date(item.review.expiresAt).toLocaleString()}. On AutoNote,
-              load draft reviews and open this meeting’s draft.
+              review the exact additions and confirm there to save.
             </p>
           )}
           {item.receipt && (

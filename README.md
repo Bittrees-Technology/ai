@@ -170,7 +170,7 @@ Source task detail and individual exports use the matching adapter for fresh acc
 
 The connector can check the source review permission, stage an immutable bounded proposal, and recover metadata-only review/receipt status using the existing AutoNote credential. It cannot enable review uploads or approve a save. Source-session review remains on AutoNote’s private page.
 
-Proposal validation matches the source’s canonical field order and limits. Responses must match the exact proposal digest, meeting, operation ID and resulting version; contradictory deleted/saved states and unexpected fields are rejected. The connector holds credential mutations until an in-flight response is captured, uses only fixed AutoNote endpoints and never automatically resubmits uncertain requests. Expired idempotent reviews remain expired rather than creating replacements. Durable operation history and explicit staging/reconcile controls are described below. Automatic source review deep-link handling remains pending.
+Proposal validation matches the source’s canonical field order and limits. Responses must match the exact proposal digest, meeting, operation ID and resulting version; contradictory deleted/saved states and unexpected fields are rejected. The connector holds credential mutations until an in-flight response is captured, uses only fixed AutoNote endpoints and never automatically resubmits uncertain requests. Expired idempotent reviews remain expired rather than creating replacements. Durable operation history and explicit staging/reconcile controls are described below. Source review links open the exact draft through AutoNote’s current signed-in account.
 
 ## Durable AutoNote submission ledger
 
@@ -178,13 +178,20 @@ Schema 7 adds encrypted AutoNote operation history tied to each completed source
 
 Explicit preparation records uncertainty before network dispatch. A lost response or failed local receipt write therefore remains uncertain after restart. Explicit reconciliation asks AutoNote for the original operation's receipt without resending the draft or requiring the old transcript version; saving into AutoNote itself changes that version. Responses must retain the same review identity, digest and expiry. Saved/deleted outcomes are terminal, and source approval remains outside the companion.
 
-Task backups include this ledger, and local task deletion cascades to its local operation history. A compatible backup is required when rolling back to binaries that understand only schema 6. The HTTP deletion guard refuses to erase task history during an active reservation, send or receipt lookup. Source deep-link integration remains pending. This increment does not enable source permissions or add automatic sends.
+Task backups include this ledger, and local task deletion cascades to its local operation history. A compatible backup is required when rolling back to binaries that understand only schema 6. The HTTP deletion guard refuses to erase task history during an active reservation, send or receipt lookup. Source review links preserve source-owned approval. This increment does not enable source permissions or add automatic sends.
 
 
 ## AutoNote submission controls
 
-A completed AutoNote task offers separate actions to prepare its immutable submission locally, explicitly send it for source review, and check the original receipt. Enable review uploads on the AutoNote consent page first. The companion cannot approve a save. The source review link opens AutoNote; currently load its draft reviews and open the meeting’s draft there.
+A completed AutoNote task offers separate actions to prepare its immutable submission locally, explicitly send it for source review, and check the original receipt. Enable review uploads on the AutoNote consent page first. The companion cannot approve a save. The source review link opens the exact draft in AutoNote. Source access is checked again, and saving still requires explicit confirmation there.
 
 Submission status and historical receipts remain readable after a save changes the meeting version. Viewing exact content or exporting the task and its submission still requires fresh source access and an unchanged source projection. Visible submission content clears after 15 seconds or when leaving the window. An uncertain send retains its original identity for explicit retry or receipt recovery; there is no automatic resend.
 
 Deleting local task data removes local submission history after active operations finish, but independently staged source drafts must be deleted on AutoNote. HTTP tests exercise authentication, forged approval rejection, immutable retries, guarded content/export, concurrent deletion and saved-receipt recovery. Local browser/keyboard and real-source pilot acceptance remain open.
+
+
+## Three-repository AutoNote acceptance
+
+`scripts/autonote-integration-check.ts` exercises the actual companion connector, trusted task worker, encrypted submission ledger, AutoNote route/save code and existing AutoNote-to-CRM publication code. GitHub checks install pinned AutoNote/CRM revisions and use disposable PostgreSQL schemas in a dedicated `autonote_test` database. For a local run, set `DATABASE_URL`, `AUTONOTE_REPO` and `CRM_REPO` to installed checkouts. Never point it at a production database.
+
+The check proves PKCE transcript consent, cited synthetic generation, separate review permission, uncertain staging recovery, source-owned save, historical receipt recovery after the version changes, rejection of unaccepted actions, normal action acceptance, and publication to the separately approved CRM destination. It drops a successful CRM response, retries through the original path and verifies exactly two destination records/receipts, then checks fresh-preview deduplication and revoked destination access. Transport invokes actual source code in-process and refuses external requests; inference is deterministic test output. This is contract/workflow evidence, not browser, hosted-network or model-quality acceptance.
