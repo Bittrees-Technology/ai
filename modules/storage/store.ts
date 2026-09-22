@@ -1,3 +1,4 @@
+import { exportPrivatePeers } from "../remote/private-peers.js";
 import { databaseChangeToken } from "./change-token.js";
 import { MemoryExtractions } from "./memory-extractions.js";
 import { RemoteTemplates } from "./remote-templates.js";
@@ -142,7 +143,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 12) {
+    if (version > 13) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -215,7 +216,10 @@ CREATE TABLE IF NOT EXISTS remote_template_receipts(user_id TEXT NOT NULL,tenant
         this.db
           .exec(`CREATE TABLE IF NOT EXISTS message_positions(position INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE);
 INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN message_positions p ON p.message_id=m.id WHERE p.message_id IS NULL ORDER BY m.rowid;`);
-        this.db.pragma("user_version = 12");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_peer_states(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,anchor TEXT NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB,PRIMARY KEY(user_id,tenant_id))",
+        );
+        this.db.pragma("user_version = 13");
       })();
     } catch (error) {
       this.db.close();
@@ -1315,6 +1319,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
       )
       .run(this.now(), eventId, owner.userId, owner.tenantId);
   }
+  exportPrivatePeerTrust(owner: Owner) {
+    return exportPrivatePeers(this, this.vault, owner);
+  }
   export(owner: Owner) {
     return (
       this.db
@@ -1585,6 +1592,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   deleteAll(owner: Owner) {
     this.db
       .transaction(() => {
+        this.db
+          .prepare(
+            "UPDATE private_peer_states SET payload=NULL,locked=1,revision=revision+1 WHERE user_id=? AND tenant_id=?",
+          )
+          .run(owner.userId, owner.tenantId);
         for (const table of [
           "remote_template_receipts",
           "remote_template_permissions",

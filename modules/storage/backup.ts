@@ -146,6 +146,9 @@ async function restoreSnapshot(
       restored = tasks;
       tasks.db.prepare("DELETE FROM remote_control_bindings").run();
       tasks.db
+        .prepare("UPDATE private_peer_states SET locked=1,revision=revision+1")
+        .run();
+      tasks.db
         .prepare("UPDATE remote_template_permissions SET payload=NULL")
         .run();
       tasks.db.pragma("wal_checkpoint(TRUNCATE)");
