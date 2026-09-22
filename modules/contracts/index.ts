@@ -52,8 +52,9 @@ export const sourceBindingSchema = z
   })
   .refine(
     (b) =>
-      ["crm", "autonote"].includes(b.authority.sourceApp) &&
-      (b.authority.sourceApp !== "autonote" || b.refs.length === 1) &&
+      ["crm", "autonote", "mail"].includes(b.authority.sourceApp) &&
+      (!["autonote", "mail"].includes(b.authority.sourceApp) ||
+        b.refs.length === 1) &&
       b.refs.every(
         (r) =>
           r.app === b.authority.sourceApp &&
