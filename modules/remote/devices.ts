@@ -151,6 +151,44 @@ export class RemoteDeviceStore {
       };
     });
   }
+  /** Replace the bearer secret without extending the approved lease or scope.
+   * Lost responses require fresh pairing; an old secret is never accepted again.
+   */
+  async rotate(credential: string) {
+    if (!opaque.safeParse(credential).success)
+      throw new RemoteStatusError("DENIED");
+    return this.transaction(async (db) => {
+      const row = (
+        await db.query(
+          "SELECT id,owner_id,epoch,expires_at,revoked_at FROM remote_devices WHERE credential_hash=$1 FOR UPDATE",
+          [hash(credential)],
+        )
+      ).rows[0];
+      if (
+        !row ||
+        row.revoked_at !== null ||
+        Number(row.expires_at) <= this.now() ||
+        row.epoch >= 2147483647
+      )
+        throw new RemoteStatusError("DENIED");
+      const replacement = secret(),
+        epoch = row.epoch + 1;
+      await db.query(
+        "UPDATE remote_devices SET credential_hash=$2,epoch=$3 WHERE id=$1",
+        [row.id, hash(replacement), epoch],
+      );
+      if (Number(row.expires_at) <= this.now())
+        throw new RemoteStatusError("DENIED");
+      return {
+        deviceId: row.id as string,
+        ownerId: row.owner_id as string,
+        epoch,
+        credential: replacement,
+        expiresAt: Number(row.expires_at),
+        scope: "status:publish" as const,
+      };
+    });
+  }
   async cancel(ownerId: string, pairingId: string) {
     if (!validId(ownerId) || !validId(pairingId))
       throw new RemoteStatusError("INVALID_INPUT");

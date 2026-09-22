@@ -294,7 +294,7 @@ try {
   );
   await checkRemoteDevices(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();
