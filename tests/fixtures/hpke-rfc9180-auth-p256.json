@@ -1,0 +1,25 @@
+{
+  "source": "https://raw.githubusercontent.com/cfrg/draft-irtf-cfrg-hpke/5f503c564da00b0687b3de75f1dfbdfc4079ad31/test-vectors.json",
+  "upstreamSha256": "61fc662f01996cd06d713dacf5e133167bd309a1f329442d53f1e21a47b3ede6",
+  "note": "Public RFC 9180 test material, not application secrets; first Auth/P-256/HKDF-SHA256/AES-256-GCM encryption.",
+  "vector": {
+    "mode": 2,
+    "kem_id": 16,
+    "kdf_id": 1,
+    "aead_id": 2,
+    "info": "4f6465206f6e2061204772656369616e2055726e",
+    "ikmE": "d6c49e442aad90bcc1bc0d166e5c4d3df845c803ba08b8a4d891af2eeae4f97e",
+    "ikmR": "3c56756948f1c27aed3eb27a923c891dc073eccf94bb6c1b64a8bfaa95f1f8f7",
+    "ikmS": "0f3def8cc45967f86c566f2c2a7decedff0d5f8b20a34ab65318144c80cb6b2b",
+    "pkEm": "04a7aeac79fda402674ef247c12d6f5fdfd21498d896b67ff04ec181382d4516b7662be32b4a2ae817c2d57104ecb6fcaa527438939810612d1b3d0af36ffc66ce",
+    "pkRm": "04cd38ef80923e26f157e06c9887f80177c97e1005a41104127271237f946df22eda13d40801bce6184f1a631c44b0807a1a5e8d039975ed0f6079fcbd2dfe6652",
+    "pkSm": "04ece9b48cc98ee03ba742fe1218a3fbec960cc34b6e1defdcd3285276f39028e95b90f9526607565888766a1101f429dc3ec87364b5c8c613f0a081881950427f",
+    "enc": "04a7aeac79fda402674ef247c12d6f5fdfd21498d896b67ff04ec181382d4516b7662be32b4a2ae817c2d57104ecb6fcaa527438939810612d1b3d0af36ffc66ce"
+  },
+  "encryption": {
+    "aad": "436f756e742d30",
+    "ct": "59b9890aabf94c1d502c39d8d356989ab0880ed43e984255db7b32a8d7b0ad5beba799a4ec326a0ddca3dd5e5d",
+    "nonce": "29240057274f71e55bfcca28",
+    "pt": "4265617574792069732074727574682c20747275746820626561757479"
+  }
+}
