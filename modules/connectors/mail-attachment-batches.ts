@@ -47,6 +47,28 @@ export function attachmentPlan(
       } else high = n - 1;
     }
     if (!best || parts.length >= 128) throw new ModelError("CAPACITY");
+    // Prefer a complete record/sentence while retaining at least half the usable part.
+    // Very long unbroken text still uses the exact bounded code-point split.
+    if (offset + best < chars.length) {
+      const minimum = Math.max(1, Math.floor(best / 2));
+      let boundary = 0;
+      for (let n = best; n >= minimum; n--) {
+        if (chars[offset + n - 1] === "\n") {
+          boundary = n;
+          break;
+        }
+      }
+      if (!boundary)
+        for (let n = best; n >= minimum; n--) {
+          const previous = chars[offset + n - 1]!,
+            next = chars[offset + n];
+          if (/[.!?]/.test(previous) && next !== undefined && /\s/.test(next)) {
+            boundary = n;
+            break;
+          }
+        }
+      if (boundary) best = boundary;
+    }
     const section = { id, text: chars.slice(offset, offset + best).join("") };
     parts.push({ section, prompt: promptFor(source, request, section) });
     offset += best;
