@@ -1,3 +1,4 @@
+import { RemoteTemplates } from "./remote-templates.js";
 import {
   templateSaveSchema,
   templateActionSchema,
@@ -126,6 +127,7 @@ const remoteControlBindingSchema = remoteControlIdentitySchema.extend({
 const terminal = ["completed", "failed", "cancelled", "expired"];
 export class Store {
   readonly db: Database.Database;
+  readonly remoteTemplates: RemoteTemplates;
   constructor(
     path: string,
     private vault: Vault,
@@ -137,7 +139,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 9) {
+    if (version > 10) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -200,12 +202,17 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
         this.db.exec(
           `CREATE TABLE IF NOT EXISTS local_templates(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,payload BLOB,PRIMARY KEY(id,user_id,tenant_id));`,
         );
-        this.db.pragma("user_version = 9");
+        this.db
+          .exec(`CREATE TABLE IF NOT EXISTS remote_template_permissions(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,device_id TEXT NOT NULL,template_id TEXT NOT NULL,payload BLOB,PRIMARY KEY(id,user_id,tenant_id));
+CREATE TABLE IF NOT EXISTS remote_template_runs(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,permission_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS remote_template_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
+        this.db.pragma("user_version = 10");
       })();
     } catch (error) {
       this.db.close();
       throw error;
     }
+    this.remoteTemplates = new RemoteTemplates(this, vault, now);
   }
   private templatePurpose(owner: Owner, id: string) {
     return JSON.stringify(["local-template", owner.tenantId, owner.userId, id]);
@@ -259,6 +266,7 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
             return current;
           if (row.revision !== expectedRevision)
             throw new StoreError("CONFLICT");
+          this.remoteTemplates.revokeTemplate(owner, id);
           this.db
             .prepare(
               "UPDATE local_templates SET revision=revision+1,payload=? WHERE id=? AND user_id=? AND tenant_id=?",
@@ -297,6 +305,7 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
         const current = this.template(owner, id);
         if (current.revision !== expectedRevision)
           throw new StoreError("CONFLICT");
+        this.remoteTemplates.revokeTemplate(owner, id);
         this.db
           .prepare(
             "UPDATE local_templates SET payload=NULL WHERE id=? AND user_id=? AND tenant_id=?",
@@ -1072,6 +1081,7 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
     return this.db
       .transaction(() => {
         const now = this.now();
+        this.remoteTemplates.invalidateRuns(owner);
         const expired = this.db
           .prepare(
             "SELECT id FROM tasks WHERE user_id=? AND tenant_id=? AND deadline<=? AND status NOT IN ('completed','failed','cancelled','expired')",
@@ -1131,6 +1141,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   ): Row {
     const r = this.row(owner, id);
     if (
+      !this.remoteTemplates.runAllowed(owner, id) ||
       r.status !== "running" ||
       r.worker_id !== worker ||
       r.generation !== generation ||
@@ -1519,6 +1530,8 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     this.db
       .transaction(() => {
         for (const table of [
+          "remote_template_receipts",
+          "remote_template_permissions",
           "local_templates",
           "remote_control_receipts",
           "remote_control_bindings",
