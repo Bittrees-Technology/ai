@@ -18,7 +18,7 @@ const savedSchema = z.strictObject({
   localOwner: z.string().min(1).max(256),
   grant: grantSchema,
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  mode: z.enum(["active", "rotation_pending"]),
+  mode: z.enum(["active", "rotation_pending", "pairing_required"]),
   pending: statusBatchSchema.optional(),
 });
 type Saved = z.infer<typeof savedSchema>;
@@ -255,8 +255,30 @@ export class RemoteClient {
     await this.save(s);
     return ack.data;
   }
-  async retryPending() {
-    return this.exclusive(async () => this.deliver(await this.active()));
+  get running() {
+    return this.busy;
+  }
+  async retryPending(validate?: (ids: string[]) => Promise<void>) {
+    return this.exclusive(async () => {
+      const saved = await this.active();
+      if (!saved.pending) throw new RemoteClientError("PENDING_DELIVERY");
+      await validate?.(saved.pending.items.map((item) => item.id));
+      return this.deliver(saved);
+    });
+  }
+  /** Clear unsent metadata under the same exclusion as publication, then delete local tasks. */
+  async clearTaskData(remove: () => void) {
+    return this.exclusive(async () => {
+      const saved = await this.saved();
+      if (saved?.pending) {
+        delete saved.pending;
+        // The relay may have accepted the batch before a lost acknowledgement.
+        // Never reuse its sequence with different content after local deletion.
+        saved.mode = "pairing_required";
+        await this.save(saved);
+      }
+      remove();
+    });
   }
   async rotate() {
     return this.exclusive(async () => {

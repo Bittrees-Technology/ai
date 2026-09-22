@@ -1,3 +1,7 @@
+import {
+  RemoteClient,
+  RemoteClientError,
+} from "../../modules/remote/client.js";
 import type { MailConnector } from "../../modules/connectors/mail.js";
 import type { MailTasks } from "../../modules/connectors/mail-tasks.js";
 import type { RolesConnector } from "../../modules/connectors/roles.js";
@@ -19,6 +23,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  remote?: RemoteClient;
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
   roles?: RolesConnector;
@@ -39,6 +44,7 @@ export interface LocalApiOptions {
 }
 export function localApi({
   store,
+  remote,
   owner,
   token,
   port,
@@ -91,6 +97,69 @@ export function localApi({
     next();
   });
   app.use(express.json({ limit: "64kb", strict: true }));
+  app.get("/v1/remote", async (_req, res) =>
+    res.json({
+      available: !!remote,
+      connection: remote ? await remote.status() : null,
+      automaticSharing: false,
+    }),
+  );
+  if (remote) {
+    const confirmed = z.strictObject({ confirmed: z.literal(true) });
+    app.post("/v1/remote/begin", async (req, res) => {
+      confirmed.parse(req.body);
+      res.json(await remote.begin());
+    });
+    app.post("/v1/remote/finish", async (req, res) => {
+      const input = z
+        .strictObject({ expectedOwnerId: z.uuid(), confirmed: z.literal(true) })
+        .parse(req.body);
+      res.json(await remote.finish(input.expectedOwnerId));
+    });
+    app.post("/v1/remote/publish", async (req, res) => {
+      const input = z
+        .strictObject({
+          confirmed: z.literal(true),
+          tasks: z
+            .array(
+              z.strictObject({
+                id: z.uuid(),
+                revision: z.number().int().positive(),
+              }),
+            )
+            .min(1)
+            .max(100)
+            .refine(
+              (items) => new Set(items.map((x) => x.id)).size === items.length,
+            ),
+        })
+        .parse(req.body);
+      const tasks = input.tasks.map((selected) => {
+        const task = store.get(owner, selected.id);
+        if (task.revision !== selected.revision)
+          throw new StoreError("CONFLICT");
+        return task;
+      });
+      res.json(await remote.publish(tasks));
+    });
+    app.post("/v1/remote/retry", async (req, res) => {
+      confirmed.parse(req.body);
+      res.json(
+        await remote.retryPending(async (ids) => {
+          for (const id of ids) store.get(owner, id);
+        }),
+      );
+    });
+    app.post("/v1/remote/rotate", async (req, res) => {
+      confirmed.parse(req.body);
+      res.json(await remote.rotate());
+    });
+    app.delete("/v1/remote/local", async (req, res) => {
+      if (req.header("X-Confirm-Delete") !== "local-remote-connection-only")
+        throw new StoreError("INVALID_INPUT");
+      res.json(await remote.forgetLocal());
+    });
+  }
   if (deviceStatus)
     app.get("/v1/device", async (_req, res) => res.json(await deviceStatus()));
   if (imports) {
@@ -635,13 +704,17 @@ export function localApi({
       memories: memory ? await memory.export(owner) : [],
     }),
   );
-  app.delete("/v1/data", (req, res) => {
+  app.delete("/v1/data", async (req, res) => {
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");
-    if (publications?.busy || autoReviews?.busy)
+    if (publications?.busy || autoReviews?.busy || remote?.running)
       throw new StoreError("CONFLICT");
-    memory?.deleteAll(owner);
-    store.deleteAll(owner);
+    const remove = () => {
+      memory?.deleteAll(owner);
+      store.deleteAll(owner);
+    };
+    if (remote) await remote.clearTaskData(remove);
+    else remove();
     res.status(204).end();
   });
   app.use((_req, res) =>
@@ -651,6 +724,7 @@ export function localApi({
   );
   const errors: ErrorRequestHandler = (err, _req, res, _next) => {
     const code =
+      err instanceof RemoteClientError ||
       err instanceof ImportError ||
       err instanceof StoreError ||
       err instanceof ModelError ||
