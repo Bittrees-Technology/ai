@@ -10,7 +10,7 @@ import {
 import { restoreContentBackup } from "../../modules/storage/content-backup.js";
 import { Vault } from "../../modules/storage/vault.js";
 import { RecoveryError, withCompanionStopped } from "./recovery.js";
-/** Not wired to HTTP, CLI or native UI until recovery delivery/review is implemented. */
+/** Existing-key preparation, exposed only through the gated native setup preview. */
 export async function prepareUserRecoveryKit(entry: SecretEntry) {
   let key: Buffer;
   try {

@@ -11,7 +11,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadStorageKey } from "../modules/storage/keychain.js";
+import {
+  loadStorageKey,
+  normalizeKeychainSecret,
+} from "../modules/storage/keychain.js";
 import { encryptedBackup, restoreBackup } from "../modules/storage/backup.js";
 import { Store } from "../modules/storage/store.js";
 import { Vault } from "../modules/storage/vault.js";
@@ -116,4 +119,37 @@ test("restore rejects existing SQLite sidecars without modifying them", async ()
     source.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("native Keychain arrays and null normalize to owned typed bytes without permissive coercion", () => {
+  assert.equal(normalizeKeychainSecret(null), undefined);
+  assert.equal(normalizeKeychainSecret(undefined), undefined);
+  for (const raw of [
+    Array.from({ length: 32 }, (_, i) => i),
+    Uint8Array.from({ length: 32 }, (_, i) => i),
+    Buffer.from(Array.from({ length: 32 }, (_, i) => i)),
+  ]) {
+    const normalized = normalizeKeychainSecret(raw)!;
+    assert.ok(normalized instanceof Uint8Array);
+    assert.equal(normalized.byteLength, 32);
+    assert.deepEqual(Buffer.from(normalized), Buffer.from(raw));
+    normalized.fill(0);
+    assert.equal(raw[31], 31);
+  }
+  for (const invalid of [
+    "secret",
+    {},
+    [256],
+    [-1],
+    [1.2],
+    [NaN],
+    [undefined],
+    new Array(2),
+    ["1"],
+    new Int16Array([1]),
+  ])
+    assert.throws(
+      () => normalizeKeychainSecret(invalid),
+      /Invalid key-store response/,
+    );
 });
