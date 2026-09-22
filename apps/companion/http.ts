@@ -782,9 +782,13 @@ export function localApi({
       }),
     ),
   );
-  app.get("/v1/inboxes/:id/conversations", (req, res) =>
-    res.json({ items: store.inboxConversations(owner, req.params.id) }),
-  );
+  app.get("/v1/inboxes/:id/conversations", (req, res) => {
+    if (req.query.cursor !== undefined && typeof req.query.cursor !== "string")
+      throw new StoreError("INVALID_INPUT");
+    res.json(
+      store.inboxConversationPage(owner, req.params.id, req.query.cursor),
+    );
+  });
   app.post("/v1/inboxes", (req, res) =>
     res.status(201).json(store.createInbox(owner, req.body)),
   );

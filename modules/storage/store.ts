@@ -141,7 +141,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 11) {
+    if (version > 12) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -211,7 +211,10 @@ CREATE TABLE IF NOT EXISTS remote_template_receipts(user_id TEXT NOT NULL,tenant
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS memory_extractions(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL)",
         );
-        this.db.pragma("user_version = 11");
+        this.db
+          .exec(`CREATE TABLE IF NOT EXISTS message_positions(position INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE);
+INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN message_positions p ON p.message_id=m.id WHERE p.message_id IS NULL ORDER BY m.rowid;`);
+        this.db.pragma("user_version = 12");
       })();
     } catch (error) {
       this.db.close();
@@ -1362,34 +1365,76 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     );
   }
   inboxConversations(owner: Owner, inboxId: string) {
+    return this.inboxConversationPage(owner, inboxId).items;
+  }
+  inboxConversationPage(owner: Owner, inboxId: string, cursor?: string) {
+    const purpose = JSON.stringify([
+      "inbox-page",
+      owner.tenantId,
+      owner.userId,
+      inboxId,
+    ]);
+    let boundary: { snapshot: number; before: number };
+    if (cursor !== undefined) {
+      try {
+        if (!/^[A-Za-z0-9_-]{1,1024}$/.test(cursor)) throw Error();
+        boundary = z
+          .strictObject({
+            snapshot: z
+              .number()
+              .int()
+              .nonnegative()
+              .max(Number.MAX_SAFE_INTEGER),
+            before: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+          })
+          .parse(this.vault.open(Buffer.from(cursor, "base64url"), purpose));
+      } catch {
+        throw new StoreError("INVALID_INPUT");
+      }
+    } else {
+      const row = this.db
+        .prepare(
+          "SELECT COALESCE(MAX(position),0) AS position FROM message_positions",
+        )
+        .get() as { position: number };
+      boundary = { snapshot: row.position, before: Number.MAX_SAFE_INTEGER };
+    }
     const rows = this.db
       .prepare(
-        "SELECT conversation_id,MAX(sequence) AS sequence,MAX(created_at) AS updated_at FROM messages WHERE user_id=? AND tenant_id=? AND inbox_id=? GROUP BY conversation_id ORDER BY updated_at DESC,conversation_id LIMIT 100",
+        `WITH latest AS (
+      SELECT m.conversation_id, MAX(p.position) AS position FROM messages m JOIN message_positions p ON p.message_id=m.id
+      WHERE m.user_id=? AND m.tenant_id=? AND m.inbox_id=? AND p.position<=? GROUP BY m.conversation_id
+    ) SELECT latest.conversation_id,latest.position,m.id,m.created_at FROM latest JOIN message_positions p ON p.position=latest.position JOIN messages m ON m.id=p.message_id WHERE latest.position<? ORDER BY latest.position DESC LIMIT 101`,
       )
-      .all(owner.userId, owner.tenantId, inboxId) as {
+      .all(
+        owner.userId,
+        owner.tenantId,
+        inboxId,
+        boundary.snapshot,
+        boundary.before,
+      ) as {
       conversation_id: string;
-      sequence: number;
-      updated_at: number;
+      position: number;
+      id: string;
+      created_at: number;
     }[];
-    return rows.map((row) => {
-      const latest = this.db
-        .prepare(
-          "SELECT id FROM messages WHERE user_id=? AND tenant_id=? AND inbox_id=? AND conversation_id=? AND sequence=?",
-        )
-        .get(
-          owner.userId,
-          owner.tenantId,
-          inboxId,
-          row.conversation_id,
-          row.sequence,
-        ) as { id: string };
-      const message = this.message(owner, latest.id);
-      return {
+    const page = rows.slice(0, 100);
+    return {
+      items: page.map((row) => ({
         id: row.conversation_id,
-        updatedAt: row.updated_at,
-        preview: message.input.content.slice(0, 100),
-      };
-    });
+        updatedAt: row.created_at,
+        preview: this.message(owner, row.id).input.content.slice(0, 100),
+      })),
+      nextCursor:
+        rows.length > 100
+          ? this.vault
+              .seal(
+                { snapshot: boundary.snapshot, before: page.at(-1)!.position },
+                purpose,
+              )
+              .toString("base64url")
+          : null,
+    };
   }
   appendMessage(owner: Owner, raw: unknown, key: string) {
     const input = inboxMessageSchema.parse(raw);
@@ -1458,6 +1503,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
             hash,
             this.now(),
           );
+        this.db
+          .prepare("INSERT INTO message_positions(message_id) VALUES(?)")
+          .run(id);
         if (input.replyExpected && input.replyDueAt)
           this.db
             .prepare("INSERT INTO checkins VALUES(?,?,?,NULL)")
