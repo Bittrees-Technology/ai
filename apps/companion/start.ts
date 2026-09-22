@@ -153,6 +153,7 @@ server.on("error", () => {
 async function stop() {
   if (stopping) return;
   stopping = true;
+  process.stdin.pause();
   clearInterval(timer);
   worker.stop();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
@@ -178,6 +179,11 @@ const timer = setInterval(() => {
       });
   }
 }, 500);
+// The native parent holds stdin open; an unexpected shell exit stops its engine.
+if (process.env.BITTREES_DESKTOP === "1") {
+  process.stdin.resume();
+  process.stdin.on("end", () => void stop());
+}
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
 {

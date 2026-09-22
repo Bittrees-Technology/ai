@@ -90,7 +90,7 @@ const reviewCriteria: Record<string, string[]> = {
     "Monday appears only in the reply as the user-authorized commitment.",
   ],
 };
-const runtime = new Ollama();
+const runtime = new Ollama(process.env.MAIL_PROBE_ENDPOINT);
 const pinned = await runtime.pin({
   id: "synthetic-mail-check",
   runtime: "ollama",
