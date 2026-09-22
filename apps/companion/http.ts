@@ -831,8 +831,11 @@ export function localApi({
   app.get("/v1/checkins", (_req, res) =>
     res.json({ items: store.checkins(owner) }),
   );
-  app.get("/v1/export", async (_req, res) =>
-    res.json({
+  app.get("/v1/export", async (_req, res) => {
+    const taskToken = store.changeToken(),
+      memoryToken = memory?.changeToken();
+    const memories = memory ? await memory.export(owner) : [];
+    const payload = {
       tasks: store.export(owner).map(concealed),
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
@@ -841,9 +844,15 @@ export function localApi({
       memoryExtractions: store.memoryExtractions.export(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
-      memories: memory ? await memory.export(owner) : [],
-    }),
-  );
+      memories,
+    };
+    if (
+      taskToken !== store.changeToken() ||
+      memoryToken !== memory?.changeToken()
+    )
+      throw new StoreError("CONFLICT");
+    res.json(payload);
+  });
   app.delete("/v1/data", async (req, res) => {
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");

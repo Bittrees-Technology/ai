@@ -1,3 +1,4 @@
+import { databaseChangeToken } from "../storage/change-token.js";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -425,6 +426,9 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
   }
   async backup(destination: string) {
     await this.db.backup(destination);
+  }
+  changeToken() {
+    return databaseChangeToken(this.db);
   }
   close() {
     this.db.close();
