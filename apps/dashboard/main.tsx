@@ -1,3 +1,4 @@
+import { createLocalApi } from "./local-api.js";
 import { MemorySuggestions } from "./memory-suggestions.js";
 import { MemorySearch } from "./memory-search.js";
 import { Templates } from "./templates.js";
@@ -31,6 +32,12 @@ type Memory = {
 };
 type Profile = { id: string; model: string };
 const explanations: Record<string, string> = {
+  LOCAL_TIMEOUT:
+    "The companion took too long to respond. A submitted action may already have completed. Check task history before retrying it; drafts stay here.",
+  LOCAL_UNAVAILABLE:
+    "Cannot reach the companion on this Mac. Open Bittrees AI and check the connection. A submitted action may already have completed; check its status before retrying.",
+  LOCAL_INVALID_RESPONSE:
+    "The companion returned an unreadable response. Check its status before retrying a submitted action. No automatic retry was made.",
   REMOTE_TEMPLATE_CAPACITY:
     "A remote template limit was reached. Review existing permissions and run allowances, then refresh before retrying.",
   TEMPLATE_CONFIRMATION_REQUIRED:
@@ -72,25 +79,7 @@ const explanations: Record<string, string> = {
   INVALID_OUTPUT:
     "The model’s answer did not meet the required format or evidence rules. Start a fresh draft with another model or a revised request.",
 };
-async function api(
-  path: string,
-  method = "GET",
-  body?: unknown,
-  headers: Record<string, string> = {},
-) {
-  const response = await fetch(path, {
-    method,
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: "INTERNAL" }));
-    throw Error(data.error);
-  }
-  return response.status === 204 ? null : response.json();
-}
+const api = createLocalApi();
 function App() {
   const [paired, setPaired] = useState(false),
     [page, setPage] = useState("Tasks"),
