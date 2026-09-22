@@ -20,6 +20,7 @@ type RemoteStatus = {
   connection: null | {
     deviceId: string;
     ownerId: string;
+    epoch: number;
     expiresAt: number;
     state: string;
     templates: RemotePermission[];
@@ -30,8 +31,7 @@ type RemoteReview = {
   expectedRevision: number;
   maxRuns: number;
   expiresAt: number;
-  deviceId: string;
-  ownerId: string;
+  expectedConnection: { deviceId: string; ownerId: string; epoch: number };
 };
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
 export class TemplateController {
@@ -142,8 +142,11 @@ export class TemplateController {
       expectedRevision: this.draft.revision,
       maxRuns,
       expiresAt: Math.min(now + minutes * 60000, connection.expiresAt),
-      deviceId: connection.deviceId,
-      ownerId: connection.ownerId,
+      expectedConnection: {
+        deviceId: connection.deviceId,
+        ownerId: connection.ownerId,
+        epoch: connection.epoch,
+      },
     };
     this.changed();
   }
@@ -158,7 +161,7 @@ export class TemplateController {
       review.expiresAt <= Date.now()
     )
       throw Error("TEMPLATE_CONFIRMATION_REQUIRED");
-    const { deviceId: _device, ownerId: _owner, ...input } = review;
+    const input = structuredClone(review);
     return this.operation(
       () =>
         this.api("/v1/remote/templates/share", "POST", {

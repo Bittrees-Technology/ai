@@ -175,6 +175,11 @@ function fixture() {
       held = promise;
     },
     share: () => ({
+      expectedConnection: {
+        ownerId: grant.ownerId,
+        deviceId: grant.deviceId,
+        epoch: grant.epoch,
+      },
       templateId: template.id,
       expectedRevision: 1,
       maxRuns: 2,
@@ -194,6 +199,12 @@ function fixture() {
       return command;
     },
     permission: () => state().templates[0].approval.identity.permissionId,
+    rePair: (change: Partial<typeof grant>) => {
+      grant = { ...grant, ...change };
+      const next = state();
+      next.grant = grant;
+      saved = Buffer.from(JSON.stringify(next));
+    },
   };
 }
 test("template client persists before publishing and recovers lost acknowledgements after lease expiry without duplicate tasks", async () => {
@@ -545,6 +556,51 @@ test("expired and unpublished template permissions cannot enable background rece
       (await f.client().status())!.templates[0]!.backgroundReceiving,
       false,
     );
+  } finally {
+    f.store.close();
+  }
+});
+
+test("template sharing rejects changed account, device or credential epoch before any local approval or upload", async () => {
+  for (const change of [
+    { ownerId: randomUUID() },
+    { deviceId: randomUUID() },
+    { epoch: 2 },
+  ]) {
+    const f = fixture();
+    try {
+      const reviewed = f.share();
+      f.rePair(change);
+      const before = Buffer.from(f.saved!);
+      await assert.rejects(
+        f.client().shareTemplate(reviewed),
+        /TEMPLATE_CONFIRMATION_REQUIRED/,
+      );
+      assert.deepEqual(Buffer.from(f.saved!), before);
+      assert.equal(f.calls.length, 0);
+      assert.equal(f.store.remoteTemplates.export(owner).permissions.length, 0);
+      await f.client().shareTemplate(f.share());
+      assert.equal(f.calls.length, 1);
+    } finally {
+      f.store.close();
+    }
+  }
+});
+test("reviewed template connection cannot survive actual credential rotation or omit its binding", async () => {
+  const f = fixture();
+  try {
+    const reviewed = f.share();
+    await f.client().rotate();
+    const before = f.calls.length;
+    await assert.rejects(
+      f.client().shareTemplate(reviewed),
+      /TEMPLATE_CONFIRMATION_REQUIRED/,
+    );
+    const { expectedConnection: _binding, ...missing } = f.share();
+    await assert.rejects(f.client().shareTemplate(missing));
+    assert.equal(f.calls.length, before);
+    await f.client().shareTemplate(f.share());
+    assert.equal((await f.client().status())!.epoch, 2);
   } finally {
     f.store.close();
   }

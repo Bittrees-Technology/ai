@@ -994,7 +994,13 @@ export async function checkRemoteHttp(pool: Pool) {
           modelProfileId: "template-model",
         },
       });
+      const reviewedConnection = (await client.status())!;
       await client.shareTemplate({
+        expectedConnection: {
+          ownerId: reviewedConnection.ownerId,
+          deviceId: reviewedConnection.deviceId,
+          epoch: reviewedConnection.epoch,
+        },
         templateId: template.id,
         expectedRevision: 1,
         maxRuns: 2,

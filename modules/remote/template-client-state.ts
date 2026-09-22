@@ -3,6 +3,11 @@ import { templateApprovalSchema } from "./template-contracts.js";
 import { remoteTemplateSchema } from "./status.js";
 import type { Store } from "../storage/store.js";
 export const shareTemplateSchema = z.strictObject({
+  expectedConnection: z.strictObject({
+    ownerId: z.uuid(),
+    deviceId: z.uuid(),
+    epoch: z.number().int().min(1).max(2147483647),
+  }),
   templateId: z.uuid(),
   expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   maxRuns: z.number().int().min(1).max(20),
