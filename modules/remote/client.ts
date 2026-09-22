@@ -33,6 +33,7 @@ const controlStateSchema = z
   .strictObject({
     mode: z.enum(["enable_pending", "active", "disable_pending"]),
     grant: controlGrantSchema.optional(),
+    receiving: z.boolean().optional(),
   })
   .refine((value) => value.mode !== "active" || !!value.grant);
 export interface RemoteControlExecutor {
@@ -141,7 +142,12 @@ export class RemoteClient {
       throw new RemoteClientError("PAIRING_REQUIRED");
     return s;
   }
-  private async post(path: string, body: unknown, credential?: string) {
+  private async post(
+    path: string,
+    body: unknown,
+    credential?: string,
+    signal?: AbortSignal,
+  ) {
     try {
       const response = await this.transport(origin + "/device/" + path, {
         method: "POST",
@@ -153,7 +159,9 @@ export class RemoteClient {
           ...(credential ? { Authorization: "Bearer " + credential } : {}),
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(15000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+          : AbortSignal.timeout(15000),
       });
       if (!response.ok) {
         await response.body?.cancel();
@@ -200,6 +208,7 @@ export class RemoteClient {
             ? "expired"
             : "paired",
       pendingDelivery: !!s.pending,
+      backgroundReceiving: s.controls?.receiving === true,
       controls: !this.executor
         ? "unavailable"
         : !s.controls
@@ -286,8 +295,35 @@ export class RemoteClient {
       return { disabledLocally: true, remoteConfirmed: true };
     });
   }
+  async setReceiving(enabled: boolean) {
+    return this.exclusive(async () => {
+      const s = await this.saved();
+      if (!s) {
+        if (enabled)
+          throw new RemoteClientError("CONTROL_CONFIRMATION_REQUIRED");
+        return;
+      }
+      if (
+        enabled &&
+        (s.mode !== "active" ||
+          s.controls?.mode !== "active" ||
+          !s.controls.grant ||
+          !this.executor?.allowed(this.controlIdentity(s.controls.grant)))
+      )
+        throw new RemoteClientError("CONTROL_CONFIRMATION_REQUIRED");
+      if (s.controls) {
+        s.controls.receiving = enabled;
+        try {
+          await this.save(s);
+        } catch (error) {
+          this.executor?.revoke(s.grant.deviceId);
+          throw error;
+        }
+      }
+    });
+  }
   /** One bounded delivery pass. Constructor and status refresh never start a polling loop. */
-  async pollControls() {
+  async pollControls(signal?: AbortSignal) {
     return this.exclusive(async () => {
       const s = await this.active(),
         grant = s.controls?.grant;
@@ -310,7 +346,9 @@ export class RemoteClient {
                   new Set(items.map((c) => c.id)).size === items.length,
               ),
           })
-          .safeParse(await this.post("commands/poll", {}, grant.credential));
+          .safeParse(
+            await this.post("commands/poll", {}, grant.credential, signal),
+          );
         if (
           !delivery.success ||
           delivery.data.identity.ownerId !== grant.ownerId ||
@@ -320,8 +358,10 @@ export class RemoteClient {
           delivery.data.commands.some((c) => c.deviceId !== grant.deviceId)
         )
           throw new RemoteClientError("INVALID_RESPONSE");
+        signal?.throwIfAborted();
         const receipts: z.infer<typeof remoteReceiptSchema>[] = [];
         for (const command of delivery.data.commands) {
+          signal?.throwIfAborted();
           const result = this.executor.execute(
             this.controlIdentity(grant),
             command,
@@ -332,7 +372,12 @@ export class RemoteClient {
           const ack = z
             .strictObject({ duplicate: z.boolean() })
             .safeParse(
-              await this.post("commands/receipt", receipt, grant.credential),
+              await this.post(
+                "commands/receipt",
+                receipt,
+                grant.credential,
+                signal,
+              ),
             );
           if (!ack.success) throw new RemoteClientError("INVALID_RESPONSE");
           receipts.push(receipt);

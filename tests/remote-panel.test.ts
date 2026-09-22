@@ -162,3 +162,28 @@ test("Mac controls require confirmation and discard late control feedback after 
   assert.equal(panel.state.notice, "");
   assert.equal(panel.state.busy, false);
 });
+
+test("Background receiving requires its own confirmation and sends only the selected preference", async () => {
+  const calls: any[] = [];
+  const panel = new RemotePanelState(
+    async (path, method, body) => {
+      calls.push({ path, method, body });
+      return {
+        available: true,
+        connection: { backgroundReceiving: true },
+        receiver: { state: "waiting" },
+      };
+    },
+    () => {},
+  );
+  await panel.receiving(true, false);
+  assert.equal(calls.length, 0);
+  await panel.receiving(true, true);
+  assert.deepEqual(calls[0], {
+    path: "/v1/remote/controls/receiving",
+    method: "POST",
+    body: { enabled: true, confirmed: true },
+  });
+  assert.equal(panel.state.connection?.backgroundReceiving, true);
+  assert.equal(panel.state.receiver?.state, "waiting");
+});
