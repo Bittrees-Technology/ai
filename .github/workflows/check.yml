@@ -93,6 +93,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Native recovery lifecycle and shell typecheck
+        run: bash scripts/check-macos-recovery.sh
       - name: Seed stale build outputs for rebuild regression
         run: |
           mkdir -p dist/apps 'dist/macos/Bittrees AI.app/Contents/Resources'
