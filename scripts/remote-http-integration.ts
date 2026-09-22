@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,6 +44,7 @@ export async function checkRemoteHttp(pool: Pool) {
   const origin = "https://ai.bittrees.org";
   const config = {
     origin,
+    assets: fileURLToPath(new URL("../apps/remote-web", import.meta.url)),
     chainId: 1,
     sessionMs: 3600000,
     deviceMs: 3600000,
@@ -102,7 +104,11 @@ export async function checkRemoteHttp(pool: Pool) {
                 resolve({
                   status: res.statusCode!,
                   headers: res.headers,
-                  body: JSON.parse(text),
+                  body: res.headers["content-type"]?.includes(
+                    "application/json",
+                  )
+                    ? JSON.parse(text)
+                    : text,
                 });
               } catch (e) {
                 reject(e);
@@ -126,6 +132,18 @@ export async function checkRemoteHttp(pool: Pool) {
       "X-Bittrees-Request": "1",
       "Sec-Fetch-Site": "same-origin",
     };
+    const page = await call("/", {}, {}, server, "GET");
+    assert.equal(page.status, 200);
+    assert.match(page.body, /Remote task status/);
+    assert.match(
+      String(page.headers["content-security-policy"]),
+      /script-src 'self'/,
+    );
+    assert.equal(
+      (await call("/settings.json", {}, {}, server, "GET")).body.chainId,
+      1,
+    );
+    assert.equal((await call("/app.js", {}, {}, server, "GET")).status, 200);
     const wallet = Wallet.createRandom();
     assert.equal(
       (await call("/browser/login/challenge", { address: wallet.address }))
@@ -247,7 +265,11 @@ export async function checkRemoteHttp(pool: Pool) {
     const sessionCookie = verified.headers["set-cookie"]!.find((x) =>
       x.startsWith("__Host-bittrees-session="),
     )!.split(";")[0]!;
-    const owner = { ...browser, Cookie: sessionCookie };
+    const owner = {
+      ...browser,
+      Cookie: sessionCookie,
+      "X-Bittrees-Account": verified.body.ownerId,
+    };
     assert.equal(
       (await call("/browser/session", {}, owner)).body.ownerId,
       verified.body.ownerId,
@@ -371,7 +393,11 @@ export async function checkRemoteHttp(pool: Pool) {
     const otherCookie = otherVerified.headers["set-cookie"]!.find((x) =>
       x.startsWith("__Host-bittrees-session="),
     )!.split(";")[0]!;
-    const otherOwner = { ...browser, Cookie: otherCookie };
+    const otherOwner = {
+      ...browser,
+      Cookie: otherCookie,
+      "X-Bittrees-Account": otherVerified.body.ownerId,
+    };
     assert.equal(
       (await call("/browser/status", { deviceId: item.deviceId }, otherOwner))
         .status,
@@ -386,6 +412,44 @@ export async function checkRemoteHttp(pool: Pool) {
         )
       ).status,
       403,
+    );
+    const deviceList = await call("/browser/devices", {}, owner);
+    assert.ok(deviceList.body.items.some((d: any) => d.id === item.deviceId));
+    const otherList = await call("/browser/devices", {}, otherOwner);
+    assert.ok(!otherList.body.items.some((d: any) => d.id === item.deviceId));
+    assert.equal(
+      (
+        await call(
+          "/browser/devices",
+          {},
+          { ...owner, "X-Bittrees-Account": otherVerified.body.ownerId },
+        )
+      ).status,
+      403,
+    );
+    const identity = await call("/browser/session", {}, owner);
+    assert.equal(identity.body.address, wallet.address.toLowerCase());
+    assert.equal(identity.body.chainId, 1);
+    const extraDevices = Array.from({ length: 100 }, () => randomUUID());
+    await pool.query(
+      "INSERT INTO remote_devices(id,owner_id,epoch,expires_at) SELECT id,$2,1,$3 FROM unnest($1::uuid[]) AS id",
+      [extraDevices, verified.body.ownerId, Date.now() + 3600000],
+    );
+    const firstDevices = await call("/browser/devices", {}, owner);
+    assert.equal(firstDevices.body.items.length, 100);
+    assert.ok(firstDevices.body.nextCursor);
+    const finalDevices = await call(
+      "/browser/devices",
+      { after: firstDevices.body.nextCursor },
+      owner,
+    );
+    assert.equal(finalDevices.body.items.length, 1);
+    assert.equal(finalDevices.body.nextCursor, null);
+    assert.deepEqual(
+      [...firstDevices.body.items, ...finalDevices.body.items].map(
+        (d: any) => d.id,
+      ),
+      [...extraDevices, item.deviceId].sort(),
     );
     const rotated = await call("/device/rotate", {}, device);
     assert.equal(rotated.status, 200);

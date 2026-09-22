@@ -13,6 +13,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: node --check apps/remote-web/app.js
+      - run: node --check apps/remote-web/controller.js
       - run: npm test
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/

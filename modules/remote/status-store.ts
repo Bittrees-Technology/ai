@@ -172,6 +172,29 @@ export class RemoteStatusStore {
       return { items, nextCursor: hasMore ? items.at(-1)!.id : null };
     });
   }
+  async devices(ownerId: string, after?: string) {
+    if (
+      !z.uuid().safeParse(ownerId).success ||
+      (after !== undefined && !z.uuid().safeParse(after).success)
+    )
+      throw new RemoteStatusError("INVALID_INPUT");
+    return this.transaction(async (db) => {
+      const rows = (
+        await db.query(
+          "SELECT id,expires_at,revoked_at FROM remote_devices WHERE owner_id=$1 AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT 101",
+          [ownerId, after ?? null],
+        )
+      ).rows;
+      const items = rows
+        .slice(0, 100)
+        .map((row) => ({
+          id: row.id as string,
+          expiresAt: Number(row.expires_at),
+          revoked: row.revoked_at !== null,
+        }));
+      return { items, nextCursor: rows.length > 100 ? items.at(-1)!.id : null };
+    });
+  }
   async revoke(ownerId: string, deviceId: string) {
     if (
       !z.uuid().safeParse(ownerId).success ||
