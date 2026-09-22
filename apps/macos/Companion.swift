@@ -14,6 +14,12 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var recovery = RecoveryLifecycle()
     var recoveryProcess: Process?
     var recoveryMessage: String?
+    let recoveryPreview = ProcessInfo.processInfo.environment["BITTREES_RECOVERY_PREVIEW"] == "1"
+    var kitSetupId: UUID?
+    var kitSetup: RecoverySetupSession?
+    var kitSetupProcess: Process?
+    var kitSetupTimeout: DispatchWorkItem?
+    var kitSetupSheet: NSWindow?
     let home = URL(string: "http://127.0.0.1:43127/")!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -24,6 +30,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Copy pairing code", action: #selector(copyPairingCode), keyEquivalent: "p")
         appMenu.addItem(NSMenuItem.separator())
+        if recoveryPreview { appMenu.addItem(withTitle: "Set up recovery kit (preview)…", action: #selector(beginKitSetup), keyEquivalent: "") }
         appMenu.addItem(withTitle: "Restore from backup…", action: #selector(chooseBackup), keyEquivalent: "")
         appMenu.addItem(withTitle: "Restore previous copy…", action: #selector(choosePrevious), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
@@ -135,13 +142,13 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         do { try process.run() } catch { fail() }
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if [#selector(chooseBackup), #selector(choosePrevious), #selector(copyPairingCode)].contains(menuItem.action) {
-            return ready && engine?.isRunning == true && !recovery.busy && !quitting && window.attachedSheet == nil
+        if [#selector(chooseBackup), #selector(choosePrevious), #selector(copyPairingCode), #selector(beginKitSetup)].contains(menuItem.action) {
+            return ready && engine?.isRunning == true && !recovery.busy && kitSetupId == nil && !quitting && window.attachedSheet == nil
         }
         return true
     }
     @objc func chooseBackup() {
-        guard ready, !recovery.busy, !quitting else { return }
+        guard ready, !recovery.busy, kitSetupId == nil, !quitting else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose an encrypted Bittrees AI backup"
         panel.message = "Choose a coordinated .aib backup made by Bittrees AI. The original Keychain key is required."
@@ -154,7 +161,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     }
     @objc func choosePrevious() { confirmRecovery(backup: nil) }
     func confirmRecovery(backup: URL?) {
-        guard ready, engine?.isRunning == true, !recovery.busy, !quitting else { return }
+        guard ready, engine?.isRunning == true, !recovery.busy, kitSetupId == nil, !quitting else { return }
         let alert = NSAlert()
         alert.messageText = backup == nil ? "Restore the previous copy?" : "Restore this backup?"
         alert.informativeText = "The app will finish stopping its local engine, restore a fresh copy of task and memory data, then restart. Current data is kept in a separate folder. Downloaded model files and connection credentials stay in place. Remote control permissions must be approved again.\n\nKeep a current encrypted backup before continuing. You will need to pair this window again. This does not downgrade the app or recover a missing Keychain key."
@@ -162,7 +169,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self = self,
-                  let process = self.engine, process.isRunning, !self.quitting,
+                  let process = self.engine, process.isRunning, !self.quitting, self.kitSetupId == nil,
                   self.recovery.begin(backup: backup) else { return }
             self.ready = false
             self.replaceWebView() // Discard the old session and pending browser requests.
@@ -200,6 +207,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         startEngine()
     }
     func fail() {
+        cancelKitSetup()
         web?.stopLoading()
         let alert = NSAlert()
         alert.messageText = "The local companion could not run"
@@ -231,7 +239,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         return nil
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        guard let url = frame.request.url, local(url) else { completionHandler(false); return }
+        guard kitSetupId == nil, let url = frame.request.url, local(url) else { completionHandler(false); return }
         let alert = NSAlert()
         alert.messageText = "Bittrees AI"
         alert.informativeText = message
@@ -242,12 +250,14 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        guard kitSetupId == nil else { completionHandler(nil); return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = URL(fileURLWithPath: suggestedFilename).lastPathComponent
         panel.beginSheetModal(for: window) { result in completionHandler(result == .OK ? panel.url : nil) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if kitSetupId != nil { quitting = true; cancelKitSetup() }
         if recovery.requestQuit() {
             quitting = true
             window.title = "Bittrees AI — Finishing recovery before quitting"
