@@ -1,3 +1,4 @@
+import { MemorySearch } from "./memory-search.js";
 import { Templates } from "./templates.js";
 import { ModelImportControls } from "./imports.js";
 import { DeviceResources } from "./device.js";
@@ -17,6 +18,10 @@ type Task = {
   result: null | { text?: string };
 };
 type Memory = {
+  type: string;
+  origin: "user" | "model";
+  expiresAt: number | null;
+  sources: { app: string; resourceId: string; revision: string }[];
   id: string;
   text: string;
   revision: number;
@@ -101,6 +106,7 @@ function App() {
     [model, setModel] = useState(""),
     [memoryIds, setMemoryIds] = useState<string[]>([]),
     [candidate, setCandidate] = useState(""),
+    [candidateType, setCandidateType] = useState("fact"),
     [deleteText, setDeleteText] = useState("");
   const epoch = useRef(0);
   const submission = useRef<{
@@ -121,6 +127,7 @@ function App() {
     setRuns([]);
     setPrompt("");
     setCandidate("");
+    setCandidateType("fact");
     setSelected("");
     setMemoryIds([]);
   }
@@ -507,6 +514,21 @@ function App() {
                           </p>
                           <div className="result">{task.result.text}</div>
                           <label>
+                            Memory type
+                            <select
+                              value={candidateType}
+                              onChange={(event) =>
+                                setCandidateType(event.target.value)
+                              }
+                            >
+                              <option value="preference">Preference</option>
+                              <option value="fact">Fact</option>
+                              <option value="decision">Decision</option>
+                              <option value="outcome">Outcome</option>
+                              <option value="procedure">Procedure</option>
+                            </select>
+                          </label>
+                          <label>
                             Save a memory candidate
                             <textarea
                               maxLength={16000}
@@ -522,7 +544,7 @@ function App() {
                                 await api(
                                   "/v1/requests/" + task.id + "/memories",
                                   "POST",
-                                  { text: candidate, type: "fact" },
+                                  { text: candidate, type: candidateType },
                                 );
                                 setCandidate("");
                                 await refresh();
@@ -686,6 +708,12 @@ function App() {
                   Candidates need your review before a task can use them.
                   Approval does not make a statement verified.
                 </p>
+                <MemorySearch
+                  key={memories.map((m) => `${m.id}:${m.revision}`).join("|")}
+                  api={api}
+                  onError={fail}
+                />
+                <h3>Review saved memory</h3>
                 {!memories.length && (
                   <p className="emptyline">
                     Save a candidate from a completed task to begin.
@@ -694,10 +722,33 @@ function App() {
                 {memories.map((m) => (
                   <article className="memory" key={m.id}>
                     <div className="status">
-                      {m.state}
+                      {m.type} · {m.state}
                       {m.pinned ? " · Pinned" : ""}
                     </div>
                     <p className="prose">{m.text}</p>
+                    <details>
+                      <summary>Source and retention</summary>
+                      <p>
+                        {m.origin === "model"
+                          ? "Model-generated candidate."
+                          : "User-entered candidate."}{" "}
+                        Review does not verify the statement.
+                      </p>
+                      <p>
+                        {m.expiresAt === null
+                          ? "Kept until you delete it while its source remains accessible."
+                          : `Available until ${new Date(m.expiresAt).toLocaleString()} while its source remains accessible.`}{" "}
+                        Older exports and backups are separate copies.
+                      </p>
+                      <ul>
+                        {m.sources.map((source, index) => (
+                          <li key={index}>
+                            {source.app} source <code>{source.resourceId}</code>
+                            , version {source.revision}.
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                     <div className="actions">
                       <button
                         disabled={busy}
