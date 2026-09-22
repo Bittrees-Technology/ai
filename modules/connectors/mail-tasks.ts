@@ -21,7 +21,7 @@ export class MailTasks {
   async create(
     store: Store,
     input: Omit<TaskInput, "sourceRefs" | "memoryIds">,
-    content: "metadata" | "plain",
+    content: "metadata" | "plain" | "attachment-text",
     key: string,
   ) {
     if (
@@ -40,7 +40,13 @@ export class MailTasks {
         app: "mail" as const,
         tenantId: mailboxId(snapshot.mailbox),
         resourceId: snapshot.message.id,
-        revision: content + ":" + snapshot.message.sourceVersion,
+        revision:
+          content +
+          ":" +
+          snapshot.message.sourceVersion +
+          (snapshot.message.mode === "attachment-text"
+            ? ":" + snapshot.message.attachment.id.replaceAll(".", "_")
+            : ""),
       },
     ];
     const binding: SourceBinding = {
@@ -78,9 +84,11 @@ export class MailTasks {
       throw new ConnectorError("SOURCE_DENIED");
     const ref = b.refs[0]!,
       mode = ref.revision.split(":")[0];
-    if (!["metadata", "plain"].includes(mode!))
+    if (!["metadata", "plain", "attachment-text"].includes(mode!))
       throw new ConnectorError("SOURCE_DENIED");
-    const snapshot = await this.connector.read(mode as "metadata" | "plain");
+    const snapshot = await this.connector.read(
+      mode as "metadata" | "plain" | "attachment-text",
+    );
     if (
       snapshot.wallet !== b.authority.subjectId ||
       mailboxId(snapshot.mailbox) !== b.authority.tenantId ||
@@ -88,7 +96,13 @@ export class MailTasks {
       snapshot.policyRevision !== b.authority.policyRevision ||
       snapshot.expiresAt !== b.expiresAt ||
       snapshot.message.id !== ref.resourceId ||
-      ref.revision !== mode + ":" + snapshot.message.sourceVersion ||
+      ref.revision !==
+        mode +
+          ":" +
+          snapshot.message.sourceVersion +
+          (snapshot.message.mode === "attachment-text"
+            ? ":" + snapshot.message.attachment.id.replaceAll(".", "_")
+            : "") ||
       snapshot.projectionHash !== b.projectionHash
     )
       throw new ConnectorError("SOURCE_DENIED");

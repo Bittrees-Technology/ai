@@ -24,6 +24,7 @@ export function MailConnection({
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState(false),
     [plain, setPlain] = useState(false),
+    [attachment, setAttachment] = useState(false),
     [kind, setKind] = useState<"summarize" | "draft">("summarize"),
     [profile, setProfile] = useState(profiles[0]?.id ?? ""),
     [prompt, setPrompt] = useState(
@@ -41,6 +42,7 @@ export function MailConnection({
     epoch.current++;
     setSelection(null);
     setPlain(false);
+    setAttachment(false);
     setKind("summarize");
     setCode("");
     setRemove(false);
@@ -161,6 +163,7 @@ export function MailConnection({
                         version: selection.message.sourceVersion,
                         mailbox: selection.mailbox,
                         plain,
+                        attachment,
                         kind,
                         profile,
                         prompt,
@@ -177,7 +180,11 @@ export function MailConnection({
                         {
                           conversationId: attempt.current.conversationId,
                           kind,
-                          content: plain ? "plain" : "metadata",
+                          content: attachment
+                            ? "attachment-text"
+                            : plain
+                              ? "plain"
+                              : "metadata",
                           prompt,
                           modelProfileId: profile,
                         },
@@ -211,6 +218,7 @@ export function MailConnection({
                         disabled={busy}
                         onChange={(e) => {
                           setPlain(e.target.checked);
+                          setAttachment(false);
                           if (!e.target.checked) setKind("summarize");
                         }}
                       />
@@ -218,9 +226,25 @@ export function MailConnection({
                     </label>
                   ) : (
                     <p>
-                      This connection permits headers only. Reconnect in Mail to
-                      permit a body.
+                      This connection does not permit the message body.
+                      Reconnect in Mail to permit a body.
                     </p>
+                  )}
+                  {selection.scopes.includes("attachment") && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={attachment}
+                        disabled={busy}
+                        onChange={(e) => {
+                          setAttachment(e.target.checked);
+                          setPlain(false);
+                          setKind("summarize");
+                        }}
+                      />
+                      Summarize the file reviewed in Mail (without the message
+                      body)
+                    </label>
                   )}
                   <label htmlFor="mail-kind">Draft type</label>
                   <select
@@ -261,8 +285,9 @@ export function MailConnection({
                     onChange={(e) => setPrompt(e.target.value)}
                   />
                   <p>
-                    Attachments and HTML are excluded. Review every generated
-                    claim before use.
+                    HTML is excluded. The selected file is used only when its
+                    summary option is checked. Review every generated claim
+                    before use.
                   </p>
                   <button
                     disabled={
@@ -335,8 +360,8 @@ export function MailConnection({
       ) : (
         <>
           <p>
-            Review one message, body permission and expiry in Mail. The source
-            integration must be enabled by its operator.
+            Review one message, optional body or text attachment, and expiry in
+            Mail. The source integration must be enabled by its operator.
           </p>
           <button
             disabled={busy}

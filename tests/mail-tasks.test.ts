@@ -33,7 +33,7 @@ const draft = {
   summary: [{ text: "Please review the plan", evidence: ["body-1"] }],
   reply: { text: "I will review the plan.", evidence: ["body-1"] },
 };
-async function fixture() {
+async function fixture(attachment = false) {
   let secret: Uint8Array | undefined,
     denied = false;
   const grant = {
@@ -46,10 +46,13 @@ async function fixture() {
       folder: "INBOX",
       metadataVersion: "c".repeat(64),
       plainVersion: "d".repeat(64),
+      ...(attachment
+        ? { attachment: { id: "1.2", version: "d".repeat(64) } }
+        : {}),
     },
-    scopes: ["metadata", "plain"],
+    scopes: ["metadata", "plain", ...(attachment ? ["attachment"] : [])],
     expiresAt: new Date(Date.now() + 1800000).toISOString(),
-    policyRevision: "mail-ai-selected-v1",
+    policyRevision: attachment ? "mail-ai-selected-v2" : "mail-ai-selected-v1",
   };
   const content = {
     text: "PRIVATE_BODY: Please review the plan.",
@@ -90,10 +93,24 @@ async function fixture() {
           date: "2026-09-22",
           truncatedMetadata: [],
           sourceVersion:
-            mode === "plain"
+            mode === "plain" || mode === "attachment-text"
               ? grant.selection.plainVersion
               : grant.selection.metadataVersion,
-          attachmentsIncluded: false,
+          attachmentsIncluded: mode === "attachment-text",
+          ...(mode === "attachment-text"
+            ? {
+                attachment: {
+                  id: grant.selection.attachment!.id,
+                  filename: "plan.txt",
+                  contentType: "text/plain",
+                  encodedBytes: 12,
+                  supported: true,
+                  text: "FILE_CONTENT",
+                  bytes: 12,
+                  truncated: false,
+                },
+              }
+            : {}),
           ...(mode === "plain" ? content : {}),
         },
       };
@@ -405,7 +422,7 @@ test("Mail authenticated HTTP controls guard selection, task creation, exports a
   const { createServer } = await import("node:http"),
     { localApi } = await import("../apps/companion/http.js"),
     { randomUUID } = await import("node:crypto");
-  const f = await fixture(),
+  const f = await fixture(true),
     store = new Store(":memory:", new Vault(randomBytes(32))),
     server = createServer();
   store.addProfile(owner, profile);
@@ -567,7 +584,50 @@ test("Mail authenticated HTTP controls guard selection, task creation, exports a
       JSON.stringify(history).includes("REJECTED_PRIVATE_MODEL_OUTPUT"),
       false,
     );
+    const attachmentBody = {
+      ...body,
+      kind: "summarize",
+      content: "attachment-text",
+      conversationId: randomUUID(),
+    };
+    assert.equal(
+      (
+        await call(
+          base + "/drafts",
+          "POST",
+          { ...attachmentBody, attachmentId: "1.3" },
+          { "Idempotency-Key": "bad-file" },
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          base + "/drafts",
+          "POST",
+          { ...attachmentBody, kind: "draft" },
+          { "Idempotency-Key": "file-reply" },
+        )
+      ).status,
+      400,
+    );
+    const fileResponse = await call(base + "/drafts", "POST", attachmentBody, {
+      "Idempotency-Key": "file-summary",
+    });
+    assert.equal(fileResponse.status, 202);
+    const fileTask = (await fileResponse.json()) as any;
+    await worker(store, f, async () =>
+      JSON.stringify({
+        summary: [{ text: "File summary", evidence: ["attachment-1"] }],
+        reply: null,
+      }),
+    ).runOnce();
+    const fileExport = "/v1/requests/" + fileTask.id + "/export";
+    const fileResult = (await (await call(fileExport)).json()) as any;
+    assert.equal(fileResult.task.result.mail.attachment.id, "1.2");
     f.deny();
+    assert.equal((await call(fileExport)).status, 400);
     assert.deepEqual(
       ((await (await call(rejectedRunsPath)).json()) as any).items,
       [],
@@ -654,6 +714,102 @@ test("Mail cancellation aborts its active inference without cancelling for anoth
     assert.equal(store.get(owner, task.id).status, "failed");
   } finally {
     release?.();
+    store.close();
+  }
+});
+
+test("Selected attachment summary includes only file content and exact file citations", async () => {
+  const f = await fixture(true),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    await assert.rejects(
+      f.adapter.create(store, input, "attachment-text", "reply"),
+      /SOURCE_DENIED/,
+    );
+    const task = await f.adapter.create(
+      store,
+      { ...input, kind: "summarize" },
+      "attachment-text",
+      "file",
+    );
+    assert.ok(!JSON.stringify(task).includes("FILE_CONTENT"));
+    const b = store.sourceBinding(owner, task.id)!;
+    assert.equal(
+      b.refs[0]!.revision,
+      "attachment-text:" + f.grant.selection.plainVersion + ":1_2",
+    );
+    await assert.rejects(
+      f.adapter.validate({
+        ...b,
+        refs: [
+          {
+            ...b.refs[0]!,
+            revision: b.refs[0]!.revision.replace(":1_2", ":1_3"),
+          },
+        ],
+      }),
+      /SOURCE_DENIED/,
+    );
+    await worker(store, f, async (_p, prompt) => {
+      assert.match(prompt, /FILE_CONTENT/);
+      assert.ok(!prompt.includes("PRIVATE_BODY"));
+      return JSON.stringify({
+        summary: [{ text: "File summary", evidence: ["attachment-1"] }],
+        reply: null,
+      });
+    }).runOnce();
+    const result = store.get(owner, task.id).result as any;
+    assert.equal(result.mail.mode, "attachment-text");
+    assert.equal(result.mail.attachment.id, "1.2");
+    assert.deepEqual(result.mail.summary[0].citations, [
+      {
+        messageId: f.grant.selection.id,
+        version: f.grant.selection.plainVersion,
+        sectionId: "attachment-1",
+        attachmentId: "1.2",
+      },
+    ]);
+    assert.equal(result.mail.reply, null);
+    assert.equal(result.mail.sent, false);
+    const snapshot = await f.adapter.validate(b);
+    assert.throws(
+      () =>
+        sourceResult(
+          snapshot,
+          JSON.stringify({
+            summary: [{ text: "Invented body", evidence: ["body-1"] }],
+            reply: null,
+          }),
+          "summarize",
+        ),
+      /INVALID_OUTPUT/,
+    );
+    f.deny();
+    await assert.rejects(f.adapter.validate(b), /SOURCE_DENIED/);
+  } finally {
+    store.close();
+  }
+});
+test("Attachment content cannot be saved after permission loss during generation", async () => {
+  const f = await fixture(true),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(
+      store,
+      { ...input, kind: "summarize" },
+      "attachment-text",
+      "late",
+    );
+    await worker(store, f, async () => {
+      f.deny();
+      return JSON.stringify({
+        summary: [{ text: "File summary", evidence: ["attachment-1"] }],
+        reply: null,
+      });
+    }).runOnce();
+    assert.equal(store.get(owner, task.id).status, "failed");
+    assert.equal(store.get(owner, task.id).result, null);
+  } finally {
     store.close();
   }
 });
