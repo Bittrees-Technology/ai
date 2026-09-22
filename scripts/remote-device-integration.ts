@@ -78,11 +78,58 @@ export async function checkRemoteDevices(pool: Pool) {
   };
   await status.publish(auth, { sequence: 1, items: [item] });
   assert.equal((await status.list(owner, issued.deviceId)).length, 1);
-  await status.revoke(owner, issued.deviceId);
+  // Rotation keeps the approved lease and the existing status/sequence checkpoint.
+  now += 1000;
+  const rotations = await Promise.allSettled([
+    devices.rotate(issued.credential),
+    devices.rotate(issued.credential),
+  ]);
+  assert.equal(rotations.filter((r) => r.status === "fulfilled").length, 1);
+  const rotated = rotations.find((r) => r.status === "fulfilled")!;
+  if (rotated.status !== "fulfilled") throw Error("Expected rotation");
+  const current = rotated.value;
+  assert.notEqual(current.credential, issued.credential);
+  assert.equal(current.deviceId, issued.deviceId);
+  assert.equal(current.ownerId, owner);
+  assert.equal(current.epoch, 2);
+  assert.equal(current.expiresAt, issued.expiresAt);
+  assert.equal(current.scope, "status:publish");
   await assert.rejects(devices.authenticate(issued.credential), /DENIED/);
-  // Previously authenticated identity cannot survive revocation at publication.
+  await assert.rejects(devices.rotate(issued.credential), /DENIED/);
   await assert.rejects(
     status.publish(auth, { sequence: 2, items: [item] }),
+    /DENIED/,
+  );
+  const currentAuth = await devices.authenticate(current.credential);
+  assert.equal(currentAuth.epoch, 2);
+  assert.equal((await status.list(owner, issued.deviceId))[0]!.revision, 1);
+  // An exact pre-rotation delivery can be retried with the new credential.
+  assert.equal(
+    (await status.publish(currentAuth, { sequence: 1, items: [item] }))
+      .duplicate,
+    true,
+  );
+  await status.publish(currentAuth, {
+    sequence: 2,
+    items: [{ ...item, revision: 2 }],
+  });
+  const rotatedRow = (
+    await pool.query(
+      "SELECT credential_hash,last_sequence,epoch FROM remote_devices WHERE id=$1",
+      [issued.deviceId],
+    )
+  ).rows[0];
+  assert.equal(
+    rotatedRow.credential_hash,
+    createHash("sha256").update(current.credential).digest("hex"),
+  );
+  assert.equal(Number(rotatedRow.last_sequence), 2);
+  await status.revoke(owner, issued.deviceId);
+  await assert.rejects(devices.authenticate(current.credential), /DENIED/);
+  await assert.rejects(devices.rotate(current.credential), /DENIED/);
+  // Current-epoch identity authenticated before revocation must also fail.
+  await assert.rejects(
+    status.publish(currentAuth, { sequence: 3, items: [item] }),
     /DENIED/,
   );
 
@@ -112,6 +159,40 @@ export async function checkRemoteDevices(pool: Pool) {
   const lease = await devices.redeem(contested.id, verifier, winner);
   now += 3600000;
   await assert.rejects(devices.authenticate(lease.credential), /DENIED/);
+  await assert.rejects(devices.rotate(lease.credential), /DENIED/);
+
+  // Mid-rotation expiry must preserve the old hash and epoch, not half-rotate.
+  const rotationPair = await devices.begin(challenge);
+  await devices.approve(owner, rotationPair.id, rotationPair.approvalCode);
+  const rotationLease = await devices.redeem(rotationPair.id, verifier, owner);
+  let rotationTicks = 0;
+  const expiringRotation = new RemoteDeviceStore(
+    pool,
+    3600000,
+    () => now + (rotationTicks++ === 0 ? 0 : 3600000),
+  );
+  await assert.rejects(
+    expiringRotation.rotate(rotationLease.credential),
+    /DENIED/,
+  );
+  const rollbackRow = (
+    await pool.query(
+      "SELECT credential_hash,epoch,expires_at FROM remote_devices WHERE id=$1",
+      [rotationLease.deviceId],
+    )
+  ).rows[0];
+  assert.equal(rollbackRow.epoch, 1);
+  assert.equal(
+    rollbackRow.credential_hash,
+    createHash("sha256").update(rotationLease.credential).digest("hex"),
+  );
+  assert.equal(Number(rollbackRow.expires_at), rotationLease.expiresAt);
+  await pool.query("UPDATE remote_devices SET epoch=2147483647 WHERE id=$1", [
+    rotationLease.deviceId,
+  ]);
+  await assert.rejects(devices.rotate(rotationLease.credential), /DENIED/);
+  await assert.rejects(devices.rotate(wrong), /DENIED/);
+  await assert.rejects(devices.rotate("invalid"), /DENIED/);
 
   // If expiry occurs during redemption, both insertion and consumption roll back.
   const late = await devices.begin(challenge);
