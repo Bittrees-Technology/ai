@@ -115,3 +115,250 @@ test("memory content stays encrypted across restart and wrong-key opens fail", a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("editing approved memory without renewed approval returns it to review", async () => {
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async () => true,
+  );
+  try {
+    const item = await memory.add(alice, candidate);
+    const approved = await memory.review(alice, item.id, 1, { approve: true });
+    const pinned = await memory.review(alice, item.id, approved.revision, {
+      pinned: true,
+    });
+    assert.equal(pinned.state, "approved");
+    const edited = await memory.review(alice, item.id, pinned.revision, {
+      text: "Changed summaries",
+    });
+    assert.equal(edited.state, "candidate");
+    assert.deepEqual(await memory.search(alice, "summaries"), []);
+    await memory.review(alice, item.id, edited.revision, { approve: true });
+    assert.equal(
+      (await memory.search(alice, "summaries"))[0]!.text,
+      "Changed summaries",
+    );
+  } finally {
+    memory.close();
+  }
+});
+test("memory get cannot return a snapshot edited, deleted or expired during its access check", async () => {
+  for (const action of ["edit", "delete", "expire"]) {
+    let now = 1000,
+      hold = false,
+      release!: (allowed: boolean) => void;
+    const memory = new MemoryStore(
+      ":memory:",
+      new Vault(randomBytes(32)),
+      async () =>
+        hold
+          ? new Promise<boolean>((r) => {
+              release = r;
+            })
+          : true,
+      () => now,
+    );
+    try {
+      const item = await memory.add(alice, { ...candidate, expiresAt: 2000 });
+      hold = true;
+      const reading = memory.get(alice, item.id);
+      hold = false;
+      if (action === "edit")
+        await memory.review(alice, item.id, 1, { text: "replacement" });
+      else if (action === "delete") memory.forget(alice, item.id);
+      else now = 2000;
+      release(true);
+      await assert.rejects(reading, /NOT_FOUND/);
+    } finally {
+      memory.close();
+    }
+  }
+});
+test("search excludes deletion during final access check and a prior result edited while a later result is checked", async () => {
+  let checks = 0,
+    heldAt = 0,
+    release!: (allowed: boolean) => void;
+  let visited: string[] = [];
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async (_owner, sources) => {
+      visited.push(sources[0]!.resourceId);
+      if (++checks === heldAt)
+        return new Promise<boolean>((r) => {
+          release = r;
+        });
+      return true;
+    },
+  );
+  try {
+    const a = await memory.add(alice, candidate);
+    const b = await memory.add(alice, {
+      ...candidate,
+      text: "Other summaries with citations",
+      sources: [{ ...candidate.sources[0], resourceId: "second" }],
+    });
+    await memory.review(alice, a.id, 1, { approve: true });
+    await memory.review(alice, b.id, 1, { approve: true });
+    checks = 0;
+    heldAt = 4;
+    visited = [];
+    const searching = memory.search(alice, "summaries");
+    // Two initial checks and the first final check resolve before the second final check waits.
+    while (checks < 4) await new Promise<void>((r) => setImmediate(r));
+    const earlier = visited[2] === "selected" ? a : b;
+    const pending = earlier.id === a.id ? b : a;
+    heldAt = 0;
+    await memory.review(alice, earlier.id, 2, { text: "Changed summaries" });
+    memory.forget(alice, pending.id);
+    release(true);
+    assert.deepEqual(await searching, []);
+  } finally {
+    memory.close();
+  }
+});
+test("expiry during access checking cannot create or approve a memory", async () => {
+  let now = 1000,
+    hold = false,
+    release!: (allowed: boolean) => void;
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async () =>
+      hold
+        ? new Promise<boolean>((r) => {
+            release = r;
+          })
+        : true,
+    () => now,
+  );
+  try {
+    hold = true;
+    const adding = memory.add(alice, { ...candidate, expiresAt: 1500 });
+    now = 1500;
+    release(true);
+    await assert.rejects(adding, /NOT_FOUND/);
+    hold = false;
+    now = 1000;
+    const item = await memory.add(alice, { ...candidate, expiresAt: 1500 });
+    hold = true;
+    const reviewing = memory.review(alice, item.id, 1, { approve: true });
+    now = 1500;
+    release(true);
+    await assert.rejects(reviewing, /NOT_FOUND/);
+    hold = false;
+    now = 1000;
+    assert.equal((await memory.get(alice, item.id)).state, "candidate");
+  } finally {
+    memory.close();
+  }
+});
+
+test("export removes an earlier snapshot deleted while another memory's access check waits", async () => {
+  let hold = false,
+    release!: (allowed: boolean) => void;
+  const visited: string[] = [];
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async (_owner, sources) => {
+      if (!hold) return true;
+      visited.push(sources[0]!.resourceId);
+      return visited.length === 2
+        ? new Promise<boolean>((r) => {
+            release = r;
+          })
+        : true;
+    },
+  );
+  try {
+    const a = await memory.add(alice, candidate);
+    const b = await memory.add(alice, {
+      ...candidate,
+      sources: [{ ...candidate.sources[0], resourceId: "second" }],
+    });
+    hold = true;
+    const exporting = memory.export(alice);
+    while (visited.length < 2) await new Promise<void>((r) => setImmediate(r));
+    const first = visited[0] === "selected" ? a : b;
+    memory.forget(alice, first.id);
+    release(true);
+    const result = await exporting;
+    assert.equal(result.length, 1);
+    assert.notEqual(result[0]!.id, first.id);
+  } finally {
+    memory.close();
+  }
+});
+
+test("worker does not send a stale approved memory to inference after an edit during access checking", async () => {
+  const { Store } = await import("../modules/storage/store.js");
+  const { LocalWorker } = await import("../apps/companion/worker.js");
+  let hold = false,
+    release!: (allowed: boolean) => void,
+    began!: () => void;
+  const started = new Promise<void>((r) => {
+    began = r;
+  });
+  const vault = new Vault(randomBytes(32)),
+    store = new Store(":memory:", vault);
+  const memory = new MemoryStore(":memory:", vault, async () => {
+    if (!hold) return true;
+    began();
+    return new Promise<boolean>((r) => {
+      release = r;
+    });
+  });
+  const profile = {
+    id: "p",
+    runtime: "ollama" as const,
+    model: "synthetic",
+    contextTokens: 2048,
+    maxOutputTokens: 100,
+    temperature: 0.2,
+  };
+  let generations = 0;
+  const worker = new LocalWorker(
+    store,
+    alice,
+    {
+      pin: async () => ({ profile, digest: "a".repeat(64) }),
+      generate: async () => {
+        generations++;
+        return "should not run";
+      },
+    },
+    () => profile,
+    "worker",
+    memory,
+  );
+  try {
+    const item = await memory.add(alice, candidate);
+    await memory.review(alice, item.id, 1, { approve: true });
+    const task = store.create(
+      alice,
+      {
+        conversationId: "c",
+        kind: "query",
+        prompt: "Use summaries",
+        modelProfileId: "p",
+        memoryIds: [item.id],
+      },
+      "memory-race",
+    );
+    hold = true;
+    const running = worker.runOnce();
+    await started;
+    hold = false;
+    await memory.review(alice, item.id, 2, { text: "Changed private memory" });
+    release(true);
+    await running;
+    assert.equal(generations, 0);
+    assert.equal(store.get(alice, task.id).status, "failed");
+    assert.equal(store.get(alice, task.id).result, null);
+  } finally {
+    memory.close();
+    store.close();
+  }
+});
