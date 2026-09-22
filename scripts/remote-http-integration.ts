@@ -1,3 +1,4 @@
+import { checkTemplateHttp } from "./remote-template-http-integration.js";
 import { RemoteReceiver } from "../modules/remote/receiver.js";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -48,9 +49,10 @@ export async function checkRemoteHttp(pool: Pool) {
     assets: fileURLToPath(new URL("../apps/remote-web", import.meta.url)),
     chainId: 1,
     sessionMs: 3600000,
+    requestsPerMinute: 1000,
     quotas: {
       pendingPairings: 1000,
-      devicesPerOwner: 100,
+      devicesPerOwner: 200,
       statusesPerDevice: 2,
     },
     deviceMs: 3600000,
@@ -740,6 +742,14 @@ export async function checkRemoteHttp(pool: Pool) {
     } finally {
       controlLocal.close();
     }
+    const templateHeaders = await checkTemplateHttp(
+      call,
+      owner,
+      otherOwner,
+      device,
+      controls,
+      item.deviceId,
+    );
     const overCapacity = await call(
       "/device/status",
       { sequence: 3, items: [{ ...item, id: randomUUID() }] },
@@ -749,6 +759,10 @@ export async function checkRemoteHttp(pool: Pool) {
     assert.deepEqual(overCapacity.body, { error: "CAPACITY" });
     const rotated = await call("/device/rotate", {}, device);
     assert.equal(rotated.status, 200);
+    assert.equal(
+      (await call("/device/templates/poll", {}, templateHeaders)).status,
+      403,
+    );
     assert.equal(
       (await call("/device/commands/poll", {}, controls)).status,
       403,

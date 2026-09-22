@@ -1,3 +1,4 @@
+import { RemoteTemplateStore } from "./templates.js";
 import { resolve } from "node:path";
 import express, { type Request, type Response } from "express";
 import type { Pool } from "pg";
@@ -45,6 +46,11 @@ export function createRemoteApp(
       devicesPerOwner: number;
       statusesPerDevice: number;
     };
+    templateQuotas?: {
+      permissionsPerDevice: number;
+      commandsPerDevice: number;
+      pendingPerDevice: number;
+    };
     now?: () => number;
   },
 ) {
@@ -69,6 +75,12 @@ export function createRemoteApp(
     config.quotas?.statusesPerDevice,
   );
   const commands = new RemoteCommandStore(pool, config.retentionMs, now);
+  const templates = new RemoteTemplateStore(
+    pool,
+    config.retentionMs,
+    now,
+    config.templateQuotas,
+  );
   const host = new URL(config.origin).host;
   const budget = config.requestsPerMinute ?? 120;
   if (!Number.isInteger(budget) || budget < 1 || budget > 1000)
@@ -290,6 +302,73 @@ export function createRemoteApp(
   app.post("/browser/commands/receipt", async (req, res) => {
     const input = parse(z.strictObject({ id: z.uuid() }), req.body);
     res.json(await commands.inspect((await owner(req)).ownerId, input.id));
+  });
+  app.post("/browser/templates", async (req, res) => {
+    const input = parse(
+      z.strictObject({ deviceId: z.uuid(), after: z.uuid().optional() }),
+      req.body,
+    );
+    res.json(
+      await templates.list(
+        (await owner(req)).ownerId,
+        input.deviceId,
+        input.after,
+      ),
+    );
+  });
+  app.post("/browser/templates/revoke", async (req, res) => {
+    const input = parse(
+      z.strictObject({ permissionId: z.uuid(), confirmed: z.literal(true) }),
+      req.body,
+    );
+    res.json(
+      await templates.revoke((await owner(req)).ownerId, input.permissionId),
+    );
+  });
+  app.post("/browser/templates/run", async (req, res) => {
+    res.json(await templates.submit((await owner(req)).ownerId, req.body));
+  });
+  app.post("/browser/templates/receipt", async (req, res) => {
+    const input = parse(
+      z.strictObject({ permissionId: z.uuid(), id: z.uuid() }),
+      req.body,
+    );
+    res.json(
+      await templates.inspect(
+        (await owner(req)).ownerId,
+        input.permissionId,
+        input.id,
+      ),
+    );
+  });
+  app.post("/device/templates/publish", async (req, res) => {
+    res.json(
+      await templates.publish(await devices.authenticate(token(req)), req.body),
+    );
+  });
+  app.post("/device/templates/revoke", async (req, res) => {
+    const input = parse(
+      z.strictObject({ permissionId: z.uuid(), confirmed: z.literal(true) }),
+      req.body,
+    );
+    res.json(
+      await templates.revokeFromDevice(
+        await devices.authenticate(token(req)),
+        input.permissionId,
+      ),
+    );
+  });
+  app.post("/device/templates/poll", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    res.json(await templates.poll(await templates.authenticate(token(req))));
+  });
+  app.post("/device/templates/receipt", async (req, res) => {
+    res.json(
+      await templates.acknowledge(
+        await templates.authenticate(token(req)),
+        req.body,
+      ),
+    );
   });
   app.post("/device/controls/enable", async (req, res) => {
     parse(z.strictObject({ confirmed: z.literal(true) }), req.body);

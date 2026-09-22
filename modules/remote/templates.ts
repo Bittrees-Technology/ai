@@ -281,12 +281,30 @@ export class RemoteTemplateStore {
   async revoke(owner: string, permissionId: string) {
     parse(z.uuid(), owner);
     parse(z.uuid(), permissionId);
+    return this.revokeOwned(owner, permissionId);
+  }
+  async revokeFromDevice(rawIdentity: unknown, permissionId: string) {
+    const identity = parse(statusIdentity, rawIdentity);
+    parse(z.uuid(), permissionId);
+    return this.revokeOwned(identity.ownerId, permissionId, identity);
+  }
+  private async revokeOwned(
+    owner: string,
+    permissionId: string,
+    expected?: z.infer<typeof statusIdentity>,
+  ) {
     return this.transaction(async (db) => {
-      await this.grant(db, owner, permissionId);
+      const { device } = await this.grant(db, owner, permissionId);
+      if (expected) {
+        this.fresh(device);
+        if (device.id !== expected.deviceId || device.epoch !== expected.epoch)
+          throw new RemoteStatusError("DENIED");
+      }
       await db.query(
         "UPDATE remote_templates SET revoked_at=COALESCE(revoked_at,$2),credential_hash=NULL WHERE permission_id=$1",
         [permissionId, this.now()],
       );
+      if (expected) this.fresh(device);
       return { revoked: true };
     });
   }
