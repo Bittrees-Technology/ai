@@ -145,7 +145,27 @@ function worker(
   return new LocalWorker(
     store,
     owner,
-    { pin: async () => ({ profile, digest: "c".repeat(64) }), generate },
+    {
+      pin: async () => ({ profile, digest: "c".repeat(64) }),
+      generate: async (p, prompt, _signal, format) => {
+        const raw = await generate(p, prompt);
+        // Existing synthetic fixtures describe a complete draft. Model each stage's output.
+        if (format && typeof format === "object") {
+          try {
+            const value = JSON.parse(raw);
+            if (value.summary && value.reply) {
+              const properties = format.properties as Record<string, unknown>;
+              return JSON.stringify(
+                properties.text ? value.reply : { ...value, reply: null },
+              );
+            }
+          } catch {
+            /* Keep malformed fixtures malformed. */
+          }
+        }
+        return raw;
+      },
+    },
     () => profile,
     "worker",
     undefined,
@@ -876,5 +896,34 @@ test("Worker completes all attachment parts and discards every partial summary o
     } finally {
       store.close();
     }
+  }
+});
+
+test("Mail worker keeps a failed second generation out of persisted results", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(
+      store,
+      { ...input, prompt: "PRIVATE_REPLY_INTENT" },
+      "plain",
+      "draft",
+    );
+    let calls = 0;
+    await worker(store, f, async (_p, prompt) => {
+      calls++;
+      if (calls === 1) {
+        assert.ok(!prompt.includes("PRIVATE_REPLY_INTENT"));
+        return JSON.stringify(draft);
+      }
+      assert.ok(prompt.includes("PRIVATE_REPLY_INTENT"));
+      throw Error("synthetic second-stage failure");
+    }).runOnce();
+    assert.equal(calls, 2);
+    const saved = store.get(owner, task.id);
+    assert.equal(saved.status, "failed");
+    assert.equal(saved.result, null);
+  } finally {
+    store.close();
   }
 });
