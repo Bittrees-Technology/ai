@@ -76,6 +76,13 @@ export function MemorySearch({
               These are search signals, not confidence in the statement.
             </p>
             <p>
+              {item.why.sourcePenalty > 0
+                ? "To broaden source coverage, this result received a repeated-source penalty while ranking."
+                : "This result has no repeated-source penalty."}{" "}
+              Source diversity only reorders candidates with the same query-term
+              coverage.
+            </p>
+            <p>
               Origin:{" "}
               {item.why.provenance === "model"
                 ? "model-generated candidate"

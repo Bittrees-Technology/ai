@@ -1,0 +1,12 @@
+{
+  "fixture": "source-diversity-v1",
+  "syntheticOnly": true,
+  "retainedMemories": 16,
+  "requestedResults": 4,
+  "returnedResults": 4,
+  "distinctSources": 1,
+  "allMatchEveryQueryTerm": true,
+  "pinnedFirst": true,
+  "originalRecordsRemain": 16,
+  "expectations": "Four distinct sources with identical full-term coverage are available. Twelve slightly higher-scored pinned records share one source; one pinned partial-term distractor must not enter the results. This is not a general relevance benchmark."
+}
