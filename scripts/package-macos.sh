@@ -41,9 +41,23 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
+node scripts/write-macos-build-info.mjs "$resources/build-info.json"
 # Development identity only: this is not Developer ID signing or notarization.
 codesign --force --deep --sign - "$bundle"
 codesign --verify --deep --strict "$bundle"
 "$resources/node" --version
+"$resources/node" --input-type=module - "$resources" <<'VERIFY'
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+const root = process.argv[2];
+const info = JSON.parse(readFileSync(root + "/build-info.json", "utf8"));
+assert.equal(info.format, 1);
+assert.equal(info.nodeVersion, process.version);
+assert.equal(info.architecture, process.arch);
+assert.match(info.sourceCommit, /^[a-f0-9]{40}$/);
+assert.equal(typeof info.sourceDirty, "boolean");
+assert.equal(info.dependencyLockSha256, createHash("sha256").update(readFileSync(root + "/engine/package-lock.json")).digest("hex"));
+VERIFY
 (cd "$resources/engine" && "$resources/node" --input-type=module -e 'import Database from "better-sqlite3"; import {AsyncEntry} from "@napi-rs/keyring"; const db=new Database(":memory:"); db.prepare("select 1").get(); db.close(); if(typeof AsyncEntry!=="function")process.exit(1);')
 printf 'Built local development app: %s\n' "$bundle"

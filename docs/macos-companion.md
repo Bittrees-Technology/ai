@@ -31,3 +31,10 @@ Initial build verification: Swift compilation, ad-hoc signature verification, bu
 Still required: hands-on pairing, Keychain prompts, confirmation/download panels, native-window stop/restart and crash handling; signed Developer ID distribution and notarization; tested update integrity and recovery. Local browser automation was unavailable under the administrator policy, so this build must not be described as visually or interactively accepted.
 
 This is an ad-hoc-signed local development build, not a notarized public installer. No updater is installed. For development updates, quit the app, rebuild and replace the bundle, retaining the Application Support directory and Keychain entries. Public automatic updates remain disabled until signed verification and rollback are implemented.
+
+
+## Identifying a development build
+
+New packages include `Contents/Resources/build-info.json` inside the signed bundle. It records the exact source revision, whether the source tree had local changes, build time, architecture, bundled Node version and dependency-lock checksum. **Bittrees AI → About Bittrees AI** displays the source revision and local-change label. Packaging verifies the manifest against the bundled runtime and lockfile before reporting success. No user data, machine paths, environment values or credentials are recorded.
+
+For a reviewable clean development archive, build from a clean merged checkout, archive with `ditto -c -k --sequesterRsrc --keepParent`, and record its SHA-256 alongside the source revision. A checksum identifies that archive; it is not an authenticated update channel or a substitute for Developer ID/notarization. Build metadata is provenance, not proof that the application passed native interaction acceptance. The currently installed app must be checked separately from newly prepared archives.
