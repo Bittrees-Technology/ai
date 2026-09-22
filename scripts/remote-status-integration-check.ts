@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
+import { checkRemoteHttp } from "./remote-http-integration.js";
 import { checkRemoteSessions } from "./remote-session-integration.js";
 import { checkRemoteDevices } from "./remote-device-integration.js";
 import { RemoteStatusStore } from "../modules/remote/status-store.js";
@@ -301,8 +302,9 @@ try {
     ),
   );
   await checkRemoteSessions(pool);
+  await checkRemoteHttp(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();

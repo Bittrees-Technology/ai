@@ -1,0 +1,466 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { createServer, request } from "node:https";
+import {
+  createServer as httpServer,
+  request as httpRequest,
+  type IncomingHttpHeaders,
+} from "node:http";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
+import { Wallet } from "ethers";
+import type { Pool } from "pg";
+import { createRemoteApp } from "../modules/remote/http.js";
+
+export async function checkRemoteHttp(pool: Pool) {
+  const temp = await mkdtemp(join(tmpdir(), "bittrees-relay-tls-"));
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "1",
+      "-subj",
+      "/CN=localhost",
+      "-keyout",
+      join(temp, "key.pem"),
+      "-out",
+      join(temp, "cert.pem"),
+    ],
+    { stdio: "ignore" },
+  );
+  const key = await readFile(join(temp, "key.pem")),
+    cert = await readFile(join(temp, "cert.pem"));
+  const origin = "https://ai.bittrees.org";
+  const config = {
+    origin,
+    chainId: 1,
+    sessionMs: 3600000,
+    deviceMs: 3600000,
+    retentionMs: 86400000,
+  };
+  const app = createRemoteApp(pool, config);
+  const server = createServer({ key, cert }, app),
+    plain = httpServer(app);
+  const limited = createServer(
+    { key, cert },
+    createRemoteApp(pool, { ...config, requestsPerMinute: 2 }),
+  );
+  const servers = [server, plain, limited];
+  try {
+    for (const s of servers)
+      await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+    const port = (s: typeof server | typeof plain) =>
+      (s.address() as { port: number }).port;
+    let requestCount = 0;
+    async function call(
+      path: string,
+      body: unknown,
+      headers: Record<string, string> = {},
+      target: typeof server | typeof plain = server,
+      method = "POST",
+    ) {
+      requestCount++;
+      const payload = typeof body === "string" ? body : JSON.stringify(body);
+      return new Promise<{
+        status: number;
+        headers: IncomingHttpHeaders;
+        body: any;
+      }>((resolve, reject) => {
+        const tls = target !== plain;
+        const req = (tls ? request : httpRequest)(
+          {
+            hostname: "127.0.0.1",
+            port: port(target),
+            path,
+            method,
+            ...(tls ? { ca: cert, servername: "localhost" } : {}),
+            headers: {
+              Host: "ai.bittrees.org",
+              "Content-Type": "application/json",
+              "Content-Length": String(Buffer.byteLength(payload)),
+              ...headers,
+            },
+          },
+          (res) => {
+            let text = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+              text += chunk;
+            });
+            res.on("end", () => {
+              try {
+                resolve({
+                  status: res.statusCode!,
+                  headers: res.headers,
+                  body: JSON.parse(text),
+                });
+              } catch (e) {
+                reject(e);
+              }
+            });
+          },
+        );
+        req.setTimeout(5000, () => req.destroy(Error("test request timeout")));
+        req.on("error", (e) =>
+          reject(
+            Error(
+              `HTTP integration connection ${requestCount} failed: ${path}, TLS=${tls}, ${e.message}`,
+            ),
+          ),
+        );
+        req.end(payload);
+      });
+    }
+    const browser = {
+      Origin: origin,
+      "X-Bittrees-Request": "1",
+      "Sec-Fetch-Site": "same-origin",
+    };
+    const wallet = Wallet.createRandom();
+    assert.equal(
+      (await call("/browser/login/challenge", { address: wallet.address }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/login/challenge",
+          { address: wallet.address },
+          { ...browser, Origin: "https://evil.example" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/login/challenge",
+          { address: wallet.address },
+          { ...browser, "Sec-Fetch-Site": "same-site" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/login/challenge",
+          {},
+          { ...browser, Host: "evil.example" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/login/challenge",
+          {},
+          { ...browser, "X-Forwarded-Proto": "https" },
+          plain,
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/login/challenge",
+          {},
+          { ...browser, "Content-Type": "text/plain" },
+        )
+      ).status,
+      415,
+    );
+    assert.equal(
+      (await call("/browser/session", {}, browser, server, "GET")).status,
+      405,
+    );
+    assert.equal(
+      (await call("/browser/login/challenge", "{", browser)).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/login/challenge",
+          { junk: "PRIVATE".repeat(6000) },
+          browser,
+        )
+      ).status,
+      400,
+    );
+    const login = await call(
+      "/browser/login/challenge",
+      { address: wallet.address },
+      browser,
+    );
+    assert.equal(login.status, 200);
+    assert.equal(login.body.browserToken, undefined);
+    const loginSet = login.headers["set-cookie"]![0]!;
+    for (const flag of ["Secure", "HttpOnly", "SameSite=Strict", "Path=/"])
+      assert.ok(loginSet.includes(flag));
+    const loginCookie = loginSet.split(";")[0]!;
+    const signed = {
+      message: login.body.message,
+      signature: await wallet.signMessage(login.body.message),
+    };
+    assert.equal(
+      (await call("/browser/login/verify", signed, browser)).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call("/browser/login/verify", signed, {
+          ...browser,
+          Cookie: loginCookie + "; " + loginCookie,
+        })
+      ).status,
+      403,
+    );
+    const verified = await call("/browser/login/verify", signed, {
+      ...browser,
+      Cookie: loginCookie,
+    });
+    assert.equal(verified.status, 200);
+    assert.equal(verified.body.token, undefined);
+    assert.equal(
+      (
+        await call("/browser/login/verify", signed, {
+          ...browser,
+          Cookie: loginCookie,
+        })
+      ).status,
+      403,
+    );
+    const sessionCookie = verified.headers["set-cookie"]!.find((x) =>
+      x.startsWith("__Host-bittrees-session="),
+    )!.split(";")[0]!;
+    const owner = { ...browser, Cookie: sessionCookie };
+    assert.equal(
+      (await call("/browser/session", {}, owner)).body.ownerId,
+      verified.body.ownerId,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/session",
+          {},
+          {
+            ...owner,
+            Authorization: "Bearer " + randomBytes(32).toString("base64url"),
+          },
+        )
+      ).status,
+      403,
+    );
+    const verifier = randomBytes(32).toString("base64url"),
+      challenge = createHash("sha256").update(verifier).digest("base64url");
+    assert.equal(
+      (await call("/device/pairings", { challenge }, browser)).status,
+      403,
+    );
+    const pair = await call("/device/pairings", { challenge });
+    assert.equal(pair.status, 200);
+    const approval = {
+      id: pair.body.id,
+      approvalCode: pair.body.approvalCode,
+      confirmed: true,
+    };
+    assert.equal(
+      (
+        await call(
+          "/browser/pairings/approve",
+          { ...approval, ownerId: verified.body.ownerId },
+          owner,
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/pairings/approve",
+          { ...approval, confirmed: false },
+          owner,
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await call("/browser/pairings/approve", approval, owner)).status,
+      200,
+    );
+    const redeemed = await call("/device/redeem", {
+      id: pair.body.id,
+      verifier,
+      expectedOwnerId: verified.body.ownerId,
+    });
+    assert.equal(redeemed.status, 200);
+    const device = { Authorization: "Bearer " + redeemed.body.credential };
+    const item = {
+      id: randomUUID(),
+      deviceId: redeemed.body.deviceId,
+      status: "queued",
+      revision: 1,
+      updatedAt: new Date().toISOString(),
+    };
+    assert.equal(
+      (
+        await call(
+          "/device/status",
+          { sequence: 1, items: [item] },
+          { ...device, Cookie: sessionCookie },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/device/status",
+          { sequence: 1, items: [{ ...item, title: "PRIVATE" }] },
+          device,
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await call("/device/status", { sequence: 1, items: [item] }, device))
+        .status,
+      200,
+    );
+    const listed = await call(
+      "/browser/status",
+      { deviceId: item.deviceId },
+      owner,
+    );
+    assert.equal(listed.status, 200);
+    assert.deepEqual(listed.body.items, [item]);
+    assert.equal(listed.headers["cache-control"], "no-store");
+    assert.equal(listed.headers["access-control-allow-origin"], undefined);
+    const otherWallet = Wallet.createRandom();
+    const otherLogin = await call(
+      "/browser/login/challenge",
+      { address: otherWallet.address },
+      browser,
+    );
+    const otherVerified = await call(
+      "/browser/login/verify",
+      {
+        message: otherLogin.body.message,
+        signature: await otherWallet.signMessage(otherLogin.body.message),
+      },
+      {
+        ...browser,
+        Cookie: otherLogin.headers["set-cookie"]![0]!.split(";")[0]!,
+      },
+    );
+    assert.equal(otherVerified.status, 200);
+    const otherCookie = otherVerified.headers["set-cookie"]!.find((x) =>
+      x.startsWith("__Host-bittrees-session="),
+    )!.split(";")[0]!;
+    const otherOwner = { ...browser, Cookie: otherCookie };
+    assert.equal(
+      (await call("/browser/status", { deviceId: item.deviceId }, otherOwner))
+        .status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/devices/revoke",
+          { deviceId: item.deviceId },
+          otherOwner,
+        )
+      ).status,
+      403,
+    );
+    const rotated = await call("/device/rotate", {}, device);
+    assert.equal(rotated.status, 200);
+    assert.equal(
+      (await call("/device/status", { sequence: 1, items: [item] }, device))
+        .status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/device/status",
+          { sequence: 1, items: [item] },
+          { Authorization: "Bearer " + rotated.body.credential },
+        )
+      ).body.duplicate,
+      true,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/devices/revoke",
+          { deviceId: item.deviceId },
+          owner,
+        )
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await call(
+          "/device/status",
+          { sequence: 1, items: [item] },
+          { Authorization: "Bearer " + rotated.body.credential },
+        )
+      ).status,
+      403,
+    );
+    assert.equal((await call("/browser/logout", {}, owner)).status, 200);
+    assert.equal((await call("/browser/session", {}, owner)).status, 403);
+    assert.equal(
+      (
+        await call(
+          "/device/missing",
+          {},
+          { "X-Forwarded-For": "192.0.2.1" },
+          limited,
+        )
+      ).status,
+      404,
+    );
+    assert.equal(
+      (
+        await call(
+          "/device/missing",
+          {},
+          { "X-Forwarded-For": "192.0.2.2" },
+          limited,
+        )
+      ).status,
+      404,
+    );
+    const exhausted = await call(
+      "/device/missing",
+      {},
+      { "X-Forwarded-For": "192.0.2.3" },
+      limited,
+    );
+    assert.equal(exhausted.status, 429);
+    assert.ok(exhausted.headers["retry-after"]);
+  } finally {
+    for (const s of servers) {
+      s.closeAllConnections();
+      if (s.listening)
+        await new Promise<void>((resolve, reject) =>
+          s.close((e) => (e ? reject(e) : resolve())),
+        );
+    }
+    await rm(temp, { recursive: true, force: true });
+  }
+}
