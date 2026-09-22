@@ -1,0 +1,425 @@
+{
+  "syntheticOnly": true,
+  "events": [
+    {
+      "type": "plan",
+      "syntheticOnly": true,
+      "model": {
+        "profile": {
+          "id": "synthetic-large-mail",
+          "runtime": "ollama",
+          "model": "qwen3.5:9b",
+          "contextTokens": 4096,
+          "maxOutputTokens": 1000,
+          "temperature": 0
+        },
+        "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7"
+      },
+      "request": "Summarize this part accurately. Distinguish estimates from approvals, preserve any correction or cancellation, and do not invent payments. Do not infer details from other parts.",
+      "sourceText": "Record 1: Project 1 has a proposed budget of EUR 100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 2: Project 2 has a proposed budget of EUR 200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 3: Project 3 has a proposed budget of EUR 300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 4: Project 4 has a proposed budget of EUR 400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 5: Project 5 has a proposed budget of EUR 500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 6: Project 6 has a proposed budget of EUR 600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 7: Project 7 has a proposed budget of EUR 700. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 8: Project 8 has a proposed budget of EUR 800. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 9: Project 9 has a proposed budget of EUR 900. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 10: Project 10 has a proposed budget of EUR 1000. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 11: Project 11 has a proposed budget of EUR 1100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 12: Project 12 has a proposed budget of EUR 1200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 13: Project 13 has a proposed budget of EUR 1300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 14: Project 14 has a proposed budget of EUR 1400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 15: Project 15 has a proposed budget of EUR 1500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 16: Project 16 has a proposed budget of EUR 1600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 17: Project 17 has a proposed budget of EUR 1700. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 18: Project 18 has a proposed budget of EUR 1800. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 19: Project 19 has a proposed budget of EUR 1900. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 20: Project 20 has a proposed budget of EUR 2000. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 21: Project 21 has a proposed budget of EUR 2100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 22: Project 22 has a proposed budget of EUR 2200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 23: Project 23 has a proposed budget of EUR 2300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 24: Project 24 has a proposed budget of EUR 2400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 25: Project 25 has a proposed budget of EUR 2500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 26: Project 26 has a proposed budget of EUR 2600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 27: Project 27 has a proposed budget of EUR 2700. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 28: Project 28 has a proposed budget of EUR 2800. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 29: Project 29 has a proposed budget of EUR 2900. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 30: Project 30 has a proposed budget of EUR 3000. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 31: Project 31 has a proposed budget of EUR 3100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 32: Project 32 has a proposed budget of EUR 3200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 33: Project 33 has a proposed budget of EUR 3300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 34: Project 34 has a proposed budget of EUR 3400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 35: Project 35 has a proposed budget of EUR 3500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 36: Project 36 has a proposed budget of EUR 3600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\n\nFinal correction: Project 36 was cancelled. Its EUR 3600 estimate is withdrawn, and no payment is authorized.\n",
+      "sourceBytes": 5592,
+      "parts": [
+        {
+          "id": "attachment-offset-0",
+          "text": "Record 1: Project 1 has a proposed budget of EUR 100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 2: Project 2 has a proposed budget of EUR 200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 3: Project 3 has a proposed budget of EUR 300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 4: Project 4 has a proposed budget of EUR 400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 5: Project 5 has a proposed budget of EUR 500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 6: Project 6 has a proposed budget of EUR 600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 7: Project 7 has a proposed budget of EUR 700. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 8: Project 8 has a proposed budget of EUR 800. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 9: Project 9 has a proposed budget of EUR 900. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 10: Project 10 has a proposed budget of EUR 1000. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 11: Project 11 has a proposed budget of EUR 1100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 12: Project 12 has a proposed budget of EUR 1200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\n",
+          "promptBytes": 2746
+        },
+        {
+          "id": "attachment-offset-1809",
+          "text": "Record 13: Project 13 has a proposed budget of EUR 1300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 14: Project 14 has a proposed budget of EUR 1400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 15: Project 15 has a proposed budget of EUR 1500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 16: Project 16 has a proposed budget of EUR 1600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 17: Project 17 has a proposed budget of EUR 1700. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 18: Project 18 has a proposed budget of EUR 1800. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 19: Project 19 has a proposed budget of EUR 1900. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 20: Project 20 has a proposed budget of EUR 2000. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 21: Project 21 has a proposed budget of EUR 2100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 22: Project 22 has a proposed budget of EUR 2200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 23: Project 23 has a proposed budget of EUR 2300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 24: Project 24 has a proposed budget of EUR 2400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\n",
+          "promptBytes": 2776
+        },
+        {
+          "id": "attachment-offset-3645",
+          "text": "Record 25: Project 25 has a proposed budget of EUR 2500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 26: Project 26 has a proposed budget of EUR 2600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 27: Project 27 has a proposed budget of EUR 2700. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 28: Project 28 has a proposed budget of EUR 2800. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 29: Project 29 has a proposed budget of EUR 2900. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 30: Project 30 has a proposed budget of EUR 3000. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 31: Project 31 has a proposed budget of EUR 3100. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 32: Project 32 has a proposed budget of EUR 3200. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 33: Project 33 has a proposed budget of EUR 3300. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 34: Project 34 has a proposed budget of EUR 3400. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 35: Project 35 has a proposed budget of EUR 3500. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\nRecord 36: Project 36 has a proposed budget of EUR 3600. This is an estimate, not an approved expense. Review is pending; nobody has authorized payment.\n\n",
+          "promptBytes": 2778
+        },
+        {
+          "id": "attachment-offset-5482",
+          "text": "Final correction: Project 36 was cancelled. Its EUR 3600 estimate is withdrawn, and no payment is authorized.\n",
+          "promptBytes": 1039
+        }
+      ]
+    },
+    {
+      "type": "part",
+      "index": 0,
+      "elapsedMs": 14139,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"The document lists proposed budgets for ten projects ranging from EUR 100 to EUR 1000.\",\n      \"evidence\": [\n        \"attachment-offset-0\"\n      ]\n    },\n    {\n      \"text\": \"All listed amounts are explicitly identified as estimates rather than approved expenses.\",\n      \"evidence\": [\n        \"attachment-offset-0\"\n      ]\n    },\n    {\n      \"text\": \"No payments have been authorized for any of the projects because reviews are pending.\",\n      \"evidence\": [\n        \"attachment-offset-0\"\n      ]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "part",
+      "index": 1,
+      "elapsedMs": 16943,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"Records 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively.\",\n      \"evidence\": [\n        \"attachment-offset-1809\"\n      ]\n    },\n    {\n      \"text\": \"All listed amounts are explicitly identified as estimates rather than approved expenses.\",\n      \"evidence\": [\n        \"attachment-offset-1809\"\n      ]\n    },\n    {\n      \"text\": \"The review status for all projects from 13 to 24 is currently pending.\",\n      \"evidence\": [\n        \"attachment-offset-1809\"\n      ]\n    },\n    {\n      \"text\": \"No payment authorization has been granted for any of the proposed budgets in this section.\",\n      \"evidence\": [\n        \"attachment-offset-1809\"\n      ]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "part",
+      "index": 2,
+      "elapsedMs": 14201,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"Records 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively.\",\n      \"evidence\": [\n        \"attachment-offset-3645\"\n      ]\n    },\n    {\n      \"text\": \"All listed amounts are explicitly identified as estimates rather than approved expenses.\",\n      \"evidence\": [\n        \"attachment-offset-3645\"\n      ]\n    },\n    {\n      \"text\": \"The review status for all projects from 25 to 36 is pending with no authorized payment.\",\n      \"evidence\": [\n        \"attachment-offset-3645\"\n      ]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "part",
+      "index": 3,
+      "elapsedMs": 12184,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"Project 36 has been cancelled.\",\n      \"evidence\": [\"attachment-offset-5482\"]\n    },\n    {\n      \"text\": \"The EUR 3600 estimate for Project 36 is withdrawn.\",\n      \"evidence\": [\"attachment-offset-5482\"]\n    },\n    {\n      \"text\": \"No payment is authorized for the cancelled project.\",\n      \"evidence\": [\"attachment-offset-5482\"]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "part",
+      "index": 4,
+      "elapsedMs": 16567,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"The document lists proposed budgets for ten projects ranging from EUR 100 to EUR 1000.\",\n      \"evidence\": [\"attachment-offset-0\"]\n    },\n    {\n      \"text\": \"Records 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively.\",\n      \"evidence\": [\"attachment-offset-1809\"]\n    },\n    {\n      \"text\": \"All listed amounts in both sections are explicitly identified as estimates rather than approved expenses.\",\n      \"evidence\": [\"attachment-offset-0\", \"attachment-offset-1809\"]\n    },\n    {\n      \"text\": \"No payments have been authorized for any of the projects because reviews are pending.\",\n      \"evidence\": [\"attachment-offset-0\", \"attachment-offset-1809\"]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "part",
+      "index": 5,
+      "elapsedMs": 16511,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"Records 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively.\",\n      \"evidence\": [\"attachment-offset-3645\"]\n    },\n    {\n      \"text\": \"All listed amounts are explicitly identified as estimates rather than approved expenses.\",\n      \"evidence\": [\"attachment-offset-3645\"]\n    },\n    {\n      \"text\": \"The review status for all projects from 25 to 36 is pending with no authorized payment.\",\n      \"evidence\": [\"attachment-offset-3645\"]\n    },\n    {\n      \"text\": \"Project 36 has been cancelled and its EUR 3,600 estimate is withdrawn.\",\n      \"evidence\": [\"attachment-offset-5482\"]\n    },\n    {\n      \"text\": \"No payment is authorized for the cancelled Project 36.\",\n      \"evidence\": [\"attachment-offset-5482\"]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "part",
+      "index": 6,
+      "elapsedMs": 21321,
+      "raw": "{\n  \"summary\": [\n    {\n      \"text\": \"Records 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively.\",\n      \"evidence\": [\n        \"attachment-offset-1809\"\n      ]\n    },\n    {\n      \"text\": \"Records 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively.\",\n      \"evidence\": [\n        \"attachment-offset-3645\"\n      ]\n    },\n    {\n      \"text\": \"Project 36 has been cancelled and its EUR 3,600 estimate is withdrawn.\",\n      \"evidence\": [\n        \"attachment-offset-5482\"\n      ]\n    },\n    {\n      \"text\": \"All listed amounts in both sections are explicitly identified as estimates rather than approved expenses.\",\n      \"evidence\": [\n        \"attachment-offset-0\",\n        \"attachment-offset-1809\",\n        \"attachment-offset-3645\"\n      ]\n    },\n    {\n      \"text\": \"No payments have been authorized for any of the projects because reviews are pending, including the cancelled Project 36.\",\n      \"evidence\": [\n        \"attachment-offset-0\",\n        \"attachment-offset-1809\",\n        \"attachment-offset-3645\",\n        \"attachment-offset-5482\"\n      ]\n    }\n  ],\n  \"reply\": null\n}"
+    },
+    {
+      "type": "result",
+      "elapsedMs": 111871,
+      "calls": 7,
+      "syntheticValidationCallbacks": 8,
+      "result": {
+        "text": "Unreviewed selected-attachment summary\n\nRecords 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively. [attachment-offset-1809]\n\nRecords 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively. [attachment-offset-3645]\n\nProject 36 has been cancelled and its EUR 3,600 estimate is withdrawn. [attachment-offset-5482]\n\nAll listed amounts in both sections are explicitly identified as estimates rather than approved expenses. [attachment-offset-0, attachment-offset-1809, attachment-offset-3645]\n\nNo payments have been authorized for any of the projects because reviews are pending, including the cancelled Project 36. [attachment-offset-0, attachment-offset-1809, attachment-offset-3645, attachment-offset-5482]\n\nReconciled from part summaries; counts and cross-part conclusions remain unverified. Review the original file.\n\nPart 1 of 4\nThe document lists proposed budgets for ten projects ranging from EUR 100 to EUR 1000. [attachment-offset-0]\nAll listed amounts are explicitly identified as estimates rather than approved expenses. [attachment-offset-0]\nNo payments have been authorized for any of the projects because reviews are pending. [attachment-offset-0]\n\nPart 2 of 4\nRecords 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively. [attachment-offset-1809]\nAll listed amounts are explicitly identified as estimates rather than approved expenses. [attachment-offset-1809]\nThe review status for all projects from 13 to 24 is currently pending. [attachment-offset-1809]\nNo payment authorization has been granted for any of the proposed budgets in this section. [attachment-offset-1809]\n\nPart 3 of 4\nRecords 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively. [attachment-offset-3645]\nAll listed amounts are explicitly identified as estimates rather than approved expenses. [attachment-offset-3645]\nThe review status for all projects from 25 to 36 is pending with no authorized payment. [attachment-offset-3645]\n\nPart 4 of 4\nProject 36 has been cancelled. [attachment-offset-5482]\nThe EUR 3600 estimate for Project 36 is withdrawn. [attachment-offset-5482]\nNo payment is authorized for the cancelled project. [attachment-offset-5482]",
+        "mail": {
+          "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+          "mode": "attachment-text",
+          "attachment": {
+            "id": "1.2",
+            "filename": "estimates.txt",
+            "bytes": 5592
+          },
+          "projectionHash": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+          "summary": [
+            {
+              "text": "Records 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively.",
+              "evidence": [
+                "attachment-offset-1809"
+              ],
+              "citations": [
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-1809",
+                  "attachmentId": "1.2"
+                }
+              ]
+            },
+            {
+              "text": "Records 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively.",
+              "evidence": [
+                "attachment-offset-3645"
+              ],
+              "citations": [
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-3645",
+                  "attachmentId": "1.2"
+                }
+              ]
+            },
+            {
+              "text": "Project 36 has been cancelled and its EUR 3,600 estimate is withdrawn.",
+              "evidence": [
+                "attachment-offset-5482"
+              ],
+              "citations": [
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-5482",
+                  "attachmentId": "1.2"
+                }
+              ]
+            },
+            {
+              "text": "All listed amounts in both sections are explicitly identified as estimates rather than approved expenses.",
+              "evidence": [
+                "attachment-offset-0",
+                "attachment-offset-1809",
+                "attachment-offset-3645"
+              ],
+              "citations": [
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-0",
+                  "attachmentId": "1.2"
+                },
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-1809",
+                  "attachmentId": "1.2"
+                },
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-3645",
+                  "attachmentId": "1.2"
+                }
+              ]
+            },
+            {
+              "text": "No payments have been authorized for any of the projects because reviews are pending, including the cancelled Project 36.",
+              "evidence": [
+                "attachment-offset-0",
+                "attachment-offset-1809",
+                "attachment-offset-3645",
+                "attachment-offset-5482"
+              ],
+              "citations": [
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-0",
+                  "attachmentId": "1.2"
+                },
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-1809",
+                  "attachmentId": "1.2"
+                },
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-3645",
+                  "attachmentId": "1.2"
+                },
+                {
+                  "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                  "sectionId": "attachment-offset-5482",
+                  "attachmentId": "1.2"
+                }
+              ]
+            }
+          ],
+          "reply": null,
+          "status": "unreviewed",
+          "savedToMail": false,
+          "sent": false,
+          "partSummaries": [
+            [
+              {
+                "text": "The document lists proposed budgets for ten projects ranging from EUR 100 to EUR 1000.",
+                "evidence": [
+                  "attachment-offset-0"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-0",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "All listed amounts are explicitly identified as estimates rather than approved expenses.",
+                "evidence": [
+                  "attachment-offset-0"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-0",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "No payments have been authorized for any of the projects because reviews are pending.",
+                "evidence": [
+                  "attachment-offset-0"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-0",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              }
+            ],
+            [
+              {
+                "text": "Records 13 through 24 list proposed budgets for Projects 13 to 24 ranging from EUR 1,300 to EUR 2,400 respectively.",
+                "evidence": [
+                  "attachment-offset-1809"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-1809",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "All listed amounts are explicitly identified as estimates rather than approved expenses.",
+                "evidence": [
+                  "attachment-offset-1809"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-1809",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "The review status for all projects from 13 to 24 is currently pending.",
+                "evidence": [
+                  "attachment-offset-1809"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-1809",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "No payment authorization has been granted for any of the proposed budgets in this section.",
+                "evidence": [
+                  "attachment-offset-1809"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-1809",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              }
+            ],
+            [
+              {
+                "text": "Records 25 through 36 list proposed budgets for Projects 25 to 36 ranging from EUR 2,500 to EUR 3,600 respectively.",
+                "evidence": [
+                  "attachment-offset-3645"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-3645",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "All listed amounts are explicitly identified as estimates rather than approved expenses.",
+                "evidence": [
+                  "attachment-offset-3645"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-3645",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "The review status for all projects from 25 to 36 is pending with no authorized payment.",
+                "evidence": [
+                  "attachment-offset-3645"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-3645",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              }
+            ],
+            [
+              {
+                "text": "Project 36 has been cancelled.",
+                "evidence": [
+                  "attachment-offset-5482"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-5482",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "The EUR 3600 estimate for Project 36 is withdrawn.",
+                "evidence": [
+                  "attachment-offset-5482"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-5482",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              },
+              {
+                "text": "No payment is authorized for the cancelled project.",
+                "evidence": [
+                  "attachment-offset-5482"
+                ],
+                "citations": [
+                  {
+                    "messageId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "version": "4c1208fbbe9ea357f47931d5453292d1be8eea8b80169197fda696c8c36a50b3",
+                    "sectionId": "attachment-offset-5482",
+                    "attachmentId": "1.2"
+                  }
+                ]
+              }
+            ]
+          ],
+          "coverage": {
+            "strategy": "sequential-parts",
+            "parts": 4,
+            "sourceBytes": 5592,
+            "allPartsProcessed": true,
+            "crossPartSynthesis": "attempted-unverified",
+            "synthesisCalls": 3
+          }
+        }
+      },
+      "manualReviewCriteria": [
+        "No estimated expense is described as approved or paid.",
+        "Final cancellation and withdrawn EUR 3600 are preserved.",
+        "No claim of full cross-part reconciliation."
+      ],
+      "qualityAcceptance": "requires-manual-review",
+      "sourceAuthorizationTested": false
+    }
+  ]
+}
