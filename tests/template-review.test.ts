@@ -19,6 +19,7 @@ function fixture() {
   const connection = {
     deviceId: randomUUID(),
     ownerId: randomUUID(),
+    epoch: 1,
     expiresAt: Date.now() + 180000,
     state: "paired",
     templates: [] as any[],
@@ -60,6 +61,11 @@ test("Mac remote template review sends only fixed metadata after separate confir
   c.confirmRemote(true);
   await c.shareRemote();
   assert.deepEqual(calls[1].body, {
+    expectedConnection: {
+      ownerId: connection.ownerId,
+      deviceId: connection.deviceId,
+      epoch: connection.epoch,
+    },
     templateId: template.id,
     expectedRevision: 2,
     maxRuns: 2,

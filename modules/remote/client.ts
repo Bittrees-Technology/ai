@@ -250,6 +250,7 @@ export class RemoteClient {
     return {
       deviceId: s.grant.deviceId,
       ownerId: s.grant.ownerId,
+      epoch: s.grant.epoch,
       expiresAt: s.grant.expiresAt,
       state:
         s.mode !== "active"
@@ -314,6 +315,12 @@ export class RemoteClient {
     const input = shareTemplateSchema.parse(raw);
     return this.exclusive(async () => {
       const s = await this.active();
+      if (
+        input.expectedConnection.ownerId !== s.grant.ownerId ||
+        input.expectedConnection.deviceId !== s.grant.deviceId ||
+        input.expectedConnection.epoch !== s.grant.epoch
+      )
+        throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
       if (
         !this.templateExecutor ||
         s.templates?.some((t) => t.approval.templateId === input.templateId)
