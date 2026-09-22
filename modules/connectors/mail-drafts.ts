@@ -62,6 +62,21 @@ const schema = z.strictObject({
   summary: z.array(claim).min(1).max(20),
   reply: claim.nullable(),
 });
+/** Generation aid only. mailResult still enforces references, uniqueness and source scope. */
+export function mailOutputSchema(kind: string) {
+  // Keep the sampler grammar small. Length, count, uniqueness and source limits
+  // remain mandatory in mailResult, including when a runtime ignores format.
+  const outputClaim = z.strictObject({
+    text: z.string(),
+    evidence: z.array(z.string()).min(1),
+  });
+  return z.toJSONSchema(
+    z.strictObject({
+      summary: z.array(outputClaim).min(1),
+      reply: kind === "draft" ? outputClaim : z.null(),
+    }),
+  );
+}
 export function mailResult(
   source: Snapshot,
   text: string,

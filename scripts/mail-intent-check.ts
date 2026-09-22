@@ -1,7 +1,11 @@
 // Synthetic-only Mac probe. No Mail account, source credentials, saving or sending.
 import { createHash } from "node:crypto";
 import { Ollama } from "../modules/models/ollama.js";
-import { mailPrompt, mailResult } from "../modules/connectors/mail-drafts.js";
+import {
+  mailPrompt,
+  mailResult,
+  mailOutputSchema,
+} from "../modules/connectors/mail-drafts.js";
 import type { MailTasks } from "../modules/connectors/mail-tasks.js";
 type Snapshot = Awaited<ReturnType<MailTasks["validate"]>>;
 const cases = [
@@ -119,10 +123,21 @@ for (const scenario of cases) {
     began = Date.now();
   let raw = "";
   try {
-    raw = await runtime.generate(pinned, prompt);
+    raw = await runtime.generate(
+      pinned,
+      prompt,
+      undefined,
+      process.env.MAIL_INTENT_FORMAT === "schema"
+        ? mailOutputSchema("draft")
+        : undefined,
+    );
     const result = mailResult(source, raw, "draft");
     console.log(
       JSON.stringify({
+        outputFormat:
+          process.env.MAIL_INTENT_FORMAT === "schema"
+            ? mailOutputSchema("draft")
+            : null,
         scenario,
         profile: pinned.profile,
         digest: pinned.digest,
@@ -137,6 +152,10 @@ for (const scenario of cases) {
   } catch (error) {
     console.log(
       JSON.stringify({
+        outputFormat:
+          process.env.MAIL_INTENT_FORMAT === "schema"
+            ? mailOutputSchema("draft")
+            : null,
         scenario,
         profile: pinned.profile,
         digest: pinned.digest,

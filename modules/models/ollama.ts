@@ -149,7 +149,15 @@ export class Ollama {
     model: PinnedModel,
     prompt: string,
     signal?: AbortSignal,
+    format?: "json" | Record<string, unknown>,
   ): Promise<string> {
+    // Internal caller-supplied schema; snapshot it before any asynchronous work.
+    const encodedFormat =
+      format === undefined ? undefined : JSON.stringify(format);
+    if (encodedFormat !== undefined && Buffer.byteLength(encodedFormat) > 16384)
+      throw new ModelError("CAPACITY");
+    const outputFormat =
+      encodedFormat === undefined ? undefined : JSON.parse(encodedFormat);
     if (
       !prompt ||
       prompt.length > 32000 ||
@@ -176,6 +184,7 @@ export class Ollama {
           {
             model: model.profile.model,
             prompt,
+            ...(outputFormat === undefined ? {} : { format: outputFormat }),
             stream: false,
             think: false,
             keep_alive: 0,
