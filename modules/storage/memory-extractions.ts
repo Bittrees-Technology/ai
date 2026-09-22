@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { StoreError, type Store, type Owner } from "./store.js";
 import type { Vault } from "./vault.js";
-import { prepareMemoryCandidates } from "../memory/candidates.js";
+import {
+  prepareMemoryCandidates,
+  readMemoryCandidates,
+} from "../memory/candidates.js";
 const request = z.strictObject({
   expectedRevision: z.number().int().positive(),
   modelProfileId: z.string().min(1).max(128),
@@ -105,6 +108,24 @@ export class MemoryExtractions {
         return task;
       })
       .immediate();
+  }
+  review(owner: Owner, id: string) {
+    const context = this.context(owner, id);
+    const task = this.store.get(owner, id);
+    if (!context || task.status !== "completed")
+      throw new StoreError("CONFLICT");
+    const result = readMemoryCandidates(
+      task.result,
+      context.source,
+      context.sourceHash,
+    );
+    return {
+      taskId: id,
+      revision: task.revision,
+      parentId: context.parentId,
+      parentRevision: context.parentRevision,
+      ...result,
+    };
   }
   context(owner: Owner, id: string) {
     const binding = this.binding(owner, id);

@@ -1,3 +1,4 @@
+import { MemorySuggestions } from "./memory-suggestions.js";
 import { MemorySearch } from "./memory-search.js";
 import { Templates } from "./templates.js";
 import { ModelImportControls } from "./imports.js";
@@ -15,7 +16,7 @@ type Task = {
   status: string;
   revision: number;
   input: { prompt: string; modelProfileId: string };
-  result: null | { text?: string };
+  result: null | { text?: string; kind?: string };
 };
 type Memory = {
   type: string;
@@ -62,7 +63,8 @@ const explanations: Record<string, string> = {
   CONFLICT:
     "This item changed or an operation is still running. Wait for it to finish, then refresh and try again.",
   MODEL_UNAVAILABLE: "Start Ollama and check your installed models.",
-  CAPACITY: "Shorten the request or choose a larger model context.",
+  CAPACITY:
+    "A size or capacity limit was reached. Shorten the request, review pending work, or free saved storage before retrying.",
   PAIRING_DENIED:
     "Code incorrect, expired or already used. Restart the companion for a new code.",
   FORBIDDEN: "This request is not permitted.",
@@ -506,6 +508,22 @@ function App() {
                           onError={fail}
                         />
                       )}
+                      {task.status === "completed" &&
+                        !task.sourceBound &&
+                        (task.result?.text ||
+                          task.result?.kind === "memory_candidates") && (
+                          <MemorySuggestions
+                            key={task.id + ":" + task.revision}
+                            taskId={task.id}
+                            revision={task.revision}
+                            profileId={profile}
+                            extraction={
+                              task.result?.kind === "memory_candidates"
+                            }
+                            api={api}
+                            onError={fail}
+                          />
+                        )}
                       {task.result?.text && (
                         <>
                           <h3>Draft result</h3>

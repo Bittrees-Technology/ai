@@ -99,12 +99,13 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
   private visible(owner: Owner, input: MemoryInput) {
     return this.unexpired(input) && this.canRead(owner, input.sources);
   }
-  async add(owner: Owner, raw: unknown) {
+  async add(owner: Owner, raw: unknown, beforeCommit?: () => void) {
     const input = memorySchema.parse(raw);
     if (!(await this.visible(owner, input))) throw new StoreError("NOT_FOUND");
     return this.db
       .transaction(() => {
         if (!this.unexpired(input)) throw new StoreError("NOT_FOUND");
+        beforeCommit?.();
         const fingerprint = this.vault.fingerprint(input);
         const old = this.db
           .prepare(
