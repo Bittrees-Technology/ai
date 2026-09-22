@@ -300,8 +300,54 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
       // A source can be revoked while other checks await. Recheck final candidates before returning.
       const output = [];
       const selectedText = new Set<string>();
-      for (const r of results) {
-        if (output.length >= limit) break;
+      const sourceUses = new Map<string, number>();
+      const sourceKeys = (sources: MemoryInput["sources"]) => [
+        ...new Set(
+          sources.map((source) =>
+            JSON.stringify([source.app, source.tenantId, source.resourceId]),
+          ),
+        ),
+      ];
+      const penalty = (sources: MemoryInput["sources"]) =>
+        Math.min(
+          2,
+          0.75 *
+            Math.max(
+              0,
+              ...sourceKeys(sources).map((key) => sourceUses.get(key) ?? 0),
+            ),
+        );
+      const remaining = [...results];
+      while (remaining.length && output.length < limit) {
+        // Once a text has a valid representative, skip its other copies in one pass.
+        for (let i = remaining.length - 1; i >= 0; i--) {
+          if (
+            selectedText.has(
+              JSON.stringify([remaining[i]!.type, remaining[i]!.text]),
+            )
+          )
+            remaining.splice(i, 1);
+        }
+        if (!remaining.length) break;
+        // Diversify only within the leading base-ranked candidate's query coverage.
+        // Never cross a different term-coverage group solely to gain source diversity.
+        const coverage = remaining[0]!.why.relevance;
+        let nextIndex = 0;
+        let nextScore = remaining[0]!.score - penalty(remaining[0]!.sources);
+        for (let i = 1; i < remaining.length; i++) {
+          const candidate = remaining[i]!;
+          if (candidate.why.relevance !== coverage) continue;
+          const score = candidate.score - penalty(candidate.sources);
+          if (
+            score > nextScore ||
+            (score === nextScore &&
+              candidate.id.localeCompare(remaining[nextIndex]!.id) < 0)
+          ) {
+            nextIndex = i;
+            nextScore = score;
+          }
+        }
+        const r = remaining.splice(nextIndex, 1)[0]!;
         // Preserve meaning-sensitive case, punctuation and whitespace. This is exact-text diversity only.
         const textKey = JSON.stringify([r.type, r.text]);
         if (selectedText.has(textKey)) continue;
@@ -312,7 +358,14 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
           this.unchanged(owner, snapshot)
         ) {
           selectedText.add(textKey);
-          output.push(r);
+          const sourcePenalty = penalty(r.sources);
+          output.push({
+            ...r,
+            score: r.score - sourcePenalty,
+            why: { ...r.why, sourcePenalty },
+          });
+          for (const key of sourceKeys(r.sources))
+            sourceUses.set(key, (sourceUses.get(key) ?? 0) + 1);
         }
       }
       // Later access checks may yield to edits/deletion of an earlier result.

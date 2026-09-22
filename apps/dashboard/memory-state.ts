@@ -11,6 +11,7 @@ export type MemoryMatch = {
   }[];
   why: {
     relevance: number;
+    sourcePenalty: number;
     freshness: number;
     usefulness: number;
     pinned: boolean;

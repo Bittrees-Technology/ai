@@ -457,3 +457,80 @@ test("duplicate selection preserves only its own authorized provenance and falls
     memory.close();
   }
 });
+
+test("source diversity improves coverage among equal matches without displacing a stronger query match", async () => {
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async () => true,
+    () => 1000,
+  );
+  try {
+    for (let i = 0; i < 16; i++) {
+      const item = await memory.add(alice, {
+        ...candidate,
+        text: i === 15 ? "release unrelated" : `release build note ${i}`,
+        sources: [
+          {
+            ...candidate.sources[0],
+            resourceId: i < 12 ? "same" : `other-${i}`,
+          },
+        ],
+      });
+      await memory.review(alice, item.id, 1, {
+        approve: true,
+        pinned: i < 12 || i === 15,
+      });
+    }
+    const results = await memory.search(alice, "release build", 4);
+    assert.equal(results.length, 4);
+    assert.equal(new Set(results.map((r) => r.sources[0]!.resourceId)).size, 4);
+    assert.ok(results.every((r) => r.why.relevance === 1));
+    assert.equal(results[0]!.why.pinned, true);
+    const larger = await memory.search(alice, "release build", 8);
+    assert.ok(
+      larger
+        .slice(4)
+        .every((r) => r.why.sourcePenalty > 0 && r.why.sourcePenalty <= 2),
+    );
+    assert.equal((await memory.export(alice)).length, 16);
+  } finally {
+    memory.close();
+  }
+});
+test("source repetition groups versions of the same resource and does not reward extra references", async () => {
+  const memory = new MemoryStore(
+    ":memory:",
+    new Vault(randomBytes(32)),
+    async () => true,
+    () => 1000,
+  );
+  try {
+    for (let i = 0; i < 4; i++) {
+      const item = await memory.add(alice, {
+        ...candidate,
+        text: `release build ${i}`,
+        sources: [
+          { ...candidate.sources[0], revision: String(i + 1) },
+          ...(i === 3
+            ? [{ ...candidate.sources[0], resourceId: "extra" }]
+            : []),
+        ],
+      });
+      await memory.review(alice, item.id, 1, { approve: true });
+    }
+    const results = await memory.search(alice, "release build", 4);
+    assert.deepEqual(
+      results.map((r) => r.why.sourcePenalty),
+      [0, 0.75, 1.5, 2],
+    );
+    assert.ok(results.every((r) => r.verified === false));
+    const repeated = await memory.search(alice, "release build", 4);
+    assert.deepEqual(
+      repeated.map((r) => r.why.sourcePenalty),
+      [0, 0.75, 1.5, 2],
+    );
+  } finally {
+    memory.close();
+  }
+});
