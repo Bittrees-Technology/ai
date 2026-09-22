@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Bittrees AI — Remote status</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <a href="/">Bittrees AI</a>
+        <h1>Remote task status</h1>
+        <p>
+          Your Mac does the work. This page shows only the task statuses you
+          choose to share.
+        </p>
+      </header>
+      <p id="error" role="alert"></p>
+      <p id="notice" role="status"></p>
+      <section aria-labelledby="account-title">
+        <h2 id="account-title">Your account</h2>
+        <p id="account">Checking your session…</p>
+        <p id="network"></p>
+        <p>
+          Sign-in establishes your companion account. Mail, CRM and other apps
+          keep their separate permissions. This pilot supports ordinary Ethereum
+          wallets; smart-contract wallets are not supported yet.
+        </p>
+        <div class="actions">
+          <button id="login">Sign in with wallet</button
+          ><button id="refresh">Refresh session</button
+          ><button id="logout" hidden>Sign out</button>
+        </div>
+      </section>
+      <section id="pairing" hidden aria-labelledby="pairing-title">
+        <h2 id="pairing-title">Pair your Mac</h2>
+        <p>
+          Start pairing in your companion, then paste its five-minute pairing
+          details here. Check the wallet shown above is yours.
+        </p>
+        <form id="pair-form">
+          <label for="details">Pairing details from your Mac</label
+          ><textarea
+            id="details"
+            rows="3"
+            maxlength="80"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          ></textarea
+          ><label class="check"
+            ><input id="confirm" type="checkbox" required />This request came
+            from my Mac. Allow it to publish generic task status.</label
+          ><button id="approve">Approve pairing</button>
+        </form>
+        <div id="confirmation-area" hidden>
+          <label for="confirmation"
+            >Account confirmation code — copy back to your Mac</label
+          ><input id="confirmation" readonly autocomplete="off" />
+          <p>
+            Confirm this account in the companion to finish pairing. No tasks
+            are shared automatically.
+          </p>
+        </div>
+      </section>
+      <section id="management" hidden aria-labelledby="devices-title">
+        <h2 id="devices-title">Your devices</h2>
+        <p>
+          Only identifiers, states and update times appear here. Status reflects
+          the last manual share from the companion.
+        </p>
+        <button id="devices-load">Load devices</button>
+        <ul id="devices"></ul>
+        <button id="devices-more" hidden>Load more devices</button>
+        <h3 id="statuses-title" hidden>Shared task statuses</h3>
+        <ul id="statuses" aria-labelledby="statuses-title"></ul>
+        <button id="statuses-more" hidden>Load more statuses</button>
+      </section>
+      <footer>
+        Removing a local connection is different from revoking a device here.
+        Revocation removes its stored remote statuses. Private task content
+        stays on the Mac.
+      </footer>
+    </main>
+  </body>
+</html>

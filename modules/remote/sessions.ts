@@ -163,6 +163,26 @@ export class RemoteSessionStore {
       return { ownerId: row.owner_id as string };
     });
   }
+  async identity(token: string) {
+    if (!tokenSchema.safeParse(token).success)
+      throw new RemoteStatusError("DENIED");
+    return this.transaction(async (db) => {
+      const row = (
+        await db.query(
+          "SELECT s.owner_id,s.expires_at,a.address,a.chain_id FROM remote_sessions s JOIN remote_accounts a ON a.id=s.owner_id WHERE s.token_hash=$1 AND s.origin=$2 AND s.chain_id=$3 FOR SHARE OF s",
+          [hash(token), this.origin, this.chainId],
+        )
+      ).rows[0];
+      if (!row || Number(row.expires_at) <= this.now())
+        throw new RemoteStatusError("DENIED");
+      return {
+        ownerId: row.owner_id as string,
+        address: row.address as string,
+        chainId: Number(row.chain_id),
+        expiresAt: Number(row.expires_at),
+      };
+    });
+  }
   async logout(token: string) {
     if (!tokenSchema.safeParse(token).success)
       throw new RemoteStatusError("DENIED");

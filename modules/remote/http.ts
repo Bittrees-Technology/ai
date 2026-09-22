@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import express, { type Request, type Response } from "express";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -30,6 +31,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 export function createRemoteApp(
   pool: Pool,
   config: {
+    assets?: string;
     origin: string;
     chainId: number;
     sessionMs: number;
@@ -87,6 +89,29 @@ export function createRemoteApp(
       );
       return res.status(429).json({ error: "RATE_LIMITED" });
     }
+    if (req.method === "GET" && config.assets) {
+      if (req.path === "/settings.json")
+        return res.json({ origin: config.origin, chainId: config.chainId });
+      const files: Record<string, string> = {
+        "/": "index.html",
+        "/app.js": "app.js",
+        "/controller.js": "controller.js",
+        "/style.css": "style.css",
+      };
+      const file = Object.hasOwn(files, req.path) ? files[req.path] : undefined;
+      if (file) {
+        res.set(
+          "Content-Security-Policy",
+          "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        );
+        return res.sendFile(file, {
+          root: resolve(config.assets),
+          dotfiles: "deny",
+          cacheControl: false,
+          lastModified: false,
+        });
+      }
+    }
     if (req.method !== "POST")
       return res.status(405).json({ error: "METHOD_NOT_ALLOWED" });
     if (!req.is("application/json"))
@@ -117,8 +142,12 @@ export function createRemoteApp(
     sameSite: "strict" as const,
     path: "/",
   };
-  const owner = (req: Request) =>
-    sessions.authenticate(cookie(req, sessionCookie));
+  const owner = async (req: Request) => {
+    const auth = await sessions.authenticate(cookie(req, sessionCookie));
+    if (req.headers["x-bittrees-account"] !== auth.ownerId)
+      throw new RemoteStatusError("DENIED");
+    return auth;
+  };
   app.post("/browser/login/challenge", async (req, res) => {
     const input = parse(
       z.strictObject({ address: z.string().max(42) }),
@@ -156,7 +185,7 @@ export function createRemoteApp(
   });
   app.post("/browser/session", async (req, res) => {
     parse(z.strictObject({}), req.body);
-    res.json(await owner(req));
+    res.json(await sessions.identity(cookie(req, sessionCookie)));
   });
   app.post("/browser/logout", async (req, res) => {
     parse(z.strictObject({}), req.body);
@@ -181,6 +210,13 @@ export function createRemoteApp(
     const input = parse(z.strictObject({ id: z.uuid() }), req.body);
     await devices.cancel((await owner(req)).ownerId, input.id);
     res.json({ cancelled: true });
+  });
+  app.post("/browser/devices", async (req, res) => {
+    const input = parse(
+      z.strictObject({ after: z.uuid().optional() }),
+      req.body,
+    );
+    res.json(await status.devices((await owner(req)).ownerId, input.after));
   });
   app.post("/browser/status", async (req, res) => {
     const input = parse(
