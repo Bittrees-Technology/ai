@@ -288,29 +288,81 @@ test("source-bound parents and changed source payloads cannot enter or complete 
       /CONFLICT/,
     );
     f.store.fail(owner, task.id, "manual", claim.generation, false);
-    f.store.db
-      .prepare("UPDATE tasks SET input=? WHERE id=?")
-      .run(
-        f.vault.seal(
-          {
-            ...f.parent.input,
-            sourceRefs: [
-              {
-                app: "crm",
-                tenantId: "home",
-                resourceId: "external",
-                revision: "1",
-              },
-            ],
-          },
-          "task:" + f.parent.id,
-        ),
-        f.parent.id,
-      );
+    f.store.db.prepare("UPDATE tasks SET input=? WHERE id=?").run(
+      f.vault.seal(
+        {
+          ...f.parent.input,
+          sourceRefs: [
+            {
+              app: "crm",
+              tenantId: "home",
+              resourceId: "external",
+              revision: "1",
+            },
+          ],
+        },
+        "task:" + f.parent.id,
+      ),
+      f.parent.id,
+    );
     assert.throws(
       () => f.store.memoryExtractions.create(owner, f.parent.id, f.request()),
       /CONFLICT/,
     );
+  } finally {
+    f.store.close();
+  }
+});
+
+test("export retains queued and failed extraction provenance and runs without treating history as current authority", () => {
+  const f = fixture();
+  try {
+    const queued = f.store.memoryExtractions.create(
+      owner,
+      f.parent.id,
+      f.request(),
+    );
+    const claim = f.store.claim(owner, "export-worker")!;
+    f.store.recordModel(owner, queued.id, "export-worker", claim.generation, {
+      profile,
+      digest: "a".repeat(64),
+    });
+    f.store.fail(
+      owner,
+      queued.id,
+      "export-worker",
+      claim.generation,
+      false,
+      "invalid_model_output",
+    );
+    const pending = f.store.memoryExtractions.create(
+      owner,
+      f.parent.id,
+      f.request(),
+    );
+    f.store.db
+      .prepare("UPDATE tasks SET revision=revision+1 WHERE id=?")
+      .run(f.parent.id);
+    assert.throws(
+      () => f.store.memoryExtractions.context(owner, pending.id),
+      /CONFLICT/,
+    );
+    const history = f.store.memoryExtractions.export(owner);
+    assert.equal(history.length, 2);
+    const failed = history.find((item) => item.taskId === queued.id)!;
+    assert.equal(failed.parentId, f.parent.id);
+    assert.equal(failed.parentRevision, f.parent.revision);
+    assert.equal(failed.promptVersion, 2);
+    assert.match(failed.sourceHash, /^[a-f0-9]{64}$/);
+    assert.equal(failed.runs[0]!.outcome, "invalid_model_output");
+    assert.equal((failed.runs[0]!.model as any).digest, "a".repeat(64));
+    assert.equal(
+      history.find((item) => item.taskId === pending.id)!.runs.length,
+      0,
+    );
+    assert.deepEqual(f.store.memoryExtractions.export(other), []);
+    f.store.deleteAll(owner);
+    assert.deepEqual(f.store.memoryExtractions.export(owner), []);
   } finally {
     f.store.close();
   }
