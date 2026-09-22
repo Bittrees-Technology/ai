@@ -1,3 +1,4 @@
+import { MailEvidenceReview } from "./mail-evidence.js";
 import { AutoNoteReviewControls } from "./autonote-reviews.js";
 import { CrmPublicationControls } from "./crm-publications.js";
 import React, { useEffect, useRef, useState } from "react";
@@ -239,7 +240,17 @@ export function SourceDraftDetail({
       ) : (
         <>
           {detail.task.result?.text ? (
-            <div className="result">{detail.task.result.text}</div>
+            <>
+              {sourceApp === "mail" ? (
+                <MailEvidenceReview
+                  key={detail.task.id + ":" + detail.task.revision}
+                  api={api}
+                  task={detail.task}
+                />
+              ) : (
+                <div className="result">{detail.task.result.text}</div>
+              )}
+            </>
           ) : (
             <p>No result yet. Task status: {detail.task.status}.</p>
           )}
