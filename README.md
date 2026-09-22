@@ -531,7 +531,7 @@ The dashboard's shared local transport retains its 15-second deadline across bot
 
 Memory text, review state, pinning, source references and feedback survive; restoration does not grant source access. The application must still supply its current source validator when reopening memory. Prior deletions can remain in older backups; backup retention/deletion is separate from deleting current content. The backup contains no storage key or connector credential.
 
-These module APIs underpin the coordinated backup download described below; restoration remains a module operation. A task snapshot alone does not include memory. The two individual snapshot calls are not a coordinated pair; use the coordinated content-bundle API below when capturing both stores, and verify key recovery separately. Do not treat JSON export as an importable backup. Older installed builds do not include the backup-download control. Full native backup/restore and installation/rollback acceptance remain open.
+These module APIs underpin the coordinated backup download described below; restoration uses the offline recovered-copy command described below. A task snapshot alone does not include memory. The two individual snapshot calls are not a coordinated pair; use the coordinated content-bundle API below when capturing both stores, and verify key recovery separately. Do not treat JSON export as an importable backup. Older installed builds do not include the backup-download control. Full native backup/restore and installation/rollback acceptance remain open.
 
 ### Coordinated task-and-memory recovery bundle
 
@@ -548,3 +548,13 @@ The Device screen now offers an explicit confirmed encrypted-backup download. Th
 The client enforces a two-minute request/body deadline and 128 MiB response bound, with no automatic retry. A session cleared during capture cannot start a late download. The blob URL remains available for the native save sheet and is released on another backup, session clear or unmount. UI copy explains that the original storage key is required, loss of that key is not recoverable through the file, connections/models are separate, and restore controls are not yet available. This is a paired personal-device backup, not a remotely exposed export.
 
 Authenticated HTTP/client tests restore both stores from the actual downloaded bytes and verify denied origin/session/unconfirmed/path requests, concurrent capture denial, logout revocation, invalid/oversized/error responses and body-timeout handling. Native visual/keyboard/save-dialog acceptance is still open, and the previously installed app has not been replaced.
+
+### Offline recovered-copy command
+
+After building with Node 24, run `npm run recover -- --help` for usage. To restore a coordinated `.aib` backup into a new private folder under an existing parent, use `npm run recover -- --backup /path/to/content.aib --destination-parent /path/to/recovery-parent --confirm`. Quit Bittrees AI first: the command holds the companion's loopback port for the operation and refuses to proceed if that port is occupied. It never terminates an application.
+
+Recovery reads the existing `personal` storage key from macOS Keychain with key creation disabled. Missing, locked or invalid entries stop recovery; a new key cannot decrypt the old backup. No key is accepted on the command line, logged, returned or written to the backup. Error output uses fixed descriptions instead of raw Keychain/provider errors.
+
+The result is a **separate recovered copy**, with `activated:false` and a `RECOVERY.json` manifest. Current task and memory files are never replaced, including data newer than the backup. Task remote-control consent stays cleared, and current source authorization still gates restored memory. The command releases its port on success or failure. It is not a restore button, recovered-copy activation workflow, portable-key recovery or lost-Keychain recovery solution. Native interaction and safe copy activation/rollback remain open.
+
+Synthetic tests cover successful copy recovery without altering newer source data, absent/invalid/locked/wrong keys without key writes, strict confirmation/arguments, occupied-port rejection before key reads and port release after failure. The actual CLI help path is exercised without reading a personal Keychain entry.
