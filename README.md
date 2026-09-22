@@ -621,3 +621,8 @@ Successful recovery offers **Open companion**. Conflicts, unconfirmed writes and
 
 
 Mac packaging CI now runs the bundled recovery path against a disposable Keychain profile. This caught a native byte-array/type mismatch that rejected a matching recovery key; the storage adapter now normalizes the actual native return value before verification. The check includes synthetic task/memory recovery, retained-copy protection and cleanup. It does not replace personal-device dialog or Keychain access-prompt acceptance.
+
+
+### Updated Mac model comparison
+
+A [32-draft comparison of original and Huihui 9B](docs/mail-model-comparison-2026-09-22.md) found valid structure in every case but different semantic reliability. The original followed reply intent in all eight unique cases; Huihui did so in six. A candidate summary prompt improved several cases while introducing an omission, so it remains experimental. Raw synthetic outputs, criteria, exact model digests, timings and reported memory residency are retained. Original 9B remains the preferred candidate for further reviewed use; saved defaults, production prompts and model weights are unchanged. This is not broad or independent quality acceptance.
