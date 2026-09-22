@@ -1,3 +1,4 @@
+import { RemoteReceiver } from "../../modules/remote/receiver.js";
 import {
   RemoteClient,
   remoteKeychainEntry,
@@ -135,6 +136,7 @@ const remote =
         },
       )
     : undefined;
+const receiver = remote ? new RemoteReceiver(remote) : undefined;
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
 const codePath = join(directory, "pairing-code.txt");
@@ -144,6 +146,7 @@ server.on(
     deviceStatus: () => deviceStatus(directory),
     imports,
     remote,
+    receiver,
     store,
     memory,
     owner,
@@ -182,6 +185,7 @@ async function stop() {
   worker.stop();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
+  await receiver?.shutdown();
   await imports.shutdown();
   await running?.catch(() => {});
   await closed;
@@ -211,6 +215,7 @@ const requestShutdown = bindProcessLifetime(stop);
   // A parent exit or signal during the write must not announce a stopped server.
   if (!stopping) {
     started = true;
+    receiver?.start();
     console.log(
       `Bittrees AI: http://127.0.0.1:${port}\nPairing code (valid for 10 minutes): ${codePath}\nStop with Ctrl+C. Restart to pair another browser session.`,
     );

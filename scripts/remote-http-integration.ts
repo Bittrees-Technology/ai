@@ -1,3 +1,4 @@
+import { RemoteReceiver } from "../modules/remote/receiver.js";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -882,14 +883,53 @@ export async function checkRemoteHttp(pool: Pool) {
         ).status,
         200,
       );
-      const result = await new RemoteClient(
+      const receivingClient = new RemoteClient(
         "synthetic-local-owner",
         secret,
         transport,
         Date.now,
         executor,
-      ).pollControls();
-      assert.equal(result.receipts[0]!.outcome, "applied");
+      );
+      let runReceiver!: () => void, done!: () => void;
+      const delivered = new Promise<void>((resolve) => {
+        done = resolve;
+      });
+      let deliveredReceipts = 0;
+      const receiver = new RemoteReceiver(
+        {
+          get running() {
+            return receivingClient.running;
+          },
+          status: () => receivingClient.status(),
+          setReceiving: (enabled) => receivingClient.setReceiving(enabled),
+          pollControls: async (signal) => {
+            try {
+              const result = await receivingClient.pollControls(signal);
+              deliveredReceipts = result.receipts.length;
+              return result;
+            } finally {
+              done();
+            }
+          },
+        },
+        (fn) => {
+          runReceiver = fn;
+          return { cancel() {} };
+        },
+      );
+      try {
+        await receiver.configure(true);
+        runReceiver();
+        await delivered;
+        assert.equal(deliveredReceipts, 1);
+        await receiver.configure(false);
+        assert.equal(
+          (await receivingClient.status())?.backgroundReceiving,
+          false,
+        );
+      } finally {
+        await receiver.shutdown();
+      }
       assert.equal(local.get(clientOwner, localTask.id).status, "paused");
       assert.equal(
         (await call("/browser/commands/receipt", { id: pause.id }, otherOwner))

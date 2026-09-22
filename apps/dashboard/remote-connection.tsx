@@ -16,6 +16,7 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
   );
   const [state, setState] = useState(controller.state);
   const [account, setAccount] = useState("");
+  const [receivingConfirmed, setReceivingConfirmed] = useState(false);
   const [controlConfirmed, setControlConfirmed] = useState(false);
   const [removeConfirmed, setRemoveConfirmed] = useState(false);
   useEffect(() => {
@@ -26,6 +27,7 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
       setAccount("");
       setRemoveConfirmed(false);
       setControlConfirmed(false);
+      setReceivingConfirmed(false);
     };
     window.addEventListener("blur", hide);
     document.addEventListener("visibilitychange", hide);
@@ -176,8 +178,8 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
                 <p>
                   First approve pause/cancel for this device on ai.bittrees.org,
                   then enable it here within five minutes. Commands are received
-                  only when you choose “Check for commands”; background
-                  receiving is not active yet.
+                  when you choose “Check for commands” or separately enable
+                  background receiving.
                 </p>
                 {state.connection?.controls === "disabled" && (
                   <>
@@ -202,6 +204,67 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
                       Enable remote pause/cancel
                     </button>
                   </>
+                )}
+                {state.connection?.controls === "enabled" && state.receiver && (
+                  <div>
+                    <p>
+                      Background receiving:{" "}
+                      {state.connection.backgroundReceiving
+                        ? state.receiver.state
+                        : "off"}
+                      .
+                      {state.receiver.lastCheckedAt && (
+                        <>
+                          {" "}
+                          Last successful check:{" "}
+                          {new Date(
+                            state.receiver.lastCheckedAt,
+                          ).toLocaleTimeString()}
+                          .
+                        </>
+                      )}
+                    </p>
+                    {state.receiver.state === "attention" && (
+                      <p>
+                        Receiving stopped because this connection needs
+                        attention. Refresh the connection and review permission
+                        before restarting.
+                      </p>
+                    )}
+                    {state.connection.backgroundReceiving ? (
+                      <button
+                        onClick={() => void controller.receiving(false, true)}
+                      >
+                        Stop background receiving
+                      </button>
+                    ) : (
+                      <>
+                        <label className="remote-task">
+                          <input
+                            type="checkbox"
+                            checked={receivingConfirmed}
+                            onChange={(e) =>
+                              setReceivingConfirmed(e.target.checked)
+                            }
+                          />
+                          <span>
+                            Receive approved pause/cancel commands in the
+                            background while the companion runs, including after
+                            restart. Task content stays on this Mac.
+                          </span>
+                        </label>
+                        <button
+                          disabled={!receivingConfirmed}
+                          onClick={() => {
+                            setReceivingConfirmed(false);
+                            void controller.receiving(true, true);
+                          }}
+                        >
+                          Start background receiving
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
                 {state.connection?.controls === "enabled" && (
                   <button

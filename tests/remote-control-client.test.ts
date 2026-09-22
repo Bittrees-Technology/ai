@@ -61,6 +61,7 @@ function fixture() {
     writes = 0,
     acknowledged = false,
     interrupts = 0;
+  let heldPoll: Promise<void> | undefined;
   const calls: string[] = [];
   const secret = {
     getSecret: async () => saved,
@@ -88,6 +89,7 @@ function fixture() {
       return Response.json({}, { status: 403 });
     if (path === "controls/enable") return Response.json(control);
     if (path === "controls/disable") return Response.json({ disabled: true });
+    if (path === "commands/poll" && heldPoll) await heldPoll;
     if (path === "commands/poll")
       return Response.json({
         identity:
@@ -153,6 +155,13 @@ function fixture() {
     interrupts: () => interrupts,
     interrupt: (fn: (id: string) => void) => {
       interrupt = fn;
+    },
+    delayPoll: () => {
+      let release!: () => void;
+      heldPoll = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
     },
     close: () => store.close(),
   };
@@ -326,6 +335,71 @@ test("delivered pause interrupts the active worker and blocks its late output", 
       finish("cleanup");
       await running;
     }
+    f.close();
+  }
+});
+
+test("Background receiving is a separate saved opt-in and aborted checks cannot execute", async () => {
+  const f = fixture();
+  try {
+    await assert.rejects(
+      f.client().setReceiving(true),
+      /CONTROL_CONFIRMATION_REQUIRED/,
+    );
+    await f.client().enableControls();
+    assert.equal((await f.client().status())?.backgroundReceiving, false);
+    await f.client().setReceiving(true);
+    assert.equal((await f.client().status())?.backgroundReceiving, true);
+    const stop = new AbortController();
+    stop.abort();
+    await assert.rejects(f.client().pollControls(stop.signal));
+    assert.equal(f.store.get(owner, f.task.id).revision, 1);
+    await f.client().setReceiving(false);
+    assert.equal((await f.client().status())?.backgroundReceiving, false);
+    await f.client().setReceiving(true);
+    await f.client().rotate();
+    assert.equal((await f.client().status())?.backgroundReceiving, false);
+  } finally {
+    f.close();
+  }
+});
+
+test("A delayed response arriving after stop cannot execute even when transport ignores cancellation", async () => {
+  const f = fixture();
+  try {
+    const client = f.client();
+    await client.enableControls();
+    const release = f.delayPoll(),
+      stop = new AbortController();
+    const checking = client.pollControls(stop.signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.ok(f.calls.includes("commands/poll"));
+    stop.abort();
+    release();
+    await assert.rejects(checking);
+    assert.equal(f.store.get(owner, f.task.id).revision, 1);
+    assert.equal(f.calls.includes("commands/receipt"), false);
+  } finally {
+    f.close();
+  }
+});
+
+test("Failed persistence of a stop revokes local consent so reopen cannot resume receiving", async () => {
+  const f = fixture();
+  try {
+    await f.client().enableControls();
+    await f.client().setReceiving(true);
+    f.failWrite(5);
+    await assert.rejects(f.client().setReceiving(false), /STORAGE_UNAVAILABLE/);
+    assert.equal(
+      (await f.client().status())?.controls,
+      "confirmation_required",
+    );
+    await assert.rejects(
+      f.client().pollControls(),
+      /CONTROL_CONFIRMATION_REQUIRED/,
+    );
+  } finally {
     f.close();
   }
 });

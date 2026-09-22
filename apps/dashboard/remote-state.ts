@@ -10,11 +10,18 @@ export type RemoteConnection = {
   expiresAt: number;
   state: string;
   pendingDelivery: boolean;
+  backgroundReceiving?: boolean;
   controls?: "unavailable" | "disabled" | "enabled" | "confirmation_required";
 };
 export type RemoteState = {
   available: boolean | null;
   connection: RemoteConnection | null;
+  receiver?: {
+    state: string;
+    lastCheckedAt: number | null;
+    nextCheckAt: number | null;
+    received: number;
+  };
   pending: { id: string; approvalCode: string; expiresAt: number } | null;
   tasks: RemoteTask[];
   tasksLoaded: boolean;
@@ -116,6 +123,7 @@ export class RemotePanelState {
       const status = await this.api("/v1/remote");
       if (current())
         this.set({
+          receiver: status.receiver,
           available: status.available,
           connection: status.connection,
         });
@@ -199,10 +207,28 @@ export class RemotePanelState {
           connection: status.connection,
           notice:
             action === "enable"
-              ? "Remote pause/cancel enabled. Check for commands when ready; background receiving is not active yet."
+              ? "Remote pause/cancel enabled. Check manually or separately opt in to background receiving."
               : action === "disable"
                 ? "Pause/cancel disabled on this Mac and the remote service."
                 : `${result.receipts.length} command receipt(s) confirmed. Refresh Tasks to see current work.`,
+        });
+    });
+  }
+  async receiving(enabled: boolean, confirmed: boolean) {
+    if (!confirmed) return;
+    return this.act(async (current) => {
+      await this.api("/v1/remote/controls/receiving", "POST", {
+        enabled,
+        confirmed: true,
+      });
+      const status = await this.api("/v1/remote");
+      if (current())
+        this.set({
+          connection: status.connection,
+          receiver: status.receiver,
+          notice: enabled
+            ? "Background receiving enabled while this companion is running. It resumes after restart while permission remains valid."
+            : "Background receiving stopped. Manual command checks remain available.",
         });
     });
   }
@@ -225,6 +251,7 @@ export class RemotePanelState {
       });
       if (current())
         this.set({
+          receiver: undefined,
           connection: null,
           pending: null,
           tasks: [],

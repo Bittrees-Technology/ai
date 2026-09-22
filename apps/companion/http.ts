@@ -1,3 +1,4 @@
+import type { RemoteReceiver } from "../../modules/remote/receiver.js";
 import {
   RemoteClient,
   RemoteClientError,
@@ -24,6 +25,7 @@ import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   remote?: RemoteClient;
+  receiver?: RemoteReceiver;
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
   roles?: RolesConnector;
@@ -45,6 +47,7 @@ export interface LocalApiOptions {
 export function localApi({
   store,
   remote,
+  receiver,
   owner,
   token,
   port,
@@ -102,9 +105,25 @@ export function localApi({
       available: !!remote,
       connection: remote ? await remote.status() : null,
       automaticSharing: false,
+      ...(receiver ? { receiver: receiver.status() } : {}),
     }),
   );
+  const receivingPaused = async <T>(action: () => Promise<T>) => {
+    await receiver?.pause();
+    try {
+      return await action();
+    } finally {
+      receiver?.start();
+    }
+  };
   if (remote) {
+    if (receiver)
+      app.post("/v1/remote/controls/receiving", async (req, res) => {
+        const input = z
+          .strictObject({ enabled: z.boolean(), confirmed: z.literal(true) })
+          .parse(req.body);
+        res.json(await receiver.configure(input.enabled));
+      });
     const confirmed = z.strictObject({ confirmed: z.literal(true) });
     app.post("/v1/remote/begin", async (req, res) => {
       confirmed.parse(req.body);
@@ -140,7 +159,7 @@ export function localApi({
           throw new StoreError("CONFLICT");
         return task;
       });
-      res.json(await remote.publish(tasks));
+      res.json(await receivingPaused(() => remote.publish(tasks)));
     });
     app.post("/v1/remote/retry", async (req, res) => {
       confirmed.parse(req.body);
@@ -152,24 +171,24 @@ export function localApi({
     });
     app.post("/v1/remote/controls/enable", async (req, res) => {
       confirmed.parse(req.body);
-      res.json(await remote.enableControls());
+      res.json(await receivingPaused(() => remote.enableControls()));
     });
     app.post("/v1/remote/controls/disable", async (req, res) => {
       confirmed.parse(req.body);
-      res.json(await remote.disableControls());
+      res.json(await receivingPaused(() => remote.disableControls()));
     });
     app.post("/v1/remote/controls/check", async (req, res) => {
       confirmed.parse(req.body);
-      res.json(await remote.pollControls());
+      res.json(await receivingPaused(() => remote.pollControls()));
     });
     app.post("/v1/remote/rotate", async (req, res) => {
       confirmed.parse(req.body);
-      res.json(await remote.rotate());
+      res.json(await receivingPaused(() => remote.rotate()));
     });
     app.delete("/v1/remote/local", async (req, res) => {
       if (req.header("X-Confirm-Delete") !== "local-remote-connection-only")
         throw new StoreError("INVALID_INPUT");
-      res.json(await remote.forgetLocal());
+      res.json(await receivingPaused(() => remote.forgetLocal()));
     });
   }
   if (deviceStatus)
@@ -720,14 +739,16 @@ export function localApi({
   app.delete("/v1/data", async (req, res) => {
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");
-    if (publications?.busy || autoReviews?.busy || remote?.running)
-      throw new StoreError("CONFLICT");
-    const remove = () => {
-      memory?.deleteAll(owner);
-      store.deleteAll(owner);
-    };
-    if (remote) await remote.clearTaskData(remove);
-    else remove();
+    await receivingPaused(async () => {
+      if (publications?.busy || autoReviews?.busy || remote?.running)
+        throw new StoreError("CONFLICT");
+      const remove = () => {
+        memory?.deleteAll(owner);
+        store.deleteAll(owner);
+      };
+      if (remote) await remote.clearTaskData(remove);
+      else remove();
+    });
     res.status(204).end();
   });
   app.use((_req, res) =>
