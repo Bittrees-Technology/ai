@@ -16,6 +16,8 @@ export function RolesConnection({
   const [status, setStatus] = useState<any>(null),
     [pending, setPending] = useState<any>(null),
     [code, setCode] = useState(""),
+    [includePolicy, setIncludePolicy] = useState(false),
+    [policy, setPolicy] = useState<any>(null),
     [report, setReport] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState(false);
@@ -25,6 +27,7 @@ export function RolesConnection({
   function clear() {
     epoch.current++;
     setReport(null);
+    setPolicy(null);
     setCode("");
     setRemove(false);
   }
@@ -89,7 +92,36 @@ export function RolesConnection({
     );
     return () => clearTimeout(timer);
   }, [pending]);
+  useEffect(() => {
+    if (!policy) return;
+    const timer = setTimeout(
+      clear,
+      Math.max(
+        0,
+        Math.min(
+          Date.parse(policy.expiresAt),
+          Date.parse(policy.projection.validUntil),
+          Date.now() + 15000,
+        ) - Date.now(),
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [policy]);
+  async function loadPolicy() {
+    clear();
+    const generation = epoch.current;
+    const result = await api(base + "/policy", "POST", {});
+    if (
+      mounted.current &&
+      generation === epoch.current &&
+      !document.hidden &&
+      document.hasFocus() &&
+      Date.parse(result.projection.validUntil) > Date.now()
+    )
+      setPolicy(result);
+  }
   const connection = status?.connection;
+  const hasPolicy = connection?.actions?.includes("read_own_policy") === true;
   return (
     <article className="card roles-connection">
       <h3>Roles</h3>
@@ -114,12 +146,34 @@ export function RolesConnection({
       {status?.available && !connection && (
         <>
           <p>No saved Roles connection.</p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={includePolicy}
+              disabled={busy}
+              onChange={(e) => {
+                setIncludePolicy(e.target.checked);
+                setPending(null);
+                setCode("");
+              }}
+            />{" "}
+            Request my own policy records as well
+          </label>
+          <p>
+            Optional: stored grants for your linked identities and personal
+            profile, including actions, resource scopes, expiry and suspension.
+            Resource scopes may identify people. You must also approve this
+            option in Roles. It does not enable role changes or prove effective
+            access.
+          </p>
           <button
             disabled={busy}
             onClick={() =>
               void act(async () => {
                 clear();
-                setPending(await api(base + "/begin", "POST", {}));
+                setPending(
+                  await api(base + "/begin", "POST", { includePolicy }),
+                );
               })
             }
           >
@@ -170,6 +224,19 @@ export function RolesConnection({
         <section>
           <p>Profile: {connection.profileId}</p>
           <p>
+            Allowed scope:{" "}
+            {hasPolicy
+              ? "Wallet observations and own policy records"
+              : "Wallet observations only"}
+            .
+          </p>
+          {!hasPolicy && (
+            <p>
+              To include policy records, disconnect and make a new connection
+              with that option approved in Roles.
+            </p>
+          )}
+          <p>
             {connection.state === "stored"
               ? "Credential saved; source access is checked when loaded"
               : connection.state === "expired"
@@ -196,6 +263,14 @@ export function RolesConnection({
           >
             Load my access observations
           </button>
+          {hasPolicy && (
+            <button
+              disabled={busy || connection.state !== "stored"}
+              onClick={() => void act(loadPolicy)}
+            >
+              Load my policy records
+            </button>
+          )}
           <button
             disabled={busy}
             onClick={() =>
@@ -238,6 +313,81 @@ export function RolesConnection({
           >
             Remove local Roles credential
           </button>
+        </section>
+      )}
+      {policy && (
+        <section>
+          <h4>Your stored policy records</h4>
+          <p>{policy.projection.coverage}</p>
+          <p>
+            {policy.projection.policyStatus === "absent"
+              ? "No stored policy is available."
+              : policy.projection.policyStatus === "expired"
+                ? "The stored policy has expired."
+                : "Current stored policy"}{" "}
+            {policy.projection.policyRevision !== null && (
+              <>· Revision {policy.projection.policyRevision}</>
+            )}
+          </p>
+          <p>
+            Checked {new Date(policy.projection.checkedAt).toLocaleString()}.
+            This view clears within 15 seconds, at snapshot expiry, or when you
+            leave this window. Load again to check for changes.
+          </p>
+          <p>
+            These records do not prove effective access or downstream
+            enforcement and cannot authorize actions. Email subject references
+            conceal the address field; exact resource scopes may still identify
+            people.
+          </p>
+          {!policy.projection.items.length && (
+            <p>
+              No matching stored grants. This does not mean you have no
+              permissions in other apps.
+            </p>
+          )}
+          {policy.projection.items.map((item: any) => (
+            <article key={item.grantId}>
+              <strong>{item.roleId}</strong>
+              <p>
+                {
+                  (
+                    {
+                      recorded_current: "Recorded in the current policy",
+                      expired: "Expired record",
+                      suspended: "Suspended",
+                      source_owned: "Authority stays with the source app",
+                      wallet_required: "Wallet authentication required",
+                    } as Record<string, string>
+                  )[item.status]
+                }
+              </p>
+              <p>
+                Subject: {item.subject.kind} · {item.subject.reference}
+              </p>
+              <p>
+                Scope: {item.scope} · Domain: {item.domain}
+              </p>
+              <p>Actions: {item.actions.join(", ")}</p>
+              <p>Resources: {item.resources.join(", ")}</p>
+              <p>Expires: {new Date(item.expiresAt).toLocaleString()}</p>
+              <p>
+                Authority confirmation:{" "}
+                {item.authorityConfirmed === "recorded_in_current_policy"
+                  ? "recorded in current policy only"
+                  : "not confirmed"}
+                . Effective access: not verified. Enforcement acknowledgement:
+                not verified.
+              </p>
+              <a
+                href={item.manageUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Inspect in Roles
+              </a>
+            </article>
+          ))}
         </section>
       )}
       {report && (

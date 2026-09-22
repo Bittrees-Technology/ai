@@ -137,8 +137,15 @@ export function localApi({
     });
     if (connector) {
       app.post(`/v1/connections/${name}/begin`, async (req, res) => {
-        z.strictObject({}).parse(req.body);
-        res.json(await connector.begin());
+        if (name === "roles" && roles) {
+          const options = z
+            .strictObject({ includePolicy: z.boolean().optional() })
+            .parse(req.body);
+          res.json(await roles.begin(options));
+        } else {
+          z.strictObject({}).parse(req.body);
+          res.json(await connector.begin());
+        }
       });
       app.post(`/v1/connections/${name}/finish`, async (req, res) => {
         const body = z
@@ -164,11 +171,16 @@ export function localApi({
       });
     }
   }
-  if (roles)
+  if (roles) {
+    app.post("/v1/connections/roles/policy", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await roles.readPolicy());
+    });
     app.post("/v1/connections/roles/access", async (req, res) => {
       z.strictObject({}).parse(req.body);
       res.json(await roles.read());
     });
+  }
   const concealed = (task: Task) =>
     task.input.sourceRefs.length
       ? {
