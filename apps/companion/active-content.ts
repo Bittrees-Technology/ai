@@ -1,12 +1,16 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, rename, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   loadStorageKey,
   type SecretEntry,
 } from "../../modules/storage/keychain.js";
-import { restoreContentBackup } from "../../modules/storage/content-backup.js";
+import Database from "better-sqlite3";
+import {
+  createContentBackup,
+  restoreContentBackup,
+} from "../../modules/storage/content-backup.js";
 import { Vault } from "../../modules/storage/vault.js";
 import { RecoveryError, withCompanionStopped } from "./recovery.js";
 const pointerName = "active-content.json";
@@ -22,17 +26,18 @@ async function contentDirectory(base: string, name: string) {
     path = join(parent, name);
   await directory(parent);
   await directory(path);
+  await validateStores(path);
+  return path;
+}
+async function validateStores(path: string) {
   for (const file of ["tasks.db", "memory.db"]) {
     const info = await lstat(join(path, file));
     if (!info.isFile() || info.isSymbolicLink() || info.size === 0)
       throw Error("Missing content store");
   }
-  return path;
 }
 /** Call only while holding the companion port. An invalid pointer must never create empty stores. */
-export async function resolveActiveContent(
-  base: string,
-): Promise<{
+export async function resolveActiveContent(base: string): Promise<{
   directory: string;
   name: string | null;
   previous: string | null;
@@ -82,8 +87,25 @@ export async function activateContentBackup(
   entry: SecretEntry,
   port = 43127,
 ) {
+  return changeContent({ backup }, base, entry, port);
+}
+export async function rollbackContent(
+  base: string,
+  entry: SecretEntry,
+  port = 43127,
+) {
+  return changeContent({ previous: true }, base, entry, port);
+}
+async function changeContent(
+  source: { backup: string } | { previous: true },
+  base: string,
+  entry: SecretEntry,
+  port: number,
+) {
   return withCompanionStopped(async () => {
     const before = await resolveActiveContent(base);
+    if ("previous" in source && before.name === null)
+      throw new RecoveryError("NO_PREVIOUS_CONTENT");
     let key: Buffer;
     try {
       key = await loadStorageKey(entry, true);
@@ -91,13 +113,57 @@ export async function activateContentBackup(
       throw new RecoveryError("ORIGINAL_KEY_UNAVAILABLE");
     }
     let restored: string | undefined;
+    let temporary: string | undefined;
     let committed = false;
     const stage = join(base, `.active-content-${randomUUID()}.tmp`);
     try {
       const parent = join(base, "stores");
       await mkdir(parent, { recursive: true, mode: 0o700 });
       await directory(parent);
-      restored = await restoreContentBackup(backup, new Vault(key), parent);
+      const vault = new Vault(key);
+      let backup: string;
+      if ("backup" in source) backup = source.backup;
+      else {
+        // Read old stores without migration or consent mutation. The fresh restore
+        // validates their key/schema and clears stale permissions before selection.
+        const previous =
+          before.previous === null
+            ? base
+            : await contentDirectory(base, before.previous);
+        await validateStores(previous);
+        temporary = await mkdtemp(join(base, ".rollback-"));
+        backup = join(temporary, "previous.aib");
+        const tasks = new Database(join(previous, "tasks.db"), {
+          readonly: true,
+          fileMustExist: true,
+        });
+        try {
+          const memory = new Database(join(previous, "memory.db"), {
+            readonly: true,
+            fileMustExist: true,
+          });
+          try {
+            const snapshot = (db: Database.Database) => ({
+              backup: async (destination: string) => {
+                await db.backup(destination);
+              },
+              changeToken: () =>
+                String(db.pragma("data_version", { simple: true })),
+            });
+            await createContentBackup(
+              snapshot(tasks),
+              snapshot(memory),
+              vault,
+              backup,
+            );
+          } finally {
+            memory.close();
+          }
+        } finally {
+          tasks.close();
+        }
+      }
+      restored = await restoreContentBackup(backup, vault, parent);
       const name = basename(restored);
       await contentDirectory(base, name);
       const handle = await open(stage, "wx", 0o600);
@@ -121,6 +187,8 @@ export async function activateContentBackup(
       throw new RecoveryError("ACTIVATION_FAILED");
     } finally {
       key.fill(0);
+      if (temporary)
+        await rm(temporary, { recursive: true, force: true }).catch(() => {});
       // A committed pointer must never be undone by cleanup errors.
       await rm(stage, { force: true }).catch(() => {});
       if (!committed && restored)
