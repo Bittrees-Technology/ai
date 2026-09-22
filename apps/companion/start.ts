@@ -1,3 +1,7 @@
+import {
+  RemoteClient,
+  remoteKeychainEntry,
+} from "../../modules/remote/client.js";
 import { bindProcessLifetime } from "./lifetime.js";
 import {
   MailConnector,
@@ -85,6 +89,10 @@ const memory = new MemoryStore(
   new Vault(key),
   localMemoryAccess(store),
 );
+const remote =
+  process.env.BITTREES_REMOTE_STATUS === "1"
+    ? new RemoteClient(JSON.stringify(owner), remoteKeychainEntry("personal"))
+    : undefined;
 const crm = new CrmConnector(
     JSON.stringify(owner),
     crmKeychainEntry("personal"),
@@ -122,6 +130,7 @@ server.on(
   dashboardServer({
     deviceStatus: () => deviceStatus(directory),
     imports,
+    remote,
     store,
     memory,
     owner,
