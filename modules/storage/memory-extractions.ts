@@ -109,6 +109,20 @@ export class MemoryExtractions {
       })
       .immediate();
   }
+  export(owner: Owner) {
+    const rows = this.store.db
+      .prepare(
+        `SELECT m.task_id FROM memory_extractions m JOIN tasks t ON t.id=m.task_id WHERE t.user_id=? AND t.tenant_id=? ORDER BY t.created_at,t.id`,
+      )
+      .all(owner.userId, owner.tenantId) as { task_id: string }[];
+    // Historical export must survive failed work and future prompt revisions.
+    // It exports recorded provenance, never a fresh execution permission.
+    return rows.map(({ task_id }) => ({
+      taskId: task_id,
+      ...this.binding(owner, task_id)!,
+      runs: this.store.runHistory(owner, task_id),
+    }));
+  }
   review(owner: Owner, id: string) {
     const context = this.context(owner, id);
     const task = this.store.get(owner, id);

@@ -139,6 +139,11 @@ test("actual authenticated request, worker, review and selected save preserve mo
     c.prepare(profile.id);
     await c.request();
     assert.ok(c.queuedId);
+    const pendingExport = await api("/v1/export", "GET");
+    assert.equal(pendingExport.memoryExtractions.length, 1);
+    assert.equal(pendingExport.memoryExtractions[0].taskId, c.queuedId);
+    assert.equal(pendingExport.memoryExtractions[0].parentId, parent.id);
+    assert.equal(pendingExport.memoryExtractions[0].runs.length, 0);
     const w = new LocalWorker(
       store,
       owner,
@@ -160,6 +165,15 @@ test("actual authenticated request, worker, review and selected save preserve mo
     );
     await w.runOnce();
     const extraction = store.get(owner, c.queuedId);
+    const completedExport = await api("/v1/export", "GET");
+    assert.equal(
+      completedExport.memoryExtractions[0].runs[0].model.profile.id,
+      profile.id,
+    );
+    assert.equal(
+      completedExport.memoryExtractions[0].runs[0].outcome,
+      "completed",
+    );
     const review = new MemorySuggestionController(
       api,
       extraction.id,
