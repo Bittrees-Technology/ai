@@ -269,3 +269,11 @@ Access is rechecked between parts and before saving. Cancellation, revocation, m
 Oversized attachment results now include a bounded pairwise reconciliation of the part summaries, retaining the original part summaries underneath. Each merge receives only unverified intermediate claims, preserves their original citation IDs, and rechecks source access. Unknown citations, invalid output, capacity or authority failure prevents saving the result. At most seven reduction rounds handle 128 parts; no cloud fallback or silent partial completion occurs.
 
 Coverage labels synthesis as `attempted-unverified`. All input parts being processed does not prove every fact survived summarization. The model can carry forward a bad count, omit detail or inadequately reconcile a correction. See the [observed multi-part limitations](docs/mail-large-attachment-check.md). Native/release quality acceptance remains open.
+
+## Remote status foundation (not activated)
+
+`modules/remote/status.ts` defines the R1 metadata boundary and projects only task ID, paired-device ID, generic state, revision and update time from an actual local task. Remote routing IDs must be UUIDs; source labels, conversation IDs, model names, titles, prompts, results, memory and raw errors are excluded. Status batches are bounded to 100 unique task IDs. The earlier reserved remote-status schema now requires UUIDs; no deployed remote consumer exists to migrate.
+
+Remote controls accept only pause/cancel with expected revision and a maximum five-minute lease; resume and content approvals belong to later encrypted-content work. Templates carry only opaque locally approved IDs/revisions, never free-text arguments. Receipts contain only an allowlisted outcome. These shapes and local lease checks do not authenticate a caller or authorize execution.
+
+Hosted Express/PostgreSQL storage, verified email/SIWE sessions, explicit pairing, durable deduplication, revocation, live status sync and companion dispatch are still to implement. Remote metadata retention is awaiting the user's decision; local content retention remains until deletion. No remote listener or data upload is enabled by these contracts. Future HTTP paths must sanitize validation errors and keep request bodies out of logs. R2 encryption and key recovery remain separate work.
