@@ -1,3 +1,4 @@
+import { InboxMessageController } from "../apps/dashboard/inbox-message-state.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -207,6 +208,20 @@ test("actual authenticated conversation endpoint drives controller through all p
     await c.more();
     assert.equal(c.items.length, 102);
     assert.equal(c.nextCursor, null);
+    for (let i = 0; i < 205; i++) add(store, "long", `long${i}`);
+    const messages = new InboxMessageController(async (path) => {
+      const response = await get(path);
+      assert.equal(response.status, 200);
+      return response.json();
+    });
+    messages.select("personal", "long");
+    await messages.load();
+    await messages.load(true);
+    await messages.load(true);
+    assert.equal(messages.messages.length, 205);
+    assert.equal(new Set(messages.messages.map((m) => m.id)).size, 205);
+    assert.equal(messages.more, false);
+    assert.equal(messages.messages.at(-1)!.input.content, "long204");
     assert.equal(
       (await get("/v1/inboxes/personal/conversations", false)).status,
       401,

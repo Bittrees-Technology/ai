@@ -1,3 +1,4 @@
+import { InboxMessageController } from "./inbox-message-state.js";
 import { InboxConversationController } from "./inbox-conversation-state.js";
 import React, { useState, useEffect, useRef } from "react";
 type Api = (
@@ -6,20 +7,6 @@ type Api = (
   body?: unknown,
   headers?: Record<string, string>,
 ) => Promise<any>;
-type Message = {
-  id: string;
-  sequence: number;
-  createdAt: number;
-  receipts: { kind: string }[];
-  input: {
-    content: string;
-    conversationId: string;
-    requestId?: string;
-    replyToId?: string;
-    replyExpected: boolean;
-    replyDueAt?: string;
-  };
-};
 export function Inbox({
   api,
   onError,
@@ -31,17 +18,12 @@ export function Inbox({
       [],
     ),
     [inbox, setInbox] = useState(""),
-    [conversation, setConversation] = useState(""),
-    [messages, setMessages] = useState<Message[]>([]),
-    [checkins, setCheckins] = useState<
-      { message_id: string; status: string }[]
-    >([]);
+    [conversation, setConversation] = useState("");
   const [content, setContent] = useState(""),
     [reply, setReply] = useState(""),
     [expected, setExpected] = useState(false),
     [due, setDue] = useState(""),
-    [busy, setBusy] = useState(false),
-    [more, setMore] = useState(false);
+    [busy, setBusy] = useState(false);
   const [, renderConversations] = useState(0);
   const [conversationPages] = useState(
     () =>
@@ -49,7 +31,11 @@ export function Inbox({
         renderConversations((v) => v + 1),
       ),
   );
-  const paging = useRef({ cursor: 0, more: false });
+  const [, renderMessages] = useState(0);
+  const [messagePages] = useState(
+    () => new InboxMessageController(api, () => renderMessages((v) => v + 1)),
+  );
+  const { messages, checkins, more } = messagePages;
   const pending = useRef<{ fingerprint: string; key: string } | null>(null);
   async function action(fn: () => Promise<void>) {
     setBusy(true);
@@ -74,57 +60,14 @@ export function Inbox({
     return () => conversationPages.clear();
   }, [inbox]);
   useEffect(() => {
-    if (!inbox || !conversation) {
-      setMessages([]);
-      return;
-    }
-    let active = true,
-      inFlight = false;
-    setMessages([]);
+    messagePages.select(inbox, conversation);
     setReply("");
-    paging.current = { cursor: 0, more: false };
-    const poll = async () => {
-      if (inFlight || paging.current.more) return;
-      inFlight = true;
-      try {
-        const [data, checks] = await Promise.all([
-          api(
-            "/v1/messages?inboxId=" +
-              encodeURIComponent(inbox) +
-              "&conversationId=" +
-              encodeURIComponent(conversation) +
-              "&after=" +
-              paging.current.cursor,
-          ),
-          api("/v1/checkins"),
-        ]);
-        if (active) {
-          setMessages((old) => {
-            const newest = new Map(
-              [...old, ...data.items].map((m: Message) => [m.id, m]),
-            );
-            return [...newest.values()].sort(
-              (a: Message, b: Message) => a.sequence - b.sequence,
-            );
-          });
-          paging.current = {
-            cursor: data.items.at(-1)?.sequence ?? paging.current.cursor,
-            more: data.items.length === 100,
-          };
-          setMore(paging.current.more);
-          setCheckins(checks.items);
-        }
-      } catch (e) {
-        if (active) onError(e);
-      } finally {
-        inFlight = false;
-      }
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), 3000);
+    const poll = () => void messagePages.load().catch(onError);
+    poll();
+    const timer = setInterval(poll, 3000);
     return () => {
-      active = false;
       clearInterval(timer);
+      messagePages.select();
     };
   }, [inbox, conversation]);
   const select = (id: string) => {
@@ -268,16 +211,7 @@ export function Inbox({
                             "POST",
                             { kind },
                           );
-                          setMessages((items) =>
-                            items.map((item) =>
-                              item.id === m.id
-                                ? {
-                                    ...item,
-                                    receipts: [...item.receipts, { kind }],
-                                  }
-                                : item,
-                            ),
-                          );
+                          messagePages.receipt(m.id, kind);
                         })
                       }
                     >
@@ -289,37 +223,8 @@ export function Inbox({
             ))}
             {more && (
               <button
-                disabled={busy}
-                onClick={() =>
-                  action(async () => {
-                    const data = await api(
-                      "/v1/messages?inboxId=" +
-                        encodeURIComponent(inbox) +
-                        "&conversationId=" +
-                        encodeURIComponent(conversation) +
-                        "&after=" +
-                        paging.current.cursor,
-                    );
-                    setMessages((old) =>
-                      [
-                        ...new Map(
-                          [...old, ...data.items].map((m: Message) => [
-                            m.id,
-                            m,
-                          ]),
-                        ).values(),
-                      ].sort(
-                        (a: Message, b: Message) => a.sequence - b.sequence,
-                      ),
-                    );
-                    paging.current = {
-                      cursor:
-                        data.items.at(-1)?.sequence ?? paging.current.cursor,
-                      more: data.items.length === 100,
-                    };
-                    setMore(paging.current.more);
-                  })
-                }
+                disabled={busy || messagePages.busy}
+                onClick={() => void messagePages.load(true).catch(onError)}
               >
                 Load later messages
               </button>
@@ -346,11 +251,7 @@ export function Inbox({
                     "Idempotency-Key": pending.current.key,
                   });
                   pending.current = null;
-                  setMessages((items) =>
-                    items.some((m) => m.id === saved.id)
-                      ? items
-                      : [...items, saved],
-                  );
+                  messagePages.saved(saved);
                   setContent("");
                   setReply("");
                   setDue("");
