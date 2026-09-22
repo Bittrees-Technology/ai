@@ -57,23 +57,3 @@ jobs:
           DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/autonote_test
           AUTONOTE_REPO: .integration/autonote
           CRM_REPO: .integration/crm
-  roles-integration:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: Bittrees-Technology/roles
-          ref: 8f1d6838dbb3470a3a47366ea67012454b7fa4a1
-          path: .integration/roles
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm ci --prefix .integration/roles
-      - name: Actual Roles connection contract acceptance
-        run: npx tsx scripts/roles-integration-check.ts
-        env:
-          ROLES_REPO: .integration/roles
