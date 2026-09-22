@@ -1,3 +1,4 @@
+import { MemoryExtractions } from "./memory-extractions.js";
 import { RemoteTemplates } from "./remote-templates.js";
 import {
   templateSaveSchema,
@@ -128,6 +129,7 @@ const terminal = ["completed", "failed", "cancelled", "expired"];
 export class Store {
   readonly db: Database.Database;
   readonly remoteTemplates: RemoteTemplates;
+  readonly memoryExtractions: MemoryExtractions;
   constructor(
     path: string,
     private vault: Vault,
@@ -139,7 +141,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 10) {
+    if (version > 11) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -206,13 +208,17 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
           .exec(`CREATE TABLE IF NOT EXISTS remote_template_permissions(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,device_id TEXT NOT NULL,template_id TEXT NOT NULL,payload BLOB,PRIMARY KEY(id,user_id,tenant_id));
 CREATE TABLE IF NOT EXISTS remote_template_runs(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,permission_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS remote_template_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
-        this.db.pragma("user_version = 10");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS memory_extractions(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL)",
+        );
+        this.db.pragma("user_version = 11");
       })();
     } catch (error) {
       this.db.close();
       throw error;
     }
     this.remoteTemplates = new RemoteTemplates(this, vault, now);
+    this.memoryExtractions = new MemoryExtractions(this, vault);
   }
   private templatePurpose(owner: Owner, id: string) {
     return JSON.stringify(["local-template", owner.tenantId, owner.userId, id]);
@@ -1226,6 +1232,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     return this.db
       .transaction(() => {
         this.validClaim(owner, id, worker, generation);
+        this.memoryExtractions.context(owner, id);
         this.db
           .prepare(
             "UPDATE tasks SET status='completed',revision=revision+1,result=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE id=?",
