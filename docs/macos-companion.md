@@ -11,7 +11,7 @@ bash scripts/package-macos.sh
 
 Open `dist/macos/Bittrees AI.app`. On the pairing screen, choose **Bittrees AI → Copy pairing code**, paste it, and pair. The code is single-use and expires after ten minutes; restarting the app creates another. Keychain may ask for access. The app uses the existing personal data directory at `~/Library/Application Support/Bittrees AI`; it does not create a second copy of your tasks. Quit any development companion before opening the app because the loopback port is exclusive. Closing the last window quits the companion and gracefully stops its own engine; Ollama runs separately.
 
-The bundle includes Node and production dependencies, so an installed Node is unnecessary to run it. Ollama and model weights are not bundled. The app uses the ordinary local Ollama endpoint, `127.0.0.1:11434`. Experimental comparisons on `127.0.0.1:11435` remain separate until an evaluated model/runtime is deliberately adopted. The Acer server and its news-briefing model are outside this app's lifecycle and remain unchanged.
+The bundle includes Node and production dependencies, so an installed Node is unnecessary to run it. Ollama and model weights are not bundled. The app uses the ordinary local Ollama endpoint, `127.0.0.1:11434`. The installed pilot now uses verified Ollama 0.17.7 from `~/Applications/Ollama.app` through its existing user startup service. A temporary comparison runtime must use both a separate loopback port and a separate model store; two download managers must not share one store. See [model comparison](mac-model-comparison.md) for the measured candidates and remaining acceptance limits. The Acer server and its news-briefing model are outside this app's lifecycle and remain unchanged.
 
 ## Boundaries
 

@@ -40,7 +40,7 @@ The original 9B correctly separated sender facts from user reply instructions in
 ## Pending
 
 - Repeat promising candidates with held-out user tasks, source-attribution/acknowledgement criteria and realistic concurrent app load.
-- Adopt a runtime/model profile only after reviewing the comparison. No production quality-acceptance item is checked by this document.
+- Decide a default model profile after broader reviewed-task acceptance. The compatible Mac runtime is installed; no production quality-acceptance item is checked by this document.
 
 Primary model references: [original Qwen3.5](https://ollama.com/library/qwen3.5:9b), [Huihui creator card](https://huggingface.co/huihui-ai/Huihui-Qwen3.5-9B-abliterated), [official Ollama 0.17.7 release](https://github.com/ollama/ollama/releases/tag/v0.17.7).
 
@@ -50,7 +50,7 @@ The official 0.17.7 app archive matched SHA-256 `ac2fa78433b91bc5b6ff989d50430ed
 
 The existing user LaunchAgent `io.bittrees.ollama` now points to that verified executable, keeps its prior resource preferences and explicitly binds `127.0.0.1:11434` with `OLLAMA_NO_CLOUD=1`. The prior app and LaunchAgent configuration are backed up under `~/Library/Application Support/Bittrees AI/runtime-backups`. API version verification reports 0.17.7. Existing model files are retained; no Acer service or configuration was accessed.
 
-The isolated runtime was stopped. An old-service restart interrupted Huihui's first download in the shared model directory, so that download is being retried with only one runtime managing the store. Comparisons are being repeated against the adopted service before making a final model recommendation. Do not run two model-download managers against the same model directory.
+The isolated runtime was stopped. An old-service restart interrupted Huihui's first download in the shared model directory, so the download was retried successfully with only one runtime managing the store. All three model comparisons then completed against the adopted service. Do not run two model-download managers against the same model directory.
 
 ## Adopted-service repeat
 
