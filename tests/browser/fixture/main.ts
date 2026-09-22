@@ -87,3 +87,87 @@ declare global {
   }
 }
 window.privateProtocolTest = harness;
+
+// Disposable storage harness; trusted providers are synthetic test inputs only.
+import {
+  BrowserPrivateOutbox,
+  type BrowserDeliveryContext,
+} from "../../../modules/remote/browser-outbox.js";
+import type { PrivateBinding } from "../../../modules/remote/private-peer-contracts.js";
+let browserStore: BrowserPrivateOutbox | undefined;
+let currentBinding: PrivateBinding | null = null,
+  deliveryContext: BrowserDeliveryContext | null = null,
+  registration: PrivateBinding | null = null,
+  storageNow = 0;
+let revokeAt = 0,
+  permissionReads = 0;
+const storageHarness = {
+  async open(
+    binding: PrivateBinding,
+    context: BrowserDeliveryContext,
+    now: number,
+    fresh = false,
+  ) {
+    browserStore?.close();
+    currentBinding = structuredClone(binding);
+    deliveryContext = structuredClone(context);
+    registration = fresh ? structuredClone(binding) : null;
+    storageNow = now;
+    permissionReads = 0;
+    revokeAt = 0;
+    browserStore = await BrowserPrivateOutbox.open(
+      () => currentBinding,
+      () => {
+        permissionReads++;
+        if (revokeAt && permissionReads >= revokeAt) deliveryContext = null;
+        return deliveryContext;
+      },
+      () => registration,
+      () => storageNow,
+    );
+  },
+  initialize(revision = 0) {
+    return browserStore!.initialize({
+      expectedRevision: revision,
+      confirmed: true,
+    });
+  },
+  reserve(peerId: string) {
+    return browserStore!.reserve({ peerId, confirmed: true });
+  },
+  commit(raw: unknown) {
+    return browserStore!.commit(raw);
+  },
+  delivery(id: string) {
+    return browserStore!.delivery(id);
+  },
+  snapshot() {
+    return browserStore!.export();
+  },
+  stop(raw: unknown) {
+    return browserStore!.stop(raw);
+  },
+  clear(raw: unknown) {
+    return browserStore!.clear(raw);
+  },
+  close() {
+    browserStore!.close();
+  },
+  permission(value: BrowserDeliveryContext | null) {
+    deliveryContext = value;
+    permissionReads = 0;
+  },
+  revokeDuringCommit() {
+    permissionReads = 0;
+    revokeAt = 2;
+  },
+  advance(ms: number) {
+    storageNow += ms;
+  },
+};
+declare global {
+  interface Window {
+    privateStorageTest: typeof storageHarness;
+  }
+}
+window.privateStorageTest = storageHarness;
