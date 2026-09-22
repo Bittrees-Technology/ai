@@ -13,7 +13,8 @@
     "build": "tsc && vite build apps/dashboard --outDir ../../dist/dashboard --emptyOutDir",
     "format": "prettier --write modules apps scripts tests",
     "start": "node dist/apps/companion/start.js",
-    "recover": "node dist/apps/companion/recover-cli.js"
+    "recover": "node dist/apps/companion/recover-cli.js",
+    "activate": "node dist/apps/companion/activate-cli.js"
   },
   "dependencies": {
     "@napi-rs/keyring": "2.1.0",

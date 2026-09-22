@@ -1,3 +1,4 @@
+import { resolveActiveContent } from "./active-content.js";
 import { localBackupDownload } from "./backup.js";
 import { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
 import { RemoteReceiver } from "../../modules/remote/receiver.js";
@@ -67,6 +68,7 @@ try {
 }
 
 await mkdir(directory, { recursive: true, mode: 0o700 });
+const content = await resolveActiveContent(directory);
 const exists = async (path: string) => {
   try {
     await stat(path);
@@ -78,17 +80,17 @@ const exists = async (path: string) => {
 };
 const key = await loadStorageKey(
   macKeychainEntry("personal"),
-  (await exists(join(directory, "tasks.db"))) ||
-    (await exists(join(directory, "memory.db"))) ||
+  (await exists(join(content.directory, "tasks.db"))) ||
+    (await exists(join(content.directory, "memory.db"))) ||
     (await exists(join(directory, "model-imports", "jobs.db"))),
 );
-const store = new Store(join(directory, "tasks.db"), new Vault(key)),
+const store = new Store(join(content.directory, "tasks.db"), new Vault(key)),
   owner = { userId: "local-owner", tenantId: "personal" };
 const importDirectory = join(directory, "model-imports");
 await mkdir(importDirectory, { recursive: true, mode: 0o700 });
 const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
 const memory = new MemoryStore(
-  join(directory, "memory.db"),
+  join(content.directory, "memory.db"),
   new Vault(key),
   localMemoryAccess(store),
 );
