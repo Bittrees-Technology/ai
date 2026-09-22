@@ -254,3 +254,133 @@ test("Roles rejects oversized responses and excessive own-access rows", async ()
     await assert.rejects(f.connector.read(), /INVALID_SOURCE/);
   }
 });
+test("Roles companion HTTP isolates own-access loading and credential controls from task authority", async () => {
+  const { createServer } = await import("node:http");
+  const { localApi } = await import("../apps/companion/http.js");
+  const { Store } = await import("../modules/storage/store.js");
+  const { Vault } = await import("../modules/storage/vault.js");
+  const { randomBytes } = await import("node:crypto");
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer(),
+    token = "a".repeat(64);
+  let cancelled = 0;
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port;
+  server.on(
+    "request",
+    localApi({
+      store,
+      owner: { userId: "local", tenantId: "personal" },
+      port,
+      token,
+      roles: f.connector,
+      cancelSourceRun: () => {
+        cancelled++;
+      },
+    }),
+  );
+  const url = "http://127.0.0.1:" + port,
+    headers = {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    };
+  const post = (
+    path: string,
+    body: unknown = {},
+    extra: Record<string, string> = {},
+  ) =>
+    fetch(url + path, {
+      method: "POST",
+      headers: { ...headers, ...extra },
+      body: JSON.stringify(body),
+    });
+  try {
+    assert.equal((await fetch(url + "/v1/connections/roles")).status, 401);
+    assert.equal(
+      (
+        await post(
+          "/v1/connections/roles/access",
+          {},
+          { Origin: "https://evil.test" },
+        )
+      ).status,
+      403,
+    );
+    const status = await (
+      await fetch(url + "/v1/connections/roles", { headers })
+    ).json();
+    assert.equal(status.available, true);
+    assert.ok(!JSON.stringify(status).includes(f.grant.token));
+    assert.equal(
+      (await post("/v1/connections/roles/access", { profileId: randomUUID() }))
+        .status,
+      400,
+    );
+    const read = await post("/v1/connections/roles/access");
+    assert.equal(read.status, 200);
+    assert.equal(read.headers.get("Cache-Control"), "no-store");
+    assert.equal((await read.json()).projection.items[0].label, "Moderator");
+    assert.ok(
+      !(await (await fetch(url + "/v1/export", { headers })).text()).includes(
+        "Moderator",
+      ),
+    );
+    assert.equal(
+      (
+        await fetch(url + "/v1/connections/roles/local", {
+          method: "DELETE",
+          headers,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await fetch(url + "/v1/connections/roles/local", {
+          method: "DELETE",
+          headers: { ...headers, "X-Confirm-Delete": "local-roles-credential" },
+        })
+      ).status,
+      204,
+    );
+    assert.equal(f.calls.filter((p) => p.endsWith("/disconnect")).length, 0);
+    assert.notEqual((await post("/v1/connections/roles/access")).status, 200);
+    const begin = await (await post("/v1/connections/roles/begin")).json();
+    assert.equal(
+      (
+        await post("/v1/connections/roles/finish", {
+          id: begin.id,
+          code: "b".repeat(64),
+          profileId: randomUUID(),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("/v1/connections/roles/finish", {
+          id: begin.id,
+          code: "b".repeat(64),
+        })
+      ).status,
+      200,
+    );
+    f.failDisconnect(true);
+    assert.notEqual(
+      (await post("/v1/connections/roles/disconnect")).status,
+      204,
+    );
+    const pending = await (
+      await fetch(url + "/v1/connections/roles", { headers })
+    ).json();
+    assert.equal(pending.connection.state, "disconnect_pending");
+    assert.notEqual((await post("/v1/connections/roles/access")).status, 200);
+    f.failDisconnect(false);
+    assert.equal((await post("/v1/connections/roles/disconnect")).status, 204);
+    assert.equal(cancelled, 0);
+  } finally {
+    await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())));
+    store.close();
+  }
+});

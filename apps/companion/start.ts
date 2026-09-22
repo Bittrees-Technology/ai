@@ -1,4 +1,8 @@
 import {
+  RolesConnector,
+  rolesKeychainEntry,
+} from "../../modules/connectors/roles.js";
+import {
   AutoNoteConnector,
   autonoteKeychainEntry,
 } from "../../modules/connectors/autonote.js";
@@ -80,6 +84,10 @@ const crm = new CrmConnector(
     crmKeychainEntry("personal"),
   ),
   sources = new CrmTasks(crm, owner, "personal"),
+  roles = new RolesConnector(
+    JSON.stringify(owner),
+    rolesKeychainEntry("personal"),
+  ),
   autonote = new AutoNoteConnector(
     JSON.stringify(owner),
     autonoteKeychainEntry("personal"),
@@ -109,6 +117,7 @@ server.on(
     crm,
     sources,
     autonote,
+    roles,
     autonoteSources,
     runtime,
     port,
