@@ -11,3 +11,8 @@ coverage/
 runtime/
 
 .integration/
+
+test-results/
+playwright-report/
+
+.private-browser-fixture/

@@ -15,8 +15,12 @@ import {
   openPrivateEnvelope,
   sealPrivateEnvelope,
 } from "./private-envelope.js";
-import { privateTaskPayloadSchema } from "./private-task-receiver.js";
-import { privateTaskReceiptSchema } from "./private-task-receipts.js";
+import {
+  privateTaskPayloadSchema,
+  privateAcceptedPayloadSchema,
+} from "./private-task-contracts.js";
+export { privateAcceptedPayloadSchema } from "./private-task-contracts.js";
+import { privateTaskReceiptSchema } from "./private-task-contracts.js";
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const permissionSchema = z.strictObject({
@@ -119,11 +123,6 @@ const enqueueSchema = z.strictObject({
   expectedPeerRevision: positive,
   content: privateTaskPayloadSchema,
   confirmed: z.literal(true),
-});
-export const privateAcceptedPayloadSchema = z.strictObject({
-  version: z.literal(1),
-  type: z.literal("task.accepted"),
-  receipt: privateTaskReceiptSchema,
 });
 
 /** Internal durable sender; no transport, timers, HTTP routes, key storage or UI.

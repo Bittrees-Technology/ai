@@ -115,3 +115,24 @@ jobs:
           name: Bittrees-AI-macOS-development
           path: dist/macos/Bittrees-AI-development.zip
           retention-days: 7
+
+  browser-private-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install disposable CI browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Verify browser and companion private-protocol interoperability
+        run: npm run test:browser-private
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: private-browser-results
+          path: test-results/private-browser.json
+          retention-days: 7

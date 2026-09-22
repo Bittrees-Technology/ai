@@ -1,18 +1,11 @@
-import { z } from "zod";
 import type { Owner, Store } from "../storage/store.js";
 import type { Vault } from "../storage/vault.js";
-import { privateHeaderSchema } from "./private-envelope.js";
 
-export const privateTaskReceiptSchema = z.strictObject({
-  version: z.literal(1),
-  id: z.uuid(),
-  taskId: z.uuid(),
-  status: z.literal("accepted"),
-  acceptedAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  header: privateHeaderSchema,
-  permissionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-});
-export type PrivateTaskReceipt = z.infer<typeof privateTaskReceiptSchema>;
+import { privateTaskReceiptSchema } from "./private-task-contracts.js";
+export {
+  privateTaskReceiptSchema,
+  type PrivateTaskReceipt,
+} from "./private-task-contracts.js";
 export const privateReceiptPurpose = (owner: Owner, operationHash: string) =>
   JSON.stringify([
     "private-task-receipt:v1",
