@@ -18,7 +18,12 @@ export class RemoteDeviceStore {
     private pool: Pool,
     private leaseMs: number,
     private now = Date.now,
+    private limits = { pendingPairings: 1000, devicesPerOwner: 100 },
   ) {
+    for (const value of [limits.pendingPairings, limits.devicesPerOwner])
+      if (!Number.isSafeInteger(value) || value < 1 || value > 100000)
+        throw new RemoteStatusError("INVALID_INPUT");
+    this.limits = { ...limits };
     if (
       !Number.isSafeInteger(leaseMs) ||
       leaseMs < 60000 ||
@@ -49,12 +54,21 @@ export class RemoteDeviceStore {
     const id = randomUUID(),
       approvalCode = secret(),
       expiresAt = this.now() + 300000;
-    await this.transaction((db) =>
-      db.query(
+    await this.transaction(async (db) => {
+      await db.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('bittrees-ai:pairing-capacity',0))",
+      );
+      const count = Number(
+        (await db.query("SELECT count(*) FROM remote_pairings")).rows[0].count,
+      );
+      if (count >= this.limits.pendingPairings)
+        throw new RemoteStatusError("CAPACITY");
+      await db.query(
         "INSERT INTO remote_pairings(id,approval_hash,challenge,expires_at) VALUES($1,$2,$3,$4)",
         [id, hash(approvalCode), challenge, expiresAt],
-      ),
-    );
+      );
+      if (expiresAt <= this.now()) throw new RemoteStatusError("DENIED");
+    });
     return { id, approvalCode, expiresAt };
   }
   async approve(ownerId: string, pairingId: string, approvalCode: string) {
@@ -107,6 +121,20 @@ export class RemoteDeviceStore {
         Number(row.expires_at) <= now
       )
         throw new RemoteStatusError("DENIED");
+      await db.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('bittrees-ai:owner-devices:' || $1,0))",
+        [expectedOwnerId],
+      );
+      const count = Number(
+        (
+          await db.query(
+            "SELECT count(*) FROM remote_devices WHERE owner_id=$1",
+            [expectedOwnerId],
+          )
+        ).rows[0].count,
+      );
+      if (count >= this.limits.devicesPerOwner)
+        throw new RemoteStatusError("CAPACITY");
       const deviceId = randomUUID(),
         credential = secret(),
         expiresAt = now + this.leaseMs;

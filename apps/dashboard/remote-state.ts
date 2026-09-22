@@ -38,6 +38,8 @@ type Api = (
   headers?: Record<string, string>,
 ) => Promise<any>;
 const messages: Record<string, string> = {
+  CAPACITY:
+    "The remote service has reached a storage limit. Keep the saved delivery for retry after capacity is available; your local tasks are unchanged.",
   CONTROL_CONFIRMATION_REQUIRED:
     "Disable the incomplete permission, approve pause/cancel on ai.bittrees.org, then confirm it here again.",
   PAIRING_REQUIRED:

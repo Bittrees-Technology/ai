@@ -68,13 +68,15 @@ export class RemoteWebController {
     } catch (e) {
       this.set({
         error:
-          e?.message === "DENIED"
-            ? "Your session or device access is unavailable. Sign in again or refresh the device list."
-            : e?.message === "WALLET_REQUIRED"
-              ? "Open this page in a browser with an Ethereum wallet."
-              : e?.message === "CHAIN_MISMATCH"
-                ? "Switch your wallet to the network shown on this page, then sign in again."
-                : "The action could not be completed. Refresh and review before trying again.",
+          e?.message === "CAPACITY"
+            ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
+            : e?.message === "DENIED"
+              ? "Your session or device access is unavailable. Sign in again or refresh the device list."
+              : e?.message === "WALLET_REQUIRED"
+                ? "Open this page in a browser with an Ethereum wallet."
+                : e?.message === "CHAIN_MISMATCH"
+                  ? "Switch your wallet to the network shown on this page, then sign in again."
+                  : "The action could not be completed. Refresh and review before trying again.",
       });
     } finally {
       this.set({ busy: false });

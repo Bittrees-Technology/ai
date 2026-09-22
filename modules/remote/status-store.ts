@@ -10,7 +10,8 @@ const identity = z.strictObject({
 });
 export class RemoteStatusError extends Error {
   constructor(
-    public code: "DENIED" | "CONFLICT" | "INVALID_INPUT" | "UNAVAILABLE",
+    public code:
+      "DENIED" | "CONFLICT" | "INVALID_INPUT" | "UNAVAILABLE" | "CAPACITY",
   ) {
     super(code);
   }
@@ -23,7 +24,14 @@ export class RemoteStatusStore {
     private pool: Pool,
     private retentionMs: number,
     private now = Date.now,
+    private maxStoredStatuses = 10000,
   ) {
+    if (
+      !Number.isSafeInteger(maxStoredStatuses) ||
+      maxStoredStatuses < 1 ||
+      maxStoredStatuses > 100000
+    )
+      throw new RemoteStatusError("INVALID_INPUT");
     if (![86400000, 7 * 86400000, 30 * 86400000].includes(retentionMs))
       throw new RemoteStatusError("INVALID_INPUT");
   }
@@ -76,6 +84,14 @@ export class RemoteStatusStore {
         return { sequence: b.sequence, duplicate: true };
       if (b.sequence !== Number(device.last_sequence) + 1)
         throw new RemoteStatusError("CONFLICT");
+      let stored = Number(
+        (
+          await db.query(
+            "SELECT count(*) FROM remote_status WHERE device_id=$1",
+            [auth.deviceId],
+          )
+        ).rows[0].count,
+      );
       for (const item of b.items) {
         const updated = Date.parse(item.updatedAt),
           itemHash = digest(item);
@@ -93,6 +109,11 @@ export class RemoteStatusStore {
               existing.projection_hash !== itemHash))
         )
           throw new RemoteStatusError("CONFLICT");
+        if (!existing) {
+          if (stored >= this.maxStoredStatuses)
+            throw new RemoteStatusError("CAPACITY");
+          stored++;
+        }
         // Repeated unchanged observations do not extend retention.
         if (existing && Number(existing.revision) === item.revision) continue;
         await db.query(

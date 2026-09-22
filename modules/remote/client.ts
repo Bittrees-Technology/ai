@@ -58,6 +58,7 @@ type Saved = z.infer<typeof savedSchema>;
 export class RemoteClientError extends Error {
   constructor(
     public code:
+      | "CAPACITY"
       | "BUSY"
       | "PAIRING_REQUIRED"
       | "INVALID_RESPONSE"
@@ -163,7 +164,7 @@ export class RemoteClient {
           ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
           : AbortSignal.timeout(15000),
       });
-      if (!response.ok) {
+      if (!response.ok && response.status !== 429) {
         await response.body?.cancel();
         throw new RemoteClientError(
           response.status === 403 ? "DENIED" : "UNAVAILABLE",
@@ -187,7 +188,17 @@ export class RemoteClient {
       } finally {
         reader.releaseLock();
       }
-      return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+      const result = JSON.parse(
+        Buffer.concat(chunks).toString("utf8"),
+      ) as unknown;
+      if (!response.ok)
+        throw new RemoteClientError(
+          z.strictObject({ error: z.literal("CAPACITY") }).safeParse(result)
+            .success
+            ? "CAPACITY"
+            : "UNAVAILABLE",
+        );
+      return result;
     } catch (e) {
       if (e instanceof RemoteClientError) throw e;
       throw new RemoteClientError("UNAVAILABLE");

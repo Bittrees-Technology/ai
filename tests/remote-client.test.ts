@@ -207,3 +207,25 @@ test("Pairing rejects substituted owner, extra response fields and oversized res
     assert.equal(f.secret.bytes, undefined);
   }
 });
+
+test("Remote storage capacity stays distinct from transient rate limiting and preserves pending delivery", async () => {
+  const f = fixture();
+  let code = "CAPACITY";
+  const transport: typeof fetch = async (url, init) =>
+    String(url).endsWith("/status")
+      ? Response.json({ error: code }, { status: 429 })
+      : f.fetcher(url, init);
+  const client = new RemoteClient(
+    "local-user",
+    f.secret,
+    transport,
+    () => f.now,
+  );
+  await client.begin();
+  await client.finish(f.ownerId);
+  await assert.rejects(client.publish([]), /CAPACITY/);
+  assert.equal((await client.status())?.pendingDelivery, true);
+  code = "RATE_LIMITED";
+  await assert.rejects(client.retryPending(), /UNAVAILABLE/);
+  assert.equal((await client.status())?.pendingDelivery, true);
+});

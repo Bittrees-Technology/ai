@@ -1,3 +1,4 @@
+import { checkRemoteQuotas } from "./remote-quota-integration.js";
 import { checkRemoteMaintenance } from "./remote-maintenance-integration.js";
 import { checkRemoteControlScope } from "./remote-control-scope-integration.js";
 import { checkRemoteCommands } from "./remote-command-integration.js";
@@ -333,8 +334,9 @@ try {
     ),
   );
   await checkRemoteMaintenance(pool);
+  await checkRemoteQuotas(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue and bounded expiry maintenance checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue and bounded expiry maintenance and concurrent stored-row quota checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();

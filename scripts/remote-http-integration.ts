@@ -48,6 +48,11 @@ export async function checkRemoteHttp(pool: Pool) {
     assets: fileURLToPath(new URL("../apps/remote-web", import.meta.url)),
     chainId: 1,
     sessionMs: 3600000,
+    quotas: {
+      pendingPairings: 1000,
+      devicesPerOwner: 100,
+      statusesPerDevice: 2,
+    },
     deviceMs: 3600000,
     retentionMs: 86400000,
   };
@@ -735,6 +740,13 @@ export async function checkRemoteHttp(pool: Pool) {
     } finally {
       controlLocal.close();
     }
+    const overCapacity = await call(
+      "/device/status",
+      { sequence: 3, items: [{ ...item, id: randomUUID() }] },
+      device,
+    );
+    assert.equal(overCapacity.status, 429);
+    assert.deepEqual(overCapacity.body, { error: "CAPACITY" });
     const rotated = await call("/device/rotate", {}, device);
     assert.equal(rotated.status, 200);
     assert.equal(
