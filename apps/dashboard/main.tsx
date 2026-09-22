@@ -893,8 +893,8 @@ function App() {
                   Save this device's tasks and memories together. Restoring
                   requires the original storage key from this Mac's Keychain.
                   This file does not recover a lost key, app connections or
-                  model files. Restore controls are not available in this app
-                  yet.
+                  model files. In the Mac app, choose Restore from backup from
+                  the Bittrees AI menu.
                 </p>
                 <button
                   disabled={busy}
