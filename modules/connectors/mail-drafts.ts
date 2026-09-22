@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { MailTasks } from "./mail-tasks.js";
-import { ConnectorError } from "./crm.js";
+import { ModelError } from "../models/ollama.js";
 type Snapshot = Awaited<ReturnType<MailTasks["validate"]>>;
 function sections(source: Snapshot) {
   const m = source.message;
@@ -55,24 +55,24 @@ const schema = z.strictObject({
 });
 export function mailResult(source: Snapshot, text: string, kind: string) {
   if (Buffer.byteLength(text) > 256 * 1024)
-    throw new ConnectorError("INVALID_SOURCE");
+    throw new ModelError("INVALID_OUTPUT");
   let parsed: z.infer<typeof schema>;
   try {
     parsed = schema.parse(JSON.parse(text));
   } catch {
-    throw new ConnectorError("INVALID_SOURCE");
+    throw new ModelError("INVALID_OUTPUT");
   }
   if (
     (kind === "draft") !== (parsed.reply !== null) ||
     (parsed.reply &&
       (source.message.mode !== "plain" || !source.message.bodyAvailable))
   )
-    throw new ConnectorError("INVALID_SOURCE");
+    throw new ModelError("INVALID_OUTPUT");
   const ids = new Set(sections(source).map((s) => s.id));
   const resolve = (item: z.infer<typeof claim>) => ({
     ...item,
     citations: item.evidence.map((sectionId) => {
-      if (!ids.has(sectionId)) throw new ConnectorError("INVALID_SOURCE");
+      if (!ids.has(sectionId)) throw new ModelError("INVALID_OUTPUT");
       return {
         messageId: source.message.id,
         version: source.message.sourceVersion,

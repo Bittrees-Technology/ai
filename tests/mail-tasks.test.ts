@@ -237,7 +237,7 @@ test("Mail metadata can summarize but cannot produce a reply or request unavaila
     );
     assert.throws(
       () => sourceResult(snapshot, JSON.stringify(draft), "draft"),
-      /INVALID_SOURCE/,
+      /INVALID_OUTPUT/,
     );
   } finally {
     store.close();
@@ -302,6 +302,12 @@ test("Mail malformed output and fabricated evidence cannot become a saved result
       await worker(store, f, async () => output).runOnce();
       assert.equal(store.get(owner, task.id).status, "failed");
       assert.equal(store.get(owner, task.id).result, null);
+      assert.equal(
+        store.runHistory(owner, task.id)[0]!.outcome,
+        "invalid_model_output",
+      );
+      assert.equal(await worker(store, f, async () => output).runOnce(), false);
+      assert.equal(store.runHistory(owner, task.id).length, 1);
     } finally {
       store.close();
     }
@@ -333,6 +339,11 @@ test("Mail source denial, content change and disconnect fence results before and
         return JSON.stringify(draft);
       }).runOnce();
       assert.equal(store.get(owner, task.id).status, "failed", change);
+      assert.equal(
+        store.runHistory(owner, task.id)[0]!.outcome,
+        "failed",
+        change,
+      );
       assert.equal(store.get(owner, task.id).result, null, change);
       if (change === "before") assert.equal(generated, false);
     } finally {
@@ -533,7 +544,34 @@ test("Mail authenticated HTTP controls guard selection, task creation, exports a
     const exported = (await (await call(prefix + "/export")).json()) as any;
     assert.equal(exported.task.result.mail.sent, false);
     assert.equal(exported.task.result.mail.messageId, f.grant.selection.id);
+    const rejectedResponse = await call(
+      base + "/drafts",
+      "POST",
+      {
+        ...body,
+        conversationId: randomUUID(),
+      },
+      { "Idempotency-Key": "rejected-output" },
+    );
+    assert.equal(rejectedResponse.status, 202);
+    const rejected = (await rejectedResponse.json()) as any;
+    await worker(
+      store,
+      f,
+      async () => "REJECTED_PRIVATE_MODEL_OUTPUT",
+    ).runOnce();
+    const rejectedRunsPath = "/v1/requests/" + rejected.id + "/runs";
+    const history = (await (await call(rejectedRunsPath)).json()) as any;
+    assert.equal(history.items[0].outcome, "invalid_model_output");
+    assert.equal(
+      JSON.stringify(history).includes("REJECTED_PRIVATE_MODEL_OUTPUT"),
+      false,
+    );
     f.deny();
+    assert.deepEqual(
+      ((await (await call(rejectedRunsPath)).json()) as any).items,
+      [],
+    );
     assert.equal((await call(prefix + "/export")).status, 400);
     const hidden = (await (await call(prefix)).json()) as any;
     assert.equal(hidden.result, null);

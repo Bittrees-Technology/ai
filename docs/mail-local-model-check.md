@@ -33,3 +33,9 @@ With the PR 33 production prompt, all three outputs parsed and referenced existi
 An experimental prompt emphasized source-only summaries and separated reply intent. It fixed the Monday attribution, but introduced a false meeting date derived from the email Date header, cited the sender header for a meeting request, and still invited an alternative meeting time. The candidate was reverted; no improvement is claimed for the production prompt in this update.
 
 The small model remains unaccepted for reliable replies. Citation existence is insufficient: reviewers must inspect whether each cited section supports the sentence and whether the output follows the user's intent. Compare a stronger local model if the user chooses that path, then evaluate a genuinely new set before acceptance. The local-only/unreviewed/no-send boundaries remain unchanged.
+
+## Rejected model output
+
+Malformed Mail JSON, disallowed fields/reply modes, and fabricated or invalid evidence references now raise `ModelError("INVALID_OUTPUT")`. The worker keeps the task terminally failed with no result, records only the fixed run outcome `invalid_model_output`, and does not automatically retry. Run history labels this **Answer rejected**, explains the format/evidence problem and suggests starting a fresh draft with another model or revised request.
+
+Actual source denial/version changes continue to fail independently. Run-history access still rechecks source permission and is concealed after revocation. Raw rejected text and exception details are not included in the persisted failure outcome. This adds a run-outcome value without changing the SQLite schema or weakening validation. Older synthetic comparison artifacts retain the error names observed when they were generated.

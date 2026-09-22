@@ -901,7 +901,13 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     worker: string,
     generation: number,
     transient: boolean,
+    reason?: "invalid_model_output",
   ) {
+    if (
+      (reason !== undefined && reason !== "invalid_model_output") ||
+      (reason !== undefined && transient)
+    )
+      throw new StoreError("INVALID_INPUT");
     return this.db
       .transaction(() => {
         const r = this.validClaim(owner, id, worker, generation);
@@ -920,7 +926,12 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           .prepare(
             "UPDATE runs SET finished_at=?,outcome=? WHERE task_id=? AND generation=?",
           )
-          .run(this.now(), retry ? "retry" : "failed", id, generation);
+          .run(
+            this.now(),
+            retry ? "retry" : (reason ?? "failed"),
+            id,
+            generation,
+          );
         this.event(id, retry ? "retry_scheduled" : "failed");
         return this.get(owner, id);
       })
