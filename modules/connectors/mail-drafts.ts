@@ -62,7 +62,12 @@ const schema = z.strictObject({
   summary: z.array(claim).min(1).max(20),
   reply: claim.nullable(),
 });
-export function mailResult(source: Snapshot, text: string, kind: string) {
+export function mailResult(
+  source: Snapshot,
+  text: string,
+  kind: string,
+  suppliedSections?: { id: string; text: string }[],
+) {
   if (Buffer.byteLength(text) > 256 * 1024)
     throw new ModelError("INVALID_OUTPUT");
   let parsed: z.infer<typeof schema>;
@@ -77,7 +82,7 @@ export function mailResult(source: Snapshot, text: string, kind: string) {
       (source.message.mode !== "plain" || !source.message.bodyAvailable))
   )
     throw new ModelError("INVALID_OUTPUT");
-  const ids = new Set(sections(source).map((s) => s.id));
+  const ids = new Set((suppliedSections ?? sections(source)).map((s) => s.id));
   const resolve = (item: z.infer<typeof claim>) => ({
     ...item,
     citations: item.evidence.map((sectionId) => {

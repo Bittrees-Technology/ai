@@ -33,7 +33,7 @@ const draft = {
   summary: [{ text: "Please review the plan", evidence: ["body-1"] }],
   reply: { text: "I will review the plan.", evidence: ["body-1"] },
 };
-async function fixture(attachment = false) {
+async function fixture(attachment = false, fileText = "FILE_CONTENT") {
   let secret: Uint8Array | undefined,
     denied = false;
   const grant = {
@@ -103,10 +103,10 @@ async function fixture(attachment = false) {
                   id: grant.selection.attachment!.id,
                   filename: "plan.txt",
                   contentType: "text/plain",
-                  encodedBytes: 12,
+                  encodedBytes: Buffer.byteLength(fileText),
                   supported: true,
-                  text: "FILE_CONTENT",
-                  bytes: 12,
+                  text: fileText,
+                  bytes: Buffer.byteLength(fileText),
                   truncated: false,
                 },
               }
@@ -811,5 +811,48 @@ test("Attachment content cannot be saved after permission loss during generation
     assert.equal(store.get(owner, task.id).result, null);
   } finally {
     store.close();
+  }
+});
+
+test("Worker completes all attachment parts and discards every partial summary on late access loss", async () => {
+  for (const revoke of [false, true]) {
+    const f = await fixture(true, "x".repeat(10000)),
+      store = new Store(":memory:", new Vault(randomBytes(32)));
+    let calls = 0;
+    try {
+      const task = await f.adapter.create(
+        store,
+        { ...input, kind: "summarize" },
+        "attachment-text",
+        "large",
+      );
+      await worker(store, f, async (_p, prompt) => {
+        calls++;
+        const section = JSON.parse(
+          prompt.split("File data:\n")[1]!.split("\nUser request:")[0]!,
+        ).section;
+        if (revoke && calls === 2) f.deny();
+        return JSON.stringify({
+          summary: [{ text: "Part summary", evidence: [section.id] }],
+          reply: null,
+        });
+      }).runOnce();
+      const taskResult = store.get(owner, task.id);
+      assert.ok(calls >= 2);
+      if (revoke) {
+        assert.equal(taskResult.status, "failed");
+        assert.equal(taskResult.result, null);
+        assert.equal(calls, 2);
+      } else {
+        assert.equal(taskResult.status, "completed");
+        assert.equal((taskResult.result as any).mail.coverage.parts, calls);
+        assert.equal(
+          (taskResult.result as any).mail.coverage.sourceBytes,
+          10000,
+        );
+      }
+    } finally {
+      store.close();
+    }
   }
 });
