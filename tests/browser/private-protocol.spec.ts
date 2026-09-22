@@ -838,3 +838,333 @@ test("Browser storage capacity retains existing history and missing storage does
     f.close();
   }
 });
+
+async function submitted(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
+  const state = await storage(page, f),
+    entry = await page.evaluate(
+      (peerId) => window.privateStorageTest.reserve(peerId),
+      f.binding.deviceId,
+    ),
+    wire = await f.seal(entry.header);
+  await page.evaluate(
+    ({ id, envelope }) =>
+      window.privateStorageTest.commit({ id, expectedRevision: 1, envelope }),
+    { id: entry.id, envelope: wire },
+  );
+  const receipt = await f.receiver.accept(wire);
+  return { state, entry, receipt, response: await f.response(receipt) };
+}
+
+test("Authenticated browser acceptance survives reload without plaintext receipt storage and ends retries", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { entry, receipt, response } = await submitted(page, f);
+    const accepted = await page.evaluate(
+      (wire) => window.privateStorageTest.acceptReceipt(wire),
+      response,
+    );
+    expect(accepted.state).toBe("accepted");
+    expect(accepted.receiptEnvelope).toEqual(response);
+    const alternate = await f.response(receipt);
+    expect(alternate).not.toEqual(response);
+    expect(
+      await page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        alternate,
+      ),
+    ).toEqual(accepted);
+    await expect(
+      page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
+    ).rejects.toThrow("DENIED");
+    await expect(
+      page.evaluate(
+        ({ id, revision }) =>
+          window.privateStorageTest.stop({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          }),
+        accepted,
+      ),
+    ).rejects.toThrow("CONFLICT");
+    await page.reload();
+    await page.waitForFunction(() => !!window.privateStorageTest);
+    await storage(page, f, false);
+    const saved = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(saved.entries[0]).toEqual(accepted);
+    expect(JSON.stringify(saved)).not.toContain(receipt.taskId);
+    expect(JSON.stringify(saved)).not.toContain(receipt.id);
+    // Reload has no endpoint private key; persisted status cannot authorize a new receipt.
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ).rejects.toThrow("DENIED");
+    await page.evaluate(
+      (revision) =>
+        window.privateStorageTest.clear({
+          expectedRevision: revision,
+          confirmed: true,
+        }),
+      saved.meta!.revision,
+    );
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).entries,
+    ).toEqual([]);
+  } finally {
+    f.close();
+  }
+});
+
+test("Browser receipt acceptance rejects forged, mismatched, impossible and conflicting destination evidence", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { entry, receipt, response } = await submitted(page, f);
+    const invalid = [
+      receipt,
+      await f.response(receipt, await pair()),
+      await f.response({
+        ...receipt,
+        header: { ...receipt.header, messageId: randomUUID() },
+      }),
+      await f.response({ ...receipt, acceptedAt: receipt.header.expiresAt }),
+      await f.response({
+        ...receipt,
+        acceptedAt: receipt.header.issuedAt - 30001,
+      }),
+      { ...response, ciphertext: response.ciphertext.slice(0, -2) + "AA" },
+    ];
+    for (const wire of invalid)
+      await expect(
+        page.evaluate(
+          (value) => window.privateStorageTest.acceptReceipt(value),
+          wire,
+        ),
+      ).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot()))
+        .entries[0]!.state,
+    ).toBe("pending");
+    await page.evaluate(
+      (wire) => window.privateStorageTest.acceptReceipt(wire),
+      response,
+    );
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        await f.response({ ...receipt, taskId: randomUUID() }),
+      ),
+    ).rejects.toThrow("CONFLICT");
+    expect(f.store.list(owner)).toHaveLength(1);
+    expect(entry.id).toBe(receipt.header.operationId);
+  } finally {
+    f.close();
+  }
+});
+
+test("A late authenticated receipt reconciles a stopped browser task while concurrent receipts deduplicate", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { entry, response } = await submitted(page, f);
+    await page.evaluate(
+      (id) =>
+        window.privateStorageTest.stop({
+          id,
+          expectedRevision: 2,
+          confirmed: true,
+        }),
+      entry.id,
+    );
+    const values = await Promise.all([
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ]);
+    expect(values[0]).toEqual(values[1]);
+    expect(values[0].state).toBe("accepted");
+    expect(values[0].revision).toBe(4);
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).meta!
+        .revision,
+    ).toBe(5);
+  } finally {
+    f.close();
+  }
+});
+
+test("Receipt commit rechecks permission and key identity and rolls back on storage failure", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { response } = await submitted(page, f);
+    const original = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    await page.evaluate(() => window.privateStorageTest.revokeDuringCommit());
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(original);
+    await storage(page, f, false);
+    await page.evaluate(() =>
+      window.privateStorageTest.rotateKeyDuringReceipt(),
+    );
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(original);
+    await storage(page, f, false);
+    expect(
+      await page.evaluate(async (wire) => {
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (...args) {
+          if (this.name === "meta")
+            throw new DOMException("Synthetic quota", "QuotaExceededError");
+          return put.apply(this, args);
+        };
+        try {
+          await window.privateStorageTest.acceptReceipt(wire);
+          return "unexpected";
+        } catch (e) {
+          return (e as Error).message;
+        } finally {
+          IDBObjectStore.prototype.put = put;
+        }
+      }, response),
+    ).toBe("CAPACITY");
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(original);
+    expect(
+      (
+        await page.evaluate(
+          (wire) => window.privateStorageTest.acceptReceipt(wire),
+          response,
+        )
+      ).state,
+    ).toBe("accepted");
+  } finally {
+    f.close();
+  }
+});
+
+test("Earlier browser rows remain readable while expired, deleted and other-account receipts are denied", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { state, entry, response } = await submitted(page, f);
+    // Model a PR112 version1 row: new optional receipt fields are absent.
+    await page.evaluate(async (id) => {
+      window.privateStorageTest.close();
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open("org.bittrees.ai.private-outbox", 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result,
+            tx = db.transaction("entries", "readwrite"),
+            store = tx.objectStore("entries"),
+            get = store.get(id);
+          get.onsuccess = () => {
+            const row = get.result;
+            delete row.receiptEnvelope;
+            delete row.receiptHash;
+            store.put(row);
+          };
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onabort = () => {
+            db.close();
+            reject(tx.error);
+          };
+        };
+      });
+    }, entry.id);
+    await storage(page, f, false);
+    const before = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(before.entries[0]!.receiptEnvelope).toBeNull();
+    expect(before.entries[0]!.state).toBe("pending");
+    const otherBinding = { ...state.binding, ownerId: randomUUID() },
+      otherContext = { ...state.context, binding: otherBinding };
+    await page.evaluate(
+      ({ binding, context, now }) =>
+        window.privateStorageTest.open(binding, context, now, true),
+      { binding: otherBinding, context: otherContext, now: f.now },
+    );
+    await page.evaluate(() => window.privateStorageTest.initialize());
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ).rejects.toThrow("DENIED");
+    await storage(page, f, false);
+    await page.evaluate(() => window.privateStorageTest.advance(3600000));
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ).rejects.toThrow("DENIED");
+    await storage(page, f, false);
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(before);
+    expect(
+      (
+        await page.evaluate(
+          (wire) => window.privateStorageTest.acceptReceipt(wire),
+          response,
+        )
+      ).state,
+    ).toBe("accepted");
+    const accepted = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    await page.evaluate(
+      (revision) =>
+        window.privateStorageTest.clear({
+          expectedRevision: revision,
+          confirmed: true,
+        }),
+      accepted.meta!.revision,
+    );
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptReceipt(wire),
+        response,
+      ),
+    ).rejects.toThrow("SETUP_REQUIRED");
+  } finally {
+    f.close();
+  }
+});

@@ -4,11 +4,20 @@ import {
   type PrivateBinding,
 } from "./private-peer-contracts.js";
 import {
+  openPrivateEnvelope,
   privateEnvelopeSchema,
   privateHeaderSchema,
   privateEnvelopeSuite,
   type PrivateEnvelope,
 } from "./private-envelope.js";
+import { privateAcceptedPayloadSchema } from "./private-task-contracts.js";
+
+/** Supplied by verified client key/peer state, never by a response or stored row. */
+export type BrowserReceiptAuthority = {
+  context: BrowserDeliveryContext;
+  recipientKey: CryptoKeyPair;
+  senderPublicKey: CryptoKey;
+};
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   hex = z.string().regex(/^[a-f0-9]{64}$/);
 export const browserDeliveryContextSchema = z.strictObject({
@@ -37,12 +46,26 @@ const entrySchema = z
     revision: positive,
     context: browserDeliveryContextSchema,
     header: privateHeaderSchema,
-    state: z.enum(["reserved", "pending", "stopped"]),
+    state: z.enum(["reserved", "pending", "stopped", "accepted"]),
     envelope: privateEnvelopeSchema.nullable(),
+    receiptEnvelope: privateEnvelopeSchema.nullable().default(null),
+    receiptHash: hex.nullable().default(null),
     attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .refine(
     (e) =>
+      (e.state === "accepted") === !!e.receiptEnvelope &&
+      !!e.receiptEnvelope === !!e.receiptHash &&
+      (!e.receiptEnvelope ||
+        (!!e.envelope &&
+          e.receiptEnvelope.header.ownerId === e.header.ownerId &&
+          e.receiptEnvelope.header.operationId === e.header.operationId &&
+          e.receiptEnvelope.header.senderId === e.header.recipientId &&
+          e.receiptEnvelope.header.recipientId === e.header.senderId &&
+          e.receiptEnvelope.header.senderKeyEpoch ===
+            e.header.recipientKeyEpoch &&
+          e.receiptEnvelope.header.recipientKeyEpoch ===
+            e.header.senderKeyEpoch)) &&
       e.id === e.header.operationId &&
       e.header.ownerId === e.context.binding.ownerId &&
       e.header.senderId === e.context.binding.deviceId &&
@@ -130,6 +153,9 @@ export class BrowserPrivateOutbox {
     private permission: (peerId: string) => BrowserDeliveryContext | null,
     private freshRegistration: () => PrivateBinding | null,
     private now: () => number,
+    private receiptAuthority: (
+      peerId: string,
+    ) => BrowserReceiptAuthority | null,
   ) {
     db.onversionchange = () => this.close();
     db.onclose = () => {
@@ -141,6 +167,8 @@ export class BrowserPrivateOutbox {
     permission: (peerId: string) => BrowserDeliveryContext | null,
     freshRegistration: () => PrivateBinding | null = () => null,
     now = Date.now,
+    receiptAuthority: (peerId: string) => BrowserReceiptAuthority | null = () =>
+      null,
   ): Promise<BrowserPrivateOutbox> {
     return new Promise((resolve, reject) => {
       let ended = false;
@@ -189,6 +217,7 @@ export class BrowserPrivateOutbox {
             permission,
             freshRegistration,
             now,
+            receiptAuthority,
           ),
         );
       };
@@ -592,6 +621,117 @@ export class BrowserPrivateOutbox {
       });
     });
   }
+  private receiptKeys(context: BrowserDeliveryContext) {
+    const value = this.receiptAuthority(context.peerId);
+    if (
+      !value ||
+      !same(browserDeliveryContextSchema.parse(value.context), context) ||
+      !same(this.authority(context.peerId), context)
+    )
+      throw new BrowserOutboxError("DENIED");
+    return {
+      privateKey: value.recipientKey.privateKey,
+      publicKey: value.recipientKey.publicKey,
+      senderPublicKey: value.senderPublicKey,
+    };
+  }
+  /** Consume authenticated destination acceptance; never accepts plaintext relay status. */
+  acceptReceipt(raw: unknown) {
+    return this.safe(async () => {
+      const envelope = wire(raw),
+        h = envelope.header,
+        identity = await this.identity();
+      const before = await this.tx<Entry>(identity, "readonly", (io) => {
+        io.request(io.store("meta").get(identity.scope), (raw) => {
+          this.meta(raw, identity);
+          io.request(io.store("entries").get(h.operationId), (raw) => {
+            const entry = this.entry(raw, identity.scope);
+            io.done(entry);
+          });
+        });
+      });
+      const original = before.header,
+        keys = this.receiptKeys(before.context);
+      if (
+        !before.envelope ||
+        h.ownerId !== original.ownerId ||
+        h.senderId !== original.recipientId ||
+        h.recipientId !== original.senderId ||
+        h.senderKeyEpoch !== original.recipientKeyEpoch ||
+        h.recipientKeyEpoch !== original.senderKeyEpoch
+      )
+        throw new BrowserOutboxError("DENIED");
+      const opened = await openPrivateEnvelope(
+        envelope,
+        h,
+        {
+          recipientKey: {
+            privateKey: keys.privateKey,
+            publicKey: keys.publicKey,
+          },
+          senderPublicKey: keys.senderPublicKey,
+        },
+        this.now,
+      );
+      let receipt;
+      try {
+        receipt = privateAcceptedPayloadSchema.parse(
+          JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
+          ),
+        ).receipt;
+      } finally {
+        opened.plaintext.fill(0);
+      }
+      if (
+        !same(receipt.header, original) ||
+        receipt.acceptedAt >= original.expiresAt ||
+        receipt.acceptedAt < original.issuedAt - 30000 ||
+        receipt.acceptedAt > this.now() + 30000
+      )
+        throw new BrowserOutboxError("DENIED");
+      const receiptHash = await digest(["browser-receipt:v1", receipt]);
+      return this.tx<Entry>(identity, "readwrite", (io) => {
+        io.gate(() => {
+          const current = this.receiptKeys(before.context);
+          if (
+            current.privateKey !== keys.privateKey ||
+            current.publicKey !== keys.publicKey ||
+            current.senderPublicKey !== keys.senderPublicKey ||
+            h.expiresAt <= this.now()
+          )
+            throw new BrowserOutboxError("DENIED");
+        });
+        io.request(io.store("meta").get(identity.scope), (raw) => {
+          const meta = this.meta(raw, identity);
+          io.request(io.store("entries").get(h.operationId), (raw) => {
+            const entry = this.entry(raw, identity.scope);
+            if (
+              !same(entry.context, before.context) ||
+              !same(entry.envelope, before.envelope)
+            )
+              throw new BrowserOutboxError("CONFLICT");
+            if (entry.receiptHash) {
+              if (entry.receiptHash !== receiptHash)
+                throw new BrowserOutboxError("CONFLICT");
+              io.done(entry);
+              return;
+            }
+            if (entry.revision >= Number.MAX_SAFE_INTEGER)
+              throw new BrowserOutboxError("CAPACITY");
+            entry.state = "accepted";
+            entry.receiptEnvelope = envelope;
+            entry.receiptHash = receiptHash;
+            entry.revision++;
+            this.bump(meta);
+            io.store("entries").put(entry);
+            io.store("meta").put(meta);
+            io.done(entry);
+          });
+        });
+      });
+    });
+  }
   stop(raw: unknown) {
     return this.safe(async () => {
       const input = z
@@ -607,6 +747,8 @@ export class BrowserPrivateOutbox {
           const meta = this.meta(raw, identity, false);
           io.request(io.store("entries").get(input.id), (raw) => {
             const entry = this.entry(raw, identity.scope);
+            if (entry.state === "accepted")
+              throw new BrowserOutboxError("CONFLICT");
             if (entry.revision !== input.expectedRevision)
               throw new BrowserOutboxError("CONFLICT");
             if (entry.revision >= Number.MAX_SAFE_INTEGER)
