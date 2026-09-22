@@ -1,6 +1,6 @@
 # Mac model comparison — initial measurements
 
-These are synthetic Mail probes, not production acceptance or a general model benchmark. Acer's news-briefing model/configuration is unchanged. Neither the companion's default model nor the existing Mac Ollama 0.15.5 runtime has been replaced.
+These are synthetic Mail probes, not production acceptance or a general model benchmark. Acer's news-briefing model/configuration is unchanged. The companion's default model has not been replaced. After these initial isolated measurements, the Mac runtime was upgraded to Ollama 0.17.7 as described below.
 
 ## Reproduction
 
@@ -44,3 +44,11 @@ The original 9B correctly separated sender facts from user reply instructions in
 - Adopt a runtime/model profile only after reviewing the comparison. No production quality-acceptance item is checked by this document.
 
 Primary model references: [original Qwen3.5](https://ollama.com/library/qwen3.5:9b), [Huihui creator card](https://huggingface.co/huihui-ai/Huihui-Qwen3.5-9B-abliterated), [official Ollama 0.17.7 release](https://github.com/ollama/ollama/releases/tag/v0.17.7).
+
+## Mac runtime adoption
+
+The official 0.17.7 app archive matched SHA-256 `ac2fa78433b91bc5b6ff989d50430ed458d49a1998d8a381f582afad2cdb1a03` and passed Apple code-signature verification (team `3MU9H2V9Y9`). The protected system-wide app could not be replaced; its signature still verifies. The new app is installed at `~/Applications/Ollama.app` instead.
+
+The existing user LaunchAgent `io.bittrees.ollama` now points to that verified executable, keeps its prior resource preferences and explicitly binds `127.0.0.1:11434` with `OLLAMA_NO_CLOUD=1`. The prior app and LaunchAgent configuration are backed up under `~/Library/Application Support/Bittrees AI/runtime-backups`. API version verification reports 0.17.7. Existing model files are retained; no Acer service or configuration was accessed.
+
+The isolated runtime was stopped. An old-service restart interrupted Huihui's first download in the shared model directory, so that download is being retried with only one runtime managing the store. Comparisons are being repeated against the adopted service before making a final model recommendation. Do not run two model-download managers against the same model directory.
