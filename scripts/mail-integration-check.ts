@@ -1,7 +1,7 @@
 // Actual Mail source routes + Python selected-read helper + companion, synthetic data only.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   mkdtemp,
@@ -16,6 +16,11 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { MailConnector } from "../modules/connectors/mail.js";
+import { MailTasks } from "../modules/connectors/mail-tasks.js";
+import { SourceTasks } from "../modules/connectors/source-tasks.js";
+import { Store } from "../modules/storage/store.js";
+import { Vault } from "../modules/storage/vault.js";
+import { LocalWorker } from "../apps/companion/worker.js";
 const root = process.env.MAIL_REPO;
 if (!root) throw Error("MAIL_REPO required");
 const source = resolve(root),
@@ -200,6 +205,62 @@ try {
         "text" in body.message && body.message.text.includes("Untrusted mail"),
       );
     } else await assert.rejects(broker.read("plain"), /SOURCE_DENIED/);
+    const owner = { userId: "personal", tenantId: "personal" },
+      store = new Store(":memory:", new Vault(randomBytes(32)));
+    try {
+      const tasks = new MailTasks(broker, owner, "device");
+      const profile = {
+        id: "p",
+        runtime: "ollama" as const,
+        model: "synthetic",
+        contextTokens: 4096,
+        maxOutputTokens: 1000,
+        temperature: 0,
+      };
+      const task = await tasks.create(
+        store,
+        {
+          conversationId: "mail",
+          kind: includePlain ? "draft" : "summarize",
+          prompt: "Summarize selected mail",
+          modelProfileId: "p",
+          dependencies: [],
+          priority: "normal",
+          tags: [],
+        },
+        includePlain ? "plain" : "metadata",
+        "source-task",
+      );
+      await new LocalWorker(
+        store,
+        owner,
+        {
+          pin: async () => ({ profile, digest: "c".repeat(64) }),
+          generate: async (_p, prompt) => {
+            assert.ok(!prompt.includes("PRIVATE_UNSELECTED"));
+            assert.equal(prompt.includes("Untrusted mail:"), includePlain);
+            return JSON.stringify({
+              summary: [
+                { text: "Selected synthetic mail", evidence: ["subject"] },
+              ],
+              reply: includePlain
+                ? { text: "Thank you for your message.", evidence: ["body-1"] }
+                : null,
+            });
+          },
+        },
+        () => profile,
+        "worker",
+        undefined,
+        new SourceTasks(undefined, undefined, tasks),
+      ).runOnce();
+      const result = store.get(owner, task.id);
+      assert.equal(result.status, "completed");
+      assert.equal((result.result as any).mail.sent, false);
+      assert.equal((result.result as any).mail.savedToMail, false);
+    } finally {
+      store.close();
+    }
     if (includePlain) {
       db.exec("UPDATE mail_accounts SET status='frozen'");
       await assert.rejects(broker.read("plain"), /SOURCE_DENIED/);
@@ -209,7 +270,7 @@ try {
     assert.equal(await broker.status(), null);
   }
   console.log(
-    "Actual Mail source consent/PKCE, Python selected reads, companion scope/hash checks, freeze denial and disabled disconnect passed. Synthetic data only; no live mailbox or browser acceptance claimed.",
+    "Actual Mail source consent/PKCE, Python selected reads, companion scope/hash checks, source-bound synthetic summary/reply generation, freeze denial and disabled disconnect passed. Synthetic data only; no live mailbox or browser acceptance claimed.",
   );
 } finally {
   db.close();
