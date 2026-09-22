@@ -41,16 +41,7 @@ export async function recoverContentCopy(
   entry: SecretEntry,
   port = 43127,
 ) {
-  const guard = createServer((_req, res) => res.writeHead(503).end());
-  try {
-    await new Promise<void>((done, reject) => {
-      guard.once("error", reject);
-      guard.listen(port, "127.0.0.1", done);
-    });
-  } catch {
-    throw new RecoveryError("COMPANION_RUNNING_OR_PORT_UNAVAILABLE");
-  }
-  try {
+  return withCompanionStopped(async () => {
     try {
       if (!(await stat(backup)).isFile() || !(await stat(parent)).isDirectory())
         throw Error();
@@ -75,6 +66,24 @@ export async function recoverContentCopy(
     } finally {
       key.fill(0);
     }
+  }, port);
+}
+/** Exclusive with the engine and other offline operations; never stops a process. */
+export async function withCompanionStopped<T>(
+  operation: () => Promise<T>,
+  port = 43127,
+): Promise<T> {
+  const guard = createServer((_req, res) => res.writeHead(503).end());
+  try {
+    await new Promise<void>((done, reject) => {
+      guard.once("error", reject);
+      guard.listen(port, "127.0.0.1", done);
+    });
+  } catch {
+    throw new RecoveryError("COMPANION_RUNNING_OR_PORT_UNAVAILABLE");
+  }
+  try {
+    return await operation();
   } finally {
     guard.closeAllConnections();
     await new Promise<void>((done) => guard.close(() => done()));
