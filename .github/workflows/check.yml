@@ -95,6 +95,8 @@ jobs:
       - run: npm ci
       - name: Native recovery lifecycle and shell typecheck
         run: bash scripts/check-macos-recovery.sh
+      - name: Add-only synthetic Keychain installation
+        run: bash scripts/check-macos-key-install.sh
       - name: Seed stale build outputs for rebuild regression
         run: |
           mkdir -p dist/apps 'dist/macos/Bittrees AI.app/Contents/Resources'
