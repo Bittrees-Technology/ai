@@ -516,6 +516,19 @@ export function localApi({
       autonoteReviews: store.autoNoteReviews(owner, req.params.id),
     });
   });
+  app.get("/v1/templates", (_req, res) =>
+    res.json({ items: store.templates(owner) }),
+  );
+  app.put("/v1/templates", (req, res) =>
+    res.json(store.saveTemplate(owner, req.body)),
+  );
+  app.delete("/v1/templates/:id", (req, res) => {
+    store.deleteTemplate(owner, req.params.id, req.body);
+    res.status(204).end();
+  });
+  app.post("/v1/templates/:id/run", (req, res) =>
+    res.status(202).json(store.runTemplate(owner, req.params.id, req.body)),
+  );
   app.post("/v1/requests", (req, res) => {
     const body = requestSchema.parse(req.body);
     // Source authority is constructed only through the dedicated trusted adapter.
@@ -731,6 +744,7 @@ export function localApi({
       tasks: store.export(owner).map(concealed),
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
+      templates: store.templates(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
       memories: memory ? await memory.export(owner) : [],

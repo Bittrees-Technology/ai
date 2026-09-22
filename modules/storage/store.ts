@@ -1,4 +1,11 @@
 import {
+  templateSaveSchema,
+  templateActionSchema,
+  templateRunSchema,
+  templateDefinitionSchema,
+  type LocalTemplate,
+} from "./templates.js";
+import {
   autoNoteProposalSchema,
   autoNoteReconciledSchema,
   type AutoNoteProposal,
@@ -130,7 +137,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 8) {
+    if (version > 9) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -190,12 +197,136 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
         this.db
           .exec(`CREATE TABLE IF NOT EXISTS remote_control_bindings(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,device_id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,device_id));
 CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
-        this.db.pragma("user_version = 8");
+        this.db.exec(
+          `CREATE TABLE IF NOT EXISTS local_templates(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,payload BLOB,PRIMARY KEY(id,user_id,tenant_id));`,
+        );
+        this.db.pragma("user_version = 9");
       })();
     } catch (error) {
       this.db.close();
       throw error;
     }
+  }
+  private templatePurpose(owner: Owner, id: string) {
+    return JSON.stringify(["local-template", owner.tenantId, owner.userId, id]);
+  }
+  template(owner: Owner, id: string): LocalTemplate {
+    z.uuid().parse(id);
+    const row = this.db
+      .prepare(
+        "SELECT revision,payload FROM local_templates WHERE id=? AND user_id=? AND tenant_id=?",
+      )
+      .get(id, owner.userId, owner.tenantId) as
+      { revision: number; payload: Buffer | null } | undefined;
+    if (!row?.payload) throw new StoreError("NOT_FOUND");
+    return {
+      id,
+      revision: row.revision,
+      definition: templateDefinitionSchema.parse(
+        this.vault.open(row.payload, this.templatePurpose(owner, id)),
+      ),
+    };
+  }
+  templates(owner: Owner): LocalTemplate[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM local_templates WHERE user_id=? AND tenant_id=? AND payload IS NOT NULL ORDER BY id",
+        )
+        .all(owner.userId, owner.tenantId) as { id: string }[]
+    ).map((row) => this.template(owner, row.id));
+  }
+  saveTemplate(owner: Owner, raw: unknown) {
+    const { id, expectedRevision, definition } = templateSaveSchema.parse(raw);
+    return this.db
+      .transaction(() => {
+        this.profile(owner, definition.modelProfileId);
+        const row = this.db
+          .prepare(
+            "SELECT revision,payload FROM local_templates WHERE id=? AND user_id=? AND tenant_id=?",
+          )
+          .get(id, owner.userId, owner.tenantId) as
+          { revision: number; payload: Buffer | null } | undefined;
+        if (row) {
+          // Deleted IDs cannot be recycled into a different definition.
+          if (!row.payload) throw new StoreError("CONFLICT");
+          const current = this.template(owner, id);
+          if (
+            row.revision === expectedRevision + 1 &&
+            this.vault.fingerprint(current.definition) ===
+              this.vault.fingerprint(definition)
+          )
+            return current;
+          if (row.revision !== expectedRevision)
+            throw new StoreError("CONFLICT");
+          this.db
+            .prepare(
+              "UPDATE local_templates SET revision=revision+1,payload=? WHERE id=? AND user_id=? AND tenant_id=?",
+            )
+            .run(
+              this.vault.seal(definition, this.templatePurpose(owner, id)),
+              id,
+              owner.userId,
+              owner.tenantId,
+            );
+        } else {
+          if (expectedRevision !== 0) throw new StoreError("CONFLICT");
+          const count = this.db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM local_templates WHERE user_id=? AND tenant_id=? AND payload IS NOT NULL",
+            )
+            .get(owner.userId, owner.tenantId) as { count: number };
+          if (count.count >= 100) throw new StoreError("CAPACITY");
+          this.db
+            .prepare("INSERT INTO local_templates VALUES(?,?,?,1,?)")
+            .run(
+              id,
+              owner.userId,
+              owner.tenantId,
+              this.vault.seal(definition, this.templatePurpose(owner, id)),
+            );
+        }
+        return this.template(owner, id);
+      })
+      .immediate();
+  }
+  deleteTemplate(owner: Owner, id: string, raw: unknown) {
+    const { expectedRevision } = templateActionSchema.parse(raw);
+    return this.db
+      .transaction(() => {
+        const current = this.template(owner, id);
+        if (current.revision !== expectedRevision)
+          throw new StoreError("CONFLICT");
+        this.db
+          .prepare(
+            "UPDATE local_templates SET payload=NULL WHERE id=? AND user_id=? AND tenant_id=?",
+          )
+          .run(id, owner.userId, owner.tenantId);
+      })
+      .immediate();
+  }
+  runTemplate(owner: Owner, id: string, raw: unknown): Task {
+    const { expectedRevision, invocationId } = templateRunSchema.parse(raw);
+    return this.db
+      .transaction(() => {
+        const current = this.template(owner, id);
+        if (current.revision !== expectedRevision)
+          throw new StoreError("CONFLICT");
+        this.profile(owner, current.definition.modelProfileId);
+        const { kind, prompt, modelProfileId } = current.definition;
+        return this.create(
+          owner,
+          {
+            conversationId: invocationId,
+            kind,
+            prompt,
+            modelProfileId,
+            tags: [id, String(current.revision)],
+          },
+          `template-run:${invocationId}`,
+        );
+      })
+      .immediate();
   }
   addProfile(owner: Owner, raw: unknown) {
     const profile = modelProfileSchema.parse(raw);
@@ -1388,6 +1519,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     this.db
       .transaction(() => {
         for (const table of [
+          "local_templates",
           "remote_control_receipts",
           "remote_control_bindings",
         ])
