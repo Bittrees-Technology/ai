@@ -1,6 +1,7 @@
+import { MailEvidenceReview } from "./mail-evidence.js";
 import { AutoNoteReviewControls } from "./autonote-reviews.js";
 import { CrmPublicationControls } from "./crm-publications.js";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 type Api = (
   path: string,
   method?: string,
@@ -178,6 +179,10 @@ export function SourceDraftDetail({
   const [detail, setDetail] = useState<any>(null),
     [busy, setBusy] = useState(false);
   const epoch = useRef(0);
+  const sourceUnavailable = useCallback(() => {
+    epoch.current++;
+    setDetail({ unavailable: true });
+  }, []);
   useEffect(() => {
     let active = true,
       running = false;
@@ -239,7 +244,18 @@ export function SourceDraftDetail({
       ) : (
         <>
           {detail.task.result?.text ? (
-            <div className="result">{detail.task.result.text}</div>
+            <>
+              {sourceApp === "mail" ? (
+                <MailEvidenceReview
+                  key={detail.task.id + ":" + detail.task.revision}
+                  api={api}
+                  task={detail.task}
+                  onUnavailable={sourceUnavailable}
+                />
+              ) : (
+                <div className="result">{detail.task.result.text}</div>
+              )}
+            </>
           ) : (
             <p>No result yet. Task status: {detail.task.status}.</p>
           )}

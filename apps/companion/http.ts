@@ -1,3 +1,4 @@
+import { readMailEvidence } from "./mail-evidence.js";
 import { contentIdPattern, type retainedContent } from "./retained-content.js";
 import { MemoryCandidateError } from "../../modules/memory/candidates.js";
 import type { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
@@ -555,6 +556,17 @@ export function localApi({
         res.json(summary(await autoReviews[action](req.params.id)));
       });
   }
+  app.post("/v1/requests/:id/mail-evidence", async (req, res) => {
+    res.json(
+      await readMailEvidence(
+        store,
+        owner,
+        mailSources,
+        req.params.id,
+        req.body,
+      ),
+    );
+  });
   app.get("/v1/requests/:id/export", async (req, res) => {
     const task = await project(store.get(owner, req.params.id));
     if ("sourceAccess" in task && task.sourceAccess === "unavailable")

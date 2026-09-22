@@ -1,3 +1,4 @@
+import { readMailEvidence } from "../apps/companion/mail-evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -7,7 +8,7 @@ import {
   SourceTasks,
   sourceResult,
 } from "../modules/connectors/source-tasks.js";
-import { Store } from "../modules/storage/store.js";
+import { Store, type Owner } from "../modules/storage/store.js";
 import { Vault } from "../modules/storage/vault.js";
 import { LocalWorker } from "../apps/companion/worker.js";
 import { sourceBindingSchema } from "../modules/contracts/index.js";
@@ -579,6 +580,50 @@ test("Mail authenticated HTTP controls guard selection, task creation, exports a
       );
     const prefix = "/v1/requests/" + task.id;
     const exported = (await (await call(prefix + "/export")).json()) as any;
+    const passageInput = {
+      expectedRevision: exported.task.revision,
+      sectionId: "body-1",
+    };
+    const passage = await call(prefix + "/mail-evidence", "POST", passageInput);
+    assert.equal(passage.status, 200);
+    assert.equal(passage.headers.get("cache-control"), "no-store");
+    assert.equal(((await passage.json()) as any).text, f.content.text);
+    for (const invalid of [
+      { ...passageInput, sectionId: "body-2" },
+      { ...passageInput, sectionId: "attachment-1" },
+      { ...passageInput, expectedRevision: 0 },
+      { ...passageInput, url: "http://untrusted.invalid" },
+    ]) {
+      assert.equal(
+        (await call(prefix + "/mail-evidence", "POST", invalid)).status,
+        400,
+      );
+    }
+    assert.equal(
+      (
+        await call(prefix + "/mail-evidence", "POST", {
+          ...passageInput,
+          expectedRevision: 999,
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await call(prefix + "/mail-evidence", "POST", passageInput, {
+          Authorization: "",
+        })
+      ).status,
+      401,
+    );
+    assert.equal(
+      (
+        await call(prefix + "/mail-evidence", "POST", passageInput, {
+          Origin: "https://untrusted.invalid",
+        })
+      ).status,
+      403,
+    );
     assert.equal(exported.task.result.mail.sent, false);
     assert.equal(exported.task.result.mail.messageId, f.grant.selection.id);
     const rejectedResponse = await call(
@@ -646,8 +691,31 @@ test("Mail authenticated HTTP controls guard selection, task creation, exports a
     const fileExport = "/v1/requests/" + fileTask.id + "/export";
     const fileResult = (await (await call(fileExport)).json()) as any;
     assert.equal(fileResult.task.result.mail.attachment.id, "1.2");
+    const fileEvidence = "/v1/requests/" + fileTask.id + "/mail-evidence";
+    const fileInput = {
+      expectedRevision: fileResult.task.revision,
+      sectionId: "attachment-1",
+    };
+    assert.equal(
+      ((await (await call(fileEvidence, "POST", fileInput)).json()) as any)
+        .text,
+      "FILE_CONTENT",
+    );
+    assert.equal(
+      (await call(fileEvidence, "POST", { ...fileInput, sectionId: "body-1" }))
+        .status,
+      400,
+    );
+
     f.deny();
     assert.equal((await call(fileExport)).status, 400);
+    const deniedPassage = await call(fileEvidence, "POST", fileInput);
+    assert.equal(deniedPassage.status, 400);
+    assert.equal((await deniedPassage.text()).includes("FILE_CONTENT"), false);
+    assert.equal(
+      (await call(prefix + "/mail-evidence", "POST", passageInput)).status,
+      400,
+    );
     assert.deepEqual(
       ((await (await call(rejectedRunsPath)).json()) as any).items,
       [],
@@ -836,7 +904,11 @@ test("Attachment content cannot be saved after permission loss during generation
 
 test("Worker completes all attachment parts and discards every partial summary on late access loss", async () => {
   for (const revoke of [false, true]) {
-    const f = await fixture(true, "x".repeat(10000)),
+    const fileText = Array.from(
+      { length: 400 },
+      (_, i) => `Row ${i}: α😀 value\n`,
+    ).join("");
+    const f = await fixture(true, fileText),
       store = new Store(":memory:", new Vault(randomBytes(32)));
     let calls = 0;
     try {
@@ -890,7 +962,34 @@ test("Worker completes all attachment parts and discards every partial summary o
         );
         assert.equal(
           (taskResult.result as any).mail.coverage.sourceBytes,
-          10000,
+          Buffer.byteLength(fileText),
+        );
+        const parts = (taskResult.result as any).mail.partSummaries;
+        let recovered = "";
+        for (const group of parts) {
+          const sectionId = group[0].citations[0].sectionId;
+          const evidence = await readMailEvidence(
+            store,
+            owner,
+            f.adapter,
+            task.id,
+            { expectedRevision: taskResult.revision, sectionId },
+          );
+          const offset = Number(sectionId.slice("attachment-offset-".length));
+          assert.equal(
+            evidence.text,
+            Array.from(fileText)
+              .slice(offset, offset + Array.from(evidence.text).length)
+              .join(""),
+          );
+          recovered += evidence.text;
+        }
+        assert.equal(recovered, fileText);
+        await assert.rejects(
+          readMailEvidence(store, owner, f.adapter, task.id, {
+            expectedRevision: taskResult.revision,
+            sectionId: "attachment-offset-1",
+          }),
         );
       }
     } finally {
@@ -923,6 +1022,197 @@ test("Mail worker keeps a failed second generation out of persisted results", as
     const saved = store.get(owner, task.id);
     assert.equal(saved.status, "failed");
     assert.equal(saved.result, null);
+  } finally {
+    store.close();
+  }
+});
+
+test("Mail evidence preserves Unicode boundaries and rejects changed content, owners and tasks deleted during validation", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  f.content.text = "x".repeat(799) + "😀" + "Second passage";
+  f.content.bodyTruncated = true;
+  try {
+    const task = await f.adapter.create(store, input, "plain", "unicode");
+    await worker(store, f, async () =>
+      JSON.stringify({
+        summary: [{ text: "Summary", evidence: ["body-2"] }],
+        reply: { text: "Received", evidence: ["body-2"] },
+      }),
+    ).runOnce();
+    const request = {
+      expectedRevision: store.get(owner, task.id).revision,
+      sectionId: "body-2",
+    };
+    const evidence = await readMailEvidence(
+      store,
+      owner,
+      f.adapter,
+      task.id,
+      request,
+    );
+    assert.equal(evidence.text, "Second passage");
+    assert.equal(evidence.incomplete, true);
+    await assert.rejects(
+      readMailEvidence(
+        store,
+        { ...owner, userId: "other" },
+        f.adapter,
+        task.id,
+        request,
+      ),
+    );
+    await assert.rejects(
+      readMailEvidence(store, owner, undefined, task.id, request),
+    );
+    f.content.text += " changed";
+    await assert.rejects(
+      readMailEvidence(store, owner, f.adapter, task.id, request),
+      /SOURCE_DENIED/,
+    );
+    f.content.text = f.content.text.slice(0, -8);
+    await assert.rejects(
+      readMailEvidence(
+        store,
+        owner,
+        {
+          validate: async (binding) => {
+            const source = await f.adapter.validate(binding);
+            store.deleteAll(owner);
+            return source;
+          },
+        },
+        task.id,
+        request,
+      ),
+      /NOT_FOUND/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("Mail metadata evidence never reads the message body", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(
+      store,
+      { ...input, kind: "summarize" },
+      "metadata",
+      "metadata",
+    );
+    await worker(store, f, async () =>
+      JSON.stringify({
+        summary: [{ text: "Review request", evidence: ["subject"] }],
+        reply: null,
+      }),
+    ).runOnce();
+    const request = {
+      expectedRevision: store.get(owner, task.id).revision,
+      sectionId: "subject",
+    };
+    const evidence = await readMailEvidence(
+      store,
+      owner,
+      f.adapter,
+      task.id,
+      request,
+    );
+    assert.equal(evidence.text, "Review request");
+    assert.equal(evidence.mode, "metadata");
+    const reads = f.calls.length;
+    await assert.rejects(
+      readMailEvidence(store, owner, f.adapter, task.id, {
+        ...request,
+        sectionId: "body-1",
+      }),
+      /SOURCE_DENIED/,
+    );
+    assert.equal(f.calls.length, reads);
+  } finally {
+    store.close();
+  }
+});
+
+test("Mail evidence rejects inconsistent stored identities and attachment-part history", async (t) => {
+  const f = await fixture(true, "Record α😀\n".repeat(700)),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(
+      store,
+      { ...input, kind: "summarize" },
+      "attachment-text",
+      "history",
+    );
+    await worker(store, f, async (_p, prompt) => {
+      const ids = prompt.startsWith("Reconcile")
+        ? JSON.parse(
+            prompt
+              .split("Ordered summaries:\n")[1]!
+              .split("\nUser request:")[0]!,
+          ).flatMap((g: any) => g.flatMap((c: any) => c.evidence))
+        : [
+            JSON.parse(
+              prompt.split("File data:\n")[1]!.split("\nUser request:")[0]!,
+            ).section.id,
+          ];
+      return JSON.stringify({
+        summary: [{ text: "Summary", evidence: [...new Set(ids)] }],
+        reply: null,
+      });
+    }).runOnce();
+    const saved = store.get(owner, task.id);
+    assert.equal(saved.status, "completed");
+    const request = {
+      expectedRevision: saved.revision,
+      sectionId: "attachment-offset-0",
+    };
+    const mutations: ((mail: any) => void)[] = [
+      (m) => {
+        m.version = "changed";
+      },
+      (m) => {
+        m.projectionHash = "changed";
+      },
+      (m) => {
+        m.attachment.id = "different";
+      },
+      (m) => {
+        m.summary[0].citations[0].messageId = "different";
+      },
+      (m) => {
+        m.partSummaries[1][0].citations[0].sectionId = "attachment-offset-0";
+      },
+      (m) => {
+        m.partSummaries[0][0].citations[0].sectionId = "attachment-offset-1";
+      },
+      (m) => {
+        m.coverage.parts++;
+      },
+      (m) => {
+        m.coverage.sourceBytes++;
+      },
+      (m) => {
+        delete m.partSummaries;
+      },
+    ];
+    const originalGet = store.get.bind(store);
+    for (const mutate of mutations) {
+      const mock = t.mock.method(store, "get", (o: Owner, id: string) => {
+        const value = originalGet(o, id);
+        if (id === task.id) mutate((value.result as any).mail);
+        return value;
+      });
+      try {
+        await assert.rejects(
+          readMailEvidence(store, owner, f.adapter, task.id, request),
+          /SOURCE_DENIED/,
+        );
+      } finally {
+        mock.mock.restore();
+      }
+    }
   } finally {
     store.close();
   }
