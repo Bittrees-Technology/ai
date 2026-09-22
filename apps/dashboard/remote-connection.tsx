@@ -158,6 +158,14 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
             <>
               <fieldset disabled={state.busy}>
                 <legend>Remote pause and cancel</legend>
+                <label htmlFor="remote-control-device">
+                  Match this device on ai.bittrees.org
+                </label>
+                <input
+                  id="remote-control-device"
+                  readOnly
+                  value={state.connection?.deviceId || ""}
+                />
                 <p>
                   Permission:{" "}
                   {state.connection?.controls?.replaceAll("_", " ") ||
