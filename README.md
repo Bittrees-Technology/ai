@@ -240,3 +240,6 @@ Connections now includes a Mail panel with source consent, expiry/disconnect sta
 
 
 `npx tsx scripts/mail-local-check.ts` probes the production Mail prompt/parser with four synthetic cases using an installed local Ollama model. It found and drove removal of example placeholders that the small model copied instead of summarizing. See [observed results and remaining quality issues](docs/mail-local-model-check.md). The final probe produced valid structures/references, but unsupported reply commitments remain: this is not a completed quality or injection-resistance gate.
+
+
+Use `MAIL_PROBE_SET=extended npx tsx scripts/mail-local-check.ts` to inspect additional invoice, meeting-decline and authorized-commitment cases with explicit manual criteria. These expose source/user attribution errors even when output structure and citation references pass; the script reports that quality acceptance is not evaluated automatically.
