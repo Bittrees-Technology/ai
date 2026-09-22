@@ -1,3 +1,4 @@
+import { checkRemoteTemplates } from "./remote-template-integration.js";
 import { checkRemoteQuotas } from "./remote-quota-integration.js";
 import { checkRemoteMaintenance } from "./remote-maintenance-integration.js";
 import { checkRemoteControlScope } from "./remote-control-scope-integration.js";
@@ -333,10 +334,20 @@ try {
       "utf8",
     ),
   );
+  await pool.query(
+    await readFile(
+      new URL(
+        "../modules/remote/migrations/007-templates.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await checkRemoteMaintenance(pool);
   await checkRemoteQuotas(pool);
+  await checkRemoteTemplates(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue and bounded expiry maintenance and concurrent stored-row quota checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue and bounded expiry maintenance and concurrent stored-row quota and separate scoped template queue checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();
