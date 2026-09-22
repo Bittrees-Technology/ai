@@ -17,6 +17,8 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         let menu = NSMenu()
         let root = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "About Bittrees AI", action: #selector(showBuildInfo), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Copy pairing code", action: #selector(copyPairingCode), keyEquivalent: "p")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Bittrees AI", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -42,6 +44,24 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         startEngine()
+    }
+    @objc func showBuildInfo() {
+        let alert = NSAlert()
+        alert.messageText = "Bittrees AI — Development preview"
+        var detail = "Build details are unavailable."
+        if let url = Bundle.main.resourceURL?.appendingPathComponent("build-info.json"),
+           let data = try? Data(contentsOf: url),
+           let info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let revision = info["sourceCommit"] as? String,
+           revision.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil,
+           let version = info["version"] as? String,
+           let dirty = info["sourceDirty"] as? Bool {
+            detail = "Version \(version) · Source \(revision.prefix(12))"
+            if dirty { detail += "\nIncludes local source changes." }
+        }
+        alert.informativeText = detail + "\n\nLocal development build. Public signing and notarization are not complete."
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
     }
     func startEngine() {
         guard let resources = Bundle.main.resourceURL else { fail(); return }
