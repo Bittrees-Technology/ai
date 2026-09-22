@@ -271,7 +271,7 @@ export function localApi({
         .strictObject({
           conversationId: z.uuid(),
           kind: z.enum(["summarize", "draft"]),
-          content: z.enum(["metadata", "plain"]),
+          content: z.enum(["metadata", "plain", "attachment-text"]),
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
         })

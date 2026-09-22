@@ -351,6 +351,63 @@ try {
   assert.ok(!JSON.stringify(extracted).includes("PRIVATE_OTHER_FILE"));
   assert.ok(!JSON.stringify(extracted).includes("PRIVATE_BODY"));
   await assert.rejects(broker.read("plain"), /SOURCE_DENIED/);
+  const attachmentOwner = { userId: "attachment-user", tenantId: "personal" };
+  const attachmentStore = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const tasks = new MailTasks(broker, attachmentOwner, "device");
+    const profile = {
+      id: "attachment",
+      runtime: "ollama" as const,
+      model: "synthetic",
+      contextTokens: 4096,
+      maxOutputTokens: 1000,
+      temperature: 0,
+    };
+    const task = await tasks.create(
+      attachmentStore,
+      {
+        conversationId: "file",
+        kind: "summarize",
+        prompt: "Summarize the file",
+        modelProfileId: profile.id,
+        dependencies: [],
+        priority: "normal",
+        tags: [],
+      },
+      "attachment-text",
+      "selected-file",
+    );
+    await new LocalWorker(
+      attachmentStore,
+      attachmentOwner,
+      {
+        pin: async () => ({ profile, digest: "c".repeat(64) }),
+        generate: async (_p, prompt) => {
+          assert.ok(prompt.includes("SELECTED_FILE"));
+          assert.ok(!prompt.includes("PRIVATE_BODY"));
+          assert.ok(!prompt.includes("PRIVATE_OTHER_FILE"));
+          return JSON.stringify({
+            summary: [
+              { text: "Selected file summary", evidence: ["attachment-1"] },
+            ],
+            reply: null,
+          });
+        },
+      },
+      () => profile,
+      "worker",
+      undefined,
+      new SourceTasks(undefined, undefined, tasks),
+    ).runOnce();
+    const result = attachmentStore.get(attachmentOwner, task.id);
+    assert.equal(result.status, "completed");
+    assert.equal(
+      (result.result as any).mail.attachment.id,
+      index.message.attachments[0].id,
+    );
+  } finally {
+    attachmentStore.close();
+  }
   await writeFile(
     join(maildir, "new", "selected"),
     "Subject: Changed\n\nDifferent message",
