@@ -1,0 +1,263 @@
+import express, { type Request, type Response } from "express";
+import type { Pool } from "pg";
+import { z } from "zod";
+import { RemoteSessionStore } from "./sessions.js";
+import { RemoteDeviceStore } from "./devices.js";
+import { RemoteStatusError, RemoteStatusStore } from "./status-store.js";
+const loginCookie = "__Host-bittrees-login",
+  sessionCookie = "__Host-bittrees-session";
+const opaque = /^[A-Za-z0-9_-]{43}$/;
+function cookie(req: Request, name: string) {
+  const values = (req.headers.cookie ?? "")
+    .split(";")
+    .map((x) => x.trim())
+    .filter((x) => x.startsWith(name + "="));
+  if (values.length !== 1) throw new RemoteStatusError("DENIED");
+  return values[0]!.slice(name.length + 1);
+}
+function token(req: Request) {
+  const header = req.headers.authorization ?? "";
+  if (!/^Bearer [A-Za-z0-9_-]{43}$/.test(header))
+    throw new RemoteStatusError("DENIED");
+  return header.slice(7);
+}
+function parse<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new RemoteStatusError("INVALID_INPUT");
+  return result.data;
+}
+/** No listener or migrations. Direct TLS only; deliberately does not trust proxy headers. */
+export function createRemoteApp(
+  pool: Pool,
+  config: {
+    origin: string;
+    chainId: number;
+    sessionMs: number;
+    deviceMs: number;
+    retentionMs: number;
+    requestsPerMinute?: number;
+    now?: () => number;
+  },
+) {
+  const now = config.now ?? Date.now;
+  const sessions = new RemoteSessionStore(
+    pool,
+    config.origin,
+    config.chainId,
+    config.sessionMs,
+    now,
+  );
+  const devices = new RemoteDeviceStore(pool, config.deviceMs, now);
+  const status = new RemoteStatusStore(pool, config.retentionMs, now);
+  const host = new URL(config.origin).host;
+  const budget = config.requestsPerMinute ?? 120;
+  if (!Number.isInteger(budget) || budget < 1 || budget > 1000)
+    throw new RemoteStatusError("INVALID_INPUT");
+  const counts = new Map<string, { count: number; until: number }>();
+  const app = express();
+  app.disable("x-powered-by");
+  app.set("trust proxy", false);
+  app.use((req, res, next) => {
+    res.set({
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Strict-Transport-Security": "max-age=31536000",
+    });
+    if (!req.secure || req.headers.host !== host)
+      return res.status(403).json({ error: "DENIED" });
+    const time = now();
+    for (const [key, value] of counts)
+      if (value.until <= time) counts.delete(key);
+    const peer = req.socket.remoteAddress ?? "unknown";
+    let entry = counts.get(peer);
+    if (!entry) {
+      if (counts.size >= 4096)
+        return res.status(429).json({ error: "RATE_LIMITED" });
+      entry = { count: 0, until: time + 60000 };
+      counts.set(peer, entry);
+    }
+    if (++entry.count > budget) {
+      res.set(
+        "Retry-After",
+        String(Math.max(1, Math.ceil((entry.until - time) / 1000))),
+      );
+      return res.status(429).json({ error: "RATE_LIMITED" });
+    }
+    if (req.method !== "POST")
+      return res.status(405).json({ error: "METHOD_NOT_ALLOWED" });
+    if (!req.is("application/json"))
+      return res.status(415).json({ error: "JSON_REQUIRED" });
+    if (req.path.startsWith("/browser/")) {
+      if (
+        req.headers.origin !== config.origin ||
+        req.headers["x-bittrees-request"] !== "1" ||
+        req.headers.authorization ||
+        (req.headers["sec-fetch-site"] &&
+          req.headers["sec-fetch-site"] !== "same-origin")
+      )
+        return res.status(403).json({ error: "DENIED" });
+    } else if (req.path.startsWith("/device/")) {
+      if (
+        req.headers.origin ||
+        req.headers.cookie ||
+        req.headers["sec-fetch-site"]
+      )
+        return res.status(403).json({ error: "DENIED" });
+    } else return res.status(404).json({ error: "NOT_FOUND" });
+    next();
+  });
+  app.use(express.json({ limit: "32kb", strict: true, inflate: false }));
+  const cookieOptions = {
+    secure: true,
+    httpOnly: true,
+    sameSite: "strict" as const,
+    path: "/",
+  };
+  const owner = (req: Request) =>
+    sessions.authenticate(cookie(req, sessionCookie));
+  app.post("/browser/login/challenge", async (req, res) => {
+    const input = parse(
+      z.strictObject({ address: z.string().max(42) }),
+      req.body,
+    );
+    const challenge = await sessions.begin(input.address);
+    res.cookie(loginCookie, challenge.id + "." + challenge.browserToken, {
+      ...cookieOptions,
+      maxAge: 300000,
+    });
+    res.json({
+      id: challenge.id,
+      message: challenge.message,
+      expiresAt: challenge.expiresAt,
+    });
+  });
+  app.post("/browser/login/verify", async (req, res) => {
+    const input = parse(
+      z.strictObject({
+        message: z.string().max(2048),
+        signature: z.string().max(132),
+      }),
+      req.body,
+    );
+    const [id, browserToken, extra] = cookie(req, loginCookie).split(".");
+    if (extra || !browserToken || !opaque.test(browserToken))
+      throw new RemoteStatusError("DENIED");
+    const verified = await sessions.verify({ id, browserToken, ...input });
+    res.clearCookie(loginCookie, cookieOptions);
+    res.cookie(sessionCookie, verified.token, {
+      ...cookieOptions,
+      maxAge: Math.max(0, verified.expiresAt - now()),
+    });
+    res.json({ ownerId: verified.ownerId, expiresAt: verified.expiresAt });
+  });
+  app.post("/browser/session", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    res.json(await owner(req));
+  });
+  app.post("/browser/logout", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    await sessions.logout(cookie(req, sessionCookie));
+    res.clearCookie(sessionCookie, cookieOptions);
+    res.json({ loggedOut: true });
+  });
+  app.post("/browser/pairings/approve", async (req, res) => {
+    const input = parse(
+      z.strictObject({
+        id: z.uuid(),
+        approvalCode: z.string().max(43),
+        confirmed: z.literal(true),
+      }),
+      req.body,
+    );
+    const auth = await owner(req);
+    await devices.approve(auth.ownerId, input.id, input.approvalCode);
+    res.json({ approved: true, ownerId: auth.ownerId });
+  });
+  app.post("/browser/pairings/cancel", async (req, res) => {
+    const input = parse(z.strictObject({ id: z.uuid() }), req.body);
+    await devices.cancel((await owner(req)).ownerId, input.id);
+    res.json({ cancelled: true });
+  });
+  app.post("/browser/status", async (req, res) => {
+    const input = parse(
+      z.strictObject({
+        deviceId: z.uuid(),
+        after: z.uuid().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      }),
+      req.body,
+    );
+    const { deviceId, ...options } = input;
+    res.json(
+      await status.listPage((await owner(req)).ownerId, deviceId, options),
+    );
+  });
+  app.post("/browser/devices/revoke", async (req, res) => {
+    const input = parse(z.strictObject({ deviceId: z.uuid() }), req.body);
+    await status.revoke((await owner(req)).ownerId, input.deviceId);
+    res.json({ revoked: true });
+  });
+  app.post("/device/pairings", async (req, res) => {
+    const input = parse(
+      z.strictObject({ challenge: z.string().max(43) }),
+      req.body,
+    );
+    res.json(await devices.begin(input.challenge));
+  });
+  app.post("/device/redeem", async (req, res) => {
+    const input = parse(
+      z.strictObject({
+        id: z.uuid(),
+        verifier: z.string().max(128),
+        expectedOwnerId: z.uuid(),
+      }),
+      req.body,
+    );
+    res.json(
+      await devices.redeem(input.id, input.verifier, input.expectedOwnerId),
+    );
+  });
+  app.post("/device/status", async (req, res) => {
+    const auth = await devices.authenticate(token(req));
+    res.json(await status.publish(auth, req.body));
+  });
+  app.post("/device/rotate", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    res.json(await devices.rotate(token(req)));
+  });
+  app.use((_req, res) => {
+    res.status(404).json({ error: "NOT_FOUND" });
+  });
+  app.use((error: unknown, _req: Request, res: Response, _next: unknown) => {
+    if (error instanceof RemoteStatusError) {
+      const code = error.code;
+      res
+        .status(
+          code === "DENIED"
+            ? 403
+            : code === "CONFLICT"
+              ? 409
+              : code === "INVALID_INPUT"
+                ? 400
+                : 503,
+        )
+        .json({ error: code });
+    } else if (
+      typeof error === "object" &&
+      error &&
+      "type" in error &&
+      [
+        "entity.parse.failed",
+        "entity.too.large",
+        "encoding.unsupported",
+      ].includes(String(error.type))
+    ) {
+      res.status(400).json({ error: "INVALID_INPUT" });
+    } else res.status(503).json({ error: "UNAVAILABLE" });
+  });
+  return app;
+}
