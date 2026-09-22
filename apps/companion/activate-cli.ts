@@ -2,9 +2,11 @@ import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { macKeychainEntry } from "../../modules/storage/keychain.js";
-import { activateContentBackup } from "./active-content.js";
+import { activateContentBackup, rollbackContent } from "./active-content.js";
 import { RecoveryError } from "./recovery.js";
 export function activationArguments(args: string[]) {
+  if (args.length === 2 && args[0] === "--previous" && args[1] === "--confirm")
+    return { previous: true as const };
   if (
     args.length !== 3 ||
     args[0] !== "--backup" ||
@@ -13,12 +15,13 @@ export function activationArguments(args: string[]) {
     args[2] !== "--confirm"
   )
     throw new RecoveryError("INVALID_ARGUMENTS");
-  return resolve(args[1]);
+  return { backup: resolve(args[1]) };
 }
 const help =
-  "Usage: activate --backup <coordinated .aib file> --confirm\nQuit Bittrees AI first. Requires the original personal Keychain key. Activates a freshly restored copy for this source build; older installed apps do not read the new selection. Keep a current backup before switching. Previous data folders are retained, but automatic rollback is not yet available.";
+  "Usage: activate --backup <coordinated .aib file> --confirm | activate --previous --confirm\nQuit Bittrees AI first. Requires the original personal Keychain key. Activates a freshly restored copy for this source build; older installed apps do not read the new selection. Keep a current backup before switching. --previous restores a fresh copy of the immediately previous content and retains the current data; it does not undo the app version or delete any copy.";
 const messages: Record<string, string> = {
   INVALID_ARGUMENTS: help,
+  NO_PREVIOUS_CONTENT: "There is no previous content selection to restore.",
   COMPANION_RUNNING_OR_PORT_UNAVAILABLE:
     "Quit Bittrees AI before activation. Its local port must be available.",
   INVALID_ACTIVE_CONTENT:
@@ -37,12 +40,18 @@ if (
     console.log(help);
   else
     try {
-      const backup = activationArguments(process.argv.slice(2));
-      const result = await activateContentBackup(
-        backup,
-        join(homedir(), "Library", "Application Support", "Bittrees AI"),
-        macKeychainEntry("personal"),
+      const input = activationArguments(process.argv.slice(2));
+      const base = join(
+        homedir(),
+        "Library",
+        "Application Support",
+        "Bittrees AI",
       );
+      const entry = macKeychainEntry("personal");
+      const result =
+        "previous" in input
+          ? await rollbackContent(base, entry)
+          : await activateContentBackup(input.backup, base, entry);
       console.log(
         JSON.stringify({
           ...result,

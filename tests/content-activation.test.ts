@@ -179,7 +179,9 @@ test("activation requires confirmation and an available companion port before an
   ])
     assert.throws(() => activationArguments(args), /INVALID_ARGUMENTS/);
   assert.ok(
-    activationArguments(["--backup", "a.aib", "--confirm"]).endsWith("/a.aib"),
+    activationArguments(["--backup", "a.aib", "--confirm"]).backup?.endsWith(
+      "/a.aib",
+    ),
   );
   const server = createServer();
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
