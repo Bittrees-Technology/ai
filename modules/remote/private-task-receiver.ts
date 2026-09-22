@@ -18,14 +18,8 @@ import {
   type PrivateTaskReceipt,
 } from "./private-task-receipts.js";
 
-// A deliberately narrow first task type. Models, memories, source grants, existing
-// conversations, approvals, tools and priorities cannot be selected by the sender.
-export const privateTaskPayloadSchema = z.strictObject({
-  version: z.literal(1),
-  type: z.literal("task.submit"),
-  kind: z.enum(["query", "summarize", "draft"]),
-  prompt: z.string().min(1).max(32000),
-});
+import { privateTaskPayloadSchema } from "./private-task-contracts.js";
+export { privateTaskPayloadSchema } from "./private-task-contracts.js";
 const permissionSchema = z.strictObject({
   binding: privateBindingSchema,
   peerId: z.uuid(),

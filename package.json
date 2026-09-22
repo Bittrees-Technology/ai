@@ -14,7 +14,8 @@
     "format": "prettier --write modules apps scripts tests",
     "start": "node dist/apps/companion/start.js",
     "recover": "node dist/apps/companion/recover-cli.js",
-    "activate": "node dist/apps/companion/activate-cli.js"
+    "activate": "node dist/apps/companion/activate-cli.js",
+    "test:browser-private": "playwright test --config scripts/private-browser.config.ts"
   },
   "dependencies": {
     "@hpke/core": "1.9.0",
@@ -29,6 +30,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/better-sqlite3": "9.6.0",
     "@types/express": "5.0.6",
     "@types/node": "26.6.2",
