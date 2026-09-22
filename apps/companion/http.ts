@@ -1,3 +1,4 @@
+import type { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
 import { shareTemplateSchema } from "../../modules/remote/template-client-state.js";
 import type { RemoteReceiver } from "../../modules/remote/receiver.js";
 import {
@@ -27,6 +28,7 @@ import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   remote?: RemoteClient;
   receiver?: RemoteReceiver;
+  templateReceiver?: RemoteTemplateReceiver;
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
   roles?: RolesConnector;
@@ -49,6 +51,7 @@ export function localApi({
   store,
   remote,
   receiver,
+  templateReceiver,
   owner,
   token,
   port,
@@ -107,14 +110,18 @@ export function localApi({
       connection: remote ? await remote.status() : null,
       automaticSharing: false,
       ...(receiver ? { receiver: receiver.status() } : {}),
+      ...(templateReceiver
+        ? { templateReceiver: templateReceiver.status() }
+        : {}),
     }),
   );
   const receivingPaused = async <T>(action: () => Promise<T>) => {
-    await receiver?.pause();
+    await Promise.all([receiver?.pause(), templateReceiver?.pause()]);
     try {
       return await action();
     } finally {
       receiver?.start();
+      templateReceiver?.start();
     }
   };
   if (remote) {
@@ -123,7 +130,9 @@ export function localApi({
         const input = z
           .strictObject({ enabled: z.boolean(), confirmed: z.literal(true) })
           .parse(req.body);
-        res.json(await receiver.configure(input.enabled));
+        res.json(
+          await receivingPaused(() => receiver.configure(input.enabled)),
+        );
       });
     const confirmed = z.strictObject({ confirmed: z.literal(true) });
     app.post("/v1/remote/begin", async (req, res) => {
@@ -182,6 +191,21 @@ export function localApi({
       confirmed.parse(req.body);
       res.json(await receivingPaused(() => remote.pollControls()));
     });
+    if (templateReceiver)
+      app.post("/v1/remote/templates/receiving", async (req, res) => {
+        const input = z
+          .strictObject({
+            permissionId: z.uuid(),
+            enabled: z.boolean(),
+            confirmed: z.literal(true),
+          })
+          .parse(req.body);
+        res.json(
+          await receivingPaused(() =>
+            templateReceiver.configure(input.permissionId, input.enabled),
+          ),
+        );
+      });
     app.post("/v1/remote/templates/share", async (req, res) => {
       const input = shareTemplateSchema.parse(req.body);
       res.json(await receivingPaused(() => remote.shareTemplate(input)));

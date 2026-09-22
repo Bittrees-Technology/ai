@@ -1,3 +1,4 @@
+import { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
 import { RemoteReceiver } from "../../modules/remote/receiver.js";
 import {
   RemoteClient,
@@ -151,6 +152,9 @@ const remote =
       )
     : undefined;
 const receiver = remote ? new RemoteReceiver(remote) : undefined;
+const templateReceiver = remote
+  ? new RemoteTemplateReceiver(remote)
+  : undefined;
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
 const codePath = join(directory, "pairing-code.txt");
@@ -161,6 +165,7 @@ server.on(
     imports,
     remote,
     receiver,
+    templateReceiver,
     store,
     memory,
     owner,
@@ -199,7 +204,7 @@ async function stop() {
   worker.stop();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
-  await receiver?.shutdown();
+  await Promise.all([receiver?.shutdown(), templateReceiver?.shutdown()]);
   await imports.shutdown();
   await running?.catch(() => {});
   await closed;
@@ -230,6 +235,7 @@ const requestShutdown = bindProcessLifetime(stop);
   if (!stopping) {
     started = true;
     receiver?.start();
+    templateReceiver?.start();
     console.log(
       `Bittrees AI: http://127.0.0.1:${port}\nPairing code (valid for 10 minutes): ${codePath}\nStop with Ctrl+C. Restart to pair another browser session.`,
     );

@@ -1,6 +1,6 @@
-import { RemoteClientError, type RemoteClient } from "./client.js";
+import { RemoteClientError } from "./client.js";
 type Timer = { cancel(): void };
-type Schedule = (fn: () => void, delay: number) => Timer;
+export type Schedule = (fn: () => void, delay: number) => Timer;
 const schedule: Schedule = (fn, delay) => {
   const timer = setTimeout(fn, delay);
   timer.unref();
@@ -22,10 +22,15 @@ export class RemoteReceiver {
     received: number;
   } = { state: "off", lastCheckedAt: null, nextCheckAt: null, received: 0 };
   constructor(
-    private client: Pick<
-      RemoteClient,
-      "status" | "pollControls" | "setReceiving" | "running"
-    >,
+    private client: {
+      readonly running: boolean;
+      status(): Promise<{
+        backgroundReceiving: boolean;
+        controls: string;
+      } | null>;
+      pollControls(signal?: AbortSignal): Promise<{ receipts: unknown[] }>;
+      setReceiving?(enabled: boolean): Promise<void>;
+    },
     private schedule: Schedule = schedule,
     private now = Date.now,
   ) {}
@@ -107,13 +112,22 @@ export class RemoteReceiver {
     this.view.nextCheckAt = null;
   }
   async configure(enabled: boolean) {
+    if (!this.client.setReceiving)
+      throw new RemoteClientError("CONTROL_CONFIRMATION_REQUIRED");
+    return this.configureWith(
+      () => this.client.setReceiving!(enabled),
+      enabled,
+    );
+  }
+  /** Drain delivery before persisting a separately reviewed preference. */
+  async configureWith(change: () => Promise<void>, restart = true) {
     if (this.changing || this.stopped) throw new RemoteClientError("BUSY");
     this.changing = true;
     try {
       await this.pause();
-      await this.client.setReceiving(enabled);
+      await change();
       this.failures = 0;
-      if (enabled) this.start();
+      if (restart) this.start();
       return this.status();
     } finally {
       this.changing = false;

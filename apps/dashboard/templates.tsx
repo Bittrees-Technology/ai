@@ -284,6 +284,27 @@ export function Templates({
                 {new Date(entry.expiresAt).toLocaleString()}; maximum{" "}
                 {entry.maxRuns} requests.
               </p>
+              <p>
+                Background receiving:{" "}
+                {entry.backgroundReceiving ? "enabled" : "off"}.
+              </p>
+              {(entry.state === "active" || entry.backgroundReceiving) && (
+                <button
+                  disabled={controller.busy}
+                  onClick={() =>
+                    controller.reviewRemoteAction(
+                      entry.permissionId,
+                      entry.backgroundReceiving
+                        ? "stop-receiving"
+                        : "start-receiving",
+                    )
+                  }
+                >
+                  {entry.backgroundReceiving
+                    ? "Review stopping background receiving"
+                    : "Review background receiving"}
+                </button>
+              )}
               {entry.pendingDelivery && (
                 <p>
                   A saved command needs acknowledgement recovery. Check requests
@@ -328,7 +349,11 @@ export function Templates({
                 ? "Receive approved template requests"
                 : controller.remoteAction.action === "revoke"
                   ? "Revoke template permission"
-                  : "Retry the saved publication"}
+                  : controller.remoteAction.action === "start-receiving"
+                    ? "Enable background template receiving"
+                    : controller.remoteAction.action === "stop-receiving"
+                      ? "Stop background template receiving"
+                      : "Retry the saved publication"}
             </legend>
             <p>
               Permission code:{" "}
@@ -337,7 +362,11 @@ export function Templates({
                 ? "This cancels unfinished dependent tasks locally before contacting the service. If the service cannot confirm, refresh the connection and retry withdrawal."
                 : controller.remoteAction.action === "check"
                   ? "This pass can create tasks from the approved saved template. It does not enable recurring checks."
-                  : "Use the original permission and deadline. If local consent is no longer valid, revoke this permission and review a new one."}
+                  : controller.remoteAction.action === "start-receiving"
+                    ? "Allow recurring checks that can create tasks from this exact approved template while the companion runs. This preference resumes on restart, within the existing permission expiry and run limit. It does not extend permission."
+                    : controller.remoteAction.action === "stop-receiving"
+                      ? "Stop and drain delivery for this permission before saving the preference. Existing tasks continue. Revoke permission to cancel unfinished dependent work."
+                      : "Use the original permission and deadline. If local consent is no longer valid, revoke this permission and review a new one."}
             </p>
             <button
               onClick={() =>
@@ -355,6 +384,21 @@ export function Templates({
               Dismiss
             </button>
           </fieldset>
+        )}
+        {controller.remote?.templateReceiver && (
+          <p role="status">
+            Template receiver: {controller.remote.templateReceiver.state}.
+            {controller.remote.templateReceiver.lastCheckedAt
+              ? ` Last checked ${new Date(controller.remote.templateReceiver.lastCheckedAt).toLocaleString()}.`
+              : ""}
+            {controller.remote.templateReceiver.nextCheckAt
+              ? ` Next check ${new Date(controller.remote.templateReceiver.nextCheckAt).toLocaleTimeString()}.`
+              : ""}
+            {controller.remote.templateReceiver.state === "attention"
+              ? " Review the connection and permission before enabling receiving again."
+              : ""}{" "}
+            Use Check remote connection to refresh this status.
+          </p>
         )}
         <p role="status">{controller.notice}</p>
       </section>

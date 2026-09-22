@@ -15,6 +15,7 @@ export const templateClientStateSchema = z.strictObject({
   credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   mode: z.enum(["publication_pending", "active", "revoke_pending"]),
   pendingCommand: remoteTemplateSchema.optional(),
+  receiving: z.boolean().optional(),
 });
 export const templateMetadataSchema = z.strictObject({
   permissionId: z.uuid(),

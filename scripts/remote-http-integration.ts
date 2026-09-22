@@ -1,3 +1,4 @@
+import { RemoteTemplateReceiver } from "../modules/remote/template-receiver.js";
 import { checkTemplateHttp } from "./remote-template-http-integration.js";
 import { RemoteReceiver } from "../modules/remote/receiver.js";
 import { fileURLToPath } from "node:url";
@@ -1026,10 +1027,52 @@ export async function checkRemoteHttp(pool: Pool) {
         executor,
         templateExecutor,
       );
-      const templateDelivery = await resumedClient.pollTemplate(
-        templateState.permissionId,
+      let templateTick: (() => void) | undefined;
+      let deliveredTemplate: string | undefined;
+      let finishTemplate!: () => void;
+      const templateDone = new Promise<void>((resolve) => {
+        finishTemplate = resolve;
+      });
+      const templateReceiver = new RemoteTemplateReceiver(
+        {
+          get running() {
+            return resumedClient.running;
+          },
+          status: () => resumedClient.status(),
+          setTemplateReceiving: (id, enabled) =>
+            resumedClient.setTemplateReceiving(id, enabled),
+          pollTemplate: async (id, signal) => {
+            try {
+              const result = await resumedClient.pollTemplate(id, signal);
+              deliveredTemplate = result.receipts[0]?.taskId;
+              return result;
+            } finally {
+              finishTemplate();
+            }
+          },
+        },
+        (fn) => {
+          templateTick = fn;
+          return {
+            cancel() {
+              templateTick = undefined;
+            },
+          };
+        },
       );
-      const templateTask = templateDelivery.receipts[0]!.taskId!;
+      try {
+        await templateReceiver.configure(templateState.permissionId, true);
+        assert.equal(
+          (await resumedClient.status())!.templates[0]!.backgroundReceiving,
+          true,
+        );
+        templateTick!();
+        await templateDone;
+      } finally {
+        await templateReceiver.shutdown();
+      }
+      const templateTask = deliveredTemplate!;
+      assert.ok(templateTask);
       assert.equal(
         local.get(clientOwner, templateTask).input.prompt,
         "PRIVATE_TEMPLATE_PROMPT",
