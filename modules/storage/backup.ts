@@ -5,9 +5,12 @@ import {
   writeFile,
   rm,
   stat,
+  lstat,
+  link,
+  open,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Vault } from "./vault.js";
 import { Store } from "./store.js";
 // Pilot bound keeps whole-file authenticated encryption out of unbounded memory use.
@@ -52,20 +55,51 @@ export async function restoreBackup(
     bytes.subarray(0, 16).toString() !== "SQLite format 3\0"
   )
     throw new Error("Invalid backup");
-  // Never replace an existing database. Restoring app grants is intentionally unsupported.
-  await writeFile(destination, bytes, { mode: 0o600, flag: "wx" });
-  // Restored receipts are history, but restored consent must not enable delivery.
+  // Restore offline into a new path. SQLite sidecars must not belong to an
+  // earlier database at that path. lstat also rejects dangling symlinks.
+  for (const path of [
+    destination,
+    `${destination}-wal`,
+    `${destination}-shm`,
+    `${destination}-journal`,
+  ]) {
+    try {
+      await lstat(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    throw new Error("EEXIST: restore destination or SQLite sidecar exists");
+  }
+  // A sibling staging directory keeps publication on the same filesystem.
+  // The destination never contains restored consent, even if preparation stops.
+  const dir = await mkdtemp(
+    join(dirname(destination), ".bittrees-ai-restore-"),
+  );
   let restored: Store | undefined;
   try {
-    restored = new Store(destination, vault);
+    await chmod(dir, 0o700);
+    const staged = join(dir, "snapshot.db");
+    await writeFile(staged, bytes, { mode: 0o600, flag: "wx" });
+    restored = new Store(staged, vault);
     restored.db.prepare("DELETE FROM remote_control_bindings").run();
     restored.db.pragma("wal_checkpoint(TRUNCATE)");
-  } catch (error) {
-    restored?.close();
+    restored.close();
     restored = undefined;
-    await rm(destination, { force: true });
-    throw error;
+    const file = await open(staged, "r");
+    try {
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    // Atomic no-replace publication: unlike rename, link cannot overwrite a
+    // destination created while preparation was underway.
+    await link(staged, destination);
   } finally {
-    restored?.close();
+    try {
+      restored?.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }
 }

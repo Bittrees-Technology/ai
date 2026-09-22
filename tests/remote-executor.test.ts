@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../modules/storage/store.js";
@@ -332,6 +332,29 @@ test("backup restores receipt history but requires fresh local control consent",
     } finally {
       restored.close();
     }
+  } finally {
+    f.close();
+  }
+});
+
+test("failed consent removal never publishes a restored database", async () => {
+  const f = fixture();
+  try {
+    f.allow();
+    f.store.db
+      .exec(`CREATE TRIGGER fail_restore_consent BEFORE DELETE ON remote_control_bindings
+      BEGIN SELECT RAISE(ABORT, 'injected consent deletion failure'); END`);
+    const backup = join(f.dir, "backup.enc");
+    const destination = join(f.dir, "restore.db");
+    await encryptedBackup(f.store, f.vault, backup);
+    const before = readdirSync(f.dir).sort();
+    await assert.rejects(
+      restoreBackup(backup, f.vault, destination),
+      /injected consent deletion failure/,
+    );
+    assert.equal(existsSync(destination), false);
+    assert.deepEqual(readdirSync(f.dir).sort(), before);
+    assert.equal(f.store.remoteControlsAllowed(owner, f.identity), true);
   } finally {
     f.close();
   }
