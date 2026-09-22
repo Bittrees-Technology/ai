@@ -939,7 +939,12 @@ test("Browser receipt acceptance rejects forged, mismatched, impossible and conf
         ...receipt,
         acceptedAt: receipt.header.issuedAt - 30001,
       }),
-      { ...response, ciphertext: response.ciphertext.slice(0, -2) + "AA" },
+      {
+        ...response,
+        ciphertext:
+          (response.ciphertext[0] === "A" ? "B" : "A") +
+          response.ciphertext.slice(1),
+      },
     ];
     for (const wire of invalid)
       await expect(
