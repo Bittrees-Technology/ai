@@ -156,6 +156,7 @@ export function MailConnection({
                     e.preventDefault();
                     void act(async () => {
                       const fingerprint = JSON.stringify({
+                        grantId: status.connection.grantId,
                         message: selection.message.id,
                         version: selection.message.sourceVersion,
                         mailbox: selection.mailbox,
