@@ -1,3 +1,4 @@
+import { shareTemplateSchema } from "../../modules/remote/template-client-state.js";
 import type { RemoteReceiver } from "../../modules/remote/receiver.js";
 import {
   RemoteClient,
@@ -181,6 +182,25 @@ export function localApi({
       confirmed.parse(req.body);
       res.json(await receivingPaused(() => remote.pollControls()));
     });
+    app.post("/v1/remote/templates/share", async (req, res) => {
+      const input = shareTemplateSchema.parse(req.body);
+      res.json(await receivingPaused(() => remote.shareTemplate(input)));
+    });
+    for (const action of ["retry", "revoke", "check"] as const)
+      app.post(`/v1/remote/templates/${action}`, async (req, res) => {
+        const input = z
+          .strictObject({ permissionId: z.uuid(), confirmed: z.literal(true) })
+          .parse(req.body);
+        res.json(
+          await receivingPaused<unknown>(() =>
+            action === "retry"
+              ? remote.retryTemplatePublication(input.permissionId)
+              : action === "revoke"
+                ? remote.revokeTemplate(input.permissionId)
+                : remote.pollTemplate(input.permissionId),
+          ),
+        );
+      });
     app.post("/v1/remote/rotate", async (req, res) => {
       confirmed.parse(req.body);
       res.json(await receivingPaused(() => remote.rotate()));

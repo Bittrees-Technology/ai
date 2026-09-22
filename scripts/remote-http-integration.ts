@@ -839,12 +839,24 @@ export async function checkRemoteHttp(pool: Pool) {
         local.executeRemoteControl(clientOwner, identity, command),
       interrupt: (_taskId: string) => {},
     };
+    const templateExecutor = {
+      approve: (raw: unknown) =>
+        local.remoteTemplates.approve(clientOwner, raw),
+      allowed: (raw: unknown) =>
+        local.remoteTemplates.allowed(clientOwner, raw),
+      revoke: (deviceId: string, templateId?: string) => {
+        local.remoteTemplates.revoke(clientOwner, deviceId, templateId);
+      },
+      execute: (identity: unknown, command: unknown) =>
+        local.remoteTemplates.execute(clientOwner, identity, command),
+    };
     const client = new RemoteClient(
       "synthetic-local-owner",
       secret,
       transport,
       Date.now,
       executor,
+      templateExecutor,
     );
     const clientPair = await client.begin();
     assert.equal(
@@ -962,7 +974,82 @@ export async function checkRemoteHttp(pool: Pool) {
           .body.state,
         "acknowledged",
       );
+      local.addProfile(clientOwner, {
+        id: "template-model",
+        runtime: "ollama",
+        model: "local",
+        contextTokens: 4096,
+        maxOutputTokens: 1024,
+        temperature: 0.2,
+      });
+      const template = local.saveTemplate(clientOwner, {
+        id: randomUUID(),
+        expectedRevision: 0,
+        confirmed: true,
+        definition: {
+          name: "PRIVATE_TEMPLATE",
+          prompt: "PRIVATE_TEMPLATE_PROMPT",
+          kind: "query",
+          modelProfileId: "template-model",
+        },
+      });
+      await client.shareTemplate({
+        templateId: template.id,
+        expectedRevision: 1,
+        maxRuns: 2,
+        expiresAt: Date.now() + 600000,
+        confirmed: true,
+      });
+      const templateState = (await client.status())!.templates[0]!;
+      const templateIntent = {
+        permissionId: templateState.permissionId,
+        confirmed: true,
+        command: {
+          id: randomUUID(),
+          deviceId: (await client.status())!.deviceId,
+          templateId: template.id,
+          templateRevision: 1,
+          issuedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      };
+      assert.equal(
+        (await call("/browser/templates/run", templateIntent, otherOwner))
+          .status,
+        200,
+      );
+      const resumedClient = new RemoteClient(
+        "synthetic-local-owner",
+        secret,
+        transport,
+        Date.now,
+        executor,
+        templateExecutor,
+      );
+      const templateDelivery = await resumedClient.pollTemplate(
+        templateState.permissionId,
+      );
+      const templateTask = templateDelivery.receipts[0]!.taskId!;
+      assert.equal(
+        local.get(clientOwner, templateTask).input.prompt,
+        "PRIVATE_TEMPLATE_PROMPT",
+      );
+      assert.equal(
+        (
+          await call(
+            "/browser/templates/receipt",
+            {
+              permissionId: templateState.permissionId,
+              id: templateIntent.command.id,
+            },
+            otherOwner,
+          )
+        ).body.receipt.outcome,
+        "queued",
+      );
       await client.rotate();
+      assert.equal(local.get(clientOwner, templateTask).status, "cancelled");
+      assert.deepEqual((await client.status())!.templates, []);
       assert.equal((await client.status())?.controls, "disabled");
       const reopened = new RemoteClient(
         "synthetic-local-owner",

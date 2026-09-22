@@ -1,5 +1,17 @@
+import {
+  shareTemplateSchema,
+  templateClientStateSchema,
+  templateMetadataSchema,
+  type TemplateClientState,
+  type RemoteTemplateExecutor,
+} from "./template-client-state.js";
+import {
+  templateIdentitySchema,
+  templateReceiptSchema,
+} from "./template-contracts.js";
+import { remoteTemplateSchema } from "./status.js";
 import { AsyncEntry } from "@napi-rs/keyring";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ConnectorSecret } from "../connectors/crm.js";
 import type { Store, Task } from "../storage/store.js";
@@ -53,6 +65,17 @@ const savedSchema = z.strictObject({
   mode: z.enum(["active", "rotation_pending", "pairing_required"]),
   pending: statusBatchSchema.optional(),
   controls: controlStateSchema.optional(),
+  templates: z
+    .array(templateClientStateSchema)
+    .max(20)
+    .refine(
+      (items) =>
+        new Set(items.map((item) => item.approval.templateId)).size ===
+          items.length &&
+        new Set(items.map((item) => item.approval.identity.permissionId))
+          .size === items.length,
+    )
+    .optional(),
 });
 type Saved = z.infer<typeof savedSchema>;
 export class RemoteClientError extends Error {
@@ -66,7 +89,8 @@ export class RemoteClientError extends Error {
       | "UNAVAILABLE"
       | "DENIED"
       | "PENDING_DELIVERY"
-      | "CONTROL_CONFIRMATION_REQUIRED",
+      | "CONTROL_CONFIRMATION_REQUIRED"
+      | "TEMPLATE_CONFIRMATION_REQUIRED",
   ) {
     super(code);
   }
@@ -87,6 +111,7 @@ export class RemoteClient {
     private transport: typeof fetch = fetch,
     private now = Date.now,
     private executor?: RemoteControlExecutor,
+    private templateExecutor?: RemoteTemplateExecutor,
   ) {
     z.string().min(1).max(256).parse(localOwner);
   }
@@ -104,12 +129,26 @@ export class RemoteClient {
     try {
       const raw = await this.secret.getSecret();
       if (!raw) return undefined;
-      if (raw.length > 32768) throw Error();
+      if (raw.length > 65536) throw Error();
       const s = savedSchema.parse(
         JSON.parse(Buffer.from(raw).toString("utf8")),
       );
       if (
         s.localOwner !== this.localOwner ||
+        s.templates?.some(
+          (t) =>
+            t.approval.identity.deviceId !== s.grant.deviceId ||
+            t.approval.identity.remoteOwnerId !== s.grant.ownerId ||
+            t.approval.identity.epoch !== s.grant.epoch ||
+            t.approval.expiresAt > s.grant.expiresAt ||
+            t.credential === s.grant.credential ||
+            t.approvedAt >= t.approval.expiresAt ||
+            (t.pendingCommand &&
+              (t.pendingCommand.deviceId !== s.grant.deviceId ||
+                t.pendingCommand.templateId !== t.approval.templateId ||
+                t.pendingCommand.templateRevision !==
+                  t.approval.templateRevision)),
+        ) ||
         (s.controls?.grant &&
           (s.controls.grant.deviceId !== s.grant.deviceId ||
             s.controls.grant.ownerId !== s.grant.ownerId ||
@@ -128,7 +167,7 @@ export class RemoteClient {
   private async save(s: Saved) {
     try {
       const bytes = Buffer.from(JSON.stringify(savedSchema.parse(s)));
-      if (bytes.length > 32768) throw Error();
+      if (bytes.length > 65536) throw Error();
       await this.secret.setSecret(bytes);
       const read = await this.secret.getSecret();
       if (!read || !bytes.equals(Buffer.from(read))) throw Error();
@@ -231,8 +270,258 @@ export class RemoteClient {
               this.executor.allowed(this.controlIdentity(s.controls.grant))
             ? "enabled"
             : "confirmation_required",
+      templates: (s.templates ?? []).map((t) => ({
+        permissionId: t.approval.identity.permissionId,
+        templateId: t.approval.templateId,
+        templateRevision: t.approval.templateRevision,
+        expiresAt: t.approval.expiresAt,
+        maxRuns: t.approval.maxRuns,
+        pendingDelivery: !!t.pendingCommand,
+        state:
+          t.mode === "revoke_pending"
+            ? "revoke_pending"
+            : s.mode === "active" && this.templateExecutor?.allowed(t.approval)
+              ? t.mode
+              : "confirmation_required",
+      })),
       manageUrl: origin,
     };
+  }
+  private revokeTemplates(s: Saved) {
+    if (s.templates?.length && !this.templateExecutor)
+      throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+    this.templateExecutor?.revoke(s.grant.deviceId);
+    for (const item of s.templates ?? []) item.mode = "revoke_pending";
+  }
+  private async saveTemplates(s: Saved) {
+    try {
+      await this.save(s);
+    } catch (error) {
+      this.revokeTemplates(s);
+      throw error;
+    }
+  }
+  private templateEntry(s: Saved, permissionId: string) {
+    const entry = s.templates?.find(
+      (t) => t.approval.identity.permissionId === permissionId,
+    );
+    if (!entry || !this.templateExecutor)
+      throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+    return entry;
+  }
+  async shareTemplate(raw: unknown) {
+    const input = shareTemplateSchema.parse(raw);
+    return this.exclusive(async () => {
+      const s = await this.active();
+      if (
+        !this.templateExecutor ||
+        s.templates?.some((t) => t.approval.templateId === input.templateId)
+      )
+        throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+      if ((s.templates?.length ?? 0) >= 20)
+        throw new RemoteClientError("CAPACITY");
+      if (input.expiresAt > s.grant.expiresAt)
+        throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+      const approval = {
+        identity: {
+          scope: "templates:run" as const,
+          remoteOwnerId: s.grant.ownerId,
+          deviceId: s.grant.deviceId,
+          epoch: s.grant.epoch,
+          permissionId: randomUUID(),
+        },
+        templateId: input.templateId,
+        templateRevision: input.expectedRevision,
+        maxRuns: input.maxRuns,
+        expiresAt: input.expiresAt,
+        confirmed: true as const,
+      };
+      const approved = this.templateExecutor.approve(approval);
+      const entry: TemplateClientState = {
+        approval,
+        approvedAt: approved.approvedAt,
+        credential: randomBytes(32).toString("base64url"),
+        mode: "publication_pending",
+      };
+      s.templates = [...(s.templates ?? []), entry];
+      await this.saveTemplates(s);
+      await this.publishTemplateEntry(s, entry);
+      return this.status();
+    });
+  }
+  private async publishTemplateEntry(s: Saved, entry: TemplateClientState) {
+    if (
+      entry.mode !== "publication_pending" ||
+      !this.templateExecutor?.allowed(entry.approval)
+    )
+      throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+    const a = entry.approval;
+    const expected = {
+      permissionId: a.identity.permissionId,
+      deviceId: a.identity.deviceId,
+      templateId: a.templateId,
+      templateRevision: a.templateRevision,
+      approvedAt: entry.approvedAt,
+      expiresAt: a.expiresAt,
+      maxRuns: a.maxRuns,
+    };
+    const response = z
+      .strictObject({
+        template: templateMetadataSchema,
+        duplicate: z.boolean(),
+      })
+      .safeParse(
+        await this.post(
+          "templates/publish",
+          {
+            permissionId: expected.permissionId,
+            templateId: a.templateId,
+            templateRevision: a.templateRevision,
+            approvedAt: entry.approvedAt,
+            expiresAt: a.expiresAt,
+            maxRuns: a.maxRuns,
+            credentialHash: createHash("sha256")
+              .update(entry.credential)
+              .digest("hex"),
+            confirmed: true,
+          },
+          s.grant.credential,
+        ),
+      );
+    if (
+      !response.success ||
+      Object.entries(expected).some(
+        ([key, value]) =>
+          response.data.template[key as keyof typeof expected] !== value,
+      ) ||
+      response.data.template.submittedRuns > a.maxRuns
+    )
+      throw new RemoteClientError("INVALID_RESPONSE");
+    if (!this.templateExecutor.allowed(a))
+      throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+    entry.mode = "active";
+    await this.saveTemplates(s);
+  }
+  async retryTemplatePublication(permissionId: string) {
+    return this.exclusive(async () => {
+      const s = await this.active();
+      await this.publishTemplateEntry(s, this.templateEntry(s, permissionId));
+      return this.status();
+    });
+  }
+  async revokeTemplate(permissionId: string) {
+    return this.exclusive(async () => {
+      const s = await this.saved();
+      if (!s) throw new RemoteClientError("PAIRING_REQUIRED");
+      const entry = this.templateEntry(s, permissionId);
+      this.templateExecutor!.revoke(
+        s.grant.deviceId,
+        entry.approval.templateId,
+      );
+      entry.mode = "revoke_pending";
+      await this.saveTemplates(s);
+      const ack = z
+        .strictObject({ revoked: z.literal(true) })
+        .safeParse(
+          await this.post(
+            "templates/revoke",
+            { permissionId, confirmed: true },
+            s.grant.credential,
+          ),
+        );
+      if (!ack.success) throw new RemoteClientError("INVALID_RESPONSE");
+      s.templates = s.templates!.filter((t) => t !== entry);
+      await this.saveTemplates(s);
+      return { disabledLocally: true, remoteConfirmed: true };
+    });
+  }
+  /** Journals each opaque command before execution, so a lost acknowledgement can
+   * be recovered after restart even once the relay stops offering the expired command. */
+  async pollTemplate(permissionId: string, signal?: AbortSignal) {
+    return this.exclusive(async () => {
+      const s = await this.active(),
+        entry = this.templateEntry(s, permissionId),
+        a = entry.approval;
+      if (entry.mode !== "active" || !this.templateExecutor!.allowed(a))
+        throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+      const receipts: z.infer<typeof templateReceiptSchema>[] = [];
+      const deliver = async () => {
+        signal?.throwIfAborted();
+        if (!this.templateExecutor!.allowed(a))
+          throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+        const result = this.templateExecutor!.execute(
+          a.identity,
+          entry.pendingCommand!,
+        );
+        const receipt = templateReceiptSchema.parse(result.receipt);
+        const ack = z
+          .strictObject({
+            receipt: templateReceiptSchema,
+            duplicate: z.boolean(),
+          })
+          .safeParse(
+            await this.post(
+              "templates/receipt",
+              receipt,
+              entry.credential,
+              signal,
+            ),
+          );
+        if (
+          !ack.success ||
+          JSON.stringify(ack.data.receipt) !== JSON.stringify(receipt)
+        )
+          throw new RemoteClientError("INVALID_RESPONSE");
+        delete entry.pendingCommand;
+        await this.saveTemplates(s);
+        receipts.push(receipt);
+      };
+      try {
+        if (entry.pendingCommand) await deliver();
+        signal?.throwIfAborted();
+        const delivery = z
+          .strictObject({
+            identity: templateIdentitySchema,
+            commands: z
+              .array(remoteTemplateSchema)
+              .max(20)
+              .refine(
+                (items) =>
+                  new Set(items.map((c) => c.id)).size === items.length,
+              ),
+          })
+          .safeParse(
+            await this.post("templates/poll", {}, entry.credential, signal),
+          );
+        if (
+          !delivery.success ||
+          JSON.stringify(delivery.data.identity) !==
+            JSON.stringify(templateIdentitySchema.parse(a.identity)) ||
+          delivery.data.commands.some(
+            (c) =>
+              c.deviceId !== a.identity.deviceId ||
+              c.templateId !== a.templateId ||
+              c.templateRevision !== a.templateRevision,
+          )
+        )
+          throw new RemoteClientError("INVALID_RESPONSE");
+        signal?.throwIfAborted();
+        for (const command of delivery.data.commands) {
+          signal?.throwIfAborted();
+          entry.pendingCommand = command;
+          await this.saveTemplates(s);
+          await deliver();
+        }
+        return { receipts };
+      } catch (error) {
+        if (error instanceof RemoteClientError && error.code === "DENIED") {
+          this.templateExecutor!.revoke(s.grant.deviceId, a.templateId);
+          entry.mode = "revoke_pending";
+          await this.saveTemplates(s);
+        }
+        throw error;
+      }
+    });
   }
   private controlIdentity(grant: z.infer<typeof controlGrantSchema>) {
     return {
@@ -509,6 +798,10 @@ export class RemoteClient {
   async clearTaskData(remove: () => void) {
     return this.exclusive(async () => {
       const saved = await this.saved();
+      if (saved?.templates?.length) {
+        this.revokeTemplates(saved);
+        await this.saveTemplates(saved);
+      }
       if (saved?.controls) {
         this.revokeControls(saved);
         await this.save(saved);
@@ -527,6 +820,8 @@ export class RemoteClient {
     return this.exclusive(async () => {
       const s = await this.active();
       if (s.pending) throw new RemoteClientError("PENDING_DELIVERY");
+      this.revokeTemplates(s);
+      delete s.templates;
       this.revokeControls(s);
       delete s.controls;
       s.mode = "rotation_pending";
@@ -554,7 +849,10 @@ export class RemoteClient {
     return this.exclusive(async () => {
       this.pendingPair = undefined;
       const saved = await this.saved();
-      if (saved) this.revokeControls(saved);
+      if (saved) {
+        this.revokeTemplates(saved);
+        this.revokeControls(saved);
+      }
       await this.secret.deleteCredential();
       if (await this.secret.getSecret())
         throw new RemoteClientError("STORAGE_UNAVAILABLE");
