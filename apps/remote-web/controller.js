@@ -25,6 +25,11 @@ export class RemoteWebController {
   state = {
     commandReview: null,
     commandResult: null,
+    templates: [],
+    templateCursor: null,
+    templateDeviceId: null,
+    templateReview: null,
+    templateResult: null,
     account: null,
     confirmation: "",
     devices: [],
@@ -52,6 +57,11 @@ export class RemoteWebController {
     this.set({
       commandReview: null,
       commandResult: null,
+      templates: [],
+      templateCursor: null,
+      templateDeviceId: null,
+      templateReview: null,
+      templateResult: null,
       confirmation: "",
       statuses: [],
       statusCursor: null,
@@ -227,6 +237,11 @@ export class RemoteWebController {
           ? ""
           : "No devices are available on this page.",
         commandReview: null,
+        templates: [],
+        templateCursor: null,
+        templateDeviceId: null,
+        templateReview: null,
+        templateResult: null,
         devices: more ? [...this.state.devices, ...page.items] : page.items,
         deviceCursor: page.nextCursor,
       });
@@ -333,6 +348,141 @@ export class RemoteWebController {
         this.set({
           commandResult: { id, state: result.state, receipt: result.receipt },
         });
+    });
+  }
+  async templates(deviceId, more = false) {
+    if (!this.state.account || !uuid.test(deviceId)) return;
+    const device = this.state.devices.find((d) => d.id === deviceId);
+    if (!device || device.revoked || device.expiresAt <= Date.now()) return;
+    const epoch = this.epoch;
+    return this.act(async () => {
+      const page = await this.api("/browser/templates", {
+        deviceId,
+        ...(more &&
+        this.state.templateDeviceId === deviceId &&
+        this.state.templateCursor
+          ? { after: this.state.templateCursor }
+          : {}),
+      });
+      if (epoch !== this.epoch) return;
+      this.set({
+        templates:
+          more && this.state.templateDeviceId === deviceId
+            ? [...this.state.templates, ...page.items]
+            : page.items,
+        templateCursor: page.nextCursor,
+        templateDeviceId: deviceId,
+        templateReview: null,
+        templateResult: null,
+      });
+    });
+  }
+  reviewTemplate(permissionId, action = "run") {
+    if (
+      this.state.busy ||
+      !this.state.account ||
+      !["run", "revoke"].includes(action)
+    )
+      return;
+    const template = this.state.templates.find(
+      (t) => t.permissionId === permissionId,
+    );
+    const device = this.state.devices.find(
+      (d) => d.id === this.state.templateDeviceId,
+    );
+    const now = Date.now();
+    if (
+      !template ||
+      !device ||
+      device.revoked ||
+      device.expiresAt <= now ||
+      template.deviceId !== device.id ||
+      template.expiresAt <= now ||
+      (action === "run" &&
+        (template.submittedRuns >= template.maxRuns ||
+          template.approvedAt > now))
+    )
+      return;
+    this.set({
+      templateResult: null,
+      templateReview: {
+        action,
+        template: { ...template },
+        ...(action === "run"
+          ? {
+              intent: {
+                permissionId,
+                command: {
+                  id: crypto.randomUUID(),
+                  deviceId: device.id,
+                  templateId: template.templateId,
+                  templateRevision: template.templateRevision,
+                  issuedAt: new Date(now).toISOString(),
+                  expiresAt: new Date(
+                    Math.min(
+                      now + 300000,
+                      template.expiresAt,
+                      device.expiresAt,
+                    ),
+                  ).toISOString(),
+                },
+              },
+            }
+          : {}),
+      },
+    });
+  }
+  async submitTemplate(confirmed) {
+    const review = this.state.templateReview,
+      epoch = this.epoch;
+    if (!confirmed || !review || !this.state.account) return;
+    return this.act(async () => {
+      if (review.action === "revoke") {
+        await this.api("/browser/templates/revoke", {
+          permissionId: review.template.permissionId,
+          confirmed: true,
+        });
+        if (epoch === this.epoch)
+          this.set({
+            templateReview: null,
+            templateResult: null,
+            templates: this.state.templates.filter(
+              (t) => t.permissionId !== review.template.permissionId,
+            ),
+            notice:
+              "Permission revoked remotely. Previously delivered work may continue until its local deadline if the Mac is offline.",
+          });
+      } else {
+        await this.api("/browser/templates/run", {
+          ...review.intent,
+          confirmed: true,
+        });
+        if (epoch === this.epoch)
+          this.set({
+            templateReview: null,
+            templateResult: {
+              permissionId: review.intent.permissionId,
+              id: review.intent.command.id,
+              state: "pending",
+              receipt: null,
+            },
+            notice:
+              "Request queued for delivery. The Mac must check requests before the deadline. A queued task receipt does not mean the work finished.",
+          });
+      }
+    });
+  }
+  async templateReceipt() {
+    const result = this.state.templateResult,
+      epoch = this.epoch;
+    if (!result || !this.state.account) return;
+    return this.act(async () => {
+      const receipt = await this.api("/browser/templates/receipt", {
+        permissionId: result.permissionId,
+        id: result.id,
+      });
+      if (epoch === this.epoch)
+        this.set({ templateResult: { ...result, ...receipt } });
     });
   }
   async revoke(deviceId, confirmed) {

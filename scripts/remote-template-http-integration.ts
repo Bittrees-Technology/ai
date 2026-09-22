@@ -134,17 +134,38 @@ export async function checkTemplateHttp(
     assert.equal(listed.status, 200);
     assert.equal(listed.body.items[0].permissionId, permissionId);
     assert.equal(listed.headers["cache-control"], "no-store");
+    const { browserApi, RemoteWebController } = await import(
+      new URL("../apps/remote-web/controller.js", import.meta.url).href
+    );
+    const controller = new RemoteWebController(
+      browserApi(
+        async (path: string, init: RequestInit) => {
+          const response = await call(path, JSON.parse(String(init.body)), {
+            ...owner,
+            ...(init.headers as Record<string, string>),
+          });
+          return Response.json(response.body, { status: response.status });
+        },
+        () => controller.state.account?.ownerId,
+      ),
+      null,
+      { chainId: 1 },
+      () => {},
+    );
+    await controller.refresh();
+    await controller.devices();
+    // The existing fixture has a paginated owner device list.
+    while (
+      !controller.state.devices.some((d: any) => d.id === deviceId) &&
+      controller.state.deviceCursor
+    )
+      await controller.devices(true);
+    await controller.templates(deviceId);
+    assert.equal(controller.state.templates[0].permissionId, permissionId);
+    controller.reviewTemplate(permissionId);
     const intent = {
-      permissionId,
+      ...controller.state.templateReview.intent,
       confirmed: true,
-      command: {
-        id: randomUUID(),
-        deviceId,
-        templateId: template.id,
-        templateRevision: 1,
-        issuedAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 60000).toISOString(),
-      },
     };
     assert.equal(
       (await call("/browser/templates/run", intent, otherOwner)).status,
@@ -170,10 +191,10 @@ export async function checkTemplateHttp(
       ).status,
       400,
     );
-    assert.equal(
-      (await call("/browser/templates/run", intent, owner)).status,
-      200,
-    );
+    await controller.submitTemplate(true);
+    assert.equal(controller.state.error, "");
+    assert.equal(controller.state.templateResult.id, intent.command.id);
+    assert.equal(controller.state.templateResult.state, "pending");
     assert.equal(
       (await call("/browser/templates/run", intent, owner)).body.duplicate,
       true,
@@ -232,6 +253,10 @@ export async function checkTemplateHttp(
         .duplicate,
       true,
     );
+    await controller.templateReceipt();
+    assert.equal(controller.state.error, "");
+    assert.equal(controller.state.templateResult.state, "received");
+    assert.deepEqual(controller.state.templateResult.receipt, executed.receipt);
     const receiptRequest = { permissionId, id: intent.command.id };
     assert.equal(
       (await call("/browser/templates/receipt", receiptRequest, otherOwner))

@@ -1,10 +1,45 @@
 import type { LocalTemplate } from "../../modules/storage/templates.js";
+type RemotePermission = {
+  permissionId: string;
+  templateId: string;
+  templateRevision: number;
+  expiresAt: number;
+  maxRuns: number;
+  pendingDelivery: boolean;
+  state: string;
+};
+type RemoteStatus = {
+  available: boolean;
+  connection: null | {
+    deviceId: string;
+    ownerId: string;
+    expiresAt: number;
+    state: string;
+    templates: RemotePermission[];
+  };
+};
+type RemoteReview = {
+  templateId: string;
+  expectedRevision: number;
+  maxRuns: number;
+  expiresAt: number;
+  deviceId: string;
+  ownerId: string;
+};
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
 export class TemplateController {
   items: LocalTemplate[] = [];
   draft: LocalTemplate | null = null;
   confirmed = false;
   busy = false;
+  remote: RemoteStatus | null = null;
+  remoteReview: RemoteReview | null = null;
+  remoteConfirmed = false;
+  remoteAction: {
+    permissionId: string;
+    action: "retry" | "revoke" | "check";
+  } | null = null;
+  notice = "";
   private epoch = 0;
   private pending: {
     id: string;
@@ -20,6 +55,9 @@ export class TemplateController {
     this.items = [];
     this.draft = null;
     this.confirmed = false;
+    this.resetRemoteReview();
+    this.remote = null;
+    this.notice = "";
     this.changed();
   }
   select(item?: LocalTemplate) {
@@ -37,6 +75,7 @@ export class TemplateController {
           },
         };
     this.confirmed = false;
+    this.resetRemoteReview();
     this.changed();
   }
   edit(change: Partial<LocalTemplate["definition"]>) {
@@ -46,11 +85,129 @@ export class TemplateController {
       definition: { ...this.draft.definition, ...change },
     };
     this.confirmed = false;
+    this.resetRemoteReview();
     this.changed();
   }
   confirm(value: boolean) {
     this.confirmed = value;
     this.changed();
+  }
+  resetRemoteReview() {
+    this.remoteReview = null;
+    this.remoteConfirmed = false;
+    this.remoteAction = null;
+  }
+  confirmRemote(value: boolean) {
+    this.remoteConfirmed = value;
+    this.changed();
+  }
+  async refreshRemote() {
+    this.resetRemoteReview();
+    return this.operation(
+      () => this.api("/v1/remote"),
+      (result: RemoteStatus) => {
+        this.remote = result;
+        this.notice = "";
+      },
+    );
+  }
+  reviewRemote(maxRuns: number, minutes: number, now = Date.now()) {
+    const connection = this.remote?.connection;
+    if (
+      this.busy ||
+      !this.saved ||
+      !this.draft ||
+      !this.remote?.available ||
+      connection?.state !== "paired" ||
+      connection.expiresAt <= now ||
+      !Number.isInteger(maxRuns) ||
+      maxRuns < 1 ||
+      maxRuns > 20 ||
+      !Number.isInteger(minutes) ||
+      minutes < 1 ||
+      minutes > 1440 ||
+      connection.templates.some((t) => t.templateId === this.draft!.id)
+    )
+      throw Error("TEMPLATE_CONFIRMATION_REQUIRED");
+    this.resetRemoteReview();
+    this.remoteReview = {
+      templateId: this.draft.id,
+      expectedRevision: this.draft.revision,
+      maxRuns,
+      expiresAt: Math.min(now + minutes * 60000, connection.expiresAt),
+      deviceId: connection.deviceId,
+      ownerId: connection.ownerId,
+    };
+    this.changed();
+  }
+  async shareRemote() {
+    const review = this.remoteReview;
+    if (
+      !review ||
+      !this.remoteConfirmed ||
+      !this.saved ||
+      this.draft?.id !== review.templateId ||
+      this.draft.revision !== review.expectedRevision ||
+      review.expiresAt <= Date.now()
+    )
+      throw Error("TEMPLATE_CONFIRMATION_REQUIRED");
+    const { deviceId: _device, ownerId: _owner, ...input } = review;
+    return this.operation(
+      () =>
+        this.api("/v1/remote/templates/share", "POST", {
+          ...input,
+          confirmed: true,
+        }),
+      (connection) => {
+        this.remote = { available: true, connection };
+        this.resetRemoteReview();
+        this.notice =
+          "Permission saved. Match this template code on the remote page. Background template receiving is off; use Check requests here for a delivery pass.";
+      },
+    );
+  }
+  reviewRemoteAction(
+    permissionId: string,
+    action: "retry" | "revoke" | "check",
+  ) {
+    const entry = this.remote?.connection?.templates.find(
+      (t) => t.permissionId === permissionId,
+    );
+    if (
+      this.busy ||
+      !entry ||
+      (action === "retry" && entry.state !== "publication_pending") ||
+      (action === "check" && entry.state !== "active")
+    )
+      return;
+    this.resetRemoteReview();
+    this.remoteAction = { permissionId, action };
+    this.changed();
+  }
+  async applyRemoteAction(confirmed: boolean) {
+    const review = this.remoteAction;
+    if (!confirmed || !review) return;
+    return this.operation(
+      async () => {
+        const result = await this.api(
+          `/v1/remote/templates/${review.action}`,
+          "POST",
+          { permissionId: review.permissionId, confirmed: true },
+        );
+        const remote = await this.api("/v1/remote");
+        return { result, remote };
+      },
+      ({ result, remote }) => {
+        this.remote = remote;
+        this.resetRemoteReview();
+        this.notice =
+          review.action === "check"
+            ? `${result.receipts.length} receipt(s) returned. Queued means a local task was created; check Tasks for its result.`
+            : review.action === "revoke"
+              ? "Permission revoked locally and confirmed by the remote service."
+              : "The original permission publication was confirmed.";
+      },
+    );
   }
   get saved() {
     return (
@@ -86,6 +243,7 @@ export class TemplateController {
     }
   }
   async load() {
+    this.resetRemoteReview();
     this.draft = null;
     this.confirmed = false;
     return this.operation(
@@ -113,6 +271,7 @@ export class TemplateController {
         ];
         this.draft = result;
         this.confirmed = false;
+        this.resetRemoteReview();
       },
     );
   }
@@ -150,6 +309,7 @@ export class TemplateController {
         this.items = this.items.filter((item) => item.id !== id);
         this.draft = null;
         this.confirmed = false;
+        this.resetRemoteReview();
       },
     );
   }

@@ -25,6 +25,10 @@ type Memory = {
 };
 type Profile = { id: string; model: string };
 const explanations: Record<string, string> = {
+  REMOTE_TEMPLATE_CAPACITY:
+    "A remote template limit was reached. Review existing permissions and run allowances, then refresh before retrying.",
+  TEMPLATE_CONFIRMATION_REQUIRED:
+    "This permission needs a fresh review. Refresh the remote connection, revoke the old permission if listed, and review the saved template again.",
   TEMPLATE_CAPACITY:
     "You have 100 saved templates. Delete one before adding another.",
   IMPORT_BUSY:

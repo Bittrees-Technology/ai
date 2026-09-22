@@ -14,7 +14,8 @@
         <h1>Remote task status</h1>
         <p>
           Your Mac does the work. This page shows only the task statuses you
-          choose to share.
+          choose to share, plus template codes you explicitly approve on that
+          Mac.
         </p>
       </header>
       <p id="error" role="alert"></p>
@@ -77,6 +78,15 @@
         <h3 id="statuses-title" hidden>Shared task statuses</h3>
         <ul id="statuses" aria-labelledby="statuses-title"></ul>
         <button id="statuses-more" hidden>Load more statuses</button>
+        <h3 id="templates-title" hidden>Approved template codes</h3>
+        <p>
+          Template names, prompts, models and results stay on the Mac. Match its
+          template code and version before requesting a run. The Mac must
+          receive the request before its deadline; template receiving currently
+          requires a manual check there.
+        </p>
+        <ul id="templates" aria-labelledby="templates-title"></ul>
+        <button id="templates-more" hidden>Load more templates</button>
       </section>
       <section id="command-review" hidden aria-labelledby="command-title">
         <h2 id="command-title">Review task command</h2>
@@ -92,6 +102,25 @@
         <h2 id="command-result-title">Command receipt</h2>
         <p id="command-outcome" role="status"></p>
         <button id="command-refresh">Check command receipt</button>
+      </section>
+      <section
+        id="template-review"
+        hidden
+        aria-labelledby="template-review-title"
+      >
+        <h2 id="template-review-title">Review template action</h2>
+        <p id="template-details"></p>
+        <button id="template-submit">Confirm this run request</button>
+        <button id="template-dismiss">Dismiss review</button>
+      </section>
+      <section
+        id="template-result"
+        hidden
+        aria-labelledby="template-result-title"
+      >
+        <h2 id="template-result-title">Template request receipt</h2>
+        <p id="template-outcome" role="status"></p>
+        <button id="template-refresh">Check template receipt</button>
       </section>
       <footer>
         Removing a local connection is different from revoking a device here.

@@ -46,6 +46,11 @@ if (!settings || settings.origin !== location.origin) {
         show.disabled = s.busy;
         show.onclick = () => controller.statuses(d.id);
         li.append(show);
+        const templates = document.createElement("button");
+        templates.textContent = "View approved templates";
+        templates.disabled = s.busy;
+        templates.onclick = () => controller.templates(d.id);
+        li.append(templates);
         const control = document.createElement("button");
         control.textContent = d.controlsEnabled
           ? "Disable pause/cancel"
@@ -112,7 +117,54 @@ if (!settings || settings.origin !== location.origin) {
       ? `Command ${s.commandResult.id}: ${s.commandResult.receipt?.outcome ?? s.commandResult.state}. A pending command has not been confirmed as applied.`
       : "";
     el("statuses-more").hidden = !s.statusCursor;
+    el("templates-title").hidden = !s.templateDeviceId;
+    el("templates").replaceChildren();
+    for (const template of s.templates) {
+      const li = document.createElement("li"),
+        description = document.createElement("p");
+      description.textContent = `Template code ${template.templateId}, version ${template.templateRevision}, on device ${template.deviceId}. ${template.submittedRuns} of ${template.maxRuns} requests submitted; permission expires ${new Date(template.expiresAt).toLocaleString()}.`;
+      li.append(description);
+      for (const action of ["run", "revoke"]) {
+        const button = document.createElement("button");
+        button.textContent =
+          action === "run" ? "Review run request" : "Review revocation";
+        button.disabled =
+          s.busy ||
+          template.expiresAt <= Date.now() ||
+          (action === "run" && template.submittedRuns >= template.maxRuns);
+        button.onclick = () =>
+          controller.reviewTemplate(template.permissionId, action);
+        li.append(button);
+      }
+      el("templates").append(li);
+    }
+    if (s.templateDeviceId && !s.templates.length) {
+      const li = document.createElement("li");
+      li.textContent =
+        "No active template permissions are available on this page. Review and share one explicitly on your Mac first.";
+      el("templates").append(li);
+    }
+    el("templates-more").hidden = !s.templateCursor;
+    el("template-review").hidden = !s.templateReview;
+    const review = s.templateReview;
+    el("template-details").textContent = review
+      ? `${review.action === "run" ? "Request one run of" : "Revoke permission for"} template ${review.template.templateId}, version ${review.template.templateRevision}, on device ${review.template.deviceId}. Permission allows ${review.template.maxRuns} requests until ${new Date(review.template.expiresAt).toLocaleString()}.${review.intent ? ` This fixed request expires ${new Date(review.intent.command.expiresAt).toLocaleTimeString()}.` : ""} Match this code and version to the prompt reviewed on your Mac. No new text or app permission is supplied here.`
+      : "";
+    el("template-submit").textContent =
+      review?.action === "revoke"
+        ? "Confirm revocation"
+        : "Confirm this run request";
+    el("template-result").hidden = !s.templateResult;
+    el("template-outcome").textContent = s.templateResult
+      ? `Request ${s.templateResult.id}: ${s.templateResult.receipt?.outcome ?? s.templateResult.state}.${s.templateResult.receipt?.taskId ? ` Local task code: ${s.templateResult.receipt.taskId}.` : ""} A queued receipt confirms task creation only. Check the Mac or its manually shared task status for progress.`
+      : "";
   }
+  el("templates-more").onclick = () =>
+    controller.templates(controller.state.templateDeviceId, true);
+  el("template-submit").onclick = () => controller.submitTemplate(true);
+  el("template-dismiss").onclick = () =>
+    controller.set({ templateReview: null });
+  el("template-refresh").onclick = () => controller.templateReceipt();
   el("command-submit").onclick = () => controller.submitCommand(true);
   el("command-dismiss").onclick = () => controller.set({ commandReview: null });
   el("command-refresh").onclick = () => controller.commandReceipt();
