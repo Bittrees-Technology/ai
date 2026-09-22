@@ -52,3 +52,14 @@ The official 0.17.7 app archive matched SHA-256 `ac2fa78433b91bc5b6ff989d50430ed
 The existing user LaunchAgent `io.bittrees.ollama` now points to that verified executable, keeps its prior resource preferences and explicitly binds `127.0.0.1:11434` with `OLLAMA_NO_CLOUD=1`. The prior app and LaunchAgent configuration are backed up under `~/Library/Application Support/Bittrees AI/runtime-backups`. API version verification reports 0.17.7. Existing model files are retained; no Acer service or configuration was accessed.
 
 The isolated runtime was stopped. An old-service restart interrupted Huihui's first download in the shared model directory, so that download is being retried with only one runtime managing the store. Comparisons are being repeated against the adopted service before making a final model recommendation. Do not run two model-download managers against the same model directory.
+
+## Adopted-service repeat
+
+Both original models completed the same seven cases again on the installed service. The substantive outputs matched the isolated run, including the remaining 9B acknowledgement conditions and the 1.7B source/user-intent errors. [Synthetic outputs and sampled allocation summaries](evidence/mac-model-comparison-2026-09-22.json) preserve the actual evidence.
+
+| Model | Median response | Range | Peak reported model allocation |
+| --- | ---: | ---: | ---: |
+| qwen3:1.7b | 1.611 s | 1.273–2.206 s | 1.89 GB |
+| qwen3.5:9b | 11.514 s | 10.472–14.660 s | 8.60 GB |
+
+The Huihui retry is still downloading; its performance and quality are not yet established. The original 9B is available for further reviewed draft testing, while final comparison/adoption remains open.
