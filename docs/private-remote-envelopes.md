@@ -1,6 +1,6 @@
 # Private remote content: envelope foundation
 
-Status: internal development codec, not an enabled remote-content feature or a completed E2EE claim. No HTTP endpoint, relay table, device enrollment, key persistence, task execution or UI imports this module. The existing remote-status allowlist remains unchanged. This step supplies the cryptographic substrate for R2; its acceptance gates remain open.
+Status: internal development codec, not an enabled remote-content feature or a completed E2EE claim. No live HTTP endpoint, relay table, device enrollment, key persistence or UI uses this module. The subsequent internal [task-admission backend](private-task-admission.md) imports it and atomically creates bounded local tasks under explicit trusted per-peer consent; startup does not enable it. The existing remote-status allowlist remains unchanged. This step supplies the cryptographic substrate for R2; its acceptance gates remain open.
 
 ## Decisions and dependencies
 
@@ -41,9 +41,9 @@ The caller supplies pinned native `CryptoKey` objects. The codec accepts P-256 E
 
 [HPKE's security discussion](https://www.rfc-editor.org/rfc/rfc9180.html#section-9) describes limitations, including application-level replay handling and lack of recipient-compromise forward secrecy. Auth mode is not a digital signature or non-repudiation mechanism, and does not establish source-app authority. Existing source permissions and exact-content approval checks still apply after decryption.
 
-The opener requires the expected complete header from trusted current routing/epoch checks and a reserved inbox item. It authenticates sequence and operation identity, but deliberately has no durable replay database. Opening the same envelope twice with the same expectation succeeds cryptographically; a regression test makes this limitation explicit. **Do not dispatch actions directly from this API.** Required integration sequence:
+The opener requires the expected complete header from trusted current routing/epoch checks; candidate message/operation/sequence identities must be durably consumed before dispatch. It authenticates sequence and operation identity, but deliberately has no durable replay database. Opening the same envelope twice with the same expectation succeeds cryptographically; a regression test makes this limitation explicit. **Do not dispatch actions directly from this API.** Required integration sequence:
 
-1. Verify current login/device lease, local permission and pinned endpoint keys/epochs; reserve the bounded incoming identity.
+1. Verify current login/device lease, local permission and pinned endpoint keys/epochs; bound in-flight work and validate the candidate incoming identity.
 2. Decrypt and strictly validate the encrypted payload; recheck current local/source authority after asynchronous work.
 3. Atomically persist receipt, sequence/replay/idempotency state and pending local task/review before acknowledging delivery. Conflicting reuse must fail; an exact duplicate returns its original receipt without executing twice.
 4. Execute only through the existing guarded local queue and reviewed source actions. Exact-content approvals bind the proposal/revision/content and cannot be supplied by model output.
@@ -56,4 +56,4 @@ Tests use disposable WebCrypto keys and public RFC test material. The selected l
 
 This proves bounded implementation behavior under these tests, not full browser/native acceptance or an independent protocol review. Remaining work: authenticated endpoint enrollment and persistence, user-held endpoint recovery and historical-key controls, durable replay/outbox/receipt state across restore, ciphertext-only relay routes/logs/quotas with chosen retention, encrypted payload validation and exact action approvals, offline/reconnect UX, actual browser/native interoperability, signed delivery/update trust and independent review. Local model inference remains on the Mac; Acer's existing news runtime is untouched.
 
-A subsequent [local private-peer enrollment backend](private-peer-enrollment.md) supplies reviewed public-key pins, replacement/revocation history and restore locking in task schema13. It is not yet connected to live invitation exchange or the native/browser UI. Endpoint private-key persistence/recovery, reciprocal enrollment, current network authentication and durable replay acceptance remain open.
+A subsequent [local private-peer enrollment backend](private-peer-enrollment.md) supplies reviewed public-key pins, replacement/revocation history and restore locking in task schema13. It is not yet connected to live invitation exchange or the native/browser UI. Endpoint private-key persistence/recovery, reciprocal enrollment and current network authentication remain open. The subsequent [local task-admission backend](private-task-admission.md) now atomically consumes replay identities with the ordinary task queue, but has no live transport or UI integration.

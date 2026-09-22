@@ -31,12 +31,12 @@ const encoded = (max: number) =>
     .min(1)
     .max(max)
     .regex(/^[A-Za-z0-9_-]+$/);
-const envelopeSchema = z.strictObject({
+export const privateEnvelopeSchema = z.strictObject({
   header: privateHeaderSchema,
   enc: encoded(87),
   ciphertext: encoded(Math.ceil(((privateEnvelopeLimit + 16) * 4) / 3)),
 });
-export type PrivateEnvelope = z.infer<typeof envelopeSchema>;
+export type PrivateEnvelope = z.infer<typeof privateEnvelopeSchema>;
 export class PrivateEnvelopeError extends Error {
   readonly code = "PRIVATE_ENVELOPE_INVALID";
   constructor() {
@@ -144,7 +144,7 @@ export async function sealPrivateEnvelope(
       aad(header),
     );
     validTime(header, now());
-    return envelopeSchema.parse({
+    return privateEnvelopeSchema.parse({
       header,
       enc: encode(new Uint8Array(result.enc)),
       ciphertext: encode(new Uint8Array(result.ct)),
@@ -156,7 +156,8 @@ export async function sealPrivateEnvelope(
   }
 }
 
-/** expectedHeader must come from current trusted routing/epoch checks and a durable inbox reservation.
+/** expectedHeader must pass current trusted routing/epoch checks. Candidate message/operation/sequence
+ * fields must be consumed in a durable acceptance transaction before any dispatch.
  * Successful decryption is NOT replay consumption or action approval. Persist acceptance atomically before use.
  */
 export async function openPrivateEnvelope(
@@ -167,7 +168,7 @@ export async function openPrivateEnvelope(
 ): Promise<{ header: PrivateHeader; plaintext: Uint8Array }> {
   let owned: Uint8Array | undefined;
   try {
-    const envelope = envelopeSchema.parse(raw),
+    const envelope = privateEnvelopeSchema.parse(raw),
       expected = privateHeaderSchema.parse(expectedHeader),
       header = envelope.header;
     validTime(header, now());
