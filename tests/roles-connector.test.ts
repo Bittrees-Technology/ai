@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { RolesConnector } from "../modules/connectors/roles.js";
-async function fixture() {
+async function fixture(includePolicy = false) {
   let secret: Uint8Array | undefined,
     now = Date.now(),
     deny = false,
@@ -12,9 +12,13 @@ async function fixture() {
     token: "f".repeat(64),
     grantId: randomUUID(),
     profileId: randomUUID(),
-    actions: ["read_own_access"],
+    actions: includePolicy
+      ? ["read_own_access", "read_own_policy"]
+      : ["read_own_access"],
     expiresAt: new Date(now + 86400000).toISOString(),
-    policyRevision: "roles-ai-own-access-v1",
+    policyRevision: includePolicy
+      ? "roles-ai-own-access-v2"
+      : "roles-ai-own-access-v1",
   };
   const projection: any = {
     contractVersion: "1.0.0",
@@ -44,6 +48,38 @@ async function fixture() {
     coverage:
       "Verified linked wallet observations only; email-based matching and live authority decisions are not included.",
     manageUrl: "https://roles.bittrees.org/profile",
+  };
+  const policyProjection: any = {
+    contractVersion: "1.0.0",
+    profileId: grant.profileId,
+    mode: "own_policy_records",
+    checkedAt: new Date(now).toISOString(),
+    validUntil: new Date(now + 15000).toISOString(),
+    policyStatus: "current",
+    policyRevision: 1,
+    policyExpiresAt: new Date(now + 60000).toISOString(),
+    items: [
+      {
+        grantId: "own-grant",
+        subject: { kind: "profile", reference: grant.profileId },
+        roleId: "reader",
+        scope: "research",
+        domain: "research.bittrees.eth",
+        authorityMode: "roles-authoritative",
+        actions: ["read"],
+        resources: ["own/*"],
+        expiresAt: new Date(now + 60000).toISOString(),
+        status: "recorded_current",
+        authorityConfirmed: "recorded_in_current_policy",
+        effectiveAccess: "not_verified",
+        enforcementAcknowledged: "not_verified",
+        executable: false,
+        manageUrl: "https://roles.bittrees.org/profile",
+      },
+    ],
+    coverage:
+      "Stored policy grants for verified linked identities and this personal profile only. Agent/service grants, delegations and downstream enforcement are not included.",
+    grantAuthority: false,
   };
   const storage = {
     getSecret: async () => secret,
@@ -83,15 +119,16 @@ async function fixture() {
     }
     await waitRead?.();
     if (deny) return new Response("PRIVATE_SOURCE_ERROR", { status: 403 });
+    const data = path.endsWith("/read-policy") ? policyProjection : projection;
     return Response.json(
       mutate({
         grantId: grant.grantId,
         expiresAt: grant.expiresAt,
         policyRevision: grant.policyRevision,
         projection: {
-          ...projection,
+          ...data,
           projectionHash: createHash("sha256")
-            .update(JSON.stringify(projection))
+            .update(JSON.stringify(data))
             .digest("hex"),
         },
       }),
@@ -100,7 +137,7 @@ async function fixture() {
   const make = (owner = "local") =>
     new RolesConnector(owner, storage, transport, () => now);
   const connector = make(),
-    start = await connector.begin();
+    start = await connector.begin({ includePolicy });
   assert.ok(
     start.consentUrl.startsWith(
       "https://roles.bittrees.org/connect/ai?challenge=",
@@ -112,6 +149,9 @@ async function fixture() {
     make,
     grant,
     projection,
+    policyProjection,
+    storage,
+    transport,
     calls,
     deny: () => {
       deny = true;
@@ -383,4 +423,170 @@ test("Roles companion HTTP isolates own-access loading and credential controls f
     await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())));
     store.close();
   }
+});
+
+test("Policy scope requires local opt-in and permits source consent to decline it", async () => {
+  const f = await fixture();
+  await assert.rejects(f.connector.readPolicy(), /SOURCE_DENIED/);
+  assert.equal(
+    f.calls.some((p) => p.endsWith("/read-policy")),
+    false,
+  );
+  await f.connector.forgetLocal();
+  const opted = await f.connector.begin({ includePolicy: true });
+  assert.equal(
+    new URL(opted.consentUrl).searchParams.get("scope"),
+    "own_policy",
+  );
+  await f.connector.finish(opted.id, "a".repeat(64)); // Source unchecked policy option.
+  assert.deepEqual((await f.connector.status())!.actions, ["read_own_access"]);
+  await f.connector.forgetLocal();
+  const unrequested = await f.connector.begin();
+  assert.equal(
+    new URL(unrequested.consentUrl).searchParams.has("scope"),
+    false,
+  );
+  f.grant.actions = ["read_own_access", "read_own_policy"];
+  f.grant.policyRevision = "roles-ai-own-access-v2";
+  await assert.rejects(
+    f.connector.finish(unrequested.id, "a".repeat(64)),
+    /INVALID_SOURCE/,
+  );
+  assert.equal(await f.connector.status(), null);
+});
+test("Policy credentials survive restart and preserve read-only status and lifecycle", async () => {
+  const f = await fixture(true);
+  assert.equal(
+    (await f.make().readPolicy()).projection.items[0]!.status,
+    "recorded_current",
+  );
+  assert.equal(
+    (await f.connector.read()).policyRevision,
+    "roles-ai-own-access-v2",
+  );
+  f.failDisconnect(true);
+  await assert.rejects(f.connector.disconnect(), /SOURCE_UNAVAILABLE/);
+  await assert.rejects(f.make().readPolicy(), /CONNECTION_BUSY/);
+  f.failDisconnect(false);
+  await f.make().disconnect();
+  assert.equal(await f.connector.status(), null);
+});
+test("Policy validation rejects stale or contradictory records even with a matching hash", async () => {
+  for (const change of [
+    (p: any) => (p.profileId = randomUUID()),
+    (p: any) => (p.checkedAt = new Date(0).toISOString()),
+    (p: any) => (p.validUntil = p.checkedAt),
+    (p: any) =>
+      (p.validUntil = new Date(Date.parse(p.checkedAt) + 15001).toISOString()),
+    (p: any) => (p.policyStatus = "absent"),
+    (p: any) => (p.policyStatus = "expired"),
+    (p: any) => (p.policyRevision = null),
+    (p: any) => (p.items[0].subject.reference = randomUUID()),
+    (p: any) =>
+      (p.items[0].subject = {
+        kind: "email",
+        reference: "private@example.org",
+      }),
+    (p: any) => (p.items[0].executable = true),
+    (p: any) => (p.items[0].effectiveAccess = "allowed"),
+    (p: any) => (p.items[0].authorityConfirmed = "not_confirmed"),
+    (p: any) => (p.items[0].authorityMode = "project-authoritative"),
+    (p: any) => (p.items[0].expiresAt = new Date(0).toISOString()),
+    (p: any) => (p.items[0].status = "expired"),
+    (p: any) => (p.items[0].manageUrl = "https://evil.test"),
+    (p: any) => p.items.push({ ...p.items[0] }),
+    (p: any) => (p.items = Array(201).fill(p.items[0])),
+    (p: any) => (p.identities = ["private@example.org"]),
+  ]) {
+    const f = await fixture(true);
+    change(f.policyProjection);
+    await assert.rejects(f.connector.readPolicy(), /INVALID_SOURCE/);
+  }
+  const f = await fixture(true);
+  f.advance(15001);
+  await assert.rejects(f.connector.readPolicy(), /INVALID_SOURCE/);
+});
+test("Policy reads reject mismatched envelopes and changed content hashes", async () => {
+  for (const change of [
+    (r: any) => (r.grantId = randomUUID()),
+    (r: any) => (r.policyRevision = "roles-ai-own-access-v1"),
+    (r: any) => (r.projection.items[0].resources = ["changed"]),
+    (r: any) => (r.padding = "x".repeat(300001)),
+  ]) {
+    const f = await fixture(true);
+    f.mutate((r) => {
+      change(r);
+      return r;
+    });
+    await assert.rejects(f.connector.readPolicy(), /INVALID_SOURCE/);
+  }
+});
+test("Policy reads are fenced by local removal and source disconnect", async () => {
+  for (const action of ["forgetLocal", "disconnect"] as const) {
+    const f = await fixture(true);
+    let release!: () => void, started!: () => void;
+    const began = new Promise<void>((r) => (started = r));
+    f.wait(async () => {
+      started();
+      await new Promise<void>((r) => (release = r));
+    });
+    const read = f.connector.readPolicy();
+    await began;
+    await f.connector[action]();
+    release();
+    await assert.rejects(read, /CONNECTION_EXPIRED/);
+  }
+});
+
+test("Policy records preserve absent, expired, suspended, source-owned and wallet-required explanations", async () => {
+  for (const status of [
+    "absent",
+    "expired",
+    "suspended",
+    "source_owned",
+    "wallet_required",
+  ]) {
+    const f = await fixture(true),
+      p = f.policyProjection,
+      row = p.items[0];
+    if (status === "absent")
+      Object.assign(p, {
+        policyStatus: "absent",
+        policyRevision: null,
+        policyExpiresAt: null,
+        items: [],
+      });
+    else {
+      row.status = status;
+      row.authorityConfirmed = "not_confirmed";
+      if (status === "expired") {
+        p.policyStatus = "expired";
+        p.policyExpiresAt = new Date(
+          Date.parse(p.checkedAt) - 1000,
+        ).toISOString();
+        row.expiresAt = p.policyExpiresAt;
+      }
+      if (status === "source_owned")
+        row.authorityMode = "project-authoritative";
+      if (status === "wallet_required")
+        row.subject = { kind: "email", reference: "a".repeat(64) };
+    }
+    const result = await f.connector.readPolicy();
+    assert.equal(
+      result.projection.items[0]?.status ?? result.projection.policyStatus,
+      status,
+    );
+  }
+});
+test("Stored Roles credentials reject mismatched scopes and revisions", async () => {
+  const f = await fixture(true);
+  const saved = JSON.parse(
+    Buffer.from((await f.storage.getSecret())!).toString(),
+  );
+  saved.grant.actions = ["read_own_access"];
+  await f.storage.setSecret(Buffer.from(JSON.stringify(saved)));
+  await assert.rejects(f.make().readPolicy(), /INVALID_CONNECTION/);
+  const legacy = await fixture();
+  legacy.mutate((r) => ({ ...r, policyRevision: "roles-ai-own-access-v2" }));
+  await assert.rejects(legacy.connector.read(), /INVALID_SOURCE/);
 });

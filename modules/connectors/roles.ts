@@ -2,17 +2,32 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AsyncEntry } from "@napi-rs/keyring";
 import { z } from "zod";
 
+import { validateOwnPolicy } from "./roles-policy.js";
+
 import { ConnectorError, type ConnectorSecret } from "./crm.js";
 
 const origin = "https://roles.bittrees.org";
-const grantSchema = z.strictObject({
+const grantFields = {
   token: z.string().regex(/^[a-f0-9]{64}$/),
   grantId: z.uuid(),
   profileId: z.uuid(),
-  actions: z.tuple([z.literal("read_own_access")]),
   expiresAt: z.iso.datetime(),
-  policyRevision: z.literal("roles-ai-own-access-v1"),
-});
+};
+const grantSchema = z.discriminatedUnion("policyRevision", [
+  z.strictObject({
+    ...grantFields,
+    actions: z.tuple([z.literal("read_own_access")]),
+    policyRevision: z.literal("roles-ai-own-access-v1"),
+  }),
+  z.strictObject({
+    ...grantFields,
+    actions: z.tuple([
+      z.literal("read_own_access"),
+      z.literal("read_own_policy"),
+    ]),
+    policyRevision: z.literal("roles-ai-own-access-v2"),
+  }),
+]);
 const savedSchema = z.strictObject({
   owner: z.string().min(1).max(256),
   grant: grantSchema,
@@ -54,7 +69,7 @@ const projectionSchema = z.strictObject({
 const readSchema = z.strictObject({
   grantId: z.uuid(),
   expiresAt: z.iso.datetime(),
-  policyRevision: z.literal("roles-ai-own-access-v1"),
+  policyRevision: z.enum(["roles-ai-own-access-v1", "roles-ai-own-access-v2"]),
   projection: projectionSchema,
 });
 export function rolesKeychainEntry(profile: string): ConnectorSecret {
@@ -64,7 +79,12 @@ export function rolesKeychainEntry(profile: string): ConnectorSecret {
 }
 /** One explicit source identity per personal profile. No inference, source approval or automatic reconnect. */
 export class RolesConnector {
-  private pending?: { id: string; verifier: string; expires: number };
+  private pending?: {
+    id: string;
+    verifier: string;
+    expires: number;
+    includePolicy: boolean;
+  };
   private busy = false;
   private generation = 0;
   constructor(
@@ -110,7 +130,10 @@ export class RolesConnector {
       throw e;
     }
   }
-  async begin() {
+  async begin(options: { includePolicy?: boolean } = {}) {
+    const { includePolicy = false } = z
+      .strictObject({ includePolicy: z.boolean().optional() })
+      .parse(options);
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
     try {
@@ -118,13 +141,17 @@ export class RolesConnector {
       const verifier = randomBytes(32).toString("base64url"),
         id = randomUUID();
       const expires = this.now() + 10 * 60_000;
-      this.pending = { id, verifier, expires };
+      this.pending = { id, verifier, expires, includePolicy };
       const challenge = createHash("sha256")
         .update(verifier)
         .digest("base64url");
       return {
         id,
-        consentUrl: origin + "/connect/ai?challenge=" + challenge,
+        consentUrl:
+          origin +
+          "/connect/ai?challenge=" +
+          challenge +
+          (includePolicy ? "&scope=own_policy" : ""),
         expiresAt: new Date(expires).toISOString(),
       };
     } finally {
@@ -132,7 +159,7 @@ export class RolesConnector {
     }
   }
   private async post(
-    path: "exchange" | "read" | "disconnect",
+    path: "exchange" | "read" | "read-policy" | "disconnect",
     body: unknown,
     token?: string,
   ) {
@@ -212,6 +239,8 @@ export class RolesConnector {
       );
       if (
         !parsed.success ||
+        (!pending.includePolicy &&
+          parsed.data.policyRevision === "roles-ai-own-access-v2") ||
         Date.parse(parsed.data.expiresAt) <= this.now() ||
         Date.parse(parsed.data.expiresAt) > this.now() + 31 * 86_400_000
       )
@@ -243,6 +272,7 @@ export class RolesConnector {
     const result = parsed.data,
       { projectionHash, ...projection } = result.projection;
     if (
+      result.policyRevision !== grant.policyRevision ||
       result.grantId !== grant.grantId ||
       projection.profileId !== grant.profileId ||
       result.expiresAt !== grant.expiresAt ||
@@ -270,6 +300,28 @@ export class RolesConnector {
     if (
       generation !== this.generation ||
       Date.parse(grant.expiresAt) <= this.now()
+    )
+      throw new ConnectorError("CONNECTION_EXPIRED");
+    return result;
+  }
+  async readPolicy() {
+    if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
+    const generation = this.generation,
+      grant = await this.saved();
+    if (grant.disconnectPending) throw new ConnectorError("CONNECTION_BUSY");
+    if (Date.parse(grant.expiresAt) <= this.now())
+      throw new ConnectorError("CONNECTION_EXPIRED");
+    if (grant.policyRevision !== "roles-ai-own-access-v2")
+      throw new ConnectorError("SOURCE_DENIED");
+    const result = validateOwnPolicy(
+      await this.post("read-policy", {}, grant.token),
+      grant,
+      this.now(),
+    );
+    if (
+      generation !== this.generation ||
+      Date.parse(grant.expiresAt) <= this.now() ||
+      Date.parse(result.projection.validUntil) <= this.now()
     )
       throw new ConnectorError("CONNECTION_EXPIRED");
     return result;
