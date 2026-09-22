@@ -531,7 +531,7 @@ The dashboard's shared local transport retains its 15-second deadline across bot
 
 Memory text, review state, pinning, source references and feedback survive; restoration does not grant source access. The application must still supply its current source validator when reopening memory. Prior deletions can remain in older backups; backup retention/deletion is separate from deleting current content. The backup contains no storage key or connector credential.
 
-These are module APIs, not an in-app backup or restore flow. A task snapshot alone does not include memory. The two individual snapshot calls are not a coordinated pair; use the coordinated content-bundle API below when capturing both stores, and verify key recovery separately. Do not treat JSON export as an importable backup or the existing native app as providing a backup button. Full native backup/restore and installation/rollback acceptance remain open.
+These module APIs underpin the coordinated backup download described below; restoration remains a module operation. A task snapshot alone does not include memory. The two individual snapshot calls are not a coordinated pair; use the coordinated content-bundle API below when capturing both stores, and verify key recovery separately. Do not treat JSON export as an importable backup. Older installed builds do not include the backup-download control. Full native backup/restore and installation/rollback acceptance remain open.
 
 ### Coordinated task-and-memory recovery bundle
 
@@ -539,4 +539,12 @@ These are module APIs, not an in-app backup or restore flow. A task snapshot alo
 
 `restoreContentBackup` accepts the original storage key and a parent directory. It allocates a new private recovery directory, uses the validated task and memory restore paths, and returns its path only when both stores and `RECOVERY.json` are ready. Ordinary failures remove the incomplete directory. A process crash can leave a private partial recovery directory; do not use one without a completion manifest and verification. Existing application data is never replaced by this API. Task control/template consent is cleared; memory access still uses current source checks, including after source deletion. This does not guarantee directory-entry power-loss durability.
 
-The bundle covers task/history/profile/Inbox/template data and memory. It excludes the storage key, connector credentials, model files and model-import jobs. Those remain separate recovery concerns. This is a backend API, not a native backup/restore button or automatic installation/rollback flow; full native and credential recovery acceptance remains open.
+The bundle covers task/history/profile/Inbox/template data and memory. It excludes the storage key, connector credentials, model files and model-import jobs. Those remain separate recovery concerns. The Device backup-download action uses this backend; there is no native restore or automatic installation/rollback flow; full native and credential recovery acceptance remains open.
+
+### Device backup download
+
+The Device screen now offers an explicit confirmed encrypted-backup download. The local startup wires both stores and the storage vault to `POST /v1/backup`; the storage key is never returned. The paired same-origin session remains required, the request accepts only `{confirmed:true}`, and the response is an attachment with no-store headers. No destination path can be supplied through the endpoint. Temporary server files are removed before return; only one capture runs at a time. Concurrent-data conflicts require explicit retry.
+
+The client enforces a two-minute request/body deadline and 128 MiB response bound, with no automatic retry. A session cleared during capture cannot start a late download. The blob URL remains available for the native save sheet and is released on another backup, session clear or unmount. UI copy explains that the original storage key is required, loss of that key is not recoverable through the file, connections/models are separate, and restore controls are not yet available. This is a paired personal-device backup, not a remotely exposed export.
+
+Authenticated HTTP/client tests restore both stores from the actual downloaded bytes and verify denied origin/session/unconfirmed/path requests, concurrent capture denial, logout revocation, invalid/oversized/error responses and body-timeout handling. Native visual/keyboard/save-dialog acceptance is still open, and the previously installed app has not been replaced.

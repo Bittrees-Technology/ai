@@ -1,3 +1,4 @@
+import { localBackupDownload } from "./backup.js";
 import { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
 import { RemoteReceiver } from "../../modules/remote/receiver.js";
 import {
@@ -161,6 +162,7 @@ const codePath = join(directory, "pairing-code.txt");
 server.on(
   "request",
   dashboardServer({
+    backupDownload: localBackupDownload(store, memory, new Vault(key)),
     deviceStatus: () => deviceStatus(directory),
     imports,
     remote,

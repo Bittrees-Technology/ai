@@ -27,6 +27,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  backupDownload?: () => Promise<Buffer>;
   remote?: RemoteClient;
   receiver?: RemoteReceiver;
   templateReceiver?: RemoteTemplateReceiver;
@@ -49,6 +50,7 @@ export interface LocalApiOptions {
   cancelRun?: (id: string) => void;
 }
 export function localApi({
+  backupDownload,
   store,
   remote,
   receiver,
@@ -831,6 +833,16 @@ export function localApi({
   app.get("/v1/checkins", (_req, res) =>
     res.json({ items: store.checkins(owner) }),
   );
+  app.post("/v1/backup", async (req, res) => {
+    z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
+    if (!backupDownload) throw new StoreError("NOT_FOUND");
+    const bytes = await backupDownload();
+    res.set(
+      "Content-Disposition",
+      'attachment; filename="bittrees-ai-content.aib"',
+    );
+    res.type("application/octet-stream").send(bytes);
+  });
   app.get("/v1/export", async (_req, res) => {
     const taskToken = store.changeToken(),
       memoryToken = memory?.changeToken();
