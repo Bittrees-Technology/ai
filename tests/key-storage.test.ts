@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadStorageKey } from "../modules/storage/keychain.js";
@@ -66,6 +73,47 @@ test("encrypted backup restores with the right key and never overwrites data", a
   } finally {
     restored?.close();
     s.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("restore preparation failure leaves no published database or staging files", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ai-restore-failure-"));
+  const vault = new Vault(randomBytes(32));
+  const source = new Store(join(dir, "source.db"), vault);
+  try {
+    // A real database that this engine cannot migrate must never be published.
+    source.db.pragma("user_version = 999");
+    const backup = join(dir, "backup.aib");
+    await encryptedBackup(source, vault, backup);
+    const before = readdirSync(dir).sort();
+    const destination = join(dir, "restore.db");
+    await assert.rejects(restoreBackup(backup, vault, destination));
+    assert.equal(existsSync(destination), false);
+    assert.deepEqual(readdirSync(dir).sort(), before);
+  } finally {
+    source.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("restore rejects existing SQLite sidecars without modifying them", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ai-restore-sidecar-"));
+  const vault = new Vault(randomBytes(32));
+  const source = new Store(join(dir, "source.db"), vault);
+  try {
+    const backup = join(dir, "backup.aib");
+    await encryptedBackup(source, vault, backup);
+    for (const suffix of ["-wal", "-shm", "-journal"]) {
+      const destination = join(dir, `restore${suffix}.db`);
+      const sidecar = destination + suffix;
+      writeFileSync(sidecar, "existing database state");
+      await assert.rejects(restoreBackup(backup, vault, destination), /EEXIST/);
+      assert.equal(existsSync(destination), false);
+      assert.equal(readFileSync(sidecar, "utf8"), "existing database state");
+    }
+  } finally {
+    source.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
