@@ -1,4 +1,4 @@
--- Apply only to the dedicated relay database. Device rows are created by future verified pairing.
+-- Apply only to the dedicated relay database. Device rows require verified pairing; see 002-pairing.sql.
 CREATE TABLE remote_devices (
  id uuid PRIMARY KEY,
  owner_id uuid NOT NULL,

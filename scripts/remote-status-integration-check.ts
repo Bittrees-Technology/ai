@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
+import { checkRemoteDevices } from "./remote-device-integration.js";
 import { RemoteStatusStore } from "../modules/remote/status-store.js";
 const connectionString = process.env.REMOTE_TEST_DATABASE_URL;
 if (!connectionString) throw Error("REMOTE_TEST_DATABASE_URL required");
@@ -32,6 +33,12 @@ try {
   await pool.query(
     await readFile(
       new URL("../modules/remote/migrations/001-status.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  await pool.query(
+    await readFile(
+      new URL("../modules/remote/migrations/002-pairing.sql", import.meta.url),
       "utf8",
     ),
   );
@@ -285,8 +292,9 @@ try {
     store.listPage(ownerId, pagedDevice, { after: first.nextCursor }),
     /DENIED/,
   );
+  await checkRemoteDevices(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen and revocation checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();
