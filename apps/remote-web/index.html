@@ -78,6 +78,21 @@
         <ul id="statuses" aria-labelledby="statuses-title"></ul>
         <button id="statuses-more" hidden>Load more statuses</button>
       </section>
+      <section id="command-review" hidden aria-labelledby="command-title">
+        <h2 id="command-title">Review task command</h2>
+        <p id="command-details"></p>
+        <button id="command-submit">Confirm this command</button>
+        <button id="command-dismiss">Dismiss review</button>
+      </section>
+      <section
+        id="command-result"
+        hidden
+        aria-labelledby="command-result-title"
+      >
+        <h2 id="command-result-title">Command receipt</h2>
+        <p id="command-outcome" role="status"></p>
+        <button id="command-refresh">Check command receipt</button>
+      </section>
       <footer>
         Removing a local connection is different from revoking a device here.
         Revocation removes its stored remote statuses. Private task content

@@ -1,19 +1,7 @@
-import { RemoteWebController } from "/controller.js";
+import { RemoteWebController, browserApi } from "/controller.js";
 const el = (id) => document.getElementById(id);
 let accountId = null;
-async function api(path, body) {
-  const r = await fetch(path, {
-    method: "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json", "X-Bittrees-Request": "1" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15000),
-  });
-  const data = await r.json();
-  if (!r.ok) throw Error(data.error);
-  return data;
-}
+const api = browserApi(fetch, () => accountId);
 const settings = await fetch("/settings.json", { cache: "no-store" })
   .then((r) => {
     if (!r.ok) throw Error();
@@ -58,6 +46,20 @@ if (!settings || settings.origin !== location.origin) {
         show.disabled = s.busy;
         show.onclick = () => controller.statuses(d.id);
         li.append(show);
+        const control = document.createElement("button");
+        control.textContent = d.controlsEnabled
+          ? "Disable pause/cancel"
+          : "Approve pause/cancel";
+        control.disabled = s.busy;
+        control.onclick = () => {
+          const confirmed = window.confirm(
+            d.controlsEnabled
+              ? "Disable remote pause/cancel for this device?"
+              : "Allow this account to pause or cancel shared tasks on this Mac? This needs separate confirmation on the Mac within five minutes. It does not allow starting tasks or reading content.",
+          );
+          void controller.controls(d.id, !d.controlsEnabled, confirmed);
+        };
+        li.append(control);
         const revoke = document.createElement("button");
         revoke.textContent = "Revoke device";
         revoke.disabled = s.busy;
@@ -79,6 +81,21 @@ if (!settings || settings.origin !== location.origin) {
     for (const task of s.statuses) {
       const li = document.createElement("li");
       li.textContent = `Task ${task.id}: ${task.status.replaceAll("_", " ")}. Updated ${new Date(task.updatedAt).toLocaleString()}.`;
+      if (
+        s.devices.find((d) => d.id === s.deviceId)?.controlsEnabled &&
+        !["completed", "failed", "cancelled", "expired"].includes(task.status)
+      ) {
+        for (const action of task.status === "paused"
+          ? ["cancel"]
+          : ["pause", "cancel"]) {
+          const button = document.createElement("button");
+          button.textContent =
+            action === "pause" ? "Review pause" : "Review cancel";
+          button.disabled = s.busy;
+          button.onclick = () => controller.reviewCommand(task.id, action);
+          li.append(button);
+        }
+      }
       el("statuses").append(li);
     }
     if (s.deviceId && !s.statuses.length) {
@@ -86,8 +103,19 @@ if (!settings || settings.origin !== location.origin) {
       li.textContent = "No unexpired statuses are available for this device.";
       el("statuses").append(li);
     }
+    el("command-review").hidden = !s.commandReview;
+    el("command-details").textContent = s.commandReview
+      ? `${s.commandReview.command === "pause" ? "Pause" : "Cancel"} task ${s.commandReview.taskId} on device ${s.commandReview.deviceId}, using reviewed revision ${s.commandReview.expectedRevision}. Expires ${new Date(s.commandReview.expiresAt).toLocaleTimeString()}. Cancelled tasks cannot be resumed.`
+      : "";
+    el("command-result").hidden = !s.commandResult;
+    el("command-outcome").textContent = s.commandResult
+      ? `Command ${s.commandResult.id}: ${s.commandResult.receipt?.outcome ?? s.commandResult.state}. A pending command has not been confirmed as applied.`
+      : "";
     el("statuses-more").hidden = !s.statusCursor;
   }
+  el("command-submit").onclick = () => controller.submitCommand(true);
+  el("command-dismiss").onclick = () => controller.set({ commandReview: null });
+  el("command-refresh").onclick = () => controller.commandReceipt();
   el("login").onclick = () => controller.login();
   el("refresh").onclick = () => controller.refresh();
   el("logout").onclick = () => controller.logout();

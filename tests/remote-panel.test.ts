@@ -130,3 +130,35 @@ test("Remote panel local removal uses a distinct confirmation and explains remot
   assert.equal(panel.state.connection, null);
   assert.match(panel.state.notice, /Revoke the device on ai.bittrees.org/);
 });
+
+test("Mac controls require confirmation and discard late control feedback after focus loss", async () => {
+  const calls: any[] = [],
+    pending = deferred<any>();
+  const panel = new RemotePanelState(
+    async (path, method, body) => {
+      calls.push({ path, method, body });
+      if (path.endsWith("check")) return pending.promise;
+      if (path === "/v1/remote")
+        return {
+          available: true,
+          connection: { controls: "enabled", state: "paired" },
+        };
+      return {};
+    },
+    () => {},
+  );
+  await panel.controls("enable", false);
+  assert.equal(calls.length, 0);
+  await panel.controls("enable", true);
+  assert.deepEqual(calls[0], {
+    path: "/v1/remote/controls/enable",
+    method: "POST",
+    body: { confirmed: true },
+  });
+  const check = panel.controls("check", true);
+  panel.hide();
+  pending.resolve({ receipts: [{ outcome: "applied" }] });
+  await check;
+  assert.equal(panel.state.notice, "");
+  assert.equal(panel.state.busy, false);
+});

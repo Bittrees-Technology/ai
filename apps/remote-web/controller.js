@@ -1,6 +1,30 @@
+/** Browser transport binds each owner action to the account actually displayed. */
+export function browserApi(fetcher, account) {
+  return async (path, body) => {
+    const ownerId = account();
+    const response = await fetcher(path, {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "error",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Bittrees-Request": "1",
+        ...(ownerId ? { "X-Bittrees-Account": ownerId } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await response.json();
+    if (!response.ok) throw Error(data.error);
+    return data;
+  };
+}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export class RemoteWebController {
   state = {
+    commandReview: null,
+    commandResult: null,
     account: null,
     confirmation: "",
     devices: [],
@@ -26,6 +50,8 @@ export class RemoteWebController {
   hide() {
     this.epoch++;
     this.set({
+      commandReview: null,
+      commandResult: null,
       confirmation: "",
       statuses: [],
       statusCursor: null,
@@ -80,6 +106,7 @@ export class RemoteWebController {
     }
   }
   async refresh() {
+    this.hide();
     const epoch = this.epoch;
     return this.act(async () => {
       try {
@@ -197,6 +224,7 @@ export class RemoteWebController {
         notice: page.items.length
           ? ""
           : "No devices are available on this page.",
+        commandReview: null,
         devices: more ? [...this.state.devices, ...page.items] : page.items,
         deviceCursor: page.nextCursor,
       });
@@ -214,9 +242,94 @@ export class RemoteWebController {
       });
       if (epoch === this.epoch)
         this.set({
+          commandReview: null,
           deviceId,
           statuses: more ? [...this.state.statuses, ...page.items] : page.items,
           statusCursor: page.nextCursor,
+        });
+    });
+  }
+  async controls(deviceId, enable, confirmed) {
+    if (!confirmed || !this.state.account) return;
+    const device = this.state.devices.find((d) => d.id === deviceId);
+    if (!device || device.revoked || device.expiresAt <= Date.now()) return;
+    const epoch = this.epoch;
+    return this.act(async () => {
+      await this.api(
+        enable ? "/browser/controls/approve" : "/browser/controls/disable",
+        enable
+          ? { deviceId, expectedEpoch: device.epoch, confirmed: true }
+          : { deviceId },
+      );
+      if (epoch !== this.epoch) return;
+      this.set({
+        commandReview: null,
+        commandResult: null,
+        devices: this.state.devices.map((d) =>
+          d.id === deviceId && !enable ? { ...d, controlsEnabled: false } : d,
+        ),
+        notice: enable
+          ? "Approved for five minutes. Return to this Mac and explicitly enable pause/cancel, then refresh devices here."
+          : "Remote pause/cancel disabled. Pending commands will no longer be delivered.",
+      });
+    });
+  }
+  reviewCommand(taskId, action) {
+    if (
+      this.state.busy ||
+      !this.state.account ||
+      !["pause", "cancel"].includes(action)
+    )
+      return;
+    const task = this.state.statuses.find((t) => t.id === taskId);
+    const device = this.state.devices.find((d) => d.id === this.state.deviceId);
+    if (
+      !task ||
+      !device?.controlsEnabled ||
+      device.revoked ||
+      device.expiresAt <= Date.now() ||
+      ["completed", "failed", "cancelled", "expired"].includes(task.status) ||
+      (action === "pause" && task.status === "paused")
+    )
+      return;
+    const now = Date.now();
+    this.set({
+      commandResult: null,
+      commandReview: {
+        id: crypto.randomUUID(),
+        deviceId: device.id,
+        taskId: task.id,
+        command: action,
+        expectedRevision: task.revision,
+        issuedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 300000).toISOString(),
+      },
+    });
+  }
+  async submitCommand(confirmed) {
+    const command = this.state.commandReview,
+      epoch = this.epoch;
+    if (!confirmed || !command || !this.state.account) return;
+    return this.act(async () => {
+      await this.api("/browser/commands", { command, confirmed: true });
+      if (epoch === this.epoch)
+        this.set({
+          commandReview: null,
+          commandResult: { id: command.id, state: "pending", receipt: null },
+          notice:
+            "Command queued. The Mac must receive and apply it before the deadline.",
+        });
+    });
+  }
+  async commandReceipt() {
+    const id = this.state.commandResult?.id,
+      epoch = this.epoch;
+    if (!id || !this.state.account) return;
+    return this.act(async () => {
+      const result = await this.api("/browser/commands/receipt", { id });
+      if (epoch === this.epoch)
+        this.set({
+          commandResult: { id, state: result.state, receipt: result.receipt },
         });
     });
   }

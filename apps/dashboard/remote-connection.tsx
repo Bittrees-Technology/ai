@@ -16,6 +16,7 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
   );
   const [state, setState] = useState(controller.state);
   const [account, setAccount] = useState("");
+  const [controlConfirmed, setControlConfirmed] = useState(false);
   const [removeConfirmed, setRemoveConfirmed] = useState(false);
   useEffect(() => {
     mounted.current = true;
@@ -24,6 +25,7 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
       controller.hide();
       setAccount("");
       setRemoveConfirmed(false);
+      setControlConfirmed(false);
     };
     window.addEventListener("blur", hide);
     document.addEventListener("visibilitychange", hide);
@@ -154,6 +156,68 @@ export function RemoteConnectionPanel({ api }: { api: Api }) {
           )}
           {paired && (
             <>
+              <fieldset disabled={state.busy}>
+                <legend>Remote pause and cancel</legend>
+                <p>
+                  Permission:{" "}
+                  {state.connection?.controls?.replaceAll("_", " ") ||
+                    "unavailable"}
+                  . This permission lets your remote account pause or cancel
+                  shared tasks. It cannot start tasks or read their content.
+                </p>
+                <p>
+                  First approve pause/cancel for this device on ai.bittrees.org,
+                  then enable it here within five minutes. Commands are received
+                  only when you choose “Check for commands”; background
+                  receiving is not active yet.
+                </p>
+                {state.connection?.controls === "disabled" && (
+                  <>
+                    <label className="remote-task">
+                      <input
+                        type="checkbox"
+                        checked={controlConfirmed}
+                        onChange={(e) => setControlConfirmed(e.target.checked)}
+                      />
+                      <span>
+                        I approved this device in my remote account and allow
+                        pause/cancel on this Mac.
+                      </span>
+                    </label>
+                    <button
+                      disabled={!controlConfirmed}
+                      onClick={() => {
+                        setControlConfirmed(false);
+                        void controller.controls("enable", true);
+                      }}
+                    >
+                      Enable remote pause/cancel
+                    </button>
+                  </>
+                )}
+                {state.connection?.controls === "enabled" && (
+                  <button
+                    onClick={() => void controller.controls("check", true)}
+                  >
+                    Check for commands
+                  </button>
+                )}
+                {["enabled", "confirmation_required"].includes(
+                  state.connection?.controls || "",
+                ) && (
+                  <button
+                    onClick={() => void controller.controls("disable", true)}
+                  >
+                    Disable remote pause/cancel
+                  </button>
+                )}
+                {state.connection?.controls === "confirmation_required" && (
+                  <p>
+                    Permission needs attention. Disable it first, then approve
+                    and enable it again.
+                  </p>
+                )}
+              </fieldset>
               {state.connection?.pendingDelivery ? (
                 <div>
                   <p>

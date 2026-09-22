@@ -10,6 +10,7 @@ export type RemoteConnection = {
   expiresAt: number;
   state: string;
   pendingDelivery: boolean;
+  controls?: "unavailable" | "disabled" | "enabled" | "confirmation_required";
 };
 export type RemoteState = {
   available: boolean | null;
@@ -30,6 +31,8 @@ type Api = (
   headers?: Record<string, string>,
 ) => Promise<any>;
 const messages: Record<string, string> = {
+  CONTROL_CONFIRMATION_REQUIRED:
+    "Disable the incomplete permission, approve pause/cancel on ai.bittrees.org, then confirm it here again.",
   PAIRING_REQUIRED:
     "Remove this local connection, revoke the old device on ai.bittrees.org, then pair again.",
   PENDING_DELIVERY:
@@ -181,6 +184,25 @@ export class RemotePanelState {
         this.set({
           connection: status.connection,
           notice: "Previous status delivery confirmed.",
+        });
+    });
+  }
+  async controls(action: "enable" | "disable" | "check", confirmed: boolean) {
+    if (!confirmed) return;
+    return this.act(async (current) => {
+      const result = await this.api(`/v1/remote/controls/${action}`, "POST", {
+        confirmed: true,
+      });
+      const status = await this.api("/v1/remote");
+      if (current())
+        this.set({
+          connection: status.connection,
+          notice:
+            action === "enable"
+              ? "Remote pause/cancel enabled. Check for commands when ready; background receiving is not active yet."
+              : action === "disable"
+                ? "Pause/cancel disabled on this Mac and the remote service."
+                : `${result.receipts.length} command receipt(s) confirmed. Refresh Tasks to see current work.`,
         });
     });
   }
