@@ -28,7 +28,7 @@ export class LocalWorker {
   stop() {
     this.active?.abort.abort();
   }
-  cancelSource(app?: "crm" | "autonote") {
+  cancelSource(app?: "crm" | "autonote" | "mail") {
     if (!this.active) return;
     const binding = this.store.sourceBinding(this.owner, this.active.id);
     if (binding && (!app || binding.authority.sourceApp === app))

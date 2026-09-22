@@ -1,4 +1,9 @@
 import {
+  MailConnector,
+  mailKeychainEntry,
+} from "../../modules/connectors/mail.js";
+import { MailTasks } from "../../modules/connectors/mail-tasks.js";
+import {
   RolesConnector,
   rolesKeychainEntry,
 } from "../../modules/connectors/roles.js";
@@ -93,6 +98,11 @@ const crm = new CrmConnector(
     autonoteKeychainEntry("personal"),
   ),
   autonoteSources = new AutoNoteTasks(autonote, owner, "personal"),
+  mail = new MailConnector(
+    JSON.stringify(owner),
+    mailKeychainEntry("personal"),
+  ),
+  mailSources = new MailTasks(mail, owner, "personal"),
   runtime = new Ollama(),
   worker = new LocalWorker(
     store,
@@ -101,7 +111,7 @@ const crm = new CrmConnector(
     (id) => store.profile(owner, id),
     "personal",
     memory,
-    new SourceTasks(sources, autonoteSources),
+    new SourceTasks(sources, autonoteSources, mailSources),
   );
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
@@ -118,6 +128,8 @@ server.on(
     sources,
     autonote,
     roles,
+    mail,
+    mailSources,
     autonoteSources,
     runtime,
     port,
