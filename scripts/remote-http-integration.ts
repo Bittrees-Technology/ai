@@ -12,6 +12,9 @@ import {
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { Wallet } from "ethers";
 import type { Pool } from "pg";
+import { RemoteClient } from "../modules/remote/client.js";
+import { Store } from "../modules/storage/store.js";
+import { Vault } from "../modules/storage/vault.js";
 import { createRemoteApp } from "../modules/remote/http.js";
 
 export async function checkRemoteHttp(pool: Pool) {
@@ -423,6 +426,97 @@ export async function checkRemoteHttp(pool: Pool) {
     );
     assert.equal((await call("/browser/logout", {}, owner)).status, 200);
     assert.equal((await call("/browser/session", {}, owner)).status, 403);
+    // Exercise the actual Mac-side protocol client over the same verified TLS transport.
+    // Secret storage is an in-memory test double; this is not native Keychain acceptance.
+    let savedSecret: Uint8Array | undefined;
+    const secret = {
+      getSecret: async () => savedSecret,
+      setSecret: async (value: Uint8Array) => {
+        savedSecret = Uint8Array.from(value);
+      },
+      deleteCredential: async () => {
+        savedSecret = undefined;
+        return true;
+      },
+    };
+    const transport: typeof fetch = async (url, init) => {
+      assert.ok(String(url).startsWith(origin + "/device/"));
+      assert.equal(init?.redirect, "error");
+      assert.equal(init?.credentials, "omit");
+      const r = await call(
+        new URL(String(url)).pathname,
+        JSON.parse(String(init?.body)),
+        init?.headers as Record<string, string>,
+      );
+      return Response.json(r.body, { status: r.status });
+    };
+    const client = new RemoteClient("synthetic-local-owner", secret, transport);
+    const clientPair = await client.begin();
+    assert.equal(
+      (
+        await call(
+          "/browser/pairings/approve",
+          {
+            id: clientPair.id,
+            approvalCode: clientPair.approvalCode,
+            confirmed: true,
+          },
+          otherOwner,
+        )
+      ).status,
+      200,
+    );
+    await client.finish(otherVerified.body.ownerId);
+    const local = new Store(":memory:", new Vault(randomBytes(32)));
+    try {
+      const localTask = local.create(
+        { userId: "synthetic-local-owner", tenantId: "personal" },
+        {
+          conversationId: "PRIVATE_CONVERSATION",
+          kind: "draft",
+          prompt: "PRIVATE_PROMPT",
+          modelProfileId: "PRIVATE_MODEL",
+          dependencies: [],
+          priority: "normal",
+          tags: [],
+        },
+        randomUUID(),
+      );
+      await client.publish([localTask]);
+      await client.rotate();
+      const reopened = new RemoteClient(
+        "synthetic-local-owner",
+        secret,
+        transport,
+      );
+      await reopened.publish([
+        { ...localTask, revision: localTask.revision + 1 },
+      ]);
+      const state = (await reopened.status())!;
+      const remote = await call(
+        "/browser/status",
+        { deviceId: state.deviceId },
+        otherOwner,
+      );
+      assert.equal(remote.body.items[0].revision, 2);
+      assert.equal(JSON.stringify(remote.body).includes("PRIVATE"), false);
+      await call(
+        "/browser/devices/revoke",
+        { deviceId: state.deviceId },
+        otherOwner,
+      );
+      await assert.rejects(
+        reopened.publish([{ ...localTask, revision: 3 }]),
+        /DENIED/,
+      );
+      assert.equal(
+        (await reopened.forgetLocal()).remoteRevocationConfirmed,
+        false,
+      );
+      assert.equal(savedSecret, undefined);
+    } finally {
+      local.close();
+    }
     assert.equal(
       (
         await call(
