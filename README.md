@@ -223,9 +223,9 @@ Connections → Roles offers an unchecked request for own-policy records before 
 
 ## Selected Mail connector foundation
 
-The Mail broker uses its own `org.bittrees.ai.connector.mail` Keychain credential and fixed `https://mail.bittrees.org` origin. PKCE consent occurs in Mail and binds one wallet, mailbox, folder and selected message with exact metadata/plain versions. Metadata-only connections cannot fetch bodies. There is no attachment, draft-saving or sending scope in this foundation.
+The Mail broker uses its own `org.bittrees.ai.connector.mail` Keychain credential and fixed `https://mail.bittrees.org` origin. PKCE consent occurs in Mail and binds one wallet, mailbox, folder and selected message with exact metadata/plain versions. Metadata-only connections cannot fetch bodies. The broker also accepts separately selected attachment grants as described below. Draft-saving and sending scopes remain unavailable.
 
-Every read validates bounded fields, exact grant/selection/expiry/scopes and the source projection hash. HTML, attachment fields, unknown properties and changed content versions are rejected. Mail text remains untrusted input. The broker never interprets it as authority or executes message instructions. Credentials expire within the source's short grant lifetime; Mail rechecks the original session, MFA and mailbox assignment on each read. Uncertain source disconnect pauses the saved credential across restarts, and local removal fences in-flight content.
+Every read validates bounded fields, exact grant/selection/expiry/scopes and the source projection hash. HTML, unexpected attachment fields, unknown properties and changed content versions are rejected. Mail text remains untrusted input. The broker never interprets it as authority or executes message instructions. Credentials expire within the source's short grant lifetime; Mail rechecks the original session, MFA and mailbox assignment on each read. Uncertain source disconnect pauses the saved credential across restarts, and local removal fences in-flight content.
 
 `MAIL_REPO=/path/to/installed/mail npx tsx scripts/mail-integration-check.ts` runs the actual private Mail routes, D1 schema in isolated SQLite, Python selected-read helper and this broker with synthetic messages only. It verifies metadata/body separation, selected-message filtering, canonical hashes, freeze denial and disabled-feature disconnect. No private source or source credential is required in public GitHub CI; CI uses independent broker fixtures. Browser/real-user acceptance, Mail deployment and Acer rollout remain open.
 
@@ -247,3 +247,9 @@ Use `MAIL_PROBE_SET=extended npx tsx scripts/mail-local-check.ts` to inspect add
 ## Mac companion preview
 
 Build the native macOS development app with `bash scripts/package-macos.sh` using Node 24. See [Mac companion](docs/macos-companion.md) for pairing, lifecycle, verification and remaining signing requirements.
+
+### Selected attachment broker (task integration pending)
+
+The broker supports `mail-ai-selected-v2` grants containing exactly one MIME part ID and reviewed whole-message version, under a separate `attachment` scope. Legacy metadata/plain grants retain v1. Body and attachment versions must match when both are selected. `read("attachment-text")` uses only the stored selection; it cannot list files or provide replacement selectors. Reads verify the grant revision, exact part/version, canonical source hash, allowed plain-text filename/type, 32 KiB UTF-8 bound and byte count, and absence of control characters/truncation/extra fields. A grant without body permission cannot read the body. Disconnect and local removal fence in-flight extraction.
+
+Broker tests cover restart, contradictory grants, substituted file/version/type/content, and disconnect races. The private-source integration runs actual source consent/HTTP and Python extraction on a synthetic multipart message, proving the companion receives the selected file without the other attachment/body, and rejects changed message versions. No live message is read. Attachment task generation, dashboard selection, native/user acceptance and deployment remain open; the installed Mac app is unchanged by this module increment.

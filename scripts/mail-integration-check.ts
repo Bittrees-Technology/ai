@@ -54,8 +54,12 @@ try {
   };
   const env = { DB: { prepare }, MAIL_AI_ENABLED: "true" };
   (globalThis as any).__mailContractEnv = env;
+  await writeFile(
+    join(temp, "entry.ts"),
+    `export * from ${JSON.stringify(join(source, "lib/ai-mail-http.ts"))}; export {ApiError} from ${JSON.stringify(join(source, "lib/mail-auth.ts"))};`,
+  );
   await build({
-    entryPoints: [join(source, "lib/ai-mail-http.ts")],
+    entryPoints: [join(temp, "entry.ts")],
     bundle: true,
     platform: "node",
     format: "esm",
@@ -75,7 +79,7 @@ try {
       },
     ],
   });
-  const { AiMailGrants, aiMailHttp } = await import(
+  const { AiMailGrants, aiMailHttp, ApiError } = await import(
     pathToFileURL(join(temp, "source.mjs")).href
   );
   const wallet = "0x" + "1".repeat(40),
@@ -122,14 +126,16 @@ try {
       assert.equal(m, mailbox);
       assert.equal(payload, undefined);
       const code =
-        "import sys,json,pathlib;from urllib.parse import urlsplit;sys.path.insert(0,sys.argv[1]);from mail_ai_read import selected_read;print(json.dumps(selected_read(pathlib.Path(sys.argv[2]),urlsplit(sys.argv[3]),None)))";
-      return JSON.parse(
+        "import sys,json,pathlib;from urllib.parse import urlsplit;sys.path.insert(0,sys.argv[1]);from mail_ai_read import selected_read,SelectedReadError\ntry:\n print(json.dumps({'data':selected_read(pathlib.Path(sys.argv[2]),urlsplit(sys.argv[3]),None)}))\nexcept SelectedReadError as e:\n print(json.dumps({'status':e.status,'error':e.message}))";
+      const result = JSON.parse(
         execFileSync(
           process.env.MAIL_PYTHON || "python3",
           ["-c", code, join(source, "ops"), maildir, route],
           { encoding: "utf8", timeout: 5000 },
         ),
       );
+      if (result.status) throw new ApiError(result.status, result.error);
+      return result.data;
     },
   );
   const dispatch = (
@@ -269,8 +275,90 @@ try {
     await broker.disconnect();
     assert.equal(await broker.status(), null);
   }
+  db.exec("UPDATE mail_accounts SET status='active'");
+  env.MAIL_AI_ENABLED = "true";
+  await writeFile(
+    join(maildir, "new", "selected"),
+    [
+      "From: fixture@example.org",
+      "Subject: Selected attachment",
+      "MIME-Version: 1.0",
+      'Content-Type: multipart/mixed; boundary="fixture"',
+      "",
+      "--fixture",
+      "Content-Type: text/plain",
+      "",
+      "PRIVATE_BODY",
+      "--fixture",
+      "Content-Type: text/plain",
+      'Content-Disposition: attachment; filename="plan.txt"',
+      "",
+      "SELECTED_FILE",
+      "--fixture",
+      "Content-Type: text/plain",
+      'Content-Disposition: attachment; filename="other.txt"',
+      "",
+      "PRIVATE_OTHER_FILE",
+      "--fixture--",
+      "",
+    ].join("\r\n"),
+  );
+  const indexResponse = await dispatch(
+    "attachments",
+    { wallet, mailbox, id: selectedId, folder: "INBOX" },
+    headers,
+  );
+  assert.equal(indexResponse.status, 200);
+  const index = await indexResponse.json();
+  assert.equal(index.message.attachments.length, 2);
+  assert.ok(!JSON.stringify(index).includes("SELECTED_FILE"));
+  const start = await broker.begin();
+  const previewResponse = await dispatch(
+    "preview",
+    {
+      wallet,
+      mailbox,
+      id: selectedId,
+      folder: "INBOX",
+      includePlain: false,
+      attachment: {
+        id: index.message.attachments[0].id,
+        version: index.message.sourceVersion,
+      },
+    },
+    headers,
+  );
+  assert.equal(previewResponse.status, 200);
+  const preview = await previewResponse.json();
+  assert.ok(preview.attachment.text.includes("SELECTED_FILE"));
+  const consent = await dispatch(
+    "authorize",
+    {
+      wallet,
+      mailbox,
+      selection: preview.selection,
+      scopes: preview.scopes,
+      challenge: new URL(start.consentUrl).searchParams.get("challenge"),
+      expiresInMinutes: 15,
+    },
+    headers,
+  );
+  assert.equal(consent.status, 201);
+  await broker.finish(start.id, (await consent.json()).code);
+  const extracted = await broker.read("attachment-text");
+  assert.equal(extracted.message.mode, "attachment-text");
+  assert.ok(JSON.stringify(extracted).includes("SELECTED_FILE"));
+  assert.ok(!JSON.stringify(extracted).includes("PRIVATE_OTHER_FILE"));
+  assert.ok(!JSON.stringify(extracted).includes("PRIVATE_BODY"));
+  await assert.rejects(broker.read("plain"), /SOURCE_DENIED/);
+  await writeFile(
+    join(maildir, "new", "selected"),
+    "Subject: Changed\n\nDifferent message",
+  );
+  await assert.rejects(broker.read("attachment-text"), /SOURCE_CONFLICT/);
+  await broker.disconnect();
   console.log(
-    "Actual Mail source consent/PKCE, Python selected reads, companion scope/hash checks, source-bound synthetic summary/reply generation, freeze denial and disabled disconnect passed. Synthetic data only; no live mailbox or browser acceptance claimed.",
+    "Actual Mail source consent/PKCE, Python selected reads, companion scope/hash checks, source-bound synthetic summary/reply generation, freeze denial, disabled disconnect and selected-attachment v2/version isolation passed. Synthetic data only; no live mailbox or browser acceptance claimed.",
   );
 } finally {
   db.close();
