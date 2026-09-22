@@ -1,3 +1,4 @@
+import { databaseChangeToken } from "./change-token.js";
 import { MemoryExtractions } from "./memory-extractions.js";
 import { RemoteTemplates } from "./remote-templates.js";
 import {
@@ -1620,6 +1621,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   }
   async backup(destination: string) {
     await this.db.backup(destination);
+  }
+  changeToken() {
+    return databaseChangeToken(this.db);
   }
   close() {
     this.db.close();
