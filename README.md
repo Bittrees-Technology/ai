@@ -198,7 +198,7 @@ The check proves PKCE transcript consent, cited synthetic generation, separate r
 
 ## Roles own-access connection foundation
 
-The Roles broker uses a separate `org.bittrees.ai.connector.roles` Keychain credential and fixed HTTPS origin. Single-use PKCE consent grants only `read_own_access`; the module cannot change roles, enroll agents or call authority decisions. Read responses must match the saved grant/profile/expiry and independently verified projection hash, with strict fields, bounded size and fresh observations. Reported effects remain separate from unverified effective/confirmed/acknowledged access. Arbitrary source fields, emails, credentials and authority claims are rejected.
+The Roles broker uses a separate `org.bittrees.ai.connector.roles` Keychain credential and fixed HTTPS origin. Single-use PKCE consent defaults to `read_own_access`; the module cannot change roles, enroll agents or call authority decisions. Read responses must match the saved grant/profile/expiry and independently verified projection hash, with strict fields, bounded size and fresh observations. Reported effects remain separate from unverified effective/confirmed/acknowledged access. Arbitrary source fields, raw email subjects, credentials and executable authority claims are rejected.
 
 Disconnect suspends the saved credential before sending to Roles and retains that state after uncertainty for explicit retry, including after restart. Local removal is separate from source revoke; either fences in-flight reads. The launcher and Connections panel now wire this broker into explicit connection and own-access controls. No Roles data enters task prompts or memory.
 
@@ -208,3 +208,12 @@ Disconnect suspends the saved credential before sending to Roles and retains tha
 Connections → Roles opens source consent and accepts its single-use code. Load my access observations fetches only the saved profile and shows reported roles/permissions separately from unverified authority, effective access and enforcement acknowledgement. The view clears on focus loss, after 15 seconds, or when the grant/observation expires. Empty observations do not imply that the account has no source permissions.
 
 Disconnect at Roles revokes at source before removing the credential; uncertainty remains visible for retry. Local-only removal requires acknowledging that source permission remains. These actions do not cancel another app’s inference, and the access view is not stored in task history, bulk exports or memory. Authenticated HTTP tests cover consent completion, forged profile rejection, Origin, privacy, uncertainty/retry and app isolation. Local browser/keyboard and real-source pilot acceptance remain open.
+
+
+### Optional own-policy broker scope
+
+The broker supports `begin({includePolicy:true})` to request an optional source checkbox for `read_own_policy`. Source consent may leave this unchecked and return the original wallet-only grant. A v2 dual-scope grant is rejected unless requested locally; v1 credentials remain unchanged and cannot read policy. Matching action/revision pairs are validated on exchange and every Keychain load.
+
+`readPolicy()` verifies the exact grant/profile/expiry, strict bounded projection, canonical hash, maximum 15-second validity, row expiry and consistent status/authority fields. Stored policy records remain distinct from fresh access decisions and downstream enforcement. Email subject references are hashes; authorized resource strings may contain identifying information. All records are non-executable. Pending disconnect pauses reads across restarts, and credential removal fences in-flight responses.
+
+The actual private-source integration check now exercises v1 and v2 consent, nonempty own-policy filtering, response hashes and source revoke. Local HTTP/UI policy selection and display are the next integration step; this broker support does not enable production access or complete pilot acceptance.

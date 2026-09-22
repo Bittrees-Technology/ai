@@ -140,8 +140,88 @@ try {
     (await pg.query("SELECT revoked_at FROM roles_ai_grants")).rows[0]
       .revoked_at,
   );
+  enabled = true;
+  await sql`UPDATE roles_assignment_sources SET health='healthy',observed_at=now() WHERE source='gov'`;
+  const policy = {
+    revision: 1,
+    issuedAt: new Date(Date.now() - 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+    scopes: [
+      {
+        id: "research",
+        domain: "research.bittrees.eth",
+        mode: "roles-authoritative",
+      },
+    ],
+    roles: [
+      {
+        id: "reader",
+        scope: "research",
+        actions: ["read"],
+        authentication: "verified-identity",
+      },
+    ],
+    grants: [
+      {
+        id: "own",
+        principal: identity,
+        role: "reader",
+        resources: ["own/*"],
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      },
+      {
+        id: "other",
+        principal: other,
+        role: "reader",
+        resources: ["PRIVATE_OTHER"],
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      },
+    ],
+    suspensions: [],
+  };
+  await sql`INSERT INTO roles_authority_policies(digest,revision,document,signature) VALUES('synthetic-policy',1,${JSON.stringify(policy)}::jsonb,'synthetic-only')`;
+  await sql`UPDATE roles_authority_head SET revision=1,digest='synthetic-policy'`;
+  const policyBegin = await connector.begin({ includePolicy: true });
+  assert.equal(
+    new URL(policyBegin.consentUrl).searchParams.get("scope"),
+    "own_policy",
+  );
+  const policyConsent = await dispatch(
+    "/api/integrations/ai/authorize",
+    {
+      identity,
+      profileId,
+      challenge: new URL(policyBegin.consentUrl).searchParams.get("challenge"),
+      actions: ["read_own_access", "read_own_policy"],
+      expiresInDays: 1,
+    },
+    headers,
+  );
+  assert.equal(policyConsent.status, 201);
+  await connector.finish(policyBegin.id, (await policyConsent.json()).code);
+  assert.equal(
+    (await connector.read()).policyRevision,
+    "roles-ai-own-access-v2",
+  );
+  const records = await connector.readPolicy();
+  assert.equal(records.projection.items.length, 1);
+  assert.equal(records.projection.items[0]!.grantId, "own");
+  assert.equal(
+    records.projection.items[0]!.authorityConfirmed,
+    "recorded_in_current_policy",
+  );
+  assert.ok(!JSON.stringify(records).includes("PRIVATE_OTHER"));
+  const connection = await connector.status();
+  const revoke = await dispatch(
+    "/api/integrations/ai/revoke",
+    { identity, grantId: connection!.grantId },
+    headers,
+  );
+  assert.equal(revoke.status, 200);
+  await assert.rejects(connector.readPolicy(), /SOURCE_DENIED/);
+  await connector.disconnect();
   console.log(
-    "Actual Roles consent/PKCE/read projection/hash/source-denial/disconnect contract passed in isolated Postgres. No production connection or browser acceptance claimed.",
+    "Actual Roles v1/v2 consent/PKCE/own-policy/read projection/hash/source-denial/revoke/disconnect contract passed in isolated Postgres. No production connection or browser acceptance claimed.",
   );
 } finally {
   await pg.close();
