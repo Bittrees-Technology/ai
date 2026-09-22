@@ -100,7 +100,9 @@ let currentBinding: PrivateBinding | null = null,
   registration: PrivateBinding | null = null,
   storageNow = 0;
 let revokeAt = 0,
-  permissionReads = 0;
+  permissionReads = 0,
+  receiptKeyReads = 0,
+  rotateReceiptKey = false;
 const storageHarness = {
   async open(
     binding: PrivateBinding,
@@ -115,6 +117,8 @@ const storageHarness = {
     storageNow = now;
     permissionReads = 0;
     revokeAt = 0;
+    receiptKeyReads = 0;
+    rotateReceiptKey = false;
     browserStore = await BrowserPrivateOutbox.open(
       () => currentBinding,
       () => {
@@ -124,6 +128,19 @@ const storageHarness = {
       },
       () => registration,
       () => storageNow,
+      () => {
+        receiptKeyReads++;
+        return keys && peer && deliveryContext
+          ? {
+              context: deliveryContext,
+              recipientKey: keys,
+              senderPublicKey:
+                rotateReceiptKey && receiptKeyReads >= 2
+                  ? keys.publicKey
+                  : peer.publicKey,
+            }
+          : null;
+      },
     );
   },
   initialize(revision = 0) {
@@ -137,6 +154,9 @@ const storageHarness = {
   },
   commit(raw: unknown) {
     return browserStore!.commit(raw);
+  },
+  acceptReceipt(raw: unknown) {
+    return browserStore!.acceptReceipt(raw);
   },
   delivery(id: string) {
     return browserStore!.delivery(id);
@@ -160,6 +180,10 @@ const storageHarness = {
   revokeDuringCommit() {
     permissionReads = 0;
     revokeAt = 2;
+  },
+  rotateKeyDuringReceipt() {
+    receiptKeyReads = 0;
+    rotateReceiptKey = true;
   },
   advance(ms: number) {
     storageNow += ms;
