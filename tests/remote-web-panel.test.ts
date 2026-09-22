@@ -126,3 +126,132 @@ test("Wallet change cannot restore an old account's late device list", async () 
   assert.equal(c.state.account, null);
   assert.deepEqual(c.state.devices, []);
 });
+
+test("Browser transport sends the displayed account and updates it between requests", async () => {
+  const { browserApi } = await import(moduleUrl);
+  let displayed: string | null = ownerId;
+  const requests: any[] = [];
+  const api = browserApi(
+    async (path: string, init: any) => {
+      requests.push({ path, ...init });
+      return Response.json({});
+    },
+    () => displayed,
+  );
+  await api("/browser/devices", {});
+  assert.equal(requests[0].headers["X-Bittrees-Account"], ownerId);
+  assert.equal(requests[0].credentials, "same-origin");
+  displayed = randomUUID();
+  await api("/browser/controls/approve", {});
+  assert.equal(requests[1].headers["X-Bittrees-Account"], displayed);
+  displayed = null;
+  await api("/browser/session", {});
+  assert.equal(requests[2].headers["X-Bittrees-Account"], undefined);
+});
+
+test("Command review is explicit, retries a fixed intent and distinguishes receipt outcomes", async () => {
+  const calls: any[] = [],
+    deviceId = randomUUID(),
+    taskId = randomUUID();
+  let loseResponse = true;
+  const c = new RemoteWebController(
+    async (path: string, body: any) => {
+      calls.push({ path, body: structuredClone(body) });
+      if (path === "/browser/commands" && loseResponse) {
+        loseResponse = false;
+        throw Error("UNAVAILABLE");
+      }
+      if (path.endsWith("receipt"))
+        return { state: "acknowledged", receipt: { outcome: "conflict" } };
+      return {};
+    },
+    wallet(),
+    { chainId: 1 },
+    () => {},
+  );
+  c.set({
+    account,
+    devices: [
+      {
+        id: deviceId,
+        epoch: 1,
+        controlsEnabled: true,
+        expiresAt: Date.now() + 60000,
+        revoked: false,
+      },
+    ],
+    deviceId,
+    statuses: [{ id: taskId, status: "running", revision: 4 }],
+  });
+  await c.controls(deviceId, true, false);
+  assert.equal(calls.length, 0);
+  c.reviewCommand(taskId, "resume");
+  assert.equal(c.state.commandReview, null);
+  c.reviewCommand(taskId, "pause");
+  const original = structuredClone(c.state.commandReview);
+  assert.equal(calls.length, 0);
+  await c.submitCommand(false);
+  assert.equal(calls.length, 0);
+  await c.submitCommand(true);
+  assert.deepEqual(c.state.commandReview, original);
+  await c.submitCommand(true);
+  assert.deepEqual(calls[0].body, calls[1].body);
+  assert.equal(c.state.commandResult.state, "pending");
+  await c.commandReceipt();
+  assert.equal(c.state.commandResult.receipt.outcome, "conflict");
+  c.hide();
+  assert.equal(c.state.commandResult, null);
+  assert.equal(c.state.commandReview, null);
+});
+
+test("Control approval needs a current device and late command responses cannot restore hidden review", async () => {
+  let resolve!: (v: any) => void;
+  const pending = new Promise((r) => {
+    resolve = r;
+  });
+  const calls: any[] = [],
+    deviceId = randomUUID(),
+    taskId = randomUUID();
+  const c = new RemoteWebController(
+    async (path: string, body: any) => {
+      calls.push({ path, body });
+      return path === "/browser/commands" ? pending : {};
+    },
+    wallet(),
+    { chainId: 1 },
+    () => {},
+  );
+  c.set({
+    account,
+    devices: [
+      {
+        id: deviceId,
+        epoch: 3,
+        controlsEnabled: true,
+        expiresAt: Date.now() + 60000,
+        revoked: false,
+      },
+    ],
+    deviceId,
+    statuses: [{ id: taskId, status: "running", revision: 2 }],
+  });
+  await c.controls(deviceId, true, true);
+  assert.deepEqual(calls[0].body, {
+    deviceId,
+    expectedEpoch: 3,
+    confirmed: true,
+  });
+  c.reviewCommand(taskId, "cancel");
+  const submit = c.submitCommand(true);
+  c.hide();
+  resolve({});
+  await submit;
+  assert.equal(c.state.commandResult, null);
+  assert.equal(c.state.commandReview, null);
+  c.set({
+    statuses: [{ id: taskId, status: "cancelled", revision: 3 }],
+    deviceId,
+  });
+  c.reviewCommand(taskId, "cancel");
+  assert.equal(c.state.commandReview, null);
+});

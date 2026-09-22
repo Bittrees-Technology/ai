@@ -427,6 +427,28 @@ export async function checkRemoteHttp(pool: Pool) {
       ).status,
       403,
     );
+    const { browserApi } = await import(
+      new URL("../apps/remote-web/controller.js", import.meta.url).href
+    );
+    let displayedOwner = verified.body.ownerId;
+    const pageApi = browserApi(
+      async (path: string, init: RequestInit) => {
+        const response = await call(path, JSON.parse(String(init.body)), {
+          ...browser,
+          Cookie: sessionCookie,
+          ...(init.headers as Record<string, string>),
+        });
+        return Response.json(response.body, { status: response.status });
+      },
+      () => displayedOwner,
+    );
+    assert.ok(
+      (await pageApi("/browser/devices", {})).items.some(
+        (d: any) => d.id === item.deviceId,
+      ),
+    );
+    displayedOwner = otherVerified.body.ownerId;
+    await assert.rejects(pageApi("/browser/devices", {}), /DENIED/);
     const identity = await call("/browser/session", {}, owner);
     assert.equal(identity.body.address, wallet.address.toLowerCase());
     assert.equal(identity.body.chainId, 1);
