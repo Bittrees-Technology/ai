@@ -31,10 +31,15 @@ All seven responses passed structure/citation-reference validation and the attac
 
 Polling Ollama `/api/ps` every 0.5 seconds reported a peak loaded-model allocation of **8,599,542,720 bytes** (about 8.60 GB / 8.01 GiB), entirely reported in `size_vram`. On unified memory this is not total system consumption, a measured process working set, or a guarantee of headroom with other apps. System memory free percentage was 22% at one early sample. Downloading Huihui in the background and other running applications make these exploratory measurements, not controlled laboratory benchmarks.
 
+## Same-runtime Qwen3 1.7B baseline
+
+The existing `qwen3:1.7b` (Q4_K_M, digest `8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`) ran the same seven cases through the same isolated Ollama 0.17.7 runtime immediately afterward. All responses passed structure checks, with elapsed times **1.254–1.946 seconds**. It was substantially faster, but still confused source content with user intent in all three extended scenarios: the invoice summary credits the sender with acknowledging receipt; the decline summary says the sender requested a declining reply and the reply asks about alternatives; the Monday summary says the sender committed to the review. These reproduce the material errors motivating the comparison.
+
+The original 9B correctly separated sender facts from user reply instructions in these three cases. This supports testing it further for accuracy-sensitive drafts, while the latency difference argues against assuming every small task should use 9B. The remaining acknowledgement errors and broader test coverage still prevent blanket acceptance.
+
 ## Pending
 
 - Complete Huihui `huihui_ai/qwen3.5-abliterated:9b` download and run the identical suites.
-- Re-run Qwen3 1.7B under the same isolated runtime for a more comparable baseline.
 - Repeat promising candidates with held-out user tasks, source-attribution/acknowledgement criteria and realistic concurrent app load.
 - Adopt a runtime/model profile only after reviewing the comparison. No production quality-acceptance item is checked by this document.
 
