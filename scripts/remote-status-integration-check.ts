@@ -1,3 +1,4 @@
+import { checkRemoteCommands } from "./remote-command-integration.js";
 // Isolated schema in an explicitly configured test PostgreSQL database; no live relay.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -303,8 +304,15 @@ try {
   );
   await checkRemoteSessions(pool);
   await checkRemoteHttp(pool);
+  await pool.query(
+    await readFile(
+      new URL("../modules/remote/migrations/004-controls.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  await checkRemoteCommands(pool);
   console.log(
-    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary checks passed. Synthetic schema only.",
+    "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue checks passed. Synthetic schema only.",
   );
 } finally {
   await pool.end();
