@@ -1,3 +1,4 @@
+import type { RolesConnector } from "../../modules/connectors/roles.js";
 import { AutoNoteReviews } from "../../modules/connectors/autonote-reviews.js";
 import type { AutoNoteConnector } from "../../modules/connectors/autonote.js";
 import type { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
@@ -18,6 +19,7 @@ import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
+  roles?: RolesConnector;
   crm?: CrmConnector;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
@@ -40,6 +42,7 @@ export function localApi({
   runtime,
   cancelRun,
   crm,
+  roles,
   sources,
   autonote,
   autonoteSources,
@@ -118,12 +121,13 @@ export function localApi({
     res.json({
       status: "ok",
       mode: "local",
-      connectorsEnabled: !!crm || !!autonote,
+      connectorsEnabled: !!crm || !!autonote || !!roles,
     }),
   );
   for (const [name, connector] of [
     ["crm", crm],
     ["autonote", autonote],
+    ["roles", roles],
   ] as const) {
     app.get(`/v1/connections/${name}`, async (_req, res) => {
       res.json({
@@ -147,19 +151,24 @@ export function localApi({
       });
       app.post(`/v1/connections/${name}/disconnect`, async (req, res) => {
         z.strictObject({}).parse(req.body);
-        cancelSourceRun?.(name);
+        if (name !== "roles") cancelSourceRun?.(name);
         await connector.disconnect();
         res.status(204).end();
       });
       app.delete(`/v1/connections/${name}/local`, async (req, res) => {
         if (req.header("X-Confirm-Delete") !== `local-${name}-credential`)
           throw new StoreError("INVALID_INPUT");
-        cancelSourceRun?.(name);
+        if (name !== "roles") cancelSourceRun?.(name);
         await connector.forgetLocal();
         res.status(204).end();
       });
     }
   }
+  if (roles)
+    app.post("/v1/connections/roles/access", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await roles.read());
+    });
   const concealed = (task: Task) =>
     task.input.sourceRefs.length
       ? {

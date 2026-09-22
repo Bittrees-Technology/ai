@@ -378,3 +378,7 @@ summary {
     padding: 22px;
   }
 }
+
+.roles-connection p {
+  overflow-wrap: anywhere;
+}

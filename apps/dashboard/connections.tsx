@@ -1,3 +1,4 @@
+import { RolesConnection } from "./roles-connection.js";
 import { AutoNoteDrafts } from "./autonote-drafts.js";
 import { CrmDrafts } from "./crm-drafts.js";
 import React, { useEffect, useState } from "react";
@@ -279,7 +280,8 @@ export function Connections(props: {
       </p>
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
-      {["Roles", "Mail", "News"].map((name) => (
+      <RolesConnection api={props.api} onError={props.onError} />
+      {["Mail", "News"].map((name) => (
         <div className="row" key={name}>
           <h3>{name}</h3>
           <span>Not connected</span>
