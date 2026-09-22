@@ -1,8 +1,11 @@
-import { lstat, stat } from "node:fs/promises";
+import { lstat, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import type { AddOnlySecretEntry } from "./key-install.js";
-import { resolveActiveContent } from "./active-content.js";
+import {
+  resolveActiveContent,
+  selectRecoveredContent,
+} from "./active-content.js";
 import { withCompanionStopped, RecoveryError } from "./recovery.js";
 import { recoverStorageKey } from "../../modules/storage/recovery-kit.js";
 import { restoreContentBackup } from "../../modules/storage/content-backup.js";
@@ -20,7 +23,48 @@ export async function installRecoveredKey(
   entry: AddOnlySecretEntry,
   port = 43127,
 ) {
+  return install(backup, parent, base, kit, code, entry, port, false);
+}
+/** Native recovery: same exclusive operation, activate only after matching-key readback. */
+export async function recoverAndActivateWithKit(
+  backup: string,
+  base: string,
+  kit: Uint8Array,
+  code: string,
+  entry: AddOnlySecretEntry,
+  port = 43127,
+) {
+  return install(
+    backup,
+    join(base, "stores"),
+    base,
+    kit,
+    code,
+    entry,
+    port,
+    true,
+  );
+}
+async function install(
+  backup: string,
+  parent: string,
+  base: string,
+  kit: Uint8Array,
+  code: string,
+  entry: AddOnlySecretEntry,
+  port: number,
+  activate: boolean,
+) {
   return withCompanionStopped(async () => {
+    if (activate) {
+      // A fresh device needs private directories but must not start the engine/create a key first.
+      await mkdir(base, { recursive: true, mode: 0o700 });
+      await resolveActiveContent(base);
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+      const info = await lstat(parent);
+      if (!info.isDirectory() || info.isSymbolicLink())
+        throw new RecoveryError("INVALID_PATH");
+    }
     try {
       if (!(await stat(backup)).isFile() || !(await stat(parent)).isDirectory())
         throw Error();
@@ -72,27 +116,33 @@ export async function installRecoveredKey(
       }
       // After an attempted add, never delete a credential or pretend failure means
       // nothing was written. Preserve the verified copy for explicit reconciliation.
+      let keyStatus: "created" | "already-present" | "conflict" | "unconfirmed";
       try {
         const created = await entry.addSecretIfAbsent(key);
         const verified = await entry.getSecret();
-        return {
-          directory,
-          activated: false as const,
-          keyStatus: matches(verified, key)
-            ? created
-              ? ("created" as const)
-              : ("already-present" as const)
-            : verified == null
-              ? ("unconfirmed" as const)
-              : ("conflict" as const),
-        };
+        keyStatus = matches(verified, key)
+          ? created
+            ? "created"
+            : "already-present"
+          : verified == null
+            ? "unconfirmed"
+            : "conflict";
       } catch {
-        return {
-          directory,
-          activated: false as const,
-          keyStatus: "unconfirmed" as const,
-        };
+        keyStatus = "unconfirmed";
       }
+      let activated = false;
+      if (
+        activate &&
+        (keyStatus === "created" || keyStatus === "already-present")
+      ) {
+        try {
+          await selectRecoveredContent(base, directory);
+          activated = true;
+        } catch {
+          /* Keep the verified copy/key; native UI must report selection failure. */
+        }
+      }
+      return { directory, activated, keyStatus };
     } finally {
       key.fill(0);
     }
