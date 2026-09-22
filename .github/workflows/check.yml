@@ -68,7 +68,15 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Seed stale build outputs for rebuild regression
+        run: |
+          mkdir -p dist/apps 'dist/macos/Bittrees AI.app/Contents/Resources'
+          touch dist/apps/stale-build-probe.js 'dist/macos/Bittrees AI.app/Contents/Resources/stale-bundle-probe'
       - run: bash scripts/package-macos.sh
+      - name: Deleted outputs must not survive packaging
+        run: |
+          test ! -e 'dist/macos/Bittrees AI.app/Contents/Resources/engine/dist/apps/stale-build-probe.js'
+          test ! -e 'dist/macos/Bittrees AI.app/Contents/Resources/stale-bundle-probe'
       - name: Archive development bundle preserving executable permissions
         run: ditto -c -k --sequesterRsrc --keepParent 'dist/macos/Bittrees AI.app' dist/macos/Bittrees-AI-development.zip
       - uses: actions/upload-artifact@v4

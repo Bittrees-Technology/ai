@@ -1,3 +1,4 @@
+import { bindProcessLifetime } from "./lifetime.js";
 import {
   MailConnector,
   mailKeychainEntry,
@@ -142,13 +143,14 @@ server.on(
 );
 let stopping = false,
   started = false,
-  running: Promise<boolean> | undefined;
+  running: Promise<boolean> | undefined,
+  pairingWrite: Promise<void> | undefined;
 server.on("error", () => {
   console.error(
     "Companion could not start. Check whether another copy is already running.",
   );
   process.exitCode = 1;
-  void stop();
+  requestShutdown();
 });
 async function stop() {
   if (stopping) return;
@@ -164,7 +166,8 @@ async function stop() {
   imports.close();
   memory.close();
   store.close();
-  if (started) await rm(codePath, { force: true });
+  await pairingWrite?.catch(() => {});
+  await rm(codePath, { force: true });
 }
 const timer = setInterval(() => {
   if (started && !stopping && !running) {
@@ -179,17 +182,15 @@ const timer = setInterval(() => {
       });
   }
 }, 500);
-// The native parent holds stdin open; an unexpected shell exit stops its engine.
-if (process.env.BITTREES_DESKTOP === "1") {
-  process.stdin.resume();
-  process.stdin.on("end", () => void stop());
-}
-process.on("SIGINT", () => void stop());
-process.on("SIGTERM", () => void stop());
+const requestShutdown = bindProcessLifetime(stop);
 {
-  started = true;
-  await writeFile(codePath, pairCode + "\n", { mode: 0o600 });
-  console.log(
-    `Bittrees AI: http://127.0.0.1:${port}\nPairing code (valid for 10 minutes): ${codePath}\nStop with Ctrl+C. Restart to pair another browser session.`,
-  );
+  pairingWrite = writeFile(codePath, pairCode + "\n", { mode: 0o600 });
+  await pairingWrite;
+  // A parent exit or signal during the write must not announce a stopped server.
+  if (!stopping) {
+    started = true;
+    console.log(
+      `Bittrees AI: http://127.0.0.1:${port}\nPairing code (valid for 10 minutes): ${codePath}\nStop with Ctrl+C. Restart to pair another browser session.`,
+    );
+  }
 }
