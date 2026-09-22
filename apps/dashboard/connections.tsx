@@ -1,3 +1,4 @@
+import { RemoteConnectionPanel } from "./remote-connection.js";
 import { MailConnection } from "./mail-connection.js";
 import { RolesConnection } from "./roles-connection.js";
 import { AutoNoteDrafts } from "./autonote-drafts.js";
@@ -279,6 +280,7 @@ export function Connections(props: {
         Each app controls its own permissions. Pairing this browser does not
         grant app access.
       </p>
+      <RemoteConnectionPanel api={props.api} />
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
       <RolesConnection api={props.api} onError={props.onError} />

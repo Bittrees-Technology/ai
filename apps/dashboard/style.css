@@ -382,3 +382,54 @@ summary {
 .roles-connection p {
   overflow-wrap: anywhere;
 }
+
+/* Remote controls follow the existing local-work palette and reading width. */
+.remote-panel {
+  border-top: 3px solid #28685c;
+  padding: 20px 0;
+  max-width: 76ch;
+}
+.remote-panel p {
+  max-width: 72ch;
+}
+.remote-panel fieldset {
+  margin: 18px 0;
+  border: 1px solid #aabec5;
+  padding: 16px;
+}
+.remote-panel form,
+.remote-pairing {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+.remote-panel textarea,
+.remote-panel input:not([type="checkbox"]) {
+  width: 100%;
+  min-width: 0;
+}
+.remote-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.remote-task input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
+  margin-top: 5px;
+}
+.remote-task small {
+  display: block;
+}
+.remote-removal {
+  margin-top: 24px;
+  border-top: 1px solid #aabec5;
+  padding-top: 12px;
+}
+@media (max-width: 600px) {
+  .remote-panel .row {
+    flex-wrap: wrap;
+  }
+}
