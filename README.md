@@ -243,3 +243,7 @@ Connections now includes a Mail panel with source consent, expiry/disconnect sta
 
 
 Use `MAIL_PROBE_SET=extended npx tsx scripts/mail-local-check.ts` to inspect additional invoice, meeting-decline and authorized-commitment cases with explicit manual criteria. These expose source/user attribution errors even when output structure and citation references pass; the script reports that quality acceptance is not evaluated automatically.
+
+## Mac companion preview
+
+Build the native macOS development app with `bash scripts/package-macos.sh` using Node 24. See [Mac companion](docs/macos-companion.md) for pairing, lifecycle, verification and remaining signing requirements.
