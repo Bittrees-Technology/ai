@@ -136,6 +136,9 @@ export class LocalWorker {
           this.workerId,
           claim.generation,
           error instanceof ModelError && error.code === "MODEL_UNAVAILABLE",
+          error instanceof ModelError && error.code === "INVALID_OUTPUT"
+            ? "invalid_model_output"
+            : undefined,
         );
       } catch (stale) {
         if (!(

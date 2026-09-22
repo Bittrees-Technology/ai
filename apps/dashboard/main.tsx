@@ -55,6 +55,8 @@ const explanations: Record<string, string> = {
     "Code incorrect, expired or already used. Restart the companion for a new code.",
   FORBIDDEN: "This request is not permitted.",
   INVALID_INPUT: "Check your entries and try again.",
+  INVALID_OUTPUT:
+    "The model’s answer did not meet the required format or evidence rules. Start a fresh draft with another model or a revised request.",
 };
 async function api(
   path: string,
@@ -533,10 +535,20 @@ function App() {
                       )}
                       <h3>Run history</h3>
                       {runs.map((r) => (
-                        <p key={r.id}>
-                          {r.outcome ?? "Running"} ·{" "}
-                          {r.model?.profile?.model ?? "Model not started"}
-                        </p>
+                        <div key={r.id}>
+                          <p>
+                            {r.outcome === "invalid_model_output"
+                              ? "Answer rejected"
+                              : (r.outcome ?? "Running")}{" "}
+                            · {r.model?.profile?.model ?? "Model not started"}
+                          </p>
+                          {r.outcome === "invalid_model_output" && (
+                            <p className="hint">
+                              {explanations.INVALID_OUTPUT} No draft result was
+                              saved.
+                            </p>
+                          )}
+                        </div>
                       ))}
                       {!runs.length && (
                         <p className="hint">Waiting to start.</p>

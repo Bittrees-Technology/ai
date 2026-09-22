@@ -259,3 +259,72 @@ test("version-one migration preserves encrypted tasks and refuses a wrong key", 
     f.close();
   }
 });
+
+test("model-output rejection persists only an allowed reason and stays terminal across restart", () => {
+  const f = fixture();
+  try {
+    const task = f.store.create(alice, input(), "invalid-output");
+    const claim = f.store.claim(alice, "w")!;
+    assert.throws(
+      () =>
+        f.store.fail(
+          bob,
+          task.id,
+          "w",
+          claim.generation,
+          false,
+          "invalid_model_output",
+        ),
+      /NOT_FOUND/,
+    );
+    assert.throws(
+      () =>
+        f.store.fail(
+          alice,
+          task.id,
+          "w",
+          claim.generation,
+          false,
+          "PRIVATE_EXCEPTION_DETAILS" as never,
+        ),
+      /INVALID_INPUT/,
+    );
+    assert.throws(
+      () =>
+        f.store.fail(
+          alice,
+          task.id,
+          "w",
+          claim.generation,
+          true,
+          "invalid_model_output",
+        ),
+      /INVALID_INPUT/,
+    );
+    assert.equal(f.store.get(alice, task.id).status, "running");
+    f.store.fail(
+      alice,
+      task.id,
+      "w",
+      claim.generation,
+      false,
+      "invalid_model_output",
+    );
+    f.reopen();
+    assert.equal(f.store.get(alice, task.id).status, "failed");
+    assert.equal(f.store.get(alice, task.id).result, null);
+    assert.equal(
+      f.store.runHistory(alice, task.id)[0]!.outcome,
+      "invalid_model_output",
+    );
+    assert.equal(f.store.claim(alice, "w"), null);
+    assert.equal(
+      JSON.stringify(f.store.runHistory(alice, task.id)).includes(
+        "PRIVATE_EXCEPTION_DETAILS",
+      ),
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});
