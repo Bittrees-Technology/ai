@@ -85,7 +85,15 @@ export async function checkRemoteMaintenance(pool: Pool) {
       keys[0]!.pairing,
     ]);
     const first = await cleanupRemote(pool, 1, cutoff);
-    assert.ok(Object.values(first.counts).every((n) => n === 1));
+    assert.ok(
+      Object.entries(first.counts).every(([key, n]) =>
+        key === "templates" ||
+        key === "templateCommands" ||
+        key === "templateCredentials"
+          ? n === 0
+          : n === 1,
+      ),
+    );
     assert.equal(
       (
         await pool.query("SELECT id FROM remote_pairings WHERE id=$1", [

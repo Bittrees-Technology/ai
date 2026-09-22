@@ -28,6 +28,7 @@ export async function cleanupRemote(
       ["loginChallenges", "remote_login_challenges", ["id"], "expires_at"],
       ["sessions", "remote_sessions", ["token_hash"], "expires_at"],
       ["commands", "remote_commands", ["id"], "purge_at"],
+      ["templateCommands", "remote_template_commands", ["id"], "purge_at"],
     ] as const) {
       const result = await db.query(
         `WITH expired AS (
@@ -39,6 +40,24 @@ export async function cleanupRemote(
       );
       counts[name] = result.rowCount ?? 0;
     }
+    const templates = await db.query(
+      `WITH expired AS (
+      SELECT permission_id FROM remote_templates t WHERE purge_at<=$1
+      AND NOT EXISTS(SELECT 1 FROM remote_template_commands c WHERE c.permission_id=t.permission_id)
+      ORDER BY purge_at,permission_id LIMIT $2 FOR UPDATE SKIP LOCKED
+    ) DELETE FROM remote_templates t USING expired WHERE t.permission_id=expired.permission_id`,
+      [cutoff, batchSize],
+    );
+    counts.templates = templates.rowCount ?? 0;
+    const templateCredentials = await db.query(
+      `WITH expired AS (
+      SELECT t.permission_id FROM remote_templates t JOIN remote_devices d ON d.id=t.device_id
+      WHERE t.credential_hash IS NOT NULL AND (t.expires_at<=$1 OR t.revoked_at IS NOT NULL OR d.revoked_at IS NOT NULL OR d.expires_at<=$1 OR t.device_epoch<>d.epoch)
+      ORDER BY t.expires_at,t.permission_id LIMIT $2 FOR UPDATE OF t SKIP LOCKED
+    ) UPDATE remote_templates t SET credential_hash=NULL FROM expired WHERE t.permission_id=expired.permission_id`,
+      [cutoff, batchSize],
+    );
+    counts.templateCredentials = templateCredentials.rowCount ?? 0;
     const credentials = await db.query(
       `WITH expired AS (
       SELECT id FROM remote_devices WHERE (expires_at<=$1 OR revoked_at IS NOT NULL)
