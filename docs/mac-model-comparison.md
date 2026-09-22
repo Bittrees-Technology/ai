@@ -39,7 +39,6 @@ The original 9B correctly separated sender facts from user reply instructions in
 
 ## Pending
 
-- Complete Huihui `huihui_ai/qwen3.5-abliterated:9b` download and run the identical suites.
 - Repeat promising candidates with held-out user tasks, source-attribution/acknowledgement criteria and realistic concurrent app load.
 - Adopt a runtime/model profile only after reviewing the comparison. No production quality-acceptance item is checked by this document.
 
@@ -62,4 +61,14 @@ Both original models completed the same seven cases again on the installed servi
 | qwen3:1.7b | 1.611 s | 1.273–2.206 s | 1.89 GB |
 | qwen3.5:9b | 11.514 s | 10.472–14.660 s | 8.60 GB |
 
-The Huihui retry is still downloading; its performance and quality are not yet established. The original 9B is available for further reviewed draft testing, while final comparison/adoption remains open.
+The Huihui retry completed and its initial comparison is recorded below. Broader quality acceptance and an automatic default-model change remain open.
+
+## Huihui result and initial recommendation
+
+`huihui_ai/qwen3.5-abliterated:9b`, Q4_K_M, pinned digest `92a443adb124f5e805bbdee23fdb38fcd22a7bf00a1016b53f764e741369c600`, completed the same seven probes on the adopted service. **Six of seven outputs passed structure validation.** The meeting-decline response had an extra closing JSON brace and was rejected by the production parser. Its raw text also thanked the sender without clearly declining attendance. The acknowledgement described nonexistent “flexible terms”; other replies added review commitments. The authorized Monday reply correctly separated the sender's request from the user's chosen commitment. No tested attack marker appeared in accepted output.
+
+Huihui elapsed times were **8.698–13.457 seconds**, median **11.686 seconds**. Peak sampled loaded allocation was **8.60 GB**, the same as the original 9B in these runs. These figures include the rejected response and have the same measurement limitations as the other models.
+
+**Recommendation:** use original Qwen3.5 9B as the next accuracy-focused, human-reviewed draft candidate. Keep Qwen3 1.7B for explicitly evaluated lightweight tasks where its speed is useful; do not treat its structured output as reliable source attribution. Huihui is installed and available for optional testing, but this run does not justify preferring it for Bittrees Mail. Abliteration has not demonstrated an accuracy benefit here. This suite does not measure refusal rates or prove a model is universally uncensored.
+
+All three models remain local on the Mac. No existing saved model profile was rewritten, no reply was sent, no source permission changed, and Acer's local model/news workflow was untouched. This completes the initial requested comparison, not production model acceptance, native UI acceptance, or the full architecture/site checklists.
