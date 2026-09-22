@@ -89,3 +89,61 @@ test("cancellation interrupts a model request without fallback", async () => {
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+test("optional structured format is bounded, snapshotted and never retries without constraints", async () => {
+  const formats: unknown[] = [];
+  let reject = false;
+  const server = createServer(async (req, res) => {
+    let text = "";
+    for await (const chunk of req) text += chunk;
+    const body = text ? JSON.parse(text) : {};
+    res.setHeader("Content-Type", "application/json");
+    if (req.url === "/api/tags")
+      res.end(
+        JSON.stringify({
+          models: [{ name: profile.model, size: 1, digest: "a".repeat(64) }],
+        }),
+      );
+    else if (req.url === "/api/show")
+      res.end(JSON.stringify({ capabilities: ["completion"] }));
+    else {
+      formats.push(body.format);
+      if (reject) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: "synthetic unsupported format" }));
+      } else
+        res.end(JSON.stringify({ response: '{"answer":"ready"}', done: true }));
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const runtime = new Ollama(
+      `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    );
+    const pinned = await runtime.pin(profile);
+    const format = { type: "object", required: ["answer"] };
+    const pending = runtime.generate(pinned, "Return JSON", undefined, format);
+    format.required.push("changed-after-call");
+    assert.equal(await pending, '{"answer":"ready"}');
+    assert.deepEqual(formats[0], { type: "object", required: ["answer"] });
+    await runtime.generate(pinned, "Return JSON", undefined, "json");
+    assert.equal(formats[1], "json");
+    await assert.rejects(
+      runtime.generate(pinned, "Return JSON", undefined, {
+        description: "x".repeat(16385),
+      }),
+      /CAPACITY/,
+    );
+    assert.equal(formats.length, 2);
+    reject = true;
+    await assert.rejects(
+      runtime.generate(pinned, "Return JSON", undefined, "json"),
+      /MODEL_UNAVAILABLE/,
+    );
+    assert.equal(formats.length, 3);
+    assert.equal(formats[2], "json");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
