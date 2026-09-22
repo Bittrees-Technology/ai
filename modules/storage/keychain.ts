@@ -33,5 +33,27 @@ export function macKeychainEntry(profile: string): SecretEntry {
     throw new Error("Packaged key storage currently supports macOS only");
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(profile))
     throw new Error("Invalid profile");
-  return new AsyncEntry("org.bittrees.ai.storage", profile);
+  const entry = new AsyncEntry("org.bittrees.ai.storage", profile);
+  return {
+    getSecret: async () => normalizeKeychainSecret(await entry.getSecret()),
+    setSecret: async (value) => {
+      await entry.setSecret(value);
+    },
+  };
+}
+
+/** The native addon can return number[]/null despite its async TypeScript declaration. */
+export function normalizeKeychainSecret(
+  value: unknown,
+): Uint8Array | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Uint8Array) return Uint8Array.from(value);
+  if (
+    Array.isArray(value) &&
+    Array.from(value).every(
+      (byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255,
+    )
+  )
+    return Uint8Array.from(value);
+  throw new Error("Invalid key-store response");
 }
