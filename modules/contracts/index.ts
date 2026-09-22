@@ -113,10 +113,10 @@ export const connectorManifestSchema = z.strictObject({
 });
 // Explicit projection: private free text is never a remote-status field.
 export const remoteStatusSchema = z.strictObject({
-  id,
-  deviceId: id,
+  id: z.uuid(),
+  deviceId: z.uuid(),
   status: taskStatus,
-  revision: z.number().int().positive(),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   updatedAt: timestamp,
   errorCode: z
     .enum([

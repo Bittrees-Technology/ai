@@ -76,8 +76,8 @@ test("strict request schema rejects caller authority and unbounded input", () =>
 });
 test("remote status cannot carry prompts, titles, subjects or arbitrary errors", () => {
   const base = {
-    id: "r",
-    deviceId: "d",
+    id: "11111111-1111-4111-8111-111111111111",
+    deviceId: "22222222-2222-4222-8222-222222222222",
     status: "queued",
     revision: 1,
     updatedAt: "2026-09-21T00:00:00Z",

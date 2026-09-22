@@ -1,9 +1,21 @@
+import {
+  remoteControlSchema,
+  remoteTemplateSchema,
+  remoteReceiptSchema,
+  statusBatchSchema,
+} from "../modules/remote/status.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { schemas, contractVersion } from "../modules/contracts/index.js";
 mkdirSync("contracts", { recursive: true });
 const jsonSchemas = Object.fromEntries(
-  Object.entries(schemas).map(([key, schema]) => [key, z.toJSONSchema(schema)]),
+  Object.entries({
+    ...schemas,
+    remoteControl: remoteControlSchema,
+    remoteTemplate: remoteTemplateSchema,
+    remoteReceipt: remoteReceiptSchema,
+    remoteStatusBatch: statusBatchSchema,
+  }).map(([key, schema]) => [key, z.toJSONSchema(schema)]),
 );
 writeFileSync(
   "contracts/schemas.json",
