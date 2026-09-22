@@ -774,7 +774,29 @@ export async function checkRemoteHttp(pool: Pool) {
       );
       return Response.json(r.body, { status: r.status });
     };
-    const client = new RemoteClient("synthetic-local-owner", secret, transport);
+    const local = new Store(":memory:", new Vault(randomBytes(32)));
+    const clientOwner = {
+      userId: "synthetic-local-owner",
+      tenantId: "personal",
+    };
+    const executor = {
+      allow: (binding: unknown) =>
+        local.allowRemoteControls(clientOwner, binding),
+      allowed: (identity: unknown) =>
+        local.remoteControlsAllowed(clientOwner, identity),
+      revoke: (deviceId: string) =>
+        local.revokeRemoteControls(clientOwner, deviceId),
+      execute: (identity: unknown, command: unknown) =>
+        local.executeRemoteControl(clientOwner, identity, command),
+      interrupt: (_taskId: string) => {},
+    };
+    const client = new RemoteClient(
+      "synthetic-local-owner",
+      secret,
+      transport,
+      Date.now,
+      executor,
+    );
     const clientPair = await client.begin();
     assert.equal(
       (
@@ -791,7 +813,6 @@ export async function checkRemoteHttp(pool: Pool) {
       200,
     );
     await client.finish(otherVerified.body.ownerId);
-    const local = new Store(":memory:", new Vault(randomBytes(32)));
     try {
       const localTask = local.create(
         { userId: "synthetic-local-owner", tenantId: "personal" },
@@ -807,15 +828,60 @@ export async function checkRemoteHttp(pool: Pool) {
         randomUUID(),
       );
       await client.publish([localTask]);
+      const paired = (await client.status())!;
+      assert.equal(
+        (
+          await call(
+            "/browser/controls/approve",
+            { deviceId: paired.deviceId, expectedEpoch: 1, confirmed: true },
+            otherOwner,
+          )
+        ).status,
+        200,
+      );
+      await client.enableControls();
+      assert.equal((await client.status())?.controls, "enabled");
+      const pause = {
+        id: randomUUID(),
+        deviceId: paired.deviceId,
+        taskId: localTask.id,
+        command: "pause",
+        expectedRevision: localTask.revision,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      };
+      assert.equal(
+        (
+          await call(
+            "/browser/commands",
+            { command: pause, confirmed: true },
+            otherOwner,
+          )
+        ).status,
+        200,
+      );
+      const result = await new RemoteClient(
+        "synthetic-local-owner",
+        secret,
+        transport,
+        Date.now,
+        executor,
+      ).pollControls();
+      assert.equal(result.receipts[0]!.outcome, "applied");
+      assert.equal(local.get(clientOwner, localTask.id).status, "paused");
+      assert.equal(
+        (await call("/browser/commands/receipt", { id: pause.id }, otherOwner))
+          .body.state,
+        "acknowledged",
+      );
       await client.rotate();
+      assert.equal((await client.status())?.controls, "disabled");
       const reopened = new RemoteClient(
         "synthetic-local-owner",
         secret,
         transport,
       );
-      await reopened.publish([
-        { ...localTask, revision: localTask.revision + 1 },
-      ]);
+      await reopened.publish([local.get(clientOwner, localTask.id)]);
       const state = (await reopened.status())!;
       const remote = await call(
         "/browser/status",

@@ -766,6 +766,30 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
         ),
       );
   }
+  remoteControlsAllowed(owner: Owner, rawIdentity: unknown) {
+    const identity = remoteControlIdentitySchema.safeParse(rawIdentity);
+    if (!identity.success) return false;
+    const stored = this.db
+      .prepare(
+        "SELECT payload FROM remote_control_bindings WHERE user_id=? AND tenant_id=? AND device_id=?",
+      )
+      .get(owner.userId, owner.tenantId, identity.data.deviceId) as
+      { payload: Buffer } | undefined;
+    if (!stored) return false;
+    const binding = remoteControlBindingSchema.safeParse(
+      this.vault.open(
+        stored.payload,
+        this.remotePurpose(owner, "binding", identity.data.deviceId),
+      ),
+    );
+    return (
+      binding.success &&
+      binding.data.expiresAt > this.now() &&
+      binding.data.remoteOwnerId === identity.data.remoteOwnerId &&
+      binding.data.epoch === identity.data.epoch &&
+      binding.data.controlId === identity.data.controlId
+    );
+  }
   revokeRemoteControls(owner: Owner, deviceId: string) {
     z.uuid().parse(deviceId);
     this.db

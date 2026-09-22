@@ -2,8 +2,13 @@ import { AsyncEntry } from "@napi-rs/keyring";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { ConnectorSecret } from "../connectors/crm.js";
-import type { Task } from "../storage/store.js";
-import { projectRemoteStatus, statusBatchSchema } from "./status.js";
+import type { Store, Task } from "../storage/store.js";
+import {
+  remoteControlSchema,
+  remoteReceiptSchema,
+  projectRemoteStatus,
+  statusBatchSchema,
+} from "./status.js";
 const origin = "https://ai.bittrees.org";
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const grantSchema = z.strictObject({
@@ -14,12 +19,39 @@ const grantSchema = z.strictObject({
   expiresAt: z.number().int().positive(),
   scope: z.literal("status:publish"),
 });
+const controlGrantSchema = grantSchema.extend({
+  scope: z.literal("controls:pause-cancel"),
+  controlId: z.uuid(),
+});
+const controlIdentitySchema = z.strictObject({
+  ownerId: z.uuid(),
+  deviceId: z.uuid(),
+  epoch: z.number().int().positive(),
+  controlId: z.uuid(),
+});
+const controlStateSchema = z
+  .strictObject({
+    mode: z.enum(["enable_pending", "active", "disable_pending"]),
+    grant: controlGrantSchema.optional(),
+  })
+  .refine((value) => value.mode !== "active" || !!value.grant);
+export interface RemoteControlExecutor {
+  allow(binding: unknown): void;
+  allowed(identity: unknown): boolean;
+  revoke(deviceId: string): void;
+  execute(
+    identity: unknown,
+    command: unknown,
+  ): ReturnType<Store["executeRemoteControl"]>;
+  interrupt(taskId: string): void;
+}
 const savedSchema = z.strictObject({
   localOwner: z.string().min(1).max(256),
   grant: grantSchema,
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   mode: z.enum(["active", "rotation_pending", "pairing_required"]),
   pending: statusBatchSchema.optional(),
+  controls: controlStateSchema.optional(),
 });
 type Saved = z.infer<typeof savedSchema>;
 export class RemoteClientError extends Error {
@@ -31,7 +63,8 @@ export class RemoteClientError extends Error {
       | "STORAGE_UNAVAILABLE"
       | "UNAVAILABLE"
       | "DENIED"
-      | "PENDING_DELIVERY",
+      | "PENDING_DELIVERY"
+      | "CONTROL_CONFIRMATION_REQUIRED",
   ) {
     super(code);
   }
@@ -51,6 +84,7 @@ export class RemoteClient {
     private secret: ConnectorSecret,
     private transport: typeof fetch = fetch,
     private now = Date.now,
+    private executor?: RemoteControlExecutor,
   ) {
     z.string().min(1).max(256).parse(localOwner);
   }
@@ -74,6 +108,11 @@ export class RemoteClient {
       );
       if (
         s.localOwner !== this.localOwner ||
+        (s.controls?.grant &&
+          (s.controls.grant.deviceId !== s.grant.deviceId ||
+            s.controls.grant.ownerId !== s.grant.ownerId ||
+            s.controls.grant.epoch !== s.grant.epoch ||
+            s.controls.grant.expiresAt !== s.grant.expiresAt)) ||
         (s.pending &&
           (s.pending.sequence !== s.sequence ||
             s.pending.items.some((x) => x.deviceId !== s.grant.deviceId)))
@@ -161,8 +200,152 @@ export class RemoteClient {
             ? "expired"
             : "paired",
       pendingDelivery: !!s.pending,
+      controls: !this.executor
+        ? "unavailable"
+        : !s.controls
+          ? "disabled"
+          : s.mode === "active" &&
+              s.controls.mode === "active" &&
+              s.controls.grant &&
+              s.controls.grant.expiresAt > this.now() &&
+              this.executor.allowed(this.controlIdentity(s.controls.grant))
+            ? "enabled"
+            : "confirmation_required",
       manageUrl: origin,
     };
+  }
+  private controlIdentity(grant: z.infer<typeof controlGrantSchema>) {
+    return {
+      remoteOwnerId: grant.ownerId,
+      deviceId: grant.deviceId,
+      epoch: grant.epoch,
+      controlId: grant.controlId,
+    };
+  }
+  private revokeControls(s: Saved) {
+    this.executor?.revoke(s.grant.deviceId);
+    if (s.controls) s.controls = { mode: "disable_pending" };
+  }
+  async enableControls() {
+    return this.exclusive(async () => {
+      if (!this.executor)
+        throw new RemoteClientError("CONTROL_CONFIRMATION_REQUIRED");
+      const s = await this.active();
+      if (s.controls)
+        throw new RemoteClientError("CONTROL_CONFIRMATION_REQUIRED");
+      this.executor.revoke(s.grant.deviceId);
+      s.controls = { mode: "enable_pending" };
+      await this.save(s);
+      const result = controlGrantSchema.safeParse(
+        await this.post(
+          "controls/enable",
+          { confirmed: true },
+          s.grant.credential,
+        ),
+      );
+      if (
+        !result.success ||
+        result.data.ownerId !== s.grant.ownerId ||
+        result.data.deviceId !== s.grant.deviceId ||
+        result.data.epoch !== s.grant.epoch ||
+        result.data.expiresAt !== s.grant.expiresAt ||
+        result.data.expiresAt <= this.now() ||
+        result.data.credential === s.grant.credential
+      )
+        throw new RemoteClientError("INVALID_RESPONSE");
+      s.controls = { mode: "enable_pending", grant: result.data };
+      await this.save(s);
+      this.executor.allow({
+        ...this.controlIdentity(result.data),
+        expiresAt: result.data.expiresAt,
+      });
+      s.controls.mode = "active";
+      try {
+        await this.save(s);
+      } catch (error) {
+        this.executor.revoke(s.grant.deviceId);
+        throw error;
+      }
+      return this.status();
+    });
+  }
+  async disableControls() {
+    return this.exclusive(async () => {
+      const s = await this.saved();
+      if (!s) return { disabledLocally: true, remoteConfirmed: false };
+      // Local revocation precedes all network/storage work and remains effective on failure.
+      this.revokeControls(s);
+      s.controls = { mode: "disable_pending" };
+      await this.save(s);
+      const response = z
+        .strictObject({ disabled: z.literal(true) })
+        .safeParse(await this.post("controls/disable", {}, s.grant.credential));
+      if (!response.success) throw new RemoteClientError("INVALID_RESPONSE");
+      delete s.controls;
+      await this.save(s);
+      return { disabledLocally: true, remoteConfirmed: true };
+    });
+  }
+  /** One bounded delivery pass. Constructor and status refresh never start a polling loop. */
+  async pollControls() {
+    return this.exclusive(async () => {
+      const s = await this.active(),
+        grant = s.controls?.grant;
+      if (
+        !this.executor ||
+        s.controls?.mode !== "active" ||
+        !grant ||
+        !this.executor.allowed(this.controlIdentity(grant))
+      )
+        throw new RemoteClientError("CONTROL_CONFIRMATION_REQUIRED");
+      try {
+        const delivery = z
+          .strictObject({
+            identity: controlIdentitySchema,
+            commands: z
+              .array(remoteControlSchema)
+              .max(20)
+              .refine(
+                (items) =>
+                  new Set(items.map((c) => c.id)).size === items.length,
+              ),
+          })
+          .safeParse(await this.post("commands/poll", {}, grant.credential));
+        if (
+          !delivery.success ||
+          delivery.data.identity.ownerId !== grant.ownerId ||
+          delivery.data.identity.deviceId !== grant.deviceId ||
+          delivery.data.identity.epoch !== grant.epoch ||
+          delivery.data.identity.controlId !== grant.controlId ||
+          delivery.data.commands.some((c) => c.deviceId !== grant.deviceId)
+        )
+          throw new RemoteClientError("INVALID_RESPONSE");
+        const receipts: z.infer<typeof remoteReceiptSchema>[] = [];
+        for (const command of delivery.data.commands) {
+          const result = this.executor.execute(
+            this.controlIdentity(grant),
+            command,
+          );
+          const receipt = remoteReceiptSchema.parse(result.receipt);
+          if (receipt.outcome === "applied" && !result.duplicate)
+            this.executor.interrupt(command.taskId);
+          const ack = z
+            .strictObject({ duplicate: z.boolean() })
+            .safeParse(
+              await this.post("commands/receipt", receipt, grant.credential),
+            );
+          if (!ack.success) throw new RemoteClientError("INVALID_RESPONSE");
+          receipts.push(receipt);
+        }
+        return { receipts };
+      } catch (error) {
+        if (error instanceof RemoteClientError && error.code === "DENIED") {
+          this.revokeControls(s);
+          await this.save(s);
+        }
+        throw error;
+      }
+    });
   }
   async begin() {
     return this.exclusive(async () => {
@@ -270,6 +453,10 @@ export class RemoteClient {
   async clearTaskData(remove: () => void) {
     return this.exclusive(async () => {
       const saved = await this.saved();
+      if (saved?.controls) {
+        this.revokeControls(saved);
+        await this.save(saved);
+      }
       if (saved?.pending) {
         delete saved.pending;
         // The relay may have accepted the batch before a lost acknowledgement.
@@ -284,6 +471,8 @@ export class RemoteClient {
     return this.exclusive(async () => {
       const s = await this.active();
       if (s.pending) throw new RemoteClientError("PENDING_DELIVERY");
+      this.revokeControls(s);
+      delete s.controls;
       s.mode = "rotation_pending";
       await this.save(s);
       const rotated = grantSchema.safeParse(
@@ -308,6 +497,8 @@ export class RemoteClient {
   async forgetLocal() {
     return this.exclusive(async () => {
       this.pendingPair = undefined;
+      const saved = await this.saved();
+      if (saved) this.revokeControls(saved);
       await this.secret.deleteCredential();
       if (await this.secret.getSecret())
         throw new RemoteClientError("STORAGE_UNAVAILABLE");
