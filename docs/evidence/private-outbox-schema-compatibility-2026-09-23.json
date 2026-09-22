@@ -1,0 +1,14 @@
+{
+  "testedAt": "2026-09-22T23:01:30.904Z",
+  "olderSource": "f79cff5944a49c45724026e806a0de819e912433",
+  "olderBundleSignatureVerified": true,
+  "newSchema": 15,
+  "oldSchema": 12,
+  "storeSourceSha256": "1ed0c50379f3fcad2537bcbf436916c7fdcd93e75e4371a615a106ea12f4c42a",
+  "upgradedTaskPreserved": true,
+  "oldEngineRefusedNewSchema": true,
+  "oldEngineRestoredOriginalBackupToSeparatePath": true,
+  "personalDataOrKeychainUsed": false,
+  "installedAppChanged": false,
+  "limits": "Synthetic data using previously reviewed extracted PR104 runtime; not a personal/native installation acceptance."
+}
