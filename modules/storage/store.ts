@@ -3,7 +3,12 @@ import {
   autoNoteReconciledSchema,
   type AutoNoteProposal,
 } from "../connectors/autonote-review-contracts.js";
-import type { z } from "zod";
+import { z } from "zod";
+import {
+  remoteControlSchema,
+  remoteReceiptSchema,
+  parseRemoteControl,
+} from "../remote/status.js";
 import {
   crmProposalSchema,
   crmPreparedSchema,
@@ -102,6 +107,14 @@ export interface Claim {
   generation: number;
   leaseUntil: number;
 }
+const remoteControlIdentitySchema = z.strictObject({
+  remoteOwnerId: z.uuid(),
+  deviceId: z.uuid(),
+  epoch: z.number().int().positive().max(2147483647),
+});
+const remoteControlBindingSchema = remoteControlIdentitySchema.extend({
+  expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
 const terminal = ["completed", "failed", "cancelled", "expired"];
 export class Store {
   readonly db: Database.Database;
@@ -116,7 +129,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 7) {
+    if (version > 8) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -173,7 +186,10 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS autonote_reviews(id TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,payload BLOB NOT NULL,revision INTEGER NOT NULL DEFAULT 1)",
         );
-        this.db.pragma("user_version = 7");
+        this.db
+          .exec(`CREATE TABLE IF NOT EXISTS remote_control_bindings(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,device_id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,device_id));
+CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
+        this.db.pragma("user_version = 8");
       })();
     } catch (error) {
       this.db.close();
@@ -731,6 +747,168 @@ CREATE TABLE IF NOT EXISTS model_defaults(user_id TEXT NOT NULL,tenant_id TEXT N
       })
       .immediate();
   }
+  /** Internal local-consent boundary. No HTTP route or implicit pairing grant. */
+  allowRemoteControls(owner: Owner, raw: unknown) {
+    const binding = remoteControlBindingSchema.parse(raw);
+    if (binding.expiresAt <= this.now()) throw new StoreError("EXPIRED");
+    this.db
+      .prepare(
+        "INSERT INTO remote_control_bindings VALUES(?,?,?,?) ON CONFLICT(user_id,tenant_id,device_id) DO UPDATE SET payload=excluded.payload",
+      )
+      .run(
+        owner.userId,
+        owner.tenantId,
+        binding.deviceId,
+        this.vault.seal(
+          binding,
+          this.remotePurpose(owner, "binding", binding.deviceId),
+        ),
+      );
+  }
+  revokeRemoteControls(owner: Owner, deviceId: string) {
+    z.uuid().parse(deviceId);
+    this.db
+      .prepare(
+        "DELETE FROM remote_control_bindings WHERE user_id=? AND tenant_id=? AND device_id=?",
+      )
+      .run(owner.userId, owner.tenantId, deviceId);
+  }
+  private remotePurpose(owner: Owner, kind: string, id: string) {
+    return JSON.stringify([
+      "remote-control",
+      owner.tenantId,
+      owner.userId,
+      kind,
+      id,
+    ]);
+  }
+  /** Delivery identity must come from the authenticated polling session, never the envelope. */
+  executeRemoteControl(owner: Owner, rawIdentity: unknown, raw: unknown) {
+    const identity = remoteControlIdentitySchema.parse(rawIdentity);
+    const command = remoteControlSchema.parse(raw);
+    if (identity.deviceId !== command.deviceId)
+      throw new StoreError("INVALID_INPUT");
+    return this.db
+      .transaction(() => {
+        const now = this.now();
+        const stored = this.db
+          .prepare(
+            "SELECT payload FROM remote_control_bindings WHERE user_id=? AND tenant_id=? AND device_id=?",
+          )
+          .get(owner.userId, owner.tenantId, identity.deviceId) as
+          { payload: Buffer } | undefined;
+        const binding = stored
+          ? remoteControlBindingSchema.parse(
+              this.vault.open(
+                stored.payload,
+                this.remotePurpose(owner, "binding", identity.deviceId),
+              ),
+            )
+          : null;
+        if (
+          !binding ||
+          binding.remoteOwnerId !== identity.remoteOwnerId ||
+          binding.epoch !== identity.epoch ||
+          binding.expiresAt <= now
+        )
+          throw new StoreError("NOT_FOUND");
+        const purpose = this.remotePurpose(owner, "receipt", command.id);
+        const hash = this.vault.fingerprint({ identity, command });
+        const previous = this.db
+          .prepare(
+            "SELECT payload FROM remote_control_receipts WHERE user_id=? AND tenant_id=? AND id=?",
+          )
+          .get(owner.userId, owner.tenantId, command.id) as
+          { payload: Buffer } | undefined;
+        if (previous) {
+          const value = this.vault.open<{ hash: string; receipt: unknown }>(
+            previous.payload,
+            purpose,
+          );
+          if (value.hash !== hash) throw new StoreError("CONFLICT");
+          return {
+            receipt: remoteReceiptSchema.parse(value.receipt),
+            duplicate: true,
+          };
+        }
+        // Reject structurally invalid leases, even if their deadline has passed.
+        const issued = Date.parse(command.issuedAt),
+          expires = Date.parse(command.expiresAt);
+        if (
+          !Number.isFinite(now) ||
+          issued > now ||
+          expires <= issued ||
+          expires - issued > 300000
+        )
+          throw new StoreError("INVALID_INPUT");
+        let outcome: z.infer<typeof remoteReceiptSchema>["outcome"] = "expired";
+        if (expires > now) {
+          parseRemoteControl(command, now);
+          try {
+            this.command(owner, command.taskId, {
+              command: command.command,
+              expectedRevision: command.expectedRevision,
+            });
+            outcome = "applied";
+          } catch (error) {
+            if (!(error instanceof StoreError)) throw error;
+            if (error.code === "NOT_FOUND") outcome = "denied";
+            else if (error.code === "CONFLICT") outcome = "conflict";
+            else throw error;
+          }
+        }
+        const completed = this.now();
+        // Throwing here rolls back both the nested task transition and the receipt.
+        if (
+          binding.expiresAt <= completed ||
+          (outcome === "applied" && expires <= completed)
+        )
+          throw new StoreError("EXPIRED");
+        const receipt = remoteReceiptSchema.parse({
+          id: command.id,
+          deviceId: command.deviceId,
+          outcome,
+          completedAt: new Date(completed).toISOString(),
+        });
+        this.db
+          .prepare("INSERT INTO remote_control_receipts VALUES(?,?,?,?)")
+          .run(
+            owner.userId,
+            owner.tenantId,
+            command.id,
+            this.vault.seal({ hash, command, identity, receipt }, purpose),
+          );
+        const committedAt = this.now();
+        if (
+          binding.expiresAt <= committedAt ||
+          (outcome === "applied" && expires <= committedAt)
+        )
+          throw new StoreError("EXPIRED");
+        return { receipt, duplicate: false };
+      })
+      .immediate();
+  }
+  exportRemoteControls(owner: Owner) {
+    return (
+      this.db
+        .prepare(
+          "SELECT id,payload FROM remote_control_receipts WHERE user_id=? AND tenant_id=? ORDER BY id",
+        )
+        .all(owner.userId, owner.tenantId) as { id: string; payload: Buffer }[]
+    )
+      .map((row) =>
+        this.vault.open<{
+          command: unknown;
+          identity: unknown;
+          receipt: unknown;
+        }>(row.payload, this.remotePurpose(owner, "receipt", row.id)),
+      )
+      .map(({ command, identity, receipt }) => ({
+        command,
+        identity,
+        receipt,
+      }));
+  }
   claim(owner: Owner, workerId: string, leaseMs = 30_000): Claim | null {
     if (!workerId || leaseMs < 100 || leaseMs > 300_000)
       throw new StoreError("INVALID_INPUT");
@@ -1183,6 +1361,13 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   deleteAll(owner: Owner) {
     this.db
       .transaction(() => {
+        for (const table of [
+          "remote_control_receipts",
+          "remote_control_bindings",
+        ])
+          this.db
+            .prepare(`DELETE FROM ${table} WHERE user_id=? AND tenant_id=?`)
+            .run(owner.userId, owner.tenantId);
         this.db
           .prepare("DELETE FROM model_defaults WHERE user_id=? AND tenant_id=?")
           .run(owner.userId, owner.tenantId);

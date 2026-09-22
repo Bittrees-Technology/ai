@@ -699,6 +699,7 @@ export function localApi({
     res.json({
       tasks: store.export(owner).map(concealed),
       messages: store.exportMessages(owner),
+      remoteControls: store.exportRemoteControls(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
       memories: memory ? await memory.export(owner) : [],

@@ -54,4 +54,18 @@ export async function restoreBackup(
     throw new Error("Invalid backup");
   // Never replace an existing database. Restoring app grants is intentionally unsupported.
   await writeFile(destination, bytes, { mode: 0o600, flag: "wx" });
+  // Restored receipts are history, but restored consent must not enable delivery.
+  let restored: Store | undefined;
+  try {
+    restored = new Store(destination, vault);
+    restored.db.prepare("DELETE FROM remote_control_bindings").run();
+    restored.db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch (error) {
+    restored?.close();
+    restored = undefined;
+    await rm(destination, { force: true });
+    throw error;
+  } finally {
+    restored?.close();
+  }
 }
