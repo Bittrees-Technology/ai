@@ -12,6 +12,8 @@ export function Templates({
   onTask: (id: string) => void;
 }) {
   const [, render] = useState(0);
+  const [maxRuns, setMaxRuns] = useState(1),
+    [minutes, setMinutes] = useState(60);
   const [controller] = useState(
     () => new TemplateController(api, () => render((value) => value + 1)),
   );
@@ -29,11 +31,11 @@ export function Templates({
     };
   }, [controller]);
   const draft = controller.draft;
-  const act = (work: () => Promise<unknown>) =>
+  const act = (work: () => Promise<unknown>, remote = false) =>
     void work().catch((error) =>
       onError(
         error instanceof Error && error.message === "CAPACITY"
-          ? Error("TEMPLATE_CAPACITY")
+          ? Error(remote ? "REMOTE_TEMPLATE_CAPACITY" : "TEMPLATE_CAPACITY")
           : error,
       ),
     );
@@ -43,7 +45,8 @@ export function Templates({
       <p>
         Keep a reusable prompt and model choice on this Mac. Each run starts a
         new task using exactly the saved text. Templates do not include app
-        access or saved memories, and cannot be started remotely yet.
+        access or saved memories. Remote runs require a separate reviewed
+        permission below.
       </p>
       <button
         disabled={controller.busy}
@@ -165,6 +168,196 @@ export function Templates({
           </button>
         </fieldset>
       )}
+      <section aria-labelledby="remote-template-title">
+        <h3 id="remote-template-title">Allow a remote template request</h3>
+        <p>
+          The prompt and model choice stay on this Mac. Only the template code,
+          version, expiry and run limit appear remotely. Editing or deleting the
+          template cancels its permission and unfinished remote runs.
+        </p>
+        <button
+          disabled={controller.busy}
+          onClick={() => act(() => controller.refreshRemote(), true)}
+        >
+          Check remote connection
+        </button>
+        {controller.remote && !controller.remote.available && (
+          <p>
+            Remote access is disabled in this build. Local templates remain
+            available.
+          </p>
+        )}
+        {controller.remote?.available &&
+          controller.remote.connection?.state !== "paired" && (
+            <p>
+              Pair this Mac in Connections before sharing a template permission.
+            </p>
+          )}
+        {controller.remote?.connection?.state === "paired" && (
+          <>
+            <p>
+              Device code: <code>{controller.remote.connection.deviceId}</code>
+            </p>
+            <p>
+              Account code: <code>{controller.remote.connection.ownerId}</code>
+            </p>
+            <fieldset disabled={controller.busy || !controller.saved}>
+              <legend>Limits for the selected saved template</legend>
+              <label>
+                Maximum requests
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={maxRuns}
+                  onChange={(e) => {
+                    setMaxRuns(Number(e.target.value));
+                    controller.resetRemoteReview();
+                    render((v) => v + 1);
+                  }}
+                />
+              </label>
+              <label>
+                Permission duration in minutes
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={minutes}
+                  onChange={(e) => {
+                    setMinutes(Number(e.target.value));
+                    controller.resetRemoteReview();
+                    render((v) => v + 1);
+                  }}
+                />
+              </label>
+              <button
+                onClick={() =>
+                  act(
+                    async () => controller.reviewRemote(maxRuns, minutes),
+                    true,
+                  )
+                }
+              >
+                Review remote permission
+              </button>
+            </fieldset>
+          </>
+        )}
+        {controller.remoteReview && (
+          <fieldset disabled={controller.busy}>
+            <legend>Confirm this exact saved version</legend>
+            <p>
+              Template code: <code>{controller.remoteReview.templateId}</code> ·
+              Version {controller.remoteReview.expectedRevision}
+            </p>
+            <p>
+              Allow up to {controller.remoteReview.maxRuns} requests until{" "}
+              {new Date(controller.remoteReview.expiresAt).toLocaleString()}.
+              The prompt and model are shown above. This does not enable
+              background receiving.
+            </p>
+            <label>
+              <input
+                type="checkbox"
+                checked={controller.remoteConfirmed}
+                onChange={(e) => controller.confirmRemote(e.target.checked)}
+              />{" "}
+              I reviewed the exact prompt, model, account, device and limits for
+              remote requests.
+            </label>
+            <button
+              disabled={!controller.remoteConfirmed}
+              onClick={() => act(() => controller.shareRemote(), true)}
+            >
+              Allow this template remotely
+            </button>
+          </fieldset>
+        )}
+        <ul>
+          {controller.remote?.connection?.templates.map((entry) => (
+            <li key={entry.permissionId}>
+              <p>
+                Template code: <code>{entry.templateId}</code> · Version{" "}
+                {entry.templateRevision}. Permission{" "}
+                {entry.state.replaceAll("_", " ")}; expires{" "}
+                {new Date(entry.expiresAt).toLocaleString()}; maximum{" "}
+                {entry.maxRuns} requests.
+              </p>
+              {entry.pendingDelivery && (
+                <p>
+                  A saved command needs acknowledgement recovery. Check requests
+                  to resume it while permission is valid.
+                </p>
+              )}
+              {entry.state === "publication_pending" && (
+                <button
+                  disabled={controller.busy}
+                  onClick={() =>
+                    controller.reviewRemoteAction(entry.permissionId, "retry")
+                  }
+                >
+                  Review publication retry
+                </button>
+              )}{" "}
+              {entry.state === "active" && (
+                <button
+                  disabled={controller.busy}
+                  onClick={() =>
+                    controller.reviewRemoteAction(entry.permissionId, "check")
+                  }
+                >
+                  Check requests
+                </button>
+              )}{" "}
+              <button
+                disabled={controller.busy}
+                onClick={() =>
+                  controller.reviewRemoteAction(entry.permissionId, "revoke")
+                }
+              >
+                Review revocation
+              </button>
+            </li>
+          ))}
+        </ul>
+        {controller.remoteAction && (
+          <fieldset disabled={controller.busy}>
+            <legend>
+              {controller.remoteAction.action === "check"
+                ? "Receive approved template requests"
+                : controller.remoteAction.action === "revoke"
+                  ? "Revoke template permission"
+                  : "Retry the saved publication"}
+            </legend>
+            <p>
+              Permission code:{" "}
+              <code>{controller.remoteAction.permissionId}</code>.{" "}
+              {controller.remoteAction.action === "revoke"
+                ? "This cancels unfinished dependent tasks locally before contacting the service. If the service cannot confirm, refresh the connection and retry withdrawal."
+                : controller.remoteAction.action === "check"
+                  ? "This pass can create tasks from the approved saved template. It does not enable recurring checks."
+                  : "Use the original permission and deadline. If local consent is no longer valid, revoke this permission and review a new one."}
+            </p>
+            <button
+              onClick={() =>
+                act(() => controller.applyRemoteAction(true), true)
+              }
+            >
+              Confirm this action
+            </button>{" "}
+            <button
+              onClick={() => {
+                controller.resetRemoteReview();
+                render((v) => v + 1);
+              }}
+            >
+              Dismiss
+            </button>
+          </fieldset>
+        )}
+        <p role="status">{controller.notice}</p>
+      </section>
       <p role="status">
         {controller.busy
           ? "Working…"
