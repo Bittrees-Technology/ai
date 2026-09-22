@@ -83,6 +83,9 @@ export async function restoreBackup(
     await writeFile(staged, bytes, { mode: 0o600, flag: "wx" });
     restored = new Store(staged, vault);
     restored.db.prepare("DELETE FROM remote_control_bindings").run();
+    restored.db
+      .prepare("UPDATE remote_template_permissions SET payload=NULL")
+      .run();
     restored.db.pragma("wal_checkpoint(TRUNCATE)");
     restored.close();
     restored = undefined;

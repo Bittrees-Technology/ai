@@ -745,6 +745,7 @@ export function localApi({
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
       templates: store.templates(owner),
+      remoteTemplates: store.remoteTemplates.export(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
       memories: memory ? await memory.export(owner) : [],
