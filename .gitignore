@@ -9,3 +9,5 @@ dist/
 coverage/
 .DS_Store
 runtime/
+
+.integration/

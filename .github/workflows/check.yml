@@ -17,3 +17,43 @@ jobs:
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/
       - run: npm run build
+
+  autonote-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: integration
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: autonote_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Bittrees-Technology/autonote
+          ref: 78023033431c1f45e6b8b203321e1b48215fd803
+          path: .integration/autonote
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Bittrees-Technology/crm
+          ref: daa4ef1ca690c67d0a837838a4a5575a0b3136eb
+          path: .integration/crm
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix .integration/autonote
+      - run: npm ci --prefix .integration/crm
+      - name: Actual companion, AutoNote and CRM synthetic acceptance
+        run: npx tsx scripts/autonote-integration-check.ts
+        env:
+          DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/autonote_test
+          AUTONOTE_REPO: .integration/autonote
+          CRM_REPO: .integration/crm
