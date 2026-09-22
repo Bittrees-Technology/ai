@@ -244,3 +244,37 @@ test("Hidden remote template catalogue and receipt responses cannot restore priv
   await checking;
   assert.equal(c.state.templateResult, null);
 });
+
+test("Mac background receiving review remains separate and sends only the selected permission", async () => {
+  const { connection, permission } = fixture(),
+    calls: any[] = [];
+  connection.templates = [
+    {
+      ...permission,
+      state: "active",
+      pendingDelivery: false,
+      backgroundReceiving: false,
+    },
+  ];
+  const c = new TemplateController(async (path, _method, body) => {
+    calls.push({ path, body });
+    return path === "/v1/remote" ? { available: true, connection } : {};
+  });
+  c.remote = { available: true, connection };
+  c.reviewRemoteAction(permission.permissionId, "start-receiving");
+  await c.applyRemoteAction(false);
+  assert.equal(calls.length, 0);
+  await c.applyRemoteAction(true);
+  assert.deepEqual(calls[0], {
+    path: "/v1/remote/templates/receiving",
+    body: {
+      permissionId: permission.permissionId,
+      confirmed: true,
+      enabled: true,
+    },
+  });
+  c.reviewRemoteAction(permission.permissionId, "stop-receiving");
+  await c.applyRemoteAction(true);
+  assert.equal(calls[2].body.enabled, false);
+  assert.match(c.notice, /Existing tasks continue/);
+});

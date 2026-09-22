@@ -277,6 +277,7 @@ export class RemoteClient {
         expiresAt: t.approval.expiresAt,
         maxRuns: t.approval.maxRuns,
         pendingDelivery: !!t.pendingCommand,
+        backgroundReceiving: t.receiving === true,
         state:
           t.mode === "revoke_pending"
             ? "revoke_pending"
@@ -433,6 +434,24 @@ export class RemoteClient {
       s.templates = s.templates!.filter((t) => t !== entry);
       await this.saveTemplates(s);
       return { disabledLocally: true, remoteConfirmed: true };
+    });
+  }
+  async setTemplateReceiving(permissionId: string, enabled: boolean) {
+    return this.exclusive(async () => {
+      const s = await this.saved();
+      if (!s) throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+      const entry = this.templateEntry(s, permissionId);
+      if (
+        enabled &&
+        (s.mode !== "active" ||
+          s.grant.expiresAt <= this.now() ||
+          entry.mode !== "active" ||
+          !this.templateExecutor!.allowed(entry.approval))
+      )
+        throw new RemoteClientError("TEMPLATE_CONFIRMATION_REQUIRED");
+      entry.receiving = enabled;
+      // A failed preference write revokes local authority before older saved opt-in can resume.
+      await this.saveTemplates(s);
     });
   }
   /** Journals each opaque command before execution, so a lost acknowledgement can

@@ -1,3 +1,4 @@
+import { RemoteTemplateReceiver } from "../modules/remote/template-receiver.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
@@ -376,9 +377,13 @@ test("authenticated local template routes require review and use the fixed local
     token = randomBytes(32).toString("hex");
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
+  const remote = f.client();
+  const templateReceiver = new RemoteTemplateReceiver(remote, () => ({
+    cancel() {},
+  }));
   server.on(
     "request",
-    localApi({ store: f.store, owner, token, port, remote: f.client() }),
+    localApi({ store: f.store, owner, token, port, remote, templateReceiver }),
   );
   const headers = {
       Authorization: "Bearer " + token,
@@ -425,6 +430,50 @@ test("authenticated local template routes require review and use the fixed local
       (await call("/v1/remote/templates/share", f.share())).status,
       200,
     );
+    const receiving = {
+      permissionId: f.permission(),
+      enabled: true,
+      confirmed: true,
+    };
+    assert.equal(
+      (
+        await call("/v1/remote/templates/receiving", {
+          ...receiving,
+          confirmed: false,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call("/v1/remote/templates/receiving", {
+          ...receiving,
+          permissionId: randomUUID(),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await call("/v1/remote/templates/receiving", receiving)).status,
+      200,
+    );
+    assert.equal(
+      (await remote.status())!.templates[0]!.backgroundReceiving,
+      true,
+    );
+    assert.equal(
+      (
+        await call("/v1/remote/templates/receiving", {
+          ...receiving,
+          enabled: false,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (await remote.status())!.templates[0]!.backgroundReceiving,
+      false,
+    );
     f.queue();
     const body = { permissionId: f.permission(), confirmed: true };
     assert.equal(
@@ -437,7 +486,66 @@ test("authenticated local template routes require review and use the fixed local
     assert.equal((await checked.json()).receipts[0].outcome, "queued");
     assert.equal((await call("/v1/remote/templates/revoke", body)).status, 200);
   } finally {
+    await templateReceiver.shutdown();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    f.store.close();
+  }
+});
+
+test("template background preference requires live permission, survives reopen and fails closed on opt-out write failure", async () => {
+  const f = fixture();
+  try {
+    await f.client().shareTemplate(f.share());
+    const id = f.permission();
+    assert.equal(
+      (await f.client().status())!.templates[0]!.backgroundReceiving,
+      false,
+    );
+    const before = f.calls.length;
+    await f.client().setTemplateReceiving(id, true);
+    assert.equal(f.calls.length, before);
+    assert.equal(
+      (await f.client().status())!.templates[0]!.backgroundReceiving,
+      true,
+    );
+    f.failNextWrite();
+    await assert.rejects(f.client().setTemplateReceiving(id, false));
+    assert.equal(
+      (await f.client().status())!.templates[0]!.state,
+      "confirmation_required",
+    );
+    await assert.rejects(f.client().pollTemplate(id), /CONFIRMATION/);
+    await assert.rejects(
+      f.client().setTemplateReceiving(id, true),
+      /CONFIRMATION/,
+    );
+    assert.equal(f.calls.length, before);
+  } finally {
+    f.store.close();
+  }
+});
+test("expired and unpublished template permissions cannot enable background receiving", async () => {
+  const f = fixture();
+  try {
+    f.fail("templates/publish");
+    await assert.rejects(f.client().shareTemplate(f.share()));
+    await assert.rejects(
+      f.client().setTemplateReceiving(f.permission(), true),
+      /CONFIRMATION/,
+    );
+    f.fail("");
+    await f.client().retryTemplatePublication(f.permission());
+    f.setTime(f.now + 600001);
+    await assert.rejects(
+      f.client().setTemplateReceiving(f.permission(), true),
+      /CONFIRMATION/,
+    );
+    await f.client().setTemplateReceiving(f.permission(), false);
+    assert.equal(
+      (await f.client().status())!.templates[0]!.backgroundReceiving,
+      false,
+    );
+  } finally {
     f.store.close();
   }
 });

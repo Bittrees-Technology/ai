@@ -6,10 +6,17 @@ type RemotePermission = {
   expiresAt: number;
   maxRuns: number;
   pendingDelivery: boolean;
+  backgroundReceiving?: boolean;
   state: string;
 };
 type RemoteStatus = {
   available: boolean;
+  templateReceiver?: {
+    state: string;
+    lastCheckedAt: number | null;
+    nextCheckAt: number | null;
+    received: number;
+  };
   connection: null | {
     deviceId: string;
     ownerId: string;
@@ -37,7 +44,7 @@ export class TemplateController {
   remoteConfirmed = false;
   remoteAction: {
     permissionId: string;
-    action: "retry" | "revoke" | "check";
+    action: "retry" | "revoke" | "check" | "start-receiving" | "stop-receiving";
   } | null = null;
   notice = "";
   private epoch = 0;
@@ -168,7 +175,7 @@ export class TemplateController {
   }
   reviewRemoteAction(
     permissionId: string,
-    action: "retry" | "revoke" | "check",
+    action: "retry" | "revoke" | "check" | "start-receiving" | "stop-receiving",
   ) {
     const entry = this.remote?.connection?.templates.find(
       (t) => t.permissionId === permissionId,
@@ -177,7 +184,8 @@ export class TemplateController {
       this.busy ||
       !entry ||
       (action === "retry" && entry.state !== "publication_pending") ||
-      (action === "check" && entry.state !== "active")
+      ((action === "check" || action === "start-receiving") &&
+        entry.state !== "active")
     )
       return;
     this.resetRemoteReview();
@@ -190,9 +198,15 @@ export class TemplateController {
     return this.operation(
       async () => {
         const result = await this.api(
-          `/v1/remote/templates/${review.action}`,
+          `/v1/remote/templates/${review.action.endsWith("receiving") ? "receiving" : review.action}`,
           "POST",
-          { permissionId: review.permissionId, confirmed: true },
+          {
+            permissionId: review.permissionId,
+            confirmed: true,
+            ...(review.action.endsWith("receiving")
+              ? { enabled: review.action === "start-receiving" }
+              : {}),
+          },
         );
         const remote = await this.api("/v1/remote");
         return { result, remote };
@@ -205,7 +219,11 @@ export class TemplateController {
             ? `${result.receipts.length} receipt(s) returned. Queued means a local task was created; check Tasks for its result.`
             : review.action === "revoke"
               ? "Permission revoked locally and confirmed by the remote service."
-              : "The original permission publication was confirmed.";
+              : review.action === "start-receiving"
+                ? "Background receiving enabled for this permission while the companion is running. It resumes on restart only while permission remains valid."
+                : review.action === "stop-receiving"
+                  ? "Background receiving stopped for this permission. Existing tasks continue; revoke permission to cancel unfinished dependent tasks."
+                  : "The original permission publication was confirmed.";
       },
     );
   }
