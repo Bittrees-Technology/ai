@@ -1,3 +1,4 @@
+import { Templates } from "./templates.js";
 import { ModelImportControls } from "./imports.js";
 import { DeviceResources } from "./device.js";
 import { SourceDraftDetail } from "./crm-drafts.js";
@@ -24,6 +25,8 @@ type Memory = {
 };
 type Profile = { id: string; model: string };
 const explanations: Record<string, string> = {
+  TEMPLATE_CAPACITY:
+    "You have 100 saved templates. Delete one before adding another.",
   IMPORT_BUSY:
     "Another model import operation is still running. Wait or cancel it first.",
   REVIEW_MISMATCH:
@@ -217,20 +220,26 @@ function App() {
         </a>
         <p className="local">On this Mac</p>
         <nav aria-label="Main">
-          {["Tasks", "Inbox", "Memory", "Models", "Device", "Connections"].map(
-            (name) => (
-              <button
-                key={name}
-                aria-current={page === name ? "page" : undefined}
-                onClick={() => {
-                  setPage(name);
-                  setError("");
-                }}
-              >
-                {name}
-              </button>
-            ),
-          )}
+          {[
+            "Tasks",
+            "Templates",
+            "Inbox",
+            "Memory",
+            "Models",
+            "Device",
+            "Connections",
+          ].map((name) => (
+            <button
+              key={name}
+              aria-current={page === name ? "page" : undefined}
+              onClick={() => {
+                setPage(name);
+                setError("");
+              }}
+            >
+              {name}
+            </button>
+          ))}
         </nav>
         <p className="privacy">
           Your work stays here.
@@ -568,6 +577,18 @@ function App() {
                 </section>
               </div>
             )}
+            {page === "Templates" && (
+              <Templates
+                api={api}
+                profiles={profiles}
+                onError={fail}
+                onTask={(id) => {
+                  setSelected(id);
+                  setPage("Tasks");
+                  void refresh().catch(fail);
+                }}
+              />
+            )}
             {page === "Models" && (
               <section className="content">
                 <h2>Choose your local model</h2>
@@ -770,9 +791,9 @@ function App() {
                 <DeviceResources api={api} />
                 <h3>Your data</h3>
                 <p>
-                  Tasks and memory stay until you delete them. Your key is
-                  stored in macOS Keychain. Exports contain readable content;
-                  older exports and backups have their own lifecycle.
+                  Tasks, templates and memory stay until you delete them. Your
+                  key is stored in macOS Keychain. Exports contain readable
+                  content; older exports and backups have their own lifecycle.
                 </p>
                 <button
                   disabled={busy}
@@ -795,7 +816,7 @@ function App() {
                   Export my local data
                 </button>
                 <div className="danger">
-                  <h3>Delete local tasks and memory</h3>
+                  <h3>Delete local tasks, templates and memory</h3>
                   <label>
                     Type DELETE to confirm
                     <input
