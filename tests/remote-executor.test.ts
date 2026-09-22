@@ -22,6 +22,7 @@ function fixture() {
   });
   const identity = {
     remoteOwnerId: randomUUID(),
+    controlId: randomUUID(),
     deviceId: randomUUID(),
     epoch: 1,
   };
@@ -84,6 +85,7 @@ test("remote executor requires persisted local consent and matching owner/device
     f.allow();
     for (const identity of [
       { ...f.identity, epoch: 2 },
+      { ...f.identity, controlId: randomUUID() },
       { ...f.identity, remoteOwnerId: randomUUID() },
     ])
       assert.throws(

@@ -181,17 +181,17 @@ export class RemoteStatusStore {
     return this.transaction(async (db) => {
       const rows = (
         await db.query(
-          "SELECT id,expires_at,revoked_at FROM remote_devices WHERE owner_id=$1 AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT 101",
+          "SELECT id,expires_at,revoked_at,epoch,controls_enabled FROM remote_devices WHERE owner_id=$1 AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT 101",
           [ownerId, after ?? null],
         )
       ).rows;
-      const items = rows
-        .slice(0, 100)
-        .map((row) => ({
-          id: row.id as string,
-          expiresAt: Number(row.expires_at),
-          revoked: row.revoked_at !== null,
-        }));
+      const items = rows.slice(0, 100).map((row) => ({
+        id: row.id as string,
+        expiresAt: Number(row.expires_at),
+        revoked: row.revoked_at !== null,
+        epoch: row.epoch as number,
+        controlsEnabled: row.controls_enabled as boolean,
+      }));
       return { items, nextCursor: rows.length > 100 ? items.at(-1)!.id : null };
     });
   }

@@ -174,7 +174,7 @@ export class RemoteDeviceStore {
       const replacement = secret(),
         epoch = row.epoch + 1;
       await db.query(
-        "UPDATE remote_devices SET credential_hash=$2,epoch=$3 WHERE id=$1",
+        "UPDATE remote_devices SET credential_hash=$2,epoch=$3,controls_enabled=false,control_id=NULL,control_credential_hash=NULL,controls_approved_epoch=NULL,controls_approval_expires_at=NULL WHERE id=$1",
         [row.id, hash(replacement), epoch],
       );
       if (Number(row.expires_at) <= this.now())
@@ -187,6 +187,124 @@ export class RemoteDeviceStore {
         expiresAt: Number(row.expires_at),
         scope: "status:publish" as const,
       };
+    });
+  }
+  /** Browser owner approval is short-lived and still requires a separate native opt-in. */
+  async approveControls(
+    ownerId: string,
+    deviceId: string,
+    expectedEpoch: number,
+  ) {
+    if (
+      !validId(ownerId) ||
+      !validId(deviceId) ||
+      !Number.isSafeInteger(expectedEpoch) ||
+      expectedEpoch < 1
+    )
+      throw new RemoteStatusError("INVALID_INPUT");
+    return this.transaction(async (db) => {
+      const row = (
+        await db.query(
+          "SELECT * FROM remote_devices WHERE id=$1 AND owner_id=$2 FOR UPDATE",
+          [deviceId, ownerId],
+        )
+      ).rows[0];
+      if (
+        !row ||
+        row.revoked_at !== null ||
+        Number(row.expires_at) <= this.now() ||
+        row.epoch !== expectedEpoch ||
+        row.controls_enabled
+      )
+        throw new RemoteStatusError("DENIED");
+      const expiresAt = Math.min(Number(row.expires_at), this.now() + 300000);
+      await db.query(
+        "UPDATE remote_devices SET controls_approved_epoch=$2,controls_approval_expires_at=$3 WHERE id=$1",
+        [deviceId, expectedEpoch, expiresAt],
+      );
+      if (expiresAt <= this.now()) throw new RemoteStatusError("DENIED");
+      return { approved: true, expiresAt };
+    });
+  }
+  /** Status credential can redeem reviewed consent once, never poll or acknowledge controls. */
+  async enableControls(credential: string) {
+    if (!opaque.safeParse(credential).success)
+      throw new RemoteStatusError("DENIED");
+    return this.transaction(async (db) => {
+      const row = (
+        await db.query(
+          "SELECT * FROM remote_devices WHERE credential_hash=$1 FOR UPDATE",
+          [hash(credential)],
+        )
+      ).rows[0];
+      if (
+        !row ||
+        row.revoked_at !== null ||
+        Number(row.expires_at) <= this.now() ||
+        row.controls_enabled ||
+        row.controls_approved_epoch !== row.epoch ||
+        Number(row.controls_approval_expires_at) <= this.now()
+      )
+        throw new RemoteStatusError("DENIED");
+      const controlId = randomUUID(),
+        replacement = secret();
+      await db.query(
+        "UPDATE remote_devices SET controls_enabled=true,control_id=$2,control_credential_hash=$3,controls_approved_epoch=NULL,controls_approval_expires_at=NULL WHERE id=$1",
+        [row.id, controlId, hash(replacement)],
+      );
+      if (
+        Math.min(
+          Number(row.expires_at),
+          Number(row.controls_approval_expires_at),
+        ) <= this.now()
+      )
+        throw new RemoteStatusError("DENIED");
+      return {
+        deviceId: row.id as string,
+        ownerId: row.owner_id as string,
+        epoch: row.epoch as number,
+        controlId,
+        credential: replacement,
+        expiresAt: Number(row.expires_at),
+        scope: "controls:pause-cancel" as const,
+      };
+    });
+  }
+  async authenticateControls(credential: string) {
+    if (!opaque.safeParse(credential).success)
+      throw new RemoteStatusError("DENIED");
+    return this.transaction(async (db) => {
+      const row = (
+        await db.query(
+          "SELECT * FROM remote_devices WHERE control_credential_hash=$1 FOR SHARE",
+          [hash(credential)],
+        )
+      ).rows[0];
+      if (
+        !row ||
+        !row.controls_enabled ||
+        !row.control_id ||
+        row.revoked_at !== null ||
+        Number(row.expires_at) <= this.now()
+      )
+        throw new RemoteStatusError("DENIED");
+      return {
+        ownerId: row.owner_id as string,
+        deviceId: row.id as string,
+        epoch: row.epoch as number,
+        controlId: row.control_id as string,
+      };
+    });
+  }
+  async disableControls(ownerId: string, deviceId: string) {
+    if (!validId(ownerId) || !validId(deviceId))
+      throw new RemoteStatusError("INVALID_INPUT");
+    return this.transaction(async (db) => {
+      const result = await db.query(
+        "UPDATE remote_devices SET controls_enabled=false,control_id=NULL,control_credential_hash=NULL,controls_approved_epoch=NULL,controls_approval_expires_at=NULL WHERE id=$1 AND owner_id=$2",
+        [deviceId, ownerId],
+      );
+      if (!result.rowCount) throw new RemoteStatusError("DENIED");
     });
   }
   async cancel(ownerId: string, pairingId: string) {

@@ -9,25 +9,28 @@ export async function checkRemoteCommands(pool: Pool) {
     otherOwner = randomUUID(),
     deviceId = randomUUID(),
     taskId = randomUUID();
-  const auth = { ownerId, deviceId, epoch: 1 };
+  const auth = { ownerId, deviceId, epoch: 1, controlId: randomUUID() };
   const queue = new RemoteCommandStore(pool, 86400000, () => now),
     status = new RemoteStatusStore(pool, 86400000, () => now);
   await pool.query(
     "INSERT INTO remote_devices(id,owner_id,epoch,expires_at) VALUES($1,$2,1,$3)",
     [deviceId, ownerId, now + 2 * 86400000],
   );
-  await status.publish(auth, {
-    sequence: 1,
-    items: [
-      {
-        id: taskId,
-        deviceId,
-        status: "running",
-        revision: 1,
-        updatedAt: new Date(now).toISOString(),
-      },
-    ],
-  });
+  await status.publish(
+    { ownerId, deviceId, epoch: 1 },
+    {
+      sequence: 1,
+      items: [
+        {
+          id: taskId,
+          deviceId,
+          status: "running",
+          revision: 1,
+          updatedAt: new Date(now).toISOString(),
+        },
+      ],
+    },
+  );
   const request = {
     id: randomUUID(),
     deviceId,
@@ -41,8 +44,8 @@ export async function checkRemoteCommands(pool: Pool) {
   await assert.rejects(queue.poll(auth), /DENIED/);
   // Explicit fixture consent only. No production device is upgraded by the migration.
   await pool.query(
-    "UPDATE remote_devices SET controls_enabled=true WHERE id=$1",
-    [deviceId],
+    "UPDATE remote_devices SET controls_enabled=true,control_id=$2 WHERE id=$1",
+    [deviceId, auth.controlId],
   );
   await assert.rejects(queue.submit(otherOwner, request), /DENIED/);
   await assert.rejects(
@@ -147,8 +150,8 @@ export async function checkRemoteCommands(pool: Pool) {
 
   const capped = randomUUID();
   await pool.query(
-    "INSERT INTO remote_devices(id,owner_id,epoch,expires_at,controls_enabled) VALUES($1,$2,1,$3,true)",
-    [capped, ownerId, now + 2 * 86400000],
+    "INSERT INTO remote_devices(id,owner_id,epoch,expires_at,controls_enabled,control_id) VALUES($1,$2,1,$3,true,$4)",
+    [capped, ownerId, now + 2 * 86400000, auth.controlId],
   );
   await status.publish(
     { ownerId, deviceId: capped, epoch: 1 },
@@ -177,7 +180,14 @@ export async function checkRemoteCommands(pool: Pool) {
     /CONFLICT/,
   );
   assert.equal(
-    (await queue.poll({ ownerId, deviceId: capped, epoch: 1 })).length,
+    (
+      await queue.poll({
+        ownerId,
+        deviceId: capped,
+        epoch: 1,
+        controlId: auth.controlId,
+      })
+    ).length,
     20,
   );
   assert.ok(
@@ -188,8 +198,8 @@ export async function checkRemoteCommands(pool: Pool) {
   const shortDevice = randomUUID(),
     rolledBackId = randomUUID();
   await pool.query(
-    "INSERT INTO remote_devices(id,owner_id,epoch,expires_at,controls_enabled) VALUES($1,$2,1,$3,true)",
-    [shortDevice, ownerId, now + 50],
+    "INSERT INTO remote_devices(id,owner_id,epoch,expires_at,controls_enabled,control_id) VALUES($1,$2,1,$3,true,$4)",
+    [shortDevice, ownerId, now + 50, auth.controlId],
   );
   await status.publish(
     { ownerId, deviceId: shortDevice, epoch: 1 },

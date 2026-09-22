@@ -3,6 +3,8 @@ import express, { type Request, type Response } from "express";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { RemoteSessionStore } from "./sessions.js";
+import { RemoteCommandStore } from "./commands.js";
+import { remoteControlSchema } from "./status.js";
 import { RemoteDeviceStore } from "./devices.js";
 import { RemoteStatusError, RemoteStatusStore } from "./status-store.js";
 const loginCookie = "__Host-bittrees-login",
@@ -51,6 +53,7 @@ export function createRemoteApp(
   );
   const devices = new RemoteDeviceStore(pool, config.deviceMs, now);
   const status = new RemoteStatusStore(pool, config.retentionMs, now);
+  const commands = new RemoteCommandStore(pool, config.retentionMs, now);
   const host = new URL(config.origin).host;
   const budget = config.requestsPerMinute ?? 120;
   if (!Number.isInteger(budget) || budget < 1 || budget > 1000)
@@ -236,6 +239,65 @@ export function createRemoteApp(
     const input = parse(z.strictObject({ deviceId: z.uuid() }), req.body);
     await status.revoke((await owner(req)).ownerId, input.deviceId);
     res.json({ revoked: true });
+  });
+  app.post("/browser/controls/approve", async (req, res) => {
+    const input = parse(
+      z.strictObject({
+        deviceId: z.uuid(),
+        expectedEpoch: z.number().int().positive().max(2147483647),
+        confirmed: z.literal(true),
+      }),
+      req.body,
+    );
+    res.json(
+      await devices.approveControls(
+        (await owner(req)).ownerId,
+        input.deviceId,
+        input.expectedEpoch,
+      ),
+    );
+  });
+  app.post("/browser/controls/disable", async (req, res) => {
+    const input = parse(z.strictObject({ deviceId: z.uuid() }), req.body);
+    await devices.disableControls((await owner(req)).ownerId, input.deviceId);
+    res.json({ disabled: true });
+  });
+  app.post("/browser/commands", async (req, res) => {
+    const input = parse(
+      z.strictObject({
+        command: remoteControlSchema,
+        confirmed: z.literal(true),
+      }),
+      req.body,
+    );
+    res.json(await commands.submit((await owner(req)).ownerId, input.command));
+  });
+  app.post("/browser/commands/receipt", async (req, res) => {
+    const input = parse(z.strictObject({ id: z.uuid() }), req.body);
+    res.json(await commands.inspect((await owner(req)).ownerId, input.id));
+  });
+  app.post("/device/controls/enable", async (req, res) => {
+    parse(z.strictObject({ confirmed: z.literal(true) }), req.body);
+    res.json(await devices.enableControls(token(req)));
+  });
+  app.post("/device/controls/disable", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    const auth = await devices.authenticate(token(req));
+    await devices.disableControls(auth.ownerId, auth.deviceId);
+    res.json({ disabled: true });
+  });
+  app.post("/device/commands/poll", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    const auth = await devices.authenticateControls(token(req));
+    res.json({ identity: auth, commands: await commands.poll(auth) });
+  });
+  app.post("/device/commands/receipt", async (req, res) => {
+    res.json(
+      await commands.acknowledge(
+        await devices.authenticateControls(token(req)),
+        req.body,
+      ),
+    );
   });
   app.post("/device/pairings", async (req, res) => {
     const input = parse(

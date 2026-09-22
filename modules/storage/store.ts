@@ -109,6 +109,7 @@ export interface Claim {
 }
 const remoteControlIdentitySchema = z.strictObject({
   remoteOwnerId: z.uuid(),
+  controlId: z.uuid(),
   deviceId: z.uuid(),
   epoch: z.number().int().positive().max(2147483647),
 });
@@ -809,6 +810,7 @@ CREATE TABLE IF NOT EXISTS remote_control_receipts(user_id TEXT NOT NULL,tenant_
           !binding ||
           binding.remoteOwnerId !== identity.remoteOwnerId ||
           binding.epoch !== identity.epoch ||
+          binding.controlId !== identity.controlId ||
           binding.expiresAt <= now
         )
           throw new StoreError("NOT_FOUND");

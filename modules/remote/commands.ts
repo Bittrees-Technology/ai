@@ -11,6 +11,7 @@ const identity = z.strictObject({
   ownerId: z.uuid(),
   deviceId: z.uuid(),
   epoch: z.number().int().positive(),
+  controlId: z.uuid(),
 });
 const request = remoteControlSchema;
 const envelope = (r: any) =>
@@ -23,7 +24,7 @@ const envelope = (r: any) =>
     issuedAt: new Date(Number(r.issued_at)).toISOString(),
     expiresAt: new Date(Number(r.expires_at)).toISOString(),
   });
-/** Internal queue only. A future control-scoped transport must authenticate callers; no local execution here. */
+/** Internal queue only. Control-scoped transport authenticates callers; no local execution here. */
 export class RemoteCommandStore {
   constructor(
     private pool: Pool,
@@ -57,6 +58,7 @@ export class RemoteCommandStore {
     ownerId: string,
     deviceId: string,
     epoch?: number,
+    controlId?: string,
   ) {
     const d = (
       await db.query(
@@ -69,7 +71,9 @@ export class RemoteCommandStore {
       d.revoked_at !== null ||
       Number(d.expires_at) <= this.now() ||
       !d.controls_enabled ||
-      (epoch !== undefined && d.epoch !== epoch)
+      !d.control_id ||
+      (epoch !== undefined && d.epoch !== epoch) ||
+      (controlId !== undefined && d.control_id !== controlId)
     )
       throw new RemoteStatusError("DENIED");
     return d;
@@ -117,8 +121,8 @@ export class RemoteCommandStore {
         throw new RemoteStatusError("CONFLICT");
       const count = (
         await db.query(
-          "SELECT count(*) FROM remote_commands WHERE device_id=$1 AND device_epoch=$2 AND outcome IS NULL AND expires_at>$3",
-          [r.deviceId, d.epoch, now],
+          "SELECT count(*) FROM remote_commands WHERE device_id=$1 AND device_epoch=$2 AND control_id=$4 AND outcome IS NULL AND expires_at>$3",
+          [r.deviceId, d.epoch, now, d.control_id],
         )
       ).rows[0].count;
       if (Number(count) >= 100) throw new RemoteStatusError("CONFLICT");
@@ -129,7 +133,7 @@ export class RemoteCommandStore {
       );
       const row = (
         await db.query(
-          "INSERT INTO remote_commands(id,device_id,device_epoch,task_id,command,expected_revision,issued_at,expires_at,purge_at,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
+          "INSERT INTO remote_commands(id,device_id,device_epoch,task_id,command,expected_revision,issued_at,expires_at,purge_at,request_hash,control_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
           [
             r.id,
             r.deviceId,
@@ -141,6 +145,7 @@ export class RemoteCommandStore {
             expiry,
             now + this.retentionMs,
             requestHash,
+            d.control_id,
           ],
         )
       ).rows[0];
@@ -154,11 +159,17 @@ export class RemoteCommandStore {
     if (!parsed.success) throw new RemoteStatusError("INVALID_INPUT");
     const who = parsed.data;
     return this.transaction(async (db) => {
-      const d = await this.device(db, who.ownerId, who.deviceId, who.epoch);
+      const d = await this.device(
+        db,
+        who.ownerId,
+        who.deviceId,
+        who.epoch,
+        who.controlId,
+      );
       const rows = (
         await db.query(
-          "SELECT * FROM remote_commands WHERE device_id=$1 AND device_epoch=$2 AND outcome IS NULL AND expires_at>$3 ORDER BY issued_at,id LIMIT 20",
-          [who.deviceId, who.epoch, this.now()],
+          "SELECT * FROM remote_commands WHERE device_id=$1 AND device_epoch=$2 AND control_id=$4 AND outcome IS NULL AND expires_at>$3 ORDER BY issued_at,id LIMIT 20",
+          [who.deviceId, who.epoch, this.now(), who.controlId],
         )
       ).rows;
       if (Number(d.expires_at) <= this.now())
@@ -177,11 +188,17 @@ export class RemoteCommandStore {
       r = receipt.data;
     if (r.deviceId !== who.deviceId) throw new RemoteStatusError("DENIED");
     return this.transaction(async (db) => {
-      const d = await this.device(db, who.ownerId, who.deviceId, who.epoch);
+      const d = await this.device(
+        db,
+        who.ownerId,
+        who.deviceId,
+        who.epoch,
+        who.controlId,
+      );
       const row = (
         await db.query(
-          "SELECT * FROM remote_commands WHERE id=$1 AND device_id=$2 AND device_epoch=$3 FOR UPDATE",
-          [r.id, who.deviceId, who.epoch],
+          "SELECT * FROM remote_commands WHERE id=$1 AND device_id=$2 AND device_epoch=$3 AND control_id=$4 FOR UPDATE",
+          [r.id, who.deviceId, who.epoch, who.controlId],
         )
       ).rows[0];
       if (!row) throw new RemoteStatusError("DENIED");
@@ -213,7 +230,7 @@ export class RemoteCommandStore {
     return this.transaction(async (db) => {
       const r = (
         await db.query(
-          "SELECT c.*,d.epoch AS current_epoch,d.revoked_at,d.expires_at AS device_expiry,d.controls_enabled FROM remote_commands c JOIN remote_devices d ON d.id=c.device_id WHERE c.id=$1 AND d.owner_id=$2 AND c.purge_at>$3",
+          "SELECT c.*,d.epoch AS current_epoch,d.revoked_at,d.expires_at AS device_expiry,d.controls_enabled,d.control_id AS current_control_id FROM remote_commands c JOIN remote_devices d ON d.id=c.device_id WHERE c.id=$1 AND d.owner_id=$2 AND c.purge_at>$3",
           [id, ownerId, this.now()],
         )
       ).rows[0];
@@ -223,7 +240,8 @@ export class RemoteCommandStore {
           ? "acknowledged"
           : r.revoked_at !== null ||
               !r.controls_enabled ||
-              r.device_epoch !== r.current_epoch
+              r.device_epoch !== r.current_epoch ||
+              r.control_id !== r.current_control_id
             ? "cancelled"
             : Math.min(Number(r.expires_at), Number(r.device_expiry)) <=
                 this.now()
