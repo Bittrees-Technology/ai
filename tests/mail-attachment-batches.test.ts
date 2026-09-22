@@ -132,3 +132,18 @@ test("Revocation or cancellation between parts stops inference and never returns
     assert.equal(calls, 1);
   }
 });
+
+test("Attachment parts prefer complete records while preserving exact bytes", () => {
+  const text = Array.from(
+    { length: 40 },
+    (_, i) =>
+      `Record ${i}: Estimated cost EUR 500. Approval is pending and no payment is authorized.\n`,
+  ).join("");
+  const plan = attachmentPlan(source(text), "Summarize", model)!;
+  assert.ok(plan.length > 1);
+  assert.equal(plan.map((p) => p.section.text).join(""), text);
+  for (const p of plan.slice(0, -1)) {
+    assert.match(p.section.text, /\n$/);
+    assert.ok(fitsLocalPrompt(model, p.prompt));
+  }
+});
