@@ -17,6 +17,7 @@
     "activate": "node dist/apps/companion/activate-cli.js"
   },
   "dependencies": {
+    "@hpke/core": "1.9.0",
     "@napi-rs/keyring": "2.1.0",
     "better-sqlite3": "13.0.3",
     "ethers": "6.17.0",
