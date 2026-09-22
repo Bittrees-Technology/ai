@@ -50,6 +50,18 @@ export class RemoteTemplates {
         )
       : null;
   }
+  allowed(owner: Owner, raw: unknown) {
+    const approval = templateApprovalSchema.safeParse(raw);
+    if (!approval.success) return false;
+    const value = this.permission(owner, approval.data.identity.permissionId);
+    const now = this.now();
+    return (
+      !!value &&
+      Number.isFinite(now) &&
+      value.approval.expiresAt > now &&
+      value.hash === this.vault.fingerprint(approval.data)
+    );
+  }
   approve(owner: Owner, raw: unknown) {
     const approval = templateApprovalSchema.parse(raw);
     return this.store.db

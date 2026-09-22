@@ -134,6 +134,20 @@ const remote =
             store.executeRemoteControl(owner, identity, command),
           interrupt: (id) => worker.cancel(id),
         },
+        {
+          approve: (raw) => store.remoteTemplates.approve(owner, raw),
+          allowed: (raw) => store.remoteTemplates.allowed(owner, raw),
+          revoke: (deviceId, templateId) => {
+            for (const id of store.remoteTemplates.revoke(
+              owner,
+              deviceId,
+              templateId,
+            ))
+              worker.cancel(id);
+          },
+          execute: (identity, command) =>
+            store.remoteTemplates.execute(owner, identity, command),
+        },
       )
     : undefined;
 const receiver = remote ? new RemoteReceiver(remote) : undefined;
