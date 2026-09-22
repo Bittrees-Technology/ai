@@ -1,3 +1,4 @@
+import { checkRemoteControlScope } from "./remote-control-scope-integration.js";
 import { checkRemoteCommands } from "./remote-command-integration.js";
 // Isolated schema in an explicitly configured test PostgreSQL database; no live relay.
 import assert from "node:assert/strict";
@@ -295,6 +296,21 @@ try {
     store.listPage(ownerId, pagedDevice, { after: first.nextCursor }),
     /DENIED/,
   );
+  await pool.query(
+    await readFile(
+      new URL("../modules/remote/migrations/004-controls.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  await pool.query(
+    await readFile(
+      new URL(
+        "../modules/remote/migrations/005-control-scope.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await checkRemoteDevices(pool);
   await pool.query(
     await readFile(
@@ -304,13 +320,8 @@ try {
   );
   await checkRemoteSessions(pool);
   await checkRemoteHttp(pool);
-  await pool.query(
-    await readFile(
-      new URL("../modules/remote/migrations/004-controls.sql", import.meta.url),
-      "utf8",
-    ),
-  );
   await checkRemoteCommands(pool);
+  await checkRemoteControlScope(pool);
   console.log(
     "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue checks passed. Synthetic schema only.",
   );

@@ -451,20 +451,282 @@ export async function checkRemoteHttp(pool: Pool) {
       ),
       [...extraDevices, item.deviceId].sort(),
     );
-    const rotated = await call("/device/rotate", {}, device);
-    assert.equal(rotated.status, 200);
+    // Separate browser approval + native confirmation + narrowly scoped token.
+    const controlApproval = {
+      deviceId: item.deviceId,
+      expectedEpoch: 1,
+      confirmed: true,
+    };
+    assert.equal((await call("/device/commands/poll", {}, device)).status, 403);
     assert.equal(
-      (await call("/device/status", { sequence: 1, items: [item] }, device))
+      (await call("/device/controls/enable", { confirmed: true }, device))
+        .status,
+      403,
+    );
+    assert.equal(
+      (await call("/browser/controls/approve", controlApproval, otherOwner))
         .status,
       403,
     );
     assert.equal(
       (
         await call(
-          "/device/status",
-          { sequence: 1, items: [item] },
-          { Authorization: "Bearer " + rotated.body.credential },
+          "/browser/controls/approve",
+          { ...controlApproval, confirmed: false },
+          owner,
         )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/controls/approve",
+          { ...controlApproval, expectedEpoch: 2 },
+          owner,
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await call("/browser/controls/approve", controlApproval, owner)).status,
+      200,
+    );
+    assert.equal((await call("/device/commands/poll", {}, device)).status, 403);
+    assert.equal(
+      (await call("/device/controls/enable", { confirmed: false }, device))
+        .status,
+      400,
+    );
+    const grants = await Promise.all([
+      call("/device/controls/enable", { confirmed: true }, device),
+      call("/device/controls/enable", { confirmed: true }, device),
+    ]);
+    assert.deepEqual(grants.map((g) => g.status).sort(), [200, 403]);
+    const controlGrant = grants.find((g) => g.status === 200)!.body;
+    assert.equal(controlGrant.scope, "controls:pause-cancel");
+    assert.equal(controlGrant.expiresAt, redeemed.body.expiresAt);
+    const controls = { Authorization: "Bearer " + controlGrant.credential };
+    assert.equal(
+      (await call("/device/status", { sequence: 1, items: [item] }, controls))
+        .status,
+      403,
+    );
+    assert.equal((await call("/device/rotate", {}, controls)).status, 403);
+    const controlLocal = new Store(":memory:", new Vault(randomBytes(32)));
+    const localOwner = { userId: "control-test", tenantId: "personal" };
+    const task = controlLocal.create(
+      localOwner,
+      {
+        conversationId: "control",
+        kind: "query",
+        prompt: "PRIVATE CONTROL TASK",
+        modelProfileId: "m",
+      },
+      "control",
+    );
+    const controlBatch = {
+      sequence: 2,
+      items: [
+        {
+          ...item,
+          id: task.id,
+          updatedAt: new Date(task.updatedAt).toISOString(),
+        },
+      ],
+    };
+    let queuedId = "";
+    try {
+      assert.equal(
+        (await call("/device/status", controlBatch, device)).status,
+        200,
+      );
+      const command = {
+        id: randomUUID(),
+        deviceId: item.deviceId,
+        taskId: task.id,
+        command: "pause",
+        expectedRevision: task.revision,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      };
+      assert.equal(
+        (
+          await call(
+            "/browser/commands",
+            { command, confirmed: true },
+            otherOwner,
+          )
+        ).status,
+        403,
+      );
+      assert.equal(
+        (await call("/browser/commands", { command, confirmed: false }, owner))
+          .status,
+        400,
+      );
+      assert.equal(
+        (
+          await call(
+            "/browser/commands",
+            { command: { ...command, command: "resume" }, confirmed: true },
+            owner,
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (await call("/browser/commands", { command, confirmed: true }, owner))
+          .status,
+        200,
+      );
+      const delivery = await call("/device/commands/poll", {}, controls);
+      assert.equal(delivery.status, 200);
+      assert.equal(delivery.body.commands.length, 1);
+      const localIdentity = {
+        remoteOwnerId: delivery.body.identity.ownerId,
+        deviceId: item.deviceId,
+        epoch: delivery.body.identity.epoch,
+        controlId: delivery.body.identity.controlId,
+      };
+      assert.throws(
+        () =>
+          controlLocal.executeRemoteControl(
+            localOwner,
+            localIdentity,
+            delivery.body.commands[0],
+          ),
+        /NOT_FOUND/,
+      );
+      controlLocal.allowRemoteControls(localOwner, {
+        ...localIdentity,
+        expiresAt: controlGrant.expiresAt,
+      });
+      const executed = controlLocal.executeRemoteControl(
+        localOwner,
+        localIdentity,
+        delivery.body.commands[0],
+      );
+      assert.equal(executed.receipt.outcome, "applied");
+      assert.equal(controlLocal.get(localOwner, task.id).status, "paused");
+      assert.equal(
+        (await call("/device/commands/receipt", executed.receipt, device))
+          .status,
+        403,
+      );
+      assert.equal(
+        (await call("/device/commands/receipt", executed.receipt, controls))
+          .body.duplicate,
+        false,
+      );
+      assert.equal(
+        (await call("/device/commands/receipt", executed.receipt, controls))
+          .body.duplicate,
+        true,
+      );
+      assert.equal(
+        (await call("/browser/commands/receipt", { id: command.id }, owner))
+          .body.state,
+        "acknowledged",
+      );
+      assert.equal(
+        (
+          await call(
+            "/browser/commands/receipt",
+            { id: command.id },
+            otherOwner,
+          )
+        ).status,
+        403,
+      );
+      queuedId = randomUUID();
+      assert.equal(
+        (
+          await call(
+            "/browser/commands",
+            {
+              command: { ...command, id: queuedId, command: "cancel" },
+              confirmed: true,
+            },
+            owner,
+          )
+        ).status,
+        200,
+      );
+      const staleIdentity = delivery.body.identity;
+      assert.equal(
+        (
+          await call(
+            "/browser/controls/disable",
+            { deviceId: item.deviceId },
+            owner,
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        (await call("/device/commands/poll", {}, controls)).status,
+        403,
+      );
+      assert.equal(
+        (await call("/browser/commands/receipt", { id: queuedId }, owner)).body
+          .state,
+        "cancelled",
+      );
+      assert.equal(
+        (await call("/browser/controls/approve", controlApproval, owner))
+          .status,
+        200,
+      );
+      const again = await call(
+        "/device/controls/enable",
+        { confirmed: true },
+        device,
+      );
+      assert.equal(again.status, 200);
+      assert.notEqual(again.body.controlId, controlGrant.controlId);
+      assert.equal(
+        (await call("/device/commands/poll", {}, controls)).status,
+        403,
+      );
+      assert.deepEqual(
+        (
+          await call(
+            "/device/commands/poll",
+            {},
+            { Authorization: "Bearer " + again.body.credential },
+          )
+        ).body.commands,
+        [],
+      );
+      const { RemoteCommandStore } =
+        await import("../modules/remote/commands.js");
+      await assert.rejects(
+        new RemoteCommandStore(pool, 86400000).poll(staleIdentity),
+        /DENIED/,
+      );
+      // Status key rotation must revoke even the replacement control permission.
+      Object.assign(controls, {
+        Authorization: "Bearer " + again.body.credential,
+      });
+    } finally {
+      controlLocal.close();
+    }
+    const rotated = await call("/device/rotate", {}, device);
+    assert.equal(rotated.status, 200);
+    assert.equal(
+      (await call("/device/commands/poll", {}, controls)).status,
+      403,
+    );
+    assert.equal(
+      (await call("/device/status", controlBatch, device)).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call("/device/status", controlBatch, {
+          Authorization: "Bearer " + rotated.body.credential,
+        })
       ).body.duplicate,
       true,
     );
@@ -480,11 +742,9 @@ export async function checkRemoteHttp(pool: Pool) {
     );
     assert.equal(
       (
-        await call(
-          "/device/status",
-          { sequence: 1, items: [item] },
-          { Authorization: "Bearer " + rotated.body.credential },
-        )
+        await call("/device/status", controlBatch, {
+          Authorization: "Bearer " + rotated.body.credential,
+        })
       ).status,
       403,
     );
