@@ -267,6 +267,6 @@ struct CompanionMain {
         let delegate = Companion()
         app.delegate = delegate
         app.setActivationPolicy(.regular)
-        app.run()
+        withExtendedLifetime(delegate) { app.run() }
     }
 }
