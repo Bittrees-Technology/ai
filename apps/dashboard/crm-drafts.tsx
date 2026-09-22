@@ -217,7 +217,14 @@ export function SourceDraftDetail({
   }, [id]);
   return (
     <section>
-      <h3>{sourceApp === "autonote" ? "AutoNote" : "CRM"} draft</h3>
+      <h3>
+        {sourceApp === "mail"
+          ? "Mail"
+          : sourceApp === "autonote"
+            ? "AutoNote"
+            : "CRM"}{" "}
+        draft
+      </h3>
       <p>
         Access is checked when opened and every 15 seconds while visible.
         Previously displayed or exported copies cannot be retracted.
@@ -240,8 +247,51 @@ export function SourceDraftDetail({
             Unreviewed draft. Verify citations and claims before use.
             {sourceApp === "crm"
               ? "Publication status is shown separately below."
-              : "Proposed owners and deadlines are unconfirmed. Send for AutoNote review using the controls below."}
+              : sourceApp === "mail"
+                ? "Nothing has been sent or saved in Mail. Download text to review and use yourself."
+                : "Proposed owners and deadlines are unconfirmed. Send for AutoNote review using the controls below."}
           </p>
+          {sourceApp === "mail" && detail.task.result?.text && (
+            <button
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                const generation = epoch.current;
+                try {
+                  const data = await api("/v1/requests/" + id + "/export");
+                  if (
+                    generation !== epoch.current ||
+                    document.hidden ||
+                    !document.hasFocus()
+                  )
+                    return;
+                  if (
+                    data.task.result?.kind !== "unreviewed_draft" ||
+                    !data.task.result?.mail ||
+                    typeof data.task.result.text !== "string"
+                  )
+                    throw Error("Mail draft unavailable");
+                  const url = URL.createObjectURL(
+                    new Blob([data.task.result.text], {
+                      type: "text/plain;charset=utf-8",
+                    }),
+                  );
+                  const link = document.createElement("a");
+                  link.href = url;
+                  link.download = "bittrees-mail-draft.txt";
+                  link.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                } catch (e) {
+                  setDetail({ unavailable: true });
+                  onError(e);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Download draft text with current permission
+            </button>
+          )}
           <details>
             <summary>Source references and run history</summary>
             <pre>
@@ -257,8 +307,15 @@ export function SourceDraftDetail({
             onClick={async () => {
               setBusy(true);
               try {
-                const data = await api("/v1/requests/" + id + "/export"),
-                  url = URL.createObjectURL(
+                const generation = epoch.current;
+                const data = await api("/v1/requests/" + id + "/export");
+                if (
+                  generation !== epoch.current ||
+                  document.hidden ||
+                  !document.hasFocus()
+                )
+                  return;
+                const url = URL.createObjectURL(
                     new Blob([JSON.stringify(data, null, 2)], {
                       type: "application/json",
                     }),
@@ -267,7 +324,11 @@ export function SourceDraftDetail({
                 a.href = url;
                 a.download =
                   "bittrees-" +
-                  (sourceApp === "autonote" ? "autonote" : "crm") +
+                  (sourceApp === "mail"
+                    ? "mail"
+                    : sourceApp === "autonote"
+                      ? "autonote"
+                      : "crm") +
                   "-draft.json";
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(url), 1000);

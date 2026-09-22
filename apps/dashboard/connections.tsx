@@ -1,3 +1,4 @@
+import { MailConnection } from "./mail-connection.js";
 import { RolesConnection } from "./roles-connection.js";
 import { AutoNoteDrafts } from "./autonote-drafts.js";
 import { CrmDrafts } from "./crm-drafts.js";
@@ -281,7 +282,8 @@ export function Connections(props: {
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
       <RolesConnection api={props.api} onError={props.onError} />
-      {["Mail", "News"].map((name) => (
+      <MailConnection {...props} />
+      {["News"].map((name) => (
         <div className="row" key={name}>
           <h3>{name}</h3>
           <span>Not connected</span>
