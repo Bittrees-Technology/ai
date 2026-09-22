@@ -40,6 +40,11 @@ export function createRemoteApp(
     deviceMs: number;
     retentionMs: number;
     requestsPerMinute?: number;
+    quotas?: {
+      pendingPairings: number;
+      devicesPerOwner: number;
+      statusesPerDevice: number;
+    };
     now?: () => number;
   },
 ) {
@@ -51,8 +56,18 @@ export function createRemoteApp(
     config.sessionMs,
     now,
   );
-  const devices = new RemoteDeviceStore(pool, config.deviceMs, now);
-  const status = new RemoteStatusStore(pool, config.retentionMs, now);
+  const devices = new RemoteDeviceStore(
+    pool,
+    config.deviceMs,
+    now,
+    config.quotas,
+  );
+  const status = new RemoteStatusStore(
+    pool,
+    config.retentionMs,
+    now,
+    config.quotas?.statusesPerDevice,
+  );
   const commands = new RemoteCommandStore(pool, config.retentionMs, now);
   const host = new URL(config.origin).host;
   const budget = config.requestsPerMinute ?? 120;
@@ -335,13 +350,15 @@ export function createRemoteApp(
       const code = error.code;
       res
         .status(
-          code === "DENIED"
-            ? 403
-            : code === "CONFLICT"
-              ? 409
-              : code === "INVALID_INPUT"
-                ? 400
-                : 503,
+          code === "CAPACITY"
+            ? 429
+            : code === "DENIED"
+              ? 403
+              : code === "CONFLICT"
+                ? 409
+                : code === "INVALID_INPUT"
+                  ? 400
+                  : 503,
         )
         .json({ error: code });
     } else if (
