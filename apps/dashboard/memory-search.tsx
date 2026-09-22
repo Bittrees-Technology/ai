@@ -29,6 +29,10 @@ export function MemorySearch({
         can appear. Search does not select memory for a task or make a statement
         verified.
       </p>
+      <p>
+        Identical text of the same memory type appears once in search. All saved
+        copies keep their own source and review history.
+      </p>
       <form
         onSubmit={(event) => {
           event.preventDefault();

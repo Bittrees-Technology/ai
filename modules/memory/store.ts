@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
       for (const [key, item] of eligible) insert.run(key, item.input.text);
       const matches = index
         .prepare(
-          "SELECT id,bm25(search) AS rank FROM search WHERE search MATCH ? ORDER BY rank LIMIT 100",
+          "SELECT id,bm25(search) AS rank FROM search WHERE search MATCH ? ORDER BY rank LIMIT 1000",
         )
         .all(terms.map((t) => '"' + t + '"').join(" OR ")) as {
         id: string;
@@ -299,15 +299,21 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
         .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
       // A source can be revoked while other checks await. Recheck final candidates before returning.
       const output = [];
+      const selectedText = new Set<string>();
       for (const r of results) {
         if (output.length >= limit) break;
+        // Preserve meaning-sensitive case, punctuation and whitespace. This is exact-text diversity only.
+        const textKey = JSON.stringify([r.type, r.text]);
+        if (selectedText.has(textKey)) continue;
         const snapshot = eligible.get(r.id)!.row;
         if (!this.unchanged(owner, snapshot)) continue;
         if (
           (await this.visible(owner, this.input(snapshot))) &&
           this.unchanged(owner, snapshot)
-        )
+        ) {
+          selectedText.add(textKey);
           output.push(r);
+        }
       }
       // Later access checks may yield to edits/deletion of an earlier result.
       return output.filter((r) =>
