@@ -30,7 +30,7 @@ const profile = {
 } as const;
 async function fixture(page: Page) {
   const external: string[] = [];
-  await page.route("**/*", (route) => {
+  await page.context().route("**/*", (route) => {
     if (new URL(route.request().url()).origin !== "http://127.0.0.1:44137") {
       external.push(route.request().url());
       return route.abort();
@@ -172,6 +172,7 @@ async function fixture(page: Page) {
     response,
     now,
     external,
+    peerFingerprint: nodeInspection.fingerprint,
     close: () => {
       store.close();
       rmSync(dir, { recursive: true, force: true });
@@ -327,6 +328,512 @@ test("Portable task contracts preserve Unicode and reject extra authority and ov
     );
     expect(f.store.list(owner)).toHaveLength(1);
     expect(f.external).toEqual([]);
+  } finally {
+    f.close();
+  }
+});
+
+async function storage(
+  page: Page,
+  f: Awaited<ReturnType<typeof fixture>>,
+  fresh = true,
+) {
+  const binding = { ...f.binding, deviceId: f.browserId },
+    context = {
+      binding,
+      senderKeyEpoch: 1,
+      peerId: f.binding.deviceId,
+      peerKeyEpoch: 1,
+      peerRevision: 1,
+      peerFingerprint: f.peerFingerprint,
+      permissionRevision: 1,
+      sendingEnabled: true as const,
+    };
+  await page.evaluate(
+    ({ binding, context, now, fresh }) =>
+      window.privateStorageTest.open(binding, context, now, fresh),
+    { binding, context, now: f.now, fresh },
+  );
+  if (fresh) await page.evaluate(() => window.privateStorageTest.initialize());
+  return { binding, context };
+}
+
+test("IndexedDB preserves original ciphertext through a full page reload and receiver retry", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    await storage(page, f);
+    const entry = await page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+      wire = await f.seal(entry.header, "PRIVATE_STORAGE_PROMPT");
+    await page.evaluate(
+      ({ id, envelope }) =>
+        window.privateStorageTest.commit({ id, expectedRevision: 1, envelope }),
+      { id: entry.id, envelope: wire },
+    );
+    const first = await f.receiver.accept(
+      await page.evaluate(
+        (id) => window.privateStorageTest.delivery(id),
+        entry.id,
+      ),
+    );
+    await page.reload();
+    await page.waitForFunction(() => !!window.privateStorageTest);
+    await storage(page, f, false);
+    const retry = await page.evaluate(
+      (id) => window.privateStorageTest.delivery(id),
+      entry.id,
+    );
+    expect(retry).toEqual(wire);
+    expect(await f.receiver.accept(retry)).toEqual(first);
+    expect(f.store.list(owner)).toHaveLength(1);
+    const snapshot = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(snapshot.entries[0]?.attempts).toBe(2);
+    expect(JSON.stringify(snapshot)).not.toContain("PRIVATE_STORAGE_PROMPT");
+    expect(JSON.stringify(snapshot)).not.toContain("privateKey");
+  } finally {
+    f.close();
+  }
+});
+
+test("Two tabs allocate unique sequences and only one competing ciphertext can be published", async ({
+  page,
+  context,
+}) => {
+  const f = await fixture(page),
+    second = await context.newPage();
+  try {
+    await storage(page, f);
+    await second.goto("/");
+    await second.waitForFunction(() => !!window.privateStorageTest);
+    await storage(second, f, false);
+    const [a, b] = await Promise.all([
+      page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+      second.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+    ]);
+    expect([a.header.sequence, b.header.sequence].sort()).toEqual([1, 2]);
+    const wire1 = await f.seal(a.header, "one"),
+      wire2 = await f.seal(a.header, "two");
+    const outcomes = await Promise.allSettled([
+      page.evaluate(
+        ({ id, envelope }) =>
+          window.privateStorageTest.commit({
+            id,
+            expectedRevision: 1,
+            envelope,
+          }),
+        { id: a.id, envelope: wire1 },
+      ),
+      second.evaluate(
+        ({ id, envelope }) =>
+          window.privateStorageTest.commit({
+            id,
+            expectedRevision: 1,
+            envelope,
+          }),
+        { id: a.id, envelope: wire2 },
+      ),
+    ]);
+    expect(outcomes.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    expect(
+      outcomes.filter(
+        (x) => x.status === "rejected" && String(x.reason).includes("CONFLICT"),
+      ),
+    ).toHaveLength(1);
+    const sent = await page.evaluate(
+      (id) => window.privateStorageTest.delivery(id),
+      a.id,
+    );
+    expect(
+      await second.evaluate(
+        (id) => window.privateStorageTest.delivery(id),
+        a.id,
+      ),
+    ).toEqual(sent);
+    const before = (
+      await page.evaluate(() => window.privateStorageTest.snapshot())
+    ).meta!.revision;
+    await page.evaluate(
+      ({ id, envelope }) =>
+        window.privateStorageTest.commit({ id, expectedRevision: 1, envelope }),
+      { id: a.id, envelope: sent },
+    );
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).meta!
+        .revision,
+    ).toBe(before);
+  } finally {
+    await second.close();
+    f.close();
+  }
+});
+
+test("Clearing browser history fences late tabs and requires a fresh device registration", async ({
+  page,
+  context,
+}) => {
+  const f = await fixture(page),
+    second = await context.newPage();
+  try {
+    const state = await storage(page, f);
+    await second.goto("/");
+    await second.waitForFunction(() => !!window.privateStorageTest);
+    await storage(second, f, false);
+    const entry = await page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+      wire = await f.seal(entry.header),
+      before = await page.evaluate(() => window.privateStorageTest.snapshot());
+    await expect(
+      page.evaluate(() =>
+        window.privateStorageTest.clear({
+          expectedRevision: 1,
+          confirmed: true,
+        }),
+      ),
+    ).rejects.toThrow("CONFLICT");
+    const cleared = await page.evaluate(
+      (revision) =>
+        window.privateStorageTest.clear({
+          expectedRevision: revision,
+          confirmed: true,
+        }),
+      before.meta!.revision,
+    );
+    await expect(
+      second.evaluate(
+        ({ id, envelope }) =>
+          window.privateStorageTest.commit({
+            id,
+            expectedRevision: 1,
+            envelope,
+          }),
+        { id: entry.id, envelope: wire },
+      ),
+    ).rejects.toThrow("SETUP_REQUIRED");
+    await expect(
+      page.evaluate(
+        (revision) => window.privateStorageTest.initialize(revision),
+        cleared.revision,
+      ),
+    ).rejects.toThrow("SETUP_REQUIRED");
+    const empty = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(empty.entries).toEqual([]);
+    expect(JSON.stringify(empty)).not.toContain(f.browserId);
+    expect(JSON.stringify(empty)).not.toContain(f.binding.ownerId);
+    const binding = { ...state.binding, deviceId: randomUUID() },
+      next = { ...state.context, binding, senderKeyEpoch: 2 };
+    await page.evaluate(
+      ({ binding, next, now }) =>
+        window.privateStorageTest.open(binding, next, now, true),
+      { binding, next, now: f.now },
+    );
+    await page.evaluate(
+      (revision) => window.privateStorageTest.initialize(revision),
+      cleared.revision,
+    );
+    const fresh = await page.evaluate(
+      (peerId) => window.privateStorageTest.reserve(peerId),
+      f.binding.deviceId,
+    );
+    expect(fresh.header.sequence).toBe(1);
+    expect(fresh.header.senderId).toBe(binding.deviceId);
+    await expect(
+      second.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+    ).rejects.toThrow("SETUP_REQUIRED");
+  } finally {
+    await second.close();
+    f.close();
+  }
+});
+
+test("Current account and permission control handoff, while stop remains available after peer permission loss", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const state = await storage(page, f),
+      entry = await page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+      wire = await f.seal(entry.header);
+    const published = await page.evaluate(
+      ({ id, envelope }) =>
+        window.privateStorageTest.commit({ id, expectedRevision: 1, envelope }),
+      { id: entry.id, envelope: wire },
+    );
+    const binding = { ...state.binding, ownerId: randomUUID() },
+      otherContext = { ...state.context, binding };
+    await page.evaluate(
+      ({ binding, otherContext, now }) =>
+        window.privateStorageTest.open(binding, otherContext, now, true),
+      { binding, otherContext, now: f.now },
+    );
+    await page.evaluate(() => window.privateStorageTest.initialize());
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).entries,
+    ).toEqual([]);
+    await expect(
+      page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
+    ).rejects.toThrow("DENIED");
+    await storage(page, f, false);
+    await page.evaluate(() => window.privateStorageTest.permission(null));
+    await expect(
+      page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
+    ).rejects.toThrow("DENIED");
+    await expect(
+      page.evaluate(
+        (id) =>
+          window.privateStorageTest.stop({
+            id,
+            expectedRevision: 2,
+            confirmed: false,
+          }),
+        entry.id,
+      ),
+    ).rejects.toThrow("DENIED");
+    await page.evaluate(
+      ({ id, revision }) =>
+        window.privateStorageTest.stop({
+          id,
+          expectedRevision: revision,
+          confirmed: true,
+        }),
+      { id: entry.id, revision: published.revision },
+    );
+    await page.evaluate(
+      (c) => window.privateStorageTest.permission(c),
+      state.context,
+    );
+    await expect(
+      page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
+    ).rejects.toThrow("DENIED");
+  } finally {
+    f.close();
+  }
+});
+
+test("Quota failure and late permission loss abort IndexedDB writes without advancing sequences or publishing ciphertext", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const state = await storage(page, f);
+    expect(
+      await page.evaluate(async (peerId) => {
+        const add = IDBObjectStore.prototype.add;
+        IDBObjectStore.prototype.add = function (...args) {
+          if (this.name === "entries")
+            throw new DOMException(
+              "Synthetic quota failure",
+              "QuotaExceededError",
+            );
+          return add.apply(this, args);
+        };
+        try {
+          await window.privateStorageTest.reserve(peerId);
+          return "unexpected";
+        } catch (e) {
+          return (e as Error).message;
+        } finally {
+          IDBObjectStore.prototype.add = add;
+        }
+      }, f.binding.deviceId),
+    ).toBe("CAPACITY");
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).entries,
+    ).toEqual([]);
+    const entry = await page.evaluate(
+      (peerId) => window.privateStorageTest.reserve(peerId),
+      f.binding.deviceId,
+    );
+    expect(entry.header.sequence).toBe(1);
+    const wire = await f.seal(entry.header);
+    await page.evaluate(() => window.privateStorageTest.revokeDuringCommit());
+    await expect(
+      page.evaluate(
+        ({ id, envelope }) =>
+          window.privateStorageTest.commit({
+            id,
+            expectedRevision: 1,
+            envelope,
+          }),
+        { id: entry.id, envelope: wire },
+      ),
+    ).rejects.toThrow("DENIED");
+    const remaining = (
+      await page.evaluate(() => window.privateStorageTest.snapshot())
+    ).entries[0]!;
+    expect(remaining.state).toBe("reserved");
+    expect(remaining.envelope).toBeNull();
+    // A new trusted provider state is used after review; no in-memory fallback was published.
+    await storage(page, f, false);
+    await page.evaluate(
+      (c) => window.privateStorageTest.permission(c),
+      state.context,
+    );
+    await page.evaluate(
+      ({ id, envelope }) =>
+        window.privateStorageTest.commit({ id, expectedRevision: 1, envelope }),
+      { id: entry.id, envelope: wire },
+    );
+    const beforeClear = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(
+      await page.evaluate(async (revision) => {
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (...args) {
+          if (this.name === "meta")
+            throw new DOMException(
+              "Synthetic quota failure",
+              "QuotaExceededError",
+            );
+          return put.apply(this, args);
+        };
+        try {
+          await window.privateStorageTest.clear({
+            expectedRevision: revision,
+            confirmed: true,
+          });
+          return "unexpected";
+        } catch (e) {
+          return (e as Error).message;
+        } finally {
+          IDBObjectStore.prototype.put = put;
+        }
+      }, beforeClear.meta!.revision),
+    ).toBe("CAPACITY");
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(beforeClear);
+    expect(
+      (
+        await page.evaluate(
+          (peerId) => window.privateStorageTest.reserve(peerId),
+          f.binding.deviceId,
+        )
+      ).header.sequence,
+    ).toBe(2);
+  } finally {
+    f.close();
+  }
+});
+
+test("Browser expiry, connection closure and database version changes fail without automatic storage reset", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    await storage(page, f);
+    const entry = await page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+      wire = await f.seal(entry.header);
+    await page.evaluate(
+      ({ id, envelope }) =>
+        window.privateStorageTest.commit({ id, expectedRevision: 1, envelope }),
+      { id: entry.id, envelope: wire },
+    );
+    await page.evaluate(() => window.privateStorageTest.advance(3600000));
+    await expect(
+      page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
+    ).rejects.toThrow("DENIED");
+    await storage(page, f, false);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const r = indexedDB.open("org.bittrees.ai.private-outbox", 2);
+          r.onerror = () => reject(r.error);
+          r.onblocked = () => reject(Error("blocked"));
+          r.onsuccess = () => {
+            r.result.close();
+            resolve();
+          };
+        }),
+    );
+    await expect(
+      page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).rejects.toThrow("STORAGE_UNAVAILABLE");
+    await expect(storage(page, f, false)).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("Browser storage capacity retains existing history and missing storage does not auto-enroll", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    await storage(page, f, false);
+    await expect(
+      page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+    ).rejects.toThrow("SETUP_REQUIRED");
+    await expect(
+      page.evaluate(() => window.privateStorageTest.initialize()),
+    ).rejects.toThrow("DENIED");
+    await storage(page, f, true);
+    await page.evaluate(async (peerId) => {
+      for (let i = 0; i < 256; i++)
+        await window.privateStorageTest.reserve(peerId);
+    }, f.binding.deviceId);
+    await expect(
+      page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+    ).rejects.toThrow("CAPACITY");
+    const saved = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(saved.entries).toHaveLength(256);
+    expect(new Set(saved.entries.map((e) => e.header.sequence)).size).toBe(256);
+    await page.evaluate(async () => {
+      window.privateStorageTest.close();
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(
+          "org.bittrees.ai.private-outbox",
+        );
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(Error("blocked"));
+      });
+    });
+    await storage(page, f, false);
+    await expect(
+      page.evaluate(() => window.privateStorageTest.initialize()),
+    ).rejects.toThrow("DENIED");
+    await expect(
+      page.evaluate(
+        (peerId) => window.privateStorageTest.reserve(peerId),
+        f.binding.deviceId,
+      ),
+    ).rejects.toThrow("SETUP_REQUIRED");
   } finally {
     f.close();
   }
