@@ -1,3 +1,4 @@
+import { InboxConversationController } from "./inbox-conversation-state.js";
 import React, { useState, useEffect, useRef } from "react";
 type Api = (
   path: string,
@@ -30,9 +31,6 @@ export function Inbox({
       [],
     ),
     [inbox, setInbox] = useState(""),
-    [conversations, setConversations] = useState<
-      { id: string; preview: string }[]
-    >([]),
     [conversation, setConversation] = useState(""),
     [messages, setMessages] = useState<Message[]>([]),
     [checkins, setCheckins] = useState<
@@ -44,6 +42,13 @@ export function Inbox({
     [due, setDue] = useState(""),
     [busy, setBusy] = useState(false),
     [more, setMore] = useState(false);
+  const [, renderConversations] = useState(0);
+  const [conversationPages] = useState(
+    () =>
+      new InboxConversationController(api, () =>
+        renderConversations((v) => v + 1),
+      ),
+  );
   const paging = useRef({ cursor: 0, more: false });
   const pending = useRef<{ fingerprint: string; key: string } | null>(null);
   async function action(fn: () => Promise<void>) {
@@ -65,17 +70,9 @@ export function Inbox({
     void loadInboxes().catch(onError);
   }, []);
   useEffect(() => {
-    if (!inbox) return;
-    let active = true;
-    api("/v1/inboxes/" + encodeURIComponent(inbox) + "/conversations")
-      .then((data) => {
-        if (active) setConversations(data.items);
-      })
-      .catch(onError);
-    return () => {
-      active = false;
-    };
-  }, [inbox, messages.length]);
+    void conversationPages.refresh(inbox).catch(onError);
+    return () => conversationPages.clear();
+  }, [inbox]);
   useEffect(() => {
     if (!inbox || !conversation) {
       setMessages([]);
@@ -186,7 +183,7 @@ export function Inbox({
             </button>
             <h3>Recent conversations</h3>
             <div className="tasklist">
-              {conversations.map((c) => (
+              {conversationPages.items.map((c) => (
                 <button
                   className={c.id === conversation ? "chosen" : ""}
                   key={c.id}
@@ -197,7 +194,26 @@ export function Inbox({
                 </button>
               ))}
             </div>
-            <p className="hint">Up to 100 recent conversations.</p>
+            <button
+              disabled={conversationPages.busy}
+              onClick={() =>
+                void conversationPages.refresh(inbox).catch(onError)
+              }
+            >
+              Refresh conversations
+            </button>
+            {conversationPages.nextCursor && (
+              <button
+                disabled={conversationPages.busy}
+                onClick={() => void conversationPages.more().catch(onError)}
+              >
+                Load earlier conversations
+              </button>
+            )}
+            <p className="hint">
+              Conversations are shown newest first, in pages of 100. Refresh to
+              include new messages.
+            </p>
           </>
         )}
       </section>
