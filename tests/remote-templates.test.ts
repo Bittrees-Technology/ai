@@ -462,7 +462,7 @@ test("schema-nine migration preserves templates and starts with no remote permis
       "DROP TABLE remote_template_runs; DROP TABLE remote_template_receipts; DROP TABLE remote_template_permissions; PRAGMA user_version=9",
     );
     f.reopen();
-    assert.equal(f.store.db.pragma("user_version", { simple: true }), 14);
+    assert.equal(f.store.db.pragma("user_version", { simple: true }), 15);
     assert.deepEqual(f.store.template(owner, f.template.id), f.template);
     assert.deepEqual(f.store.remoteTemplates.export(owner), {
       permissions: [],

@@ -886,6 +886,7 @@ export function localApi({
       remoteControls: store.exportRemoteControls(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
       privateTaskReceipts: store.exportPrivateTaskReceipts(owner),
+      privateTaskOutbox: store.exportPrivateTaskOutbox(owner),
       templates: store.templates(owner),
       remoteTemplates: store.remoteTemplates.export(owner),
       memoryExtractions: store.memoryExtractions.export(owner),
