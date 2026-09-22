@@ -13,7 +13,14 @@ export default defineConfig({
   timeout: 30000,
   reporter: [
     ["list"],
-    ["json", { outputFile: "test-results/private-browser.json" }],
+    [
+      "json",
+      {
+        outputFile: fileURLToPath(
+          new URL("../test-results/private-browser.json", import.meta.url),
+        ),
+      },
+    ],
   ],
   use: {
     baseURL: "http://127.0.0.1:44137",

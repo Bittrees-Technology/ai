@@ -135,4 +135,5 @@ jobs:
         with:
           name: private-browser-results
           path: test-results/private-browser.json
+          if-no-files-found: error
           retention-days: 7
