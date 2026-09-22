@@ -24,7 +24,7 @@ The bundle includes Node and production dependencies, so an installed Node is un
 
 ## Verification and remaining release work
 
-Initial build verification: Swift compilation, ad-hoc signature verification, bundled Node execution, actual SQLite/native-keyring module loading, TypeScript/dashboard build and 128 shared-engine tests. These do not prove native UI acceptance.
+Initial build verification: Swift compilation, ad-hoc signature verification, bundled Node execution, actual SQLite/native-keyring module loading, TypeScript/dashboard build and 130 shared-engine/process tests. Process tests exercise actual child-process exit on parent-pipe closure and on repeated quit signals with the parent pipe still open. Rebuild checks seed obsolete outputs and verify that neither compiled nor bundled stale files survive. These do not prove native UI acceptance.
 
 Still required: hands-on pairing, Keychain prompts, confirmation/download panels, native-window stop/restart and crash handling; signed Developer ID distribution and notarization; tested update integrity and recovery. Local browser automation was unavailable under the administrator policy, so this build must not be described as visually or interactively accepted.
 

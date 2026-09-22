@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 # Output is disposable; never put user data in this bundle.
 bundle="$PWD/dist/macos/Bittrees AI.app"
 resources="$bundle/Contents/Resources"
+# Clean only generated package inputs so deleted code/assets cannot survive a rebuild.
+rm -rf "$PWD/dist/apps" "$PWD/dist/modules" "$PWD/dist/dashboard" "$PWD/dist/macos"
 npm run build
 mkdir -p "$resources/engine/dist" "$bundle/Contents/MacOS"
 cp -R dist/apps dist/modules "$resources/engine/dist/"
