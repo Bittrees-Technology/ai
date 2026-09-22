@@ -36,6 +36,20 @@ struct RecoveryLifecycleTests {
         precondition(running.phase == .recovering) // Do not terminate an in-progress restore.
         precondition(!running.finished()) // Finish Quit instead of restarting the engine.
         precondition(!running.busy && running.arguments.isEmpty)
+        var kit = RecoveryLifecycle()
+        precondition(kit.beginKit(engineRunning: false))
+        precondition(kit.phase == .recovering && kit.arguments.isEmpty)
+        precondition(!kit.beginKit(engineRunning: true))
+        precondition(kit.engineStopped() == .ignore)
+        precondition(kit.finished())
+        precondition(kit.beginKit(engineRunning: true))
+        precondition(kit.phase == .stoppingEngine)
+        precondition(kit.requestQuit())
+        precondition(kit.engineStopped() == .quit)
+        var kitRunning = RecoveryLifecycle()
+        precondition(kitRunning.beginKit(engineRunning: false))
+        precondition(kitRunning.requestQuit())
+        precondition(!kitRunning.finished())
         print("Mac recovery lifecycle: sequencing, duplicate denial, literal arguments, and Quit checks passed")
     }
 }

@@ -20,6 +20,8 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var kitSetupProcess: Process?
     var kitSetupTimeout: DispatchWorkItem?
     var kitSetupSheet: NSWindow?
+    var kitRecoveryInput: Data?
+    var kitRecoveryChoosing = false
     let home = URL(string: "http://127.0.0.1:43127/")!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -30,7 +32,11 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Copy pairing code", action: #selector(copyPairingCode), keyEquivalent: "p")
         appMenu.addItem(NSMenuItem.separator())
-        if recoveryPreview { appMenu.addItem(withTitle: "Set up recovery kit (preview)…", action: #selector(beginKitSetup), keyEquivalent: "") }
+        if recoveryPreview {
+            appMenu.addItem(withTitle: "Set up recovery kit (preview)…", action: #selector(beginKitSetup), keyEquivalent: "")
+            appMenu.addItem(withTitle: "Recover with kit (preview)…", action: #selector(chooseKitRecovery), keyEquivalent: "")
+            appMenu.addItem(withTitle: "Start local companion", action: #selector(startFromRecoveryScreen), keyEquivalent: "")
+        }
         appMenu.addItem(withTitle: "Restore from backup…", action: #selector(chooseBackup), keyEquivalent: "")
         appMenu.addItem(withTitle: "Restore previous copy…", action: #selector(choosePrevious), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
@@ -51,7 +57,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        startEngine()
+        if recoveryPreview { showRecoveryStart() } else { startEngine() }
     }
     @objc func showBuildInfo() {
         let alert = NSAlert()
@@ -83,6 +89,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.contentView = web
     }
     func startEngine() {
+        guard engine?.isRunning != true, !recovery.busy, !quitting else { return }
         ready = false
         buffer = ""
         guard let resources = Bundle.main.resourceURL else { fail(); return }
@@ -130,20 +137,27 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                 if self.recovery.busy {
                     switch self.recovery.engineStopped() {
                     case .recover: self.runRecovery()
-                    case .quit: NSApp.reply(toApplicationShouldTerminate: true)
+                    case .quit: self.clearKitRecoveryInput(); NSApp.reply(toApplicationShouldTerminate: true)
                     case .ignore: break
                     }
                 }
                 else if self.quitting { NSApp.reply(toApplicationShouldTerminate: true) }
+                else if self.kitRecoveryChoosing { self.ready = false; self.window.title = "Bittrees AI — Engine stopped; recovery available" }
                 else { self.fail() }
             }
         }
         engine = process
-        do { try process.run() } catch { fail() }
+        do { try process.run() } catch { engine = nil; fail() }
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(chooseKitRecovery) {
+            return recoveryPreview && !recovery.busy && !kitRecoveryChoosing && kitSetupId == nil && !quitting && window.attachedSheet == nil && (engine == nil || ready)
+        }
+        if menuItem.action == #selector(startFromRecoveryScreen) {
+            return recoveryPreview && engine == nil && !recovery.busy && !kitRecoveryChoosing && !quitting && window.attachedSheet == nil
+        }
         if [#selector(chooseBackup), #selector(choosePrevious), #selector(copyPairingCode), #selector(beginKitSetup)].contains(menuItem.action) {
-            return ready && engine?.isRunning == true && !recovery.busy && kitSetupId == nil && !quitting && window.attachedSheet == nil
+            return ready && engine?.isRunning == true && !recovery.busy && !kitRecoveryChoosing && kitSetupId == nil && !quitting && window.attachedSheet == nil
         }
         return true
     }
@@ -178,6 +192,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         }
     }
     func runRecovery() {
+        if kitRecoveryInput != nil { runKitRecovery(); return }
         guard let resources = Bundle.main.resourceURL else { finishRecovery(success: false); return }
         window.title = "Bittrees AI — Restoring a separate copy"
         let process = Process()
@@ -208,12 +223,17 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     }
     func fail() {
         cancelKitSetup()
+        ready = false
         web?.stopLoading()
         let alert = NSAlert()
         alert.messageText = "The local companion could not run"
         alert.informativeText = "Close any other Bittrees companion, check Keychain access, and reopen this app. Your saved data has not been reset."
-        alert.runModal()
-        NSApp.terminate(nil)
+        if recoveryPreview && engine == nil {
+            window.title = "Bittrees AI — Recovery available"
+            alert.informativeText = "The local engine stopped. Your data has not been reset. Use Recover with kit in the app menu if the storage key is missing, or check Keychain access and try Start local companion."
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window)
+        } else { alert.runModal(); NSApp.terminate(nil) }
     }
     @objc func copyPairingCode() {
         guard ready, engine?.isRunning == true else { return }
@@ -239,7 +259,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         return nil
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        guard kitSetupId == nil, let url = frame.request.url, local(url) else { completionHandler(false); return }
+        guard kitSetupId == nil, !kitRecoveryChoosing, !recovery.busy, let url = frame.request.url, local(url) else { completionHandler(false); return }
         let alert = NSAlert()
         alert.messageText = "Bittrees AI"
         alert.informativeText = message
@@ -250,7 +270,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        guard kitSetupId == nil else { completionHandler(nil); return }
+        guard kitSetupId == nil, !kitRecoveryChoosing, !recovery.busy else { completionHandler(nil); return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = URL(fileURLWithPath: suggestedFilename).lastPathComponent
         panel.beginSheetModal(for: window) { result in completionHandler(result == .OK ? panel.url : nil) }

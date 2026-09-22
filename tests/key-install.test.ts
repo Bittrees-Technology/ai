@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { mkdtemp, rm, readdir, mkdir, copyFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  readdir,
+  mkdir,
+  copyFile,
+  writeFile,
+  symlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -12,7 +20,13 @@ import { MemoryStore } from "../modules/memory/store.js";
 import { Vault } from "../modules/storage/vault.js";
 import { createRecoveryKit } from "../modules/storage/recovery-kit.js";
 import { createContentBackup } from "../modules/storage/content-backup.js";
-import { installRecoveredKey } from "../apps/companion/install-recovered-key.js";
+import {
+  installRecoveredKey,
+  recoverAndActivateWithKit,
+} from "../apps/companion/install-recovered-key.js";
+import { resolveActiveContent } from "../apps/companion/active-content.js";
+import { recoverKitRequest } from "../apps/companion/kit-recovery.js";
+import { spawnSync } from "node:child_process";
 const owner = { userId: "a", tenantId: "personal" };
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), "install-key-")),
@@ -267,5 +281,230 @@ test("occupied companion port blocks key installation before key-store access", 
     );
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
+test("kit recovery selects verified task and memory data on a fresh device and retains earlier content", async () => {
+  const f = await fixture();
+  let saved: Uint8Array | undefined;
+  const entry = {
+    getSecret: async () => saved,
+    addSecretIfAbsent: async (key: Uint8Array) => {
+      if (saved) return false;
+      saved = Uint8Array.from(key);
+      return true;
+    },
+  };
+  const target = join(f.base, "fresh-device"),
+    kitFile = join(f.base, "key.btkey");
+  try {
+    const tasks = new Store(join(f.current, "tasks.db"), f.vault);
+    const memory = new MemoryStore(
+      join(f.current, "memory.db"),
+      f.vault,
+      async () => true,
+    );
+    const item = await memory.add(owner, {
+      type: "preference",
+      text: "Synthetic recovery memory",
+      origin: "user",
+      sources: [
+        {
+          app: "local",
+          tenantId: "personal",
+          resourceId: "seed",
+          revision: "1",
+        },
+      ],
+    });
+    const secondBackup = join(f.base, "with-memory.aib");
+    await createContentBackup(tasks, memory, f.vault, secondBackup);
+    memory.close();
+    tasks.close();
+    await writeFile(kitFile, f.kit.kit);
+    const result = await recoverKitRequest(
+      {
+        operation: "recover-with-kit-v1",
+        confirmed: true,
+        kit: kitFile,
+        backup: secondBackup,
+        code: f.kit.recoveryCode,
+      },
+      target,
+      entry,
+      0,
+    );
+    assert.deepEqual(result, {
+      version: 1,
+      activated: true,
+      keyStatus: "created",
+    });
+    const first = await resolveActiveContent(target);
+    const opened = new Store(join(first.directory, "tasks.db"), f.vault);
+    const openedMemory = new MemoryStore(
+      join(first.directory, "memory.db"),
+      f.vault,
+      async () => true,
+    );
+    assert.equal(
+      opened.list(owner)[0]!.input.prompt,
+      "synthetic recovered key",
+    );
+    assert.equal(
+      (await openedMemory.get(owner, item.id)).text,
+      "Synthetic recovery memory",
+    );
+    openedMemory.close();
+    opened.close();
+    const next = await recoverAndActivateWithKit(
+      f.backup,
+      target,
+      f.kit.kit,
+      f.kit.recoveryCode,
+      entry,
+      0,
+    );
+    assert.equal(next.activated, true);
+    assert.equal(next.keyStatus, "already-present");
+    const current = await resolveActiveContent(target);
+    assert.equal(current.previous, first.name);
+    assert.ok((await readdir(first.directory)).includes("memory.db"));
+    assert.deepEqual(Buffer.from(saved!), f.key);
+  } finally {
+    await f.close();
+  }
+});
+test("native recovery protocol rejects unconfirmed, injected, malformed and symlink input before key access", async () => {
+  const f = await fixture();
+  let reads = 0;
+  const entry = {
+    getSecret: async () => {
+      reads++;
+      return undefined;
+    },
+    addSecretIfAbsent: async () => {
+      assert.fail("no writes");
+    },
+  };
+  try {
+    const kit = join(f.base, "kit.btkey"),
+      linked = join(f.base, "linked.btkey");
+    await writeFile(kit, f.kit.kit);
+    await symlink(kit, linked);
+    const value = {
+      operation: "recover-with-kit-v1",
+      confirmed: true,
+      kit,
+      backup: f.backup,
+      code: f.kit.recoveryCode,
+    };
+    for (const change of [
+      { confirmed: false },
+      { base: f.base },
+      { helper: "/other" },
+      { code: "wrong" },
+      { kit: "relative" },
+      { kit: linked },
+    ])
+      await assert.rejects(
+        recoverKitRequest({ ...value, ...change }, f.current, entry, 0),
+      );
+    await writeFile(kit, Buffer.alloc(117));
+    await assert.rejects(recoverKitRequest(value, f.current, entry, 0));
+    assert.equal(reads, 0);
+    const child = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "apps/companion/kit-recovery-worker.ts"],
+      {
+        input: JSON.stringify(value),
+        env: { PATH: process.env.PATH, HOME: process.env.HOME },
+        encoding: "utf8",
+        timeout: 10000,
+      },
+    );
+    assert.equal(child.status, 1);
+    assert.equal(child.stdout, "");
+    assert.equal(child.stderr, "");
+  } finally {
+    await f.close();
+  }
+});
+test("conflicts, uncertain writes and selection failures retain copies without silently activating", async () => {
+  const f = await fixture();
+  let saved: Uint8Array | undefined;
+  const entry = {
+    getSecret: async () => saved,
+    addSecretIfAbsent: async (key: Uint8Array) => {
+      saved = Uint8Array.from(key);
+      throw Error("lost acknowledgement");
+    },
+  };
+  try {
+    const before = await resolveActiveContent(f.current);
+    const uncertain = await recoverAndActivateWithKit(
+      f.backup,
+      f.current,
+      f.kit.kit,
+      f.kit.recoveryCode,
+      entry,
+      0,
+    );
+    assert.equal(uncertain.keyStatus, "unconfirmed");
+    assert.equal(uncertain.activated, false);
+    assert.deepEqual(await resolveActiveContent(f.current), before);
+    assert.ok((await readdir(uncertain.directory)).includes("RECOVERY.json"));
+    saved = undefined;
+    const conflict = await recoverAndActivateWithKit(
+      f.backup,
+      f.current,
+      f.kit.kit,
+      f.kit.recoveryCode,
+      {
+        ...entry,
+        addSecretIfAbsent: async () => {
+          saved = randomBytes(32);
+          return false;
+        },
+      },
+      0,
+    );
+    assert.equal(conflict.keyStatus, "conflict");
+    assert.equal(conflict.activated, false);
+    assert.deepEqual(await resolveActiveContent(f.current), before);
+    saved = undefined;
+    // Force a selection failure after the add without deleting the recovered copy/key.
+    const failed = await recoverAndActivateWithKit(
+      f.backup,
+      f.current,
+      f.kit.kit,
+      f.kit.recoveryCode,
+      {
+        ...entry,
+        addSecretIfAbsent: async (key) => {
+          saved = Uint8Array.from(key);
+          await mkdir(join(f.current, "active-content.json"));
+          return true;
+        },
+      },
+      0,
+    );
+    assert.equal(failed.keyStatus, "created");
+    assert.equal(failed.activated, false);
+    assert.deepEqual(Buffer.from(saved!), f.key);
+    assert.ok((await readdir(failed.directory)).includes("RECOVERY.json"));
+    await rm(join(f.current, "active-content.json"), { recursive: true });
+    const retry = await recoverAndActivateWithKit(
+      f.backup,
+      f.current,
+      f.kit.kit,
+      f.kit.recoveryCode,
+      { ...entry, addSecretIfAbsent: async () => false },
+      0,
+    );
+    assert.equal(retry.keyStatus, "already-present");
+    assert.equal(retry.activated, true);
+    assert.ok((await readdir(uncertain.directory)).includes("RECOVERY.json"));
+  } finally {
+    await f.close();
   }
 });

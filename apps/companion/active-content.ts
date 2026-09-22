@@ -80,6 +80,34 @@ export async function resolveActiveContent(base: string): Promise<{
     await handle.close();
   }
 }
+/** Internal: caller must hold the companion port and have verified this restored copy/key. */
+export async function selectRecoveredContent(base: string, restored: string) {
+  const before = await resolveActiveContent(base);
+  const name = basename(restored);
+  if (!validName(name) || (await contentDirectory(base, name)) !== restored)
+    throw new RecoveryError("INVALID_ACTIVE_CONTENT");
+  const stage = join(base, `.active-content-${randomUUID()}.tmp`);
+  try {
+    const handle = await open(stage, "wx", 0o600);
+    try {
+      await handle.writeFile(
+        JSON.stringify({ version: 1, current: name, previous: before.name }) +
+          "\n",
+      );
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(stage, join(base, pointerName));
+    return {
+      directory: restored,
+      previousDirectory: before.directory,
+      activated: true as const,
+    };
+  } finally {
+    await rm(stage, { force: true }).catch(() => {});
+  }
+}
 /** Restore both stores before switching one pointer; every previous dataset remains in place. */
 export async function activateContentBackup(
   backup: string,

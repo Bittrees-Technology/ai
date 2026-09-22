@@ -16,6 +16,12 @@ struct RecoveryLifecycle {
         phase = .stoppingEngine
         return true
     }
+    mutating func beginKit(engineRunning: Bool) -> Bool {
+        guard !busy, !quitRequested else { return false }
+        arguments = [] // Recovery code is never a process argument.
+        phase = engineRunning ? .stoppingEngine : .recovering
+        return true
+    }
     mutating func engineStopped() -> AfterStop {
         guard phase == .stoppingEngine else { return .ignore }
         if quitRequested { phase = .idle; arguments = []; return .quit }
