@@ -335,3 +335,6 @@ if (new URLSearchParams(location.search).has("dependencies"))
 
 if (new URLSearchParams(location.search).has("workspace"))
   void import("./workspace.js");
+
+if (new URLSearchParams(location.search).has("browser-endpoint-keys"))
+  void import("./browser-endpoint-keys.js");
