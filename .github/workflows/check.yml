@@ -215,3 +215,11 @@ jobs:
           path: test-results/import-cleanup-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain task quality review previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-quality-ui-preview
+          path: test-results/task-quality-*.png
+          if-no-files-found: error
+          retention-days: 7

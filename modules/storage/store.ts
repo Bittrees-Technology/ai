@@ -1,3 +1,4 @@
+import { TaskFeedback } from "./task-feedback.js";
 import { dependencyFailureSchema } from "./dependency-failure.js";
 import { exportPrivateTaskConsent } from "../remote/private-task-consent.js";
 import { exportPrivatePeerChecks } from "../remote/private-peer-checks.js";
@@ -142,6 +143,7 @@ export class Store {
   readonly db: Database.Database;
   readonly remoteTemplates: RemoteTemplates;
   readonly memoryExtractions: MemoryExtractions;
+  readonly taskFeedback: TaskFeedback;
   constructor(
     path: string,
     private vault: Vault,
@@ -153,7 +155,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 19) {
+    if (version > 20) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -253,7 +255,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
           this.db.exec(
             "UPDATE private_task_consents SET locked=1,revision=revision+1",
           );
-        this.db.pragma("user_version = 19");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS task_feedback(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,revision INTEGER NOT NULL,payload BLOB NOT NULL)",
+        );
+        this.db.pragma("user_version = 20");
       })();
     } catch (error) {
       this.db.close();
@@ -261,6 +266,7 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
     }
     this.remoteTemplates = new RemoteTemplates(this, vault, now);
     this.memoryExtractions = new MemoryExtractions(this, vault);
+    this.taskFeedback = new TaskFeedback(this, vault, now);
   }
   private templatePurpose(owner: Owner, id: string) {
     return JSON.stringify(["local-template", owner.tenantId, owner.userId, id]);

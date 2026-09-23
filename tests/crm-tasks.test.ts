@@ -354,7 +354,7 @@ test("version-four migration preserves local tasks while adding protected source
     store = new Store(path, vault);
     assert.equal(store.get(owner, task.id).input.prompt, input.prompt);
     assert.equal(store.sourceBinding(owner, task.id), null);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 19);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 20);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -681,7 +681,7 @@ test("schema five migration adds the publication ledger without changing existin
     store = new Store(path, vault);
     assert.deepEqual(store.get(owner, task.id), task);
     assert.deepEqual(store.publications(owner, task.id), []);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 19);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 20);
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });

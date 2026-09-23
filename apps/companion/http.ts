@@ -726,6 +726,7 @@ export function localApi({
       runs: store.runHistory(owner, req.params.id),
       publications: store.publications(owner, req.params.id),
       autonoteReviews: store.autoNoteReviews(owner, req.params.id),
+      qualityReview: store.taskFeedback.exportTask(owner, req.params.id),
     });
   });
   app.get("/v1/templates", (_req, res) =>
@@ -760,6 +761,26 @@ export function localApi({
   app.get("/v1/requests/:id", async (req, res) =>
     res.json(await project(store.get(owner, req.params.id))),
   );
+  const checkFeedbackAccess = async (id: string) => {
+    const initial = store.get(owner, id),
+      binding = store.sourceBinding(owner, id);
+    if (initial.input.sourceRefs.length || binding) {
+      if (!binding) throw new ConnectorError("SOURCE_DENIED");
+      await sourceRouter.validate(binding);
+    }
+    // Source checks are asynchronous. A deleted or changed task cannot receive
+    // a review based on the earlier snapshot after that check returns.
+    if (store.get(owner, id).revision !== initial.revision)
+      throw new StoreError("CONFLICT");
+  };
+  app.get("/v1/requests/:id/quality-review", async (req, res) => {
+    await checkFeedbackAccess(req.params.id);
+    res.json(store.taskFeedback.read(owner, req.params.id));
+  });
+  app.put("/v1/requests/:id/quality-review", async (req, res) => {
+    await checkFeedbackAccess(req.params.id);
+    res.json(store.taskFeedback.save(owner, req.params.id, req.body));
+  });
   app.post("/v1/requests/:id/commands", async (req, res) => {
     const task = store.command(owner, req.params.id, req.body);
     if (task.status === "cancelled" || task.status === "paused")
@@ -1044,6 +1065,7 @@ export function localApi({
       templates: store.templates(owner),
       remoteTemplates: store.remoteTemplates.export(owner),
       memoryExtractions: store.memoryExtractions.export(owner),
+      qualityReviews: store.taskFeedback.exportLocal(owner),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
       memories,
