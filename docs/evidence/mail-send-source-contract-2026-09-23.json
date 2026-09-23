@@ -1,0 +1,21 @@
+{
+  "verifiedAt": "2026-09-23T11:46:12.676Z",
+  "runtime": "v24.21.0",
+  "privateSourceCommit": "b32e91db8feb9683579c44128c0ba8f5bd67e98f",
+  "sourceContractSha256": "0dfc747233d5fd52b0f8f3cb2779f49f617fe9d860d87b4839f67f6585a05b1b",
+  "clientContractSha256": "3340e83e98e245ee6fe49bfb3bb20d39e4f45bd5699318d1fec8a2bc5ba00d2e",
+  "validEnvelopes": 5,
+  "rejectedEnvelopes": 13,
+  "validReceipts": 4,
+  "rejectedReceipts": 8,
+  "checks": [
+    "Actual clean private source and independent public client agree on exact parsing, canonical bytes and digests.",
+    "All recipient groups, Bcc-only, Unicode, reply version, empty and full one-MiB attachments preserved.",
+    "Invalid fields/normalization/attachment limits and mismatched receipts rejected by both."
+  ],
+  "limits": [
+    "Contract interoperability only. Combined source HTTP/queue/SMTP and companion review UI acceptance remain open.",
+    "Private source was bundled only in a disposable directory and not copied into the public repository.",
+    "No source deployment, actual mail, personal data, Keychain, installed app, model or Acer change."
+  ]
+}

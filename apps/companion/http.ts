@@ -1,3 +1,4 @@
+import type { MailSendConnector } from "../../modules/connectors/mail-send.js";
 import type { NewsConnector } from "../../modules/connectors/news.js";
 import { localTaskDependencies } from "./memory.js";
 import type { ExecutionControls } from "./execution-limits.js";
@@ -53,6 +54,7 @@ export interface LocalApiOptions {
   news?: NewsConnector;
   roles?: RolesConnector;
   mail?: MailConnector;
+  mailSend?: MailSendConnector;
   mailSources?: MailTasks;
   crm?: CrmConnector;
   sources?: CrmTasks;
@@ -86,6 +88,7 @@ export function localApi({
   roles,
   news,
   mail,
+  mailSend,
   mailSources,
   sources,
   autonote,
@@ -135,6 +138,11 @@ export function localApi({
   app.post(
     "/v1/private-tasks/receive",
     express.json({ limit: "96kb", strict: true }),
+  );
+  // Only explicit, authenticated reviewed-mail preparation accepts the full attachment envelope.
+  app.post(
+    "/v1/connections/mail-send/prepare",
+    express.json({ limit: 1500000, strict: true }),
   );
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/private-tasks", (_req, res) =>
@@ -505,6 +513,53 @@ export function localApi({
     app.post("/v1/connections/roles/access", async (req, res) => {
       z.strictObject({}).parse(req.body);
       res.json(await roles.read());
+    });
+  }
+  app.get("/v1/connections/mail-send", async (_req, res) =>
+    res.json(
+      mailSend
+        ? { available: true, ...(await mailSend.status()) }
+        : { available: false },
+    ),
+  );
+  if (mailSend) {
+    app.post("/v1/connections/mail-send/prepare", async (req, res) =>
+      res.json(await mailSend.prepare(req.body)),
+    );
+    app.post("/v1/connections/mail-send/reconnect", async (req, res) =>
+      res.json(await mailSend.reconnect(req.body)),
+    );
+    app.post("/v1/connections/mail-send/finish", async (req, res) =>
+      res.json(await mailSend.finish(req.body)),
+    );
+    app.post("/v1/connections/mail-send/review", async (req, res) =>
+      res.json(await mailSend.prepareSend(req.body)),
+    );
+    app.post("/v1/connections/mail-send/confirm", async (req, res) =>
+      res.json(await mailSend.confirm(req.body)),
+    );
+    app.post("/v1/connections/mail-send/cancel", (req, res) =>
+      res.json(mailSend.cancelReview(req.body)),
+    );
+    app.post("/v1/connections/mail-send/reconcile", async (req, res) =>
+      res.json(await mailSend.reconcile(req.body)),
+    );
+    app.get("/v1/connections/mail-send/history", (_req, res) =>
+      res.json(mailSend.history()),
+    );
+    app.get("/v1/connections/mail-send/history/:operationId", (req, res) =>
+      res.json(mailSend.record({ operationId: req.params.operationId })),
+    );
+    app.post("/v1/connections/mail-send/delete", async (req, res) =>
+      res.json(await mailSend.remove(req.body)),
+    );
+    app.post("/v1/connections/mail-send/disconnect", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await mailSend.disconnect());
+    });
+    app.post("/v1/connections/mail-send/forget", async (req, res) => {
+      z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
+      res.json(await mailSend.forgetLocal());
     });
   }
   app.get("/v1/connections/news", async (_req, res) => {
@@ -1190,6 +1245,7 @@ export function localApi({
       privateTaskOutbox: store.exportPrivateTaskOutbox(owner),
       privateTaskResponses: store.exportPrivateTaskResponses(owner),
       newsPublications: store.newsPublications.list(owner),
+      mailSends: store.mailSends.list(owner),
       templates: store.templates(owner),
       remoteTemplates: store.remoteTemplates.export(owner),
       memoryExtractions: store.memoryExtractions
@@ -1214,6 +1270,7 @@ export function localApi({
       throw new StoreError("INVALID_INPUT");
     await receivingPaused(async () => {
       if (
+        mailSend?.busy ||
         news?.publicationBusy ||
         publications?.busy ||
         autoReviews?.busy ||
@@ -1239,6 +1296,8 @@ export function localApi({
       }
       const remove = () => {
         store.deleteAll(owner, () => {
+          if (mailSend?.busy) throw new StoreError("CONFLICT");
+          mailSend?.invalidateReview();
           news?.invalidatePublicationReview();
           // Remote journal cleanup may await storage. Fence another connection's
           // new key selection at the actual deletion commit, under a write lock.

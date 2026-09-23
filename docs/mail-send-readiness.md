@@ -1,6 +1,10 @@
 # Mail sending prerequisites
 
-The Mac companion cannot currently send Mail. Its selected-message grants permit metadata, optional body and optional selected text attachment reads only. Chat sending grants belong to Chat's separate audience and must not be reused by the AI companion. Copy/download remains the available output path for a generated reply.
+End-user Mail sending remains unavailable. The companion now has [reviewed-send backend groundwork](mail-send-journal.md), while its complete user interface, combined source/companion acceptance and release remain open. Its selected-message grants permit metadata, optional body and optional selected text attachment reads only. Chat sending grants belong to Chat's separate audience and must not be reused by the AI companion. Copy/download remains the available output path for a generated reply.
+
+## Historical version54 prerequisite audit
+
+The following results describe the pinned version54 baseline, not the later version57 source or new companion backend.
 
 The source-readiness probe checks an explicitly pinned, clean private Mail checkout. It runs actual source consent, grant and queue tests, calls the current request parsers and AI HTTP router, then exercises the real Python connector with temporary Maildirs, an isolated SQLite journal and intercepted SMTP. The network is denied during the connector probe. It never launches the connector service or reads personal Mail configuration.
 

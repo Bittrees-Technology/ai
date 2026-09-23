@@ -1,4 +1,4 @@
-/** Compare an actual compiled task21 engine with current task22 using disposable data. */
+/** Compare an actual compiled task21 engine with current task23 using disposable data. */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -60,7 +60,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 22);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 23);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.profiles(owner), profiles);
   assert.deepEqual(current.newsPublications.list(owner), []);
@@ -145,7 +145,7 @@ try {
     verifiedAt: new Date().toISOString(),
     runtime: process.version,
     fromTaskSchema: 21,
-    toTaskSchema: 22,
+    toTaskSchema: 23,
     legacySourceCommit: "855a034dee926315d4e318adbc3f3a49d83e1f7f",
     legacyCompiledStoreSha256: await sha(
       join(legacy, "modules/storage/store.js"),
@@ -161,10 +161,10 @@ try {
       ),
     ),
     checks: [
-      "Actual PR137 task21 task/result/model-profile preservation under task22 upgrade.",
+      "Actual PR137 task21 task/result/model-profile preservation under task23 upgrade.",
       "Wrong-key upgrade rolls back without changing the task21 database.",
       "Pending encrypted exact News intent survives reopen and encrypted backup/restore.",
-      "Actual task21 engine rejects upgraded and restored task22 databases.",
+      "Actual task21 engine rejects upgraded and restored task23 databases.",
       "Original backup opens separately with actual old task21 helpers; later pending publication is absent from historical rollback.",
     ],
     limits: [
@@ -177,12 +177,12 @@ try {
     process.argv[3] ||
       join(
         repo,
-        "docs/evidence/news-publication-task22-compatibility-2026-09-23.json",
+        "docs/evidence/news-publication-task23-compatibility-2026-09-23.json",
       ),
     JSON.stringify(evidence, null, 2) + "\n",
   );
   console.log(
-    "Actual PR137 task21→22 preservation, wrong-key rollback, encrypted pending intent restore, old-engine refusal and separate original-backup rollback passed.",
+    "Actual PR137 task21→23 preservation, wrong-key rollback, encrypted pending intent restore, old-engine refusal and separate original-backup rollback passed.",
   );
 } finally {
   old?.close();

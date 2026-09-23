@@ -1,0 +1,28 @@
+{
+  "verifiedAt": "2026-09-23T11:46:12.626Z",
+  "runtime": "v24.21.0",
+  "fromTaskSchema": 22,
+  "toTaskSchema": 23,
+  "legacySourceCommit": "94c61849444c1081f133d83022810e37e5fb78fa",
+  "legacyCompiledStoreSha256": "48bc0ac7f309973a30fc33d2f6ecd10748dfa2526cb1581a8c675448021565ee",
+  "sourceHashes": {
+    "modules/storage/store.ts": "8857172d8ecbbabf71df322bf2fff443b04b4505de65e3a61201fbe5c7bd039a",
+    "modules/storage/mail-sends.ts": "ef02238d54a971956d2623188320431dbd04e93c176fa26b8f7a8f478c4a9a02",
+    "modules/storage/backup.ts": "d97f351c0220ba27e97856bdb43f531dd2904218b0401d9e94904314cc9bd8df",
+    "modules/connectors/mail-send-contracts.ts": "3340e83e98e245ee6fe49bfb3bb20d39e4f45bd5699318d1fec8a2bc5ba00d2e",
+    "modules/connectors/mail-send.ts": "3ee706d8f12b69e25cb496879263662e87c8248ca607447272e4ed46ee007ab6"
+  },
+  "checks": [
+    "Actual PR139 task22 task/result/model-profile and pending News intent preserved under task23 upgrade.",
+    "Wrong-key upgrade leaves task22 readable by the actual old engine.",
+    "Prepared and reserved encrypted exact Mail records survive reopen.",
+    "Encrypted restore marks ALL Mail records reconciliation-only, including prepared records backed up before a possible later send.",
+    "Actual old task22 engine rejects upgraded and restored task23 databases.",
+    "Separate original backup opens with actual old helpers and preserves original News intent; later Mail history is absent."
+  ],
+  "limits": [
+    "Synthetic data only; no personal key/data, installed app, source deployment, real email or Acer operations.",
+    "Historical rollback lacks newer messages and send tracking. Export/preserve newer records before rollback; never interpret missing old history as permission to resend.",
+    "No native or personal acceptance, model change or new app archive."
+  ]
+}

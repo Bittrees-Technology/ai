@@ -180,7 +180,7 @@ test("schema-eight upgrade and encrypted restore preserve local template definit
     store.db.exec("DROP TABLE local_templates; PRAGMA user_version=8");
     store.close();
     store = new Store(path, vault);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 22);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 23);
     assert.equal(store.get(owner, existing.id).input.prompt, "old");
     const item = store.saveTemplate(owner, save());
     await encryptedBackup(store, vault, join(dir, "backup.enc"));

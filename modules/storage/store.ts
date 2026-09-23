@@ -1,3 +1,4 @@
+import { MailSends } from "./mail-sends.js";
 import { NewsPublications } from "./news-publications.js";
 import { TaskFeedback } from "./task-feedback.js";
 import { dependencyFailureSchema } from "./dependency-failure.js";
@@ -146,6 +147,7 @@ export class Store {
   readonly memoryExtractions: MemoryExtractions;
   readonly taskFeedback: TaskFeedback;
   readonly newsPublications: NewsPublications;
+  readonly mailSends: MailSends;
   constructor(
     path: string,
     private vault: Vault,
@@ -158,7 +160,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 22) {
+    if (version > 23) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -264,7 +266,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS news_publications(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id))",
         );
-        this.db.pragma("user_version = 22");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS mail_sends(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id))",
+        );
+        this.db.pragma("user_version = 23");
       })();
     } catch (error) {
       this.db.close();
@@ -274,6 +279,7 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
     this.memoryExtractions = new MemoryExtractions(this, vault);
     this.taskFeedback = new TaskFeedback(this, vault, now);
     this.newsPublications = new NewsPublications(this, vault, now);
+    this.mailSends = new MailSends(this, vault, now);
   }
   private templatePurpose(owner: Owner, id: string) {
     return JSON.stringify(["local-template", owner.tenantId, owner.userId, id]);
@@ -1740,6 +1746,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           )
           .run(owner.userId, owner.tenantId);
         for (const table of [
+          "mail_sends",
           "news_publications",
           "private_peer_checks",
           "private_task_responses",
