@@ -18,7 +18,9 @@ export function PrivateCheckPanel({
   const [peer, setPeer] = useState(""),
     [incoming, setIncoming] = useState(""),
     [ack, setAck] = useState(false);
-  const labelId = useId();
+  const labelId = useId(),
+    codeLabelId = useId(),
+    incomingLabelId = useId();
   const clear = () => {
     c.hide();
     setIncoming("");
@@ -131,8 +133,9 @@ export function PrivateCheckPanel({
             Review starting a check
           </button>
           <label>
-            Encrypted code from this device
+            <span id={incomingLabelId}>Encrypted code from this device</span>
             <textarea
+              aria-labelledby={incomingLabelId}
               rows={5}
               spellCheck={false}
               autoComplete="off"
@@ -234,8 +237,9 @@ export function PrivateCheckPanel({
               : "On the other device, choose to verify this reply. To verify that device here, start a separate check on this Mac."}
           </p>
           <label>
-            Encrypted code to transfer
+            <span id={codeLabelId}>Encrypted code to transfer</span>
             <textarea
+              aria-labelledby={codeLabelId}
               rows={6}
               readOnly
               spellCheck={false}
