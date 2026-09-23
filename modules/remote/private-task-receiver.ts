@@ -46,7 +46,8 @@ type ReceiptRow = {
   payload: Buffer;
 };
 
-/** Internal admission boundary. No HTTP route or live caller. Providers must read
+/** Admission boundary. The Mac local controller supplies fresh scoped providers.
+ * Providers must read
  * verified current account/device/key state and explicit per-peer local consent.
  * A reviewed public key alone is never task-submission permission.
  */

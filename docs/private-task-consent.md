@@ -1,6 +1,6 @@
 # Persisted private-task consent
 
-`PrivateTaskConsent` supplies the missing durable local permission layer for the private task receiver, sender and response producer. It connects actual endpoint-key and peer-registry proofs to explicit, expiring per-peer choices. [Mac permission controls](mac-private-task-permissions.md) now connect its reviews to authenticated local routes and fresh verified-device scopes. There is still no startup task dispatcher, hosted service or automatic grant. The existing authenticated content export includes the saved decisions. Installed PR40, prepared PR104, personal Keychain/data, model defaults and Acer news processing are unchanged.
+`PrivateTaskConsent` supplies the missing durable local permission layer for the private task receiver, sender and response producer. It connects actual endpoint-key and peer-registry proofs to explicit, expiring per-peer choices. [Mac permission controls](mac-private-task-permissions.md) now connect its reviews to authenticated local routes and fresh verified-device scopes. [Mac dispatch](mac-private-task-dispatch.md) now supplies fresh scopes for authenticated local task admission and response handoff; it remains off by default and has no live relay or automatic grant. The existing authenticated content export includes the saved decisions. Installed PR40, prepared PR104, personal Keychain/data, model defaults and Acer news processing are unchanged.
 
 ## Independent choices and review
 
@@ -8,7 +8,7 @@ A strict review request contains the expected consent revision, exact peer/key e
 
 Preparation resolves the actual retained Mac key and reviewed peer key under the host’s trusted current identity provider. The review captures full identity, selected-key and peer-registry proofs, exact profile configuration hash, original choices and the consent revision. It expires within five minutes and returns a clone. Approval consumes the review, requires explicit confirmation and acknowledgement, then checks all proofs, current identity, profile and revision under a SQLite immediate transaction before publishing the grant. Returning a modified preview cannot substitute authority. Invalidation clears pending reviews, including those still waiting on native key reads; it does not itself revoke a saved permission.
 
-The host must supply fresh verified identity, not saved registration metadata, and must renew that short scope separately for review and confirmation. A future mounted controller must also make the independent choices clear, clear hidden/changed reviews, and coordinate logout/credential invalidation. The mounted Mac controller supplies separate fresh scopes for review and confirmation; live dispatch remains unwired. A public-key pin or pairing credential alone never creates task permission.
+The host must supply fresh verified identity, not saved registration metadata, and must renew that short scope separately for review and confirmation. The mounted Mac controller makes the independent choices clear, clears hidden/changed reviews, coordinates logout/credential invalidation and supplies separate fresh scopes for review and confirmation. Mac local dispatch also obtains a separate fresh scope for each private operation; live relay delivery remains unwired. A public-key pin or pairing credential alone never creates task permission.
 
 ## Use and revocation
 
