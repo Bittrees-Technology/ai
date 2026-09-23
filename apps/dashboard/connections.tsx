@@ -1,3 +1,4 @@
+import { MailSendPanel } from "./mail-send.js";
 import { NewsConnectionPanel } from "./news-connection.js";
 import { PrivateCheckPanel } from "./private-checks.js";
 import { PrivatePermissionPanel } from "./private-permissions.js";
@@ -294,6 +295,7 @@ export function Connections(props: {
       <ConnectionCard app="autonote" {...props} />
       <RolesConnection api={props.api} onError={props.onError} />
       <MailConnection {...props} />
+      <MailSendPanel api={props.api} />
       <NewsConnectionPanel api={props.api} />
     </section>
   );

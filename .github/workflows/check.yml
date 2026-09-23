@@ -284,3 +284,11 @@ jobs:
           path: test-results/news-publication-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain reviewed Mail sending previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mail-send-ui-preview
+          path: test-results/mail-send-*.png
+          if-no-files-found: error
+          retention-days: 7

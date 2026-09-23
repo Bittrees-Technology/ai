@@ -840,3 +840,99 @@ select.model-profile-select {
     padding-left: 0.7rem;
   }
 }
+
+/* Mail keeps the complete message in one reading column; recipient labels stay aligned. */
+.mail-send-panel {
+  max-width: 900px;
+}
+.mail-send-panel fieldset {
+  border: 1px solid #aabec5;
+  margin: 1.2rem 0;
+  padding: 1rem;
+  min-width: 0;
+}
+.mail-send-panel legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+.mail-send-panel label {
+  display: block;
+  margin: 0.75rem 0;
+}
+.mail-compose-field input,
+.mail-compose-field textarea {
+  display: block;
+  width: 100%;
+}
+.mail-send-panel input[type="file"] {
+  max-width: 100%;
+}
+.mail-send-panel dd,
+.mail-send-panel li,
+.mail-operation {
+  overflow-wrap: anywhere;
+}
+.mail-send-panel dd {
+  margin-left: 0;
+}
+.mail-send-panel dt {
+  font-weight: 600;
+}
+.mail-exact-message {
+  padding: 1rem;
+  background: #f8fbfc;
+  border-left: 3px solid #29658b;
+  margin: 1rem 0;
+}
+.mail-exact-message dl {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+}
+.mail-exact-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.mail-exact-message pre {
+  max-width: 100%;
+}
+.mail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+.mail-history {
+  list-style: none;
+  padding: 0;
+}
+.mail-history li {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid #aabec5;
+}
+.mail-history button {
+  justify-self: start;
+}
+.mail-saved-record {
+  border-top: 2px solid #28685c;
+  margin-top: 1.5rem;
+}
+@media (max-width: 520px) {
+  .mail-exact-message {
+    padding: 0.75rem;
+  }
+  .mail-exact-message dl {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+  .mail-exact-message dd {
+    margin-bottom: 0.6rem;
+  }
+  .mail-send-panel fieldset {
+    padding: 0.6rem;
+  }
+}
