@@ -746,3 +746,13 @@ select.model-profile-select {
   border-top: 1px solid #d3e1e5;
   margin-top: 20px;
 }
+
+.news-curation {
+  margin-top: 1.5rem;
+  border-top: 1px solid #cbdce1;
+  padding-top: 1rem;
+}
+.news-exact-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

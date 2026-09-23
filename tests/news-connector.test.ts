@@ -388,3 +388,355 @@ test("News panel clears key, review and articles on focus loss and preserves the
   await retry.confirm();
   assert.deepEqual(calls.at(-1)?.body, calls.at(-2)?.body);
 });
+
+async function previewFixture(scopes = ["curate", "read"]) {
+  const f = fixture();
+  f.connection.scopes = scopes;
+  let preview: any = {
+    name: "Synthetic newspaper",
+    draft_revision: 4,
+    draft: {
+      front: [row],
+      feeds: [{ items: [{ secretField: "OMIT_FEED_PAYLOAD" }] }],
+    },
+    secretField: "DROP_PREVIEW_FIELD",
+  };
+  let lose = false,
+    after: (() => void) | undefined;
+  f.transform(async (request, response) => {
+    const name = request.params?.name;
+    if (name === "get_preview")
+      response.result.content[0].text = JSON.stringify(preview);
+    if (name === "edit_preview_item") {
+      const input = request.params.arguments;
+      if (input.revision !== preview.draft_revision)
+        return Response.json({ ...response, result: { isError: true } });
+      preview = {
+        ...preview,
+        draft_revision: preview.draft_revision + 1,
+        draft: {
+          ...preview.draft,
+          front: preview.draft.front.map((i: any) =>
+            i.id === input.itemId
+              ? {
+                  ...i,
+                  original_title: i.original_title || i.title,
+                  title: input.title,
+                  summary: input.summary,
+                  user_edited: true,
+                  summary_kind: "user_edited",
+                }
+              : i,
+          ),
+        },
+      };
+      after?.();
+      if (lose) throw Error("Response lost after source commit");
+      response.result.content[0].text = JSON.stringify(preview);
+    }
+  });
+  await f.connect();
+  const input = {
+    revision: 4,
+    itemId: row.id,
+    title: "Reviewed headline",
+    summary: "Exact\nowner text",
+  };
+  return {
+    ...f,
+    input,
+    source: () => preview,
+    change: (value: any) => {
+      preview = value;
+    },
+    lose: () => {
+      lose = true;
+    },
+    after: (fn: () => void) => {
+      after = fn;
+    },
+  };
+}
+test("News curation requires an exact review and separate explicit confirmation; only one save is dispatched", async () => {
+  const f = await previewFixture();
+  const before = await f.client.preview();
+  assert.equal(before.revision, 4);
+  assert.ok(!JSON.stringify(before).includes("OMIT_FEED_PAYLOAD"));
+  assert.ok(!JSON.stringify(before).includes("DROP_PREVIEW_FIELD"));
+  const review = await f.client.reviewEdit(f.input);
+  assert.equal(review.before.title, row.title);
+  assert.deepEqual(review.after, f.input);
+  assert.equal(
+    f.calls.filter((c) => c.params?.name === "edit_preview_item").length,
+    0,
+  );
+  await assert.rejects(
+    f.client.confirmEdit({ id: review.id, confirmed: true }),
+  );
+  await assert.rejects(
+    f.client.confirmEdit({ id: review.id, confirmed: true, curate: false }),
+  );
+  await assert.rejects(
+    f.client.confirmEdit({
+      id: review.id,
+      confirmed: true,
+      curate: true,
+      summary: "changed",
+    }),
+  );
+  const saved = await f.client.confirmEdit({
+    id: review.id,
+    confirmed: true,
+    curate: true,
+  });
+  assert.equal(saved.published, false);
+  assert.equal(saved.preview.revision, 5);
+  assert.equal(saved.preview.front[0]!.summary, f.input.summary);
+  await assert.rejects(
+    f.client.confirmEdit({ id: review.id, confirmed: true, curate: true }),
+    /REVIEW_EXPIRED/,
+  );
+  assert.equal(
+    f.calls.filter((c) => c.params?.name === "edit_preview_item").length,
+    1,
+  );
+  assert.deepEqual(
+    f.calls.find((c) => c.params?.name === "edit_preview_item").params
+      .arguments,
+    f.input,
+  );
+  assert.ok(
+    !f.calls.some((c) =>
+      /publish|delivery|subscription|generate|refresh_source/.test(
+        c.params?.name ?? "",
+      ),
+    ),
+  );
+});
+test("News read-only or publish-only keys cannot prepare curation; source and local identities remain bound", async () => {
+  for (const scopes of [["read"], ["read", "publish"]]) {
+    const f = await previewFixture(scopes);
+    assert.equal((await f.client.preview()).revision, 4);
+    await assert.rejects(f.client.reviewEdit(f.input), /CURATION_REQUIRED/);
+    assert.equal(
+      f.calls.filter((c) => c.params?.name === "edit_preview_item").length,
+      0,
+    );
+  }
+  for (const change of ["account", "scopes", "local"] as const) {
+    const f = await previewFixture();
+    const review = await f.client.reviewEdit(f.input);
+    if (change === "account") f.connection.accountId = randomUUID();
+    if (change === "scopes") f.connection.scopes = ["read"];
+    if (change === "local")
+      await f.secret.setSecret(
+        Buffer.from(
+          JSON.stringify({
+            ...JSON.parse(Buffer.from(f.bytes()!).toString()),
+            owner: "other",
+          }),
+        ),
+      );
+    await assert.rejects(
+      f.client.confirmEdit({ id: review.id, confirmed: true, curate: true }),
+    );
+    assert.equal(
+      f.calls.filter((c) => c.params?.name === "edit_preview_item").length,
+      0,
+    );
+  }
+});
+test("News changed preview, expired review, cancellation, replacement and removal invalidate review before writes", async () => {
+  for (const mode of [
+    "revision",
+    "same-revision-content",
+    "expiry",
+    "cancel",
+    "replacement",
+    "forget",
+  ] as const) {
+    const f = await previewFixture(),
+      review = await f.client.reviewEdit(f.input);
+    if (mode === "revision") f.change({ ...f.source(), draft_revision: 5 });
+    if (mode === "same-revision-content")
+      f.change({ ...f.source(), name: "Changed" });
+    if (mode === "expiry") f.setNow(Date.parse(review.expiresAt));
+    if (mode === "cancel") await f.client.cancel();
+    if (mode === "replacement")
+      await f.client.reviewEdit({ ...f.input, title: "Another review" });
+    if (mode === "forget") await f.client.forget({ confirmed: true });
+    await assert.rejects(
+      f.client.confirmEdit({ id: review.id, confirmed: true, curate: true }),
+    );
+    assert.equal(
+      f.calls.filter((c) => c.params?.name === "edit_preview_item").length,
+      0,
+    );
+    await f.client.cancel();
+  }
+});
+test("News source commit with lost response or post-write authority loss is unconfirmed and never blindly retried", async () => {
+  for (const mode of ["lost", "revoked"] as const) {
+    const f = await previewFixture(),
+      review = await f.client.reviewEdit(f.input);
+    if (mode === "lost") f.lose();
+    else
+      f.after(() => {
+        f.connection.scopes = ["read"];
+      });
+    await assert.rejects(
+      f.client.confirmEdit({ id: review.id, confirmed: true, curate: true }),
+      /NEWS_SAVE_UNCONFIRMED/,
+    );
+    assert.equal(f.source().draft_revision, 5);
+    await assert.rejects(
+      f.client.confirmEdit({ id: review.id, confirmed: true, curate: true }),
+      /REVIEW_EXPIRED/,
+    );
+    assert.equal(
+      f.calls.filter((c) => c.params?.name === "edit_preview_item").length,
+      1,
+    );
+    if (mode === "lost")
+      assert.equal((await f.client.preview()).front[0]!.title, f.input.title);
+  }
+});
+test("News previews reject unsafe links and unsupported bounds; edits reject nonexistent stories and no-op text", async () => {
+  const f = await previewFixture();
+  await assert.rejects(
+    f.client.reviewEdit({ ...f.input, itemId: "c".repeat(64) }),
+    /SOURCE_CONFLICT/,
+  );
+  await assert.rejects(
+    f.client.reviewEdit({ ...f.input, title: row.title, summary: row.excerpt }),
+    /NO_CHANGE/,
+  );
+  for (const draft of [
+    { front: [{ ...row, url: "http://example.org" }], feeds: [] },
+    { front: [row, row], feeds: [] },
+    { front: [row], feeds: Array(101).fill({}) },
+  ]) {
+    f.change({ ...f.source(), draft });
+    await assert.rejects(f.client.preview(), /INVALID_SOURCE/);
+  }
+});
+test("News story controller invalidates changed/focus-lost reviews and reconciles unconfirmed saves without a retry", async () => {
+  const calls: any[] = [];
+  let release!: (v: any) => void;
+  const c = new NewsConnectionController(async (path, method, body) => {
+    calls.push({ path, body });
+    if (path.endsWith("/confirm")) throw Error("Lost response");
+    return new Promise((r) => {
+      release = r;
+    });
+  });
+  const preview = {
+    name: "Preview",
+    revision: 4,
+    front: [row],
+    feedCount: 0,
+    exists: true,
+    checkedAt: new Date().toISOString(),
+  };
+  c.preview = preview;
+  c.chooseStory(row.id);
+  c.changeStory("title", "Edited");
+  const pending = c.reviewStory();
+  c.hide();
+  release({ id: randomUUID() });
+  await pending;
+  assert.equal(c.editReview, null);
+  c.preview = preview;
+  c.chooseStory(row.id);
+  c.changeStory("title", "Edited");
+  const reviewing = c.reviewStory();
+  release({ id: randomUUID(), after: c.edit });
+  await reviewing;
+  c.curateConfirmed = true;
+  c.changeStory("summary", "Changed after review");
+  assert.equal(c.editReview, null);
+  assert.equal(c.curateConfirmed, false);
+  c.editReview = { id: randomUUID() } as any;
+  c.curateConfirmed = true;
+  await c.saveStory();
+  assert.match(c.error, /could not be confirmed/);
+  assert.equal(c.preview, null);
+  assert.equal(c.editReview, null);
+  await c.saveStory();
+  assert.equal(calls.filter((x) => x.path.endsWith("/confirm")).length, 1);
+});
+
+test("News curation HTTP requires session, strict reviewed intent and separate curation confirmation; exports omit edits", async () => {
+  const f = await previewFixture(),
+    owner = { userId: "alice", tenantId: "home" },
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer(),
+    token = randomBytes(32).toString("hex");
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  server.on("request", localApi({ store, owner, token, port, news: f.client }));
+  const call = (path: string, body: unknown, auth = token) =>
+    fetch(`http://127.0.0.1:${port}/v1/connections/news/${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + auth,
+      },
+      body: JSON.stringify(body),
+    });
+  try {
+    assert.equal((await call("curation/review", f.input, "bad")).status, 401);
+    assert.equal(
+      (await call("preview", { method: "publish_preview" })).status,
+      400,
+    );
+    const preview = (await (await call("preview", {})).json()) as any;
+    assert.equal(preview.revision, 4);
+    const review = (await (
+      await call("curation/review", f.input)
+    ).json()) as any;
+    assert.equal(
+      (await call("curation/confirm", { id: review.id, confirmed: true }))
+        .status,
+      400,
+    );
+    assert.equal(
+      (
+        await call("curation/confirm", {
+          id: review.id,
+          confirmed: true,
+          curate: true,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await call("curation/confirm", {
+          id: review.id,
+          confirmed: true,
+          curate: true,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await call("publish", { revision: 5, confirmed: true })).status,
+      404,
+    );
+    const data = await (
+      await fetch(`http://127.0.0.1:${port}/v1/export`, {
+        headers: { Authorization: "Bearer " + token },
+      })
+    ).text();
+    assert.ok(
+      !data.includes(f.input.summary) &&
+        !data.includes(row.title) &&
+        !data.includes(key),
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});

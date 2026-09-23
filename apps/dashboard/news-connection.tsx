@@ -1,3 +1,4 @@
+import { NewsCuration } from "./news-curation.js";
 import React, { useEffect, useRef, useState } from "react";
 import { NewsConnectionController } from "./news-state.js";
 export function NewsConnectionPanel({
@@ -27,7 +28,12 @@ export function NewsConnectionPanel({
     };
   }, [c]);
   useEffect(() => {
-    const until = c.pending?.reviewExpiresAt ?? c.status?.connection?.expiresAt;
+    const deadlines = [
+      c.pending?.reviewExpiresAt,
+      c.editReview?.expiresAt,
+      c.status?.connection?.expiresAt,
+    ].filter((v): v is string => !!v);
+    const until = deadlines.sort((a, b) => Date.parse(a) - Date.parse(b))[0];
     if (!until) return;
     let timer: ReturnType<typeof setTimeout>;
     const expire = () => {
@@ -45,12 +51,18 @@ export function NewsConnectionPanel({
           ...c.status,
           connection: { ...c.status.connection, state: "expired" },
         };
-      if (c.pending || c.checkedAt || c.status?.connection?.state === "expired")
+      if (
+        c.pending ||
+        c.editReview ||
+        c.preview ||
+        c.checkedAt ||
+        c.status?.connection?.state === "expired"
+      )
         c.hide();
     };
     expire();
     return () => clearTimeout(timer);
-  }, [c, c.pending, c.status]);
+  }, [c, c.pending, c.editReview, c.status]);
   const connection = c.status?.connection;
   return (
     <article className="card news-connection" aria-label="News connection">
@@ -69,8 +81,9 @@ export function NewsConnectionPanel({
         </a>
       </p>
       <p className="hint">
-        Read-only access. Manage curation, publishing, deliveries and scheduled
-        processing in News.
+        Starts with read-only access. Each preview edit requires a separate
+        review and curation confirmation. Manage publishing, deliveries and
+        schedules in News.
       </p>
       {c.error && <p role="alert">{c.error}</p>}
       {!c.status ? (
@@ -117,8 +130,9 @@ export function NewsConnectionPanel({
         <section aria-label="Review News connection">
           <h4>Review this connection</h4>
           <p>
-            News verified the key. This companion will use read access only,
-            even if the key has other permissions.
+            News verified the key. Saving the key enables reads. Editing also
+            requires curation permission and a separate confirmation for each
+            change.
           </p>
           <p>
             Expires {new Date(c.pending.connection.expiresAt).toLocaleString()}{" "}
@@ -163,7 +177,7 @@ export function NewsConnectionPanel({
               autoComplete="off"
               maxLength={68}
               value={c.token}
-              onChange={(e) => c.edit(e.target.value)}
+              onChange={(e) => c.editToken(e.target.value)}
               placeholder="Paste your News key"
             />
           </label>
@@ -175,6 +189,9 @@ export function NewsConnectionPanel({
       <button disabled={c.busy} onClick={() => void c.refresh()}>
         Refresh News connection
       </button>
+      {connection && (
+        <NewsCuration controller={c} changed={() => render((n) => n + 1)} />
+      )}
       {c.checkedAt && (
         <section aria-label="News articles">
           <h4>Your News articles</h4>

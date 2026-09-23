@@ -56,11 +56,15 @@ try {
     if (body.method === "tools/call") calls.push(body.params.name);
     return mcp(new Request(String(url), options));
   };
-  async function connect(account: string, owner: string) {
+  async function connect(
+    account: string,
+    owner: string,
+    scopes = ["read", "curate", "publish", "delivery"],
+  ) {
     const key = (
       await createMcpToken(account, {
         name: "Synthetic companion",
-        scopes: ["read", "curate", "publish", "delivery"],
+        scopes,
         days: 7,
       })
     ).token;
@@ -98,13 +102,6 @@ try {
     new NewsConnector("local-b", first.secret, transport).read(),
     /INVALID_CONNECTION/,
   );
-  await pool().query("DELETE FROM mcp_tokens WHERE id=$1", [first.credential]);
-  await assert.rejects(first.client.read(), /SOURCE_DENIED/);
-  await pool().query(
-    "UPDATE mcp_tokens SET expires_at=now()-interval '1 second' WHERE id=$1",
-    [second.credential],
-  );
-  await assert.rejects(second.client.read(), /SOURCE_DENIED/);
   assert.deepEqual([...new Set(calls)].sort(), [
     "get_connection",
     "list_articles",
@@ -126,10 +123,195 @@ try {
       ),
       0,
     );
+  const originalDraft = {
+    front: [
+      one.items[0],
+      {
+        ...one.items[0],
+        id: itemId("untouched"),
+        title: "Long unchanged story",
+        excerpt: "x".repeat(10000),
+      },
+    ],
+    feeds: [{ items: [one.items[0]] }],
+  };
+  for (const account of ids)
+    await pool().query(
+      "INSERT INTO newspapers(account_id,name,slug,draft,draft_revision,snapshot,published,auto_publish) VALUES($1,'Synthetic preview',$2,$3,7,$3,true,true)",
+      [
+        account,
+        account,
+        JSON.stringify(
+          account === a
+            ? originalDraft
+            : { ...originalDraft, front: two.items, feeds: [] },
+        ),
+      ],
+    );
+  const original = (
+    await pool().query("SELECT * FROM newspapers WHERE account_id=$1", [a])
+  ).rows[0];
+  const otherBefore = (
+    await pool().query("SELECT * FROM newspapers WHERE account_id=$1", [b])
+  ).rows[0];
+  const reader = await connect(a, "local-reader", ["read"]);
+  const preview = await first.client.preview();
+  assert.equal(preview.revision, 7);
+  assert.ok(
+    !JSON.stringify(await second.client.preview()).includes(
+      "ACCOUNT_A_PRIVATE",
+    ),
+  );
+  const input = {
+    revision: 7,
+    itemId: one.items[0]!.id,
+    title: "Reviewed owner headline",
+    summary: "An exact owner edit.\nStill unverified.",
+  };
+  await assert.rejects(reader.client.reviewEdit(input), /CURATION_REQUIRED/);
+  const review = await first.client.reviewEdit(input);
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT draft_revision FROM newspapers WHERE account_id=$1",
+        [a],
+      )
+    ).rows[0].draft_revision,
+    7,
+  );
+  const saved = await first.client.confirmEdit({
+    id: review.id,
+    confirmed: true,
+    curate: true,
+  });
+  assert.equal(saved.published, false);
+  assert.equal(saved.preview.revision, 8);
+  assert.equal(saved.preview.front[0]!.summary, input.summary);
+  await assert.rejects(
+    first.client.confirmEdit({ id: review.id, confirmed: true, curate: true }),
+    /REVIEW_EXPIRED/,
+  );
+  const after = (
+    await pool().query("SELECT * FROM newspapers WHERE account_id=$1", [a])
+  ).rows[0];
+  for (const field of Object.keys(original).filter(
+    (k) => !["draft", "draft_revision"].includes(k),
+  ))
+    assert.deepEqual(after[field], original[field], field);
+  assert.deepEqual(after.draft.front[1], originalDraft.front[1]);
+  assert.deepEqual(after.draft.feeds, originalDraft.feeds);
+  assert.deepEqual(
+    (await pool().query("SELECT * FROM newspapers WHERE account_id=$1", [b]))
+      .rows[0],
+    otherBefore,
+  );
+  const oldReview = await first.client.reviewEdit({
+    ...input,
+    revision: 8,
+    title: "Stale edit",
+  });
+  await pool().query(
+    "UPDATE newspapers SET draft_revision=draft_revision+1 WHERE account_id=$1",
+    [a],
+  );
+  await assert.rejects(
+    first.client.confirmEdit({
+      id: oldReview.id,
+      confirmed: true,
+      curate: true,
+    }),
+    /SOURCE_CONFLICT/,
+  );
+  const uncertain = new NewsConnector(
+    "local-a",
+    first.secret,
+    async (url, options) => {
+      const result = await transport(url, options);
+      if (
+        JSON.parse(String(options?.body)).params?.name === "edit_preview_item"
+      )
+        throw Error("Lost response after actual source commit");
+      return result;
+    },
+  );
+  const uncertainReview = await uncertain.reviewEdit({
+    ...input,
+    revision: 9,
+    title: "Committed with lost response",
+  });
+  await assert.rejects(
+    uncertain.confirmEdit({
+      id: uncertainReview.id,
+      confirmed: true,
+      curate: true,
+    }),
+    /NEWS_SAVE_UNCONFIRMED/,
+  );
+  await assert.rejects(
+    uncertain.confirmEdit({
+      id: uncertainReview.id,
+      confirmed: true,
+      curate: true,
+    }),
+    /REVIEW_EXPIRED/,
+  );
+  const reconciled = await first.client.preview();
+  assert.equal(reconciled.revision, 10);
+  assert.equal(reconciled.front[0]!.title, "Committed with lost response");
+  const revokedReview = await first.client.reviewEdit({
+    ...input,
+    revision: 10,
+    title: "Do not commit",
+  });
+  await pool().query("DELETE FROM mcp_tokens WHERE id=$1", [first.credential]);
+  await assert.rejects(first.client.read(), /SOURCE_DENIED/);
+  await pool().query(
+    "UPDATE mcp_tokens SET expires_at=now()-interval '1 second' WHERE id=$1",
+    [second.credential],
+  );
+  await assert.rejects(second.client.read(), /SOURCE_DENIED/);
+  await assert.rejects(
+    first.client.confirmEdit({
+      id: revokedReview.id,
+      confirmed: true,
+      curate: true,
+    }),
+    /SOURCE_DENIED/,
+  );
+  assert.equal(
+    (
+      await pool().query(
+        "SELECT draft_revision FROM newspapers WHERE account_id=$1",
+        [a],
+      )
+    ).rows[0].draft_revision,
+    10,
+  );
+  for (const table of [
+    "newspaper_editions",
+    "news_subscriptions",
+    "deliveries",
+    "public_job_claims",
+    "public_job_events",
+    "editor_jobs",
+    "translations",
+  ])
+    assert.equal(
+      Number(
+        (await pool().query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n,
+      ),
+      0,
+    );
+  assert.deepEqual([...new Set(calls)].sort(), [
+    "edit_preview_item",
+    "get_connection",
+    "get_preview",
+    "list_articles",
+  ]);
   const removed = await first.client.forget({ confirmed: true });
   assert.equal(removed.sourceRevoked, false);
   console.log(
-    "Actual News MCP + companion: reviewed reused keys, own-account reads, local-owner isolation, source expiry/revocation, fixed read-only calls and unchanged curation/processing/delivery tables pass.",
+    "Actual News MCP + companion: reviewed reused keys, own-account reads, local-owner isolation, source expiry/revocation, explicit exact curation review, read-scope denial, stale/revoked authority, unchanged unrelated source content/snapshots/schedules, lost-response reconciliation and zero publishing/delivery/processing effects pass.",
   );
 } finally {
   await (globalThis as any).newsPool?.end();
