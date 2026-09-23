@@ -22,6 +22,7 @@ async function startIdentityServer() {
     cert: Buffer,
     holdPath = "",
     dropPath = "",
+    dropSkip = 0,
     offline = false,
     heldIdentity = false,
     releaseIdentity: (() => void) | undefined;
@@ -122,7 +123,7 @@ async function startIdentityServer() {
               .end('{"error":"UNAVAILABLE"}');
             return;
           }
-          if (dropPath === url.pathname) {
+          if (dropPath === url.pathname && dropSkip-- <= 0) {
             dropPath = "";
             res.end = (() => {
               res.destroy();
@@ -229,6 +230,7 @@ async function startIdentityServer() {
         releaseIdentity?.();
         holdPath = "";
         dropPath = "";
+        dropSkip = 0;
         heldIdentity = false;
         releaseIdentity = undefined;
         offline = false;
@@ -246,8 +248,9 @@ async function startIdentityServer() {
       offline(value: boolean) {
         offline = value;
       },
-      drop(path: string) {
+      drop(path: string, skip = 0) {
         dropPath = path;
+        dropSkip = skip;
       },
       close,
     };

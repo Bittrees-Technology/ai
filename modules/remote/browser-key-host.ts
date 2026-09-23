@@ -99,6 +99,10 @@ export class BrowserKeyHost {
       return null;
     }
   }
+  /** View cancellation counter only; it supplies no key or identity authority. */
+  reviewVersion() {
+    return this.generation;
+  }
   session() {
     return this.currentContext();
   }

@@ -188,3 +188,9 @@
     text-align: left;
   }
 }
+
+.browser-peers-fingerprint {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
