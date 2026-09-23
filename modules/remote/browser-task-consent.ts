@@ -581,7 +581,7 @@ export class BrowserTaskConsent {
       );
       this.check(r.guard, r.proof.local, r.expiresAt);
       return this.tx<Grant>(
-        g,
+        r.guard,
         "readwrite",
         p.proof,
         (io, current) => {

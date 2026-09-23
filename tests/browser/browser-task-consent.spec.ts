@@ -518,6 +518,35 @@ test("offline permission deletion removes encrypted choices and requires a diffe
       }),
     ).rejects.toThrow("REPAIR_REQUIRED");
     await expect(f.prepare()).rejects.toThrow("REPAIR_REQUIRED");
+    const next = {
+      ...f.f,
+      binding: { ...f.f.binding, deviceId: randomUUID() },
+    };
+    await reopen(page, next);
+    const keyState = await page.evaluate(() =>
+      window.browserPeersTest.keyStatus(),
+    );
+    await page.evaluate(
+      (expectedRevision) =>
+        window.browserPeersTest.keyReset({ expectedRevision, confirmed: true }),
+      keyState.revision,
+    );
+    await page.evaluate(() => window.browserPeersTest.activate());
+    await page.evaluate(
+      (expectedRevision) =>
+        window.browserPeersTest.consentReset({
+          expectedRevision,
+          confirmed: true,
+        }),
+      deleted.revision,
+    );
+    const fresh = await page.evaluate(() =>
+      window.browserPeersTest.consentStatus(),
+    );
+    expect(fresh.needsFreshDevice).toBe(false);
+    expect(fresh.grants).toEqual([]);
+    expect(fresh.revision).toBe(deleted.revision + 1);
+    await expect(f.authorize()).rejects.toThrow();
   } finally {
     f.mac.close();
   }
