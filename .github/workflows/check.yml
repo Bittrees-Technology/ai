@@ -156,9 +156,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Prepare pinned PR143 browser key compatibility provider
+      - name: Prepare pinned browser key compatibility providers
         run: |
           git fetch --no-tags --depth=1 origin 84132a15d0ddf6027bc9bc8d8d9dbf4217fa69f0
+          git fetch --no-tags --depth=1 origin 99a3c5e3a408305438f718e3326363b656234c9e
           node scripts/prepare-legacy-browser-keys.mjs
           node scripts/prepare-legacy-browser-lifecycle.mjs
       - name: Install disposable CI browser engines
