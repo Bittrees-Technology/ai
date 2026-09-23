@@ -753,3 +753,37 @@ test("Peer and retired-key storage bounds refuse further enrollment without drop
     another.close();
   }
 });
+
+test("Revocation during public-key import denies the delayed resolved peer", async ({
+  page,
+  context,
+}) => {
+  const { f, mac, saved } = await pinned(page);
+  try {
+    const other = await context.newPage();
+    await init(other, f, false);
+    await page.evaluate(() => window.browserPeersTest.holdImport());
+    const pending = page
+      .evaluate(
+        (s) => window.browserPeersTest.resolve(s.peerId, s.keyEpoch),
+        saved,
+      )
+      .catch((e) => String(e));
+    await expect
+      .poll(() => page.evaluate(() => window.browserPeersTest.held()))
+      .toBe(true);
+    await other.evaluate(
+      (s) =>
+        window.browserPeersTest.revoke({
+          peerId: s.peerId,
+          expectedRevision: s.revision,
+          confirmed: true,
+        }),
+      saved,
+    );
+    await page.evaluate(() => window.browserPeersTest.release());
+    expect(await pending).toContain("CONFLICT");
+  } finally {
+    mac.close();
+  }
+});

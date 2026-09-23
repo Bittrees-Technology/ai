@@ -167,3 +167,32 @@ test("Offline host maintenance revokes local peer trust without claiming a remot
     mac.close();
   }
 });
+
+test("Scope loss after local commit rejects the response and refresh reveals the committed outcome without replay", async ({
+  page,
+}) => {
+  const { mac } = await active(page);
+  try {
+    const r = await review(page, (await mac.invitation()).invitation);
+    await page.evaluate(() => window.browserPeersTest.holdSecondIdentity());
+    const pending = approve(page, r).catch((e) => String(e));
+    await expect
+      .poll(() => page.evaluate(() => window.browserPeersTest.held()))
+      .toBe(true);
+    await page.evaluate(() => {
+      window.browserPeersTest.scopeChange();
+      window.browserPeersTest.release();
+    });
+    expect(await pending).toContain("DENIED");
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const status = await page.evaluate(() => window.browserPeersTest.status());
+    expect(status.revision).toBe(r.expectedRevision + 1);
+    expect(status.state!.peers[0]!.fingerprint).toBe(r.fingerprint);
+    await expect(approve(page, r)).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.status())).revision,
+    ).toBe(status.revision);
+  } finally {
+    mac.close();
+  }
+});

@@ -27,6 +27,7 @@ let hostOwner: string | null = null,
   hostScope = 0;
 let release: (() => void) | undefined,
   held = false;
+let identityCountdown = 0;
 const context = () =>
   hostOwner ? { ownerId: hostOwner, scope: String(hostScope) } : null;
 async function withKey<T>(fn: () => Promise<T>) {
@@ -57,7 +58,18 @@ async function mount(id: string) {
   host?.close();
   hostOwner = id;
   hostScope++;
-  host = await BrowserKeyHost.open(context);
+  host = await BrowserKeyHost.open(context, async (...args) => {
+    if (
+      new URL(String(args[0]), location.origin).pathname ===
+        "/browser/registration/identity" &&
+      identityCountdown > 0 &&
+      --identityCountdown === 0
+    ) {
+      held = true;
+      await new Promise<void>((r) => (release = r));
+    }
+    return globalThis.fetch(...args);
+  });
   await host.inspect();
 }
 const legacyUrl = "/legacy-lifecycle.js";
@@ -201,6 +213,20 @@ const fixture = {
       await new Promise<void>((r) => (release = r));
       return original(...args);
     }) as SubtleCrypto["digest"];
+  },
+  holdImport() {
+    const original = crypto.subtle.importKey.bind(crypto.subtle);
+    crypto.subtle.importKey = (async (
+      ...args: Parameters<SubtleCrypto["importKey"]>
+    ) => {
+      crypto.subtle.importKey = original;
+      held = true;
+      await new Promise<void>((r) => (release = r));
+      return original(...args);
+    }) as SubtleCrypto["importKey"];
+  },
+  holdSecondIdentity() {
+    identityCountdown = 2;
   },
   held: () => held,
   release() {
