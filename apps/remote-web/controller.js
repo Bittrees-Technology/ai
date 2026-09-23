@@ -31,6 +31,7 @@ export class RemoteWebController {
     templateReview: null,
     templateResult: null,
     account: null,
+    sessionScope: null,
     confirmation: "",
     devices: [],
     deviceCursor: null,
@@ -42,6 +43,11 @@ export class RemoteWebController {
     busy: false,
   };
   epoch = 0;
+  authEpoch = 0;
+  activeAction = null;
+  authAction = null;
+  signingOut = null;
+  logoutRequired = false;
   constructor(api, wallet, settings, changed) {
     this.api = api;
     this.wallet = wallet;
@@ -52,9 +58,8 @@ export class RemoteWebController {
     this.state = { ...this.state, ...patch };
     this.changed(this.state);
   }
-  hide() {
-    this.epoch++;
-    this.set({
+  concealed() {
+    return {
       commandReview: null,
       commandResult: null,
       templates: [],
@@ -68,128 +73,220 @@ export class RemoteWebController {
       deviceId: null,
       error: "",
       notice: "",
+    };
+  }
+  hide() {
+    this.epoch++;
+    this.set(this.concealed());
+  }
+  // Authentication changes are distinct from ordinary view concealment. Publish
+  // the empty scope atomically so a mounted key host can invalidate immediately.
+  invalidateSession() {
+    this.authEpoch++;
+    this.epoch++;
+    this.set({
+      ...this.concealed(),
+      account: null,
+      sessionScope: null,
+      devices: [],
+      deviceCursor: null,
     });
+    return this.authEpoch;
   }
-  async act(fn) {
-    if (this.state.busy) return;
+  sessionContext() {
+    const { account, sessionScope } = this.state;
+    return account && sessionScope && account.expiresAt > Date.now()
+      ? { ownerId: account.ownerId, scope: sessionScope }
+      : null;
+  }
+  checkAuth(epoch) {
+    if (epoch !== this.authEpoch) throw Error("DENIED");
+  }
+  sessionAccount(raw) {
+    if (
+      !raw ||
+      !uuid.test(raw.ownerId ?? "") ||
+      !/^0x[0-9a-f]{40}$/i.test(raw.address ?? "") ||
+      raw.chainId !== this.settings.chainId ||
+      !Number.isSafeInteger(raw.expiresAt) ||
+      raw.expiresAt <= Date.now()
+    )
+      throw Error("DENIED");
+    return {
+      ownerId: raw.ownerId,
+      address: raw.address,
+      chainId: raw.chainId,
+      expiresAt: raw.expiresAt,
+    };
+  }
+  act(fn, authentication = false) {
+    if (this.state.busy) return Promise.resolve();
+    const epoch = this.authEpoch;
+    let finish;
+    const pending = new Promise((resolve) => {
+      finish = resolve;
+    });
+    this.activeAction = pending;
+    if (authentication) this.authAction = pending;
     this.set({ busy: true, error: "", notice: "" });
-    try {
-      await fn();
-    } catch (e) {
-      this.set({
-        error:
-          e?.message === "CAPACITY"
-            ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
-            : e?.message === "DENIED"
-              ? "Your session or device access is unavailable. Sign in again or refresh the device list."
-              : e?.message === "WALLET_REQUIRED"
-                ? "Open this page in a browser with an Ethereum wallet."
-                : e?.message === "CHAIN_MISMATCH"
-                  ? "Switch your wallet to the network shown on this page, then sign in again."
-                  : "The action could not be completed. Refresh and review before trying again.",
-      });
-    } finally {
-      this.set({ busy: false });
-    }
+    void (async () => {
+      try {
+        this.checkAuth(epoch);
+        await fn();
+      } catch (e) {
+        if (epoch === this.authEpoch)
+          this.set({
+            error:
+              e?.message === "CAPACITY"
+                ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
+                : e?.message === "DENIED"
+                  ? "Your session or device access is unavailable. Sign in again or refresh the device list."
+                  : e?.message === "WALLET_REQUIRED"
+                    ? "Open this page in a browser with an Ethereum wallet."
+                    : e?.message === "CHAIN_MISMATCH"
+                      ? "Switch your wallet to the network shown on this page, then sign in again."
+                      : "The action could not be completed. Refresh and review before trying again.",
+          });
+      } finally {
+        this.activeAction = null;
+        if (authentication) this.authAction = null;
+        this.set({ busy: !!this.signingOut });
+        finish();
+      }
+    })();
+    return pending;
   }
-  async checkWallet(account) {
+  async clearServerSession() {
+    // A failed cleanup stays sticky: refresh/login must retry it before they can
+    // adopt cookies or begin another login. Never claim a remote logout on error.
+    this.logoutRequired = true;
+    await this.api("/browser/logout", {});
+    this.logoutRequired = false;
+  }
+  async checkWallet(account, epoch) {
     if (!this.wallet?.request) return;
     const addresses = await this.wallet.request({ method: "eth_accounts" });
-    if (!addresses.length) return;
+    this.checkAuth(epoch);
     const chain = await this.wallet.request({ method: "eth_chainId" });
+    this.checkAuth(epoch);
     if (
-      addresses[0].toLowerCase() !== account.address.toLowerCase() ||
+      addresses[0]?.toLowerCase() !== account.address.toLowerCase() ||
       Number(BigInt(chain)) !== account.chainId
-    ) {
-      await this.api("/browser/logout", {});
+    )
       throw Error("DENIED");
-    }
   }
-  async walletChanged() {
-    if (!this.state.account) return;
-    this.hide();
-    this.set({ account: null, devices: [], deviceCursor: null });
-    try {
-      await this.api("/browser/logout", {});
-    } catch {
-      this.set({
-        error: "Wallet changed. Refresh your session before continuing.",
-      });
-    }
+  walletChanged() {
+    return this.logout();
   }
   async refresh() {
-    this.hide();
-    const epoch = this.epoch;
+    const epoch = this.invalidateSession();
     return this.act(async () => {
       try {
-        const account = await this.api("/browser/session", {});
-        await this.checkWallet(account);
-        if (epoch === this.epoch)
-          this.set({
-            account,
-            devices: [],
-            deviceCursor: null,
-            statuses: [],
-            deviceId: null,
-            statusCursor: null,
-          });
+        if (this.logoutRequired) await this.clearServerSession();
+        this.checkAuth(epoch);
+        const raw = await this.api("/browser/session", {});
+        this.checkAuth(epoch);
+        const account = this.sessionAccount(raw);
+        await this.checkWallet(account, epoch);
+        this.checkAuth(epoch);
+        this.set({ account, sessionScope: crypto.randomUUID() });
       } catch (e) {
-        if (e?.message !== "DENIED") throw e;
-        this.set({ account: null, devices: [] });
+        // Sign-out owns cleanup if requested; otherwise invalidate a mismatched
+        // or expired server identity before any subsequent attempt can adopt it.
+        if (e?.message === "DENIED" && !this.signingOut) {
+          await this.clearServerSession();
+          return;
+        }
+        throw e;
       }
-    });
+    }, true);
   }
   async login() {
+    if (this.state.busy) return;
+    const epoch = this.invalidateSession();
     return this.act(async () => {
-      this.hide();
-      this.set({ account: null, devices: [], deviceCursor: null });
-      if (!this.wallet?.request) throw Error("WALLET_REQUIRED");
-      const [address] = await this.wallet.request({
-        method: "eth_requestAccounts",
-      });
-      const chain = await this.wallet.request({ method: "eth_chainId" });
-      if (Number(BigInt(chain)) !== this.settings.chainId)
-        throw Error("CHAIN_MISMATCH");
-      const challenge = await this.api("/browser/login/challenge", { address });
-      const hex =
-        "0x" +
-        Array.from(new TextEncoder().encode(challenge.message), (x) =>
-          x.toString(16).padStart(2, "0"),
-        ).join("");
-      const signature = await this.wallet.request({
-        method: "personal_sign",
-        params: [hex, address],
-      });
-      const [current] = await this.wallet.request({ method: "eth_accounts" });
-      const currentChain = await this.wallet.request({ method: "eth_chainId" });
-      if (
-        current?.toLowerCase() !== address.toLowerCase() ||
-        currentChain !== chain
-      )
-        throw Error("DENIED");
-      await this.api("/browser/login/verify", {
-        message: challenge.message,
-        signature,
-      });
-      const account = await this.api("/browser/session", {});
-      if (
-        account.address.toLowerCase() !== address.toLowerCase() ||
-        account.chainId !== this.settings.chainId
-      )
-        throw Error("DENIED");
-      await this.checkWallet(account);
-      this.set({
-        account,
-        notice: "Signed in. Review a pairing request or load your devices.",
-      });
-    });
+      let verificationStarted = false;
+      try {
+        if (this.logoutRequired) await this.clearServerSession();
+        this.checkAuth(epoch);
+        if (!this.wallet?.request) throw Error("WALLET_REQUIRED");
+        const [address] = await this.wallet.request({
+          method: "eth_requestAccounts",
+        });
+        this.checkAuth(epoch);
+        if (!/^0x[0-9a-f]{40}$/i.test(address ?? "")) throw Error("DENIED");
+        const chain = await this.wallet.request({ method: "eth_chainId" });
+        this.checkAuth(epoch);
+        if (Number(BigInt(chain)) !== this.settings.chainId)
+          throw Error("CHAIN_MISMATCH");
+        const challenge = await this.api("/browser/login/challenge", {
+          address,
+        });
+        this.checkAuth(epoch);
+        const hex =
+          "0x" +
+          Array.from(new TextEncoder().encode(challenge.message), (x) =>
+            x.toString(16).padStart(2, "0"),
+          ).join("");
+        const signature = await this.wallet.request({
+          method: "personal_sign",
+          params: [hex, address],
+        });
+        this.checkAuth(epoch);
+        await this.checkWallet(
+          { address, chainId: this.settings.chainId },
+          epoch,
+        );
+        this.checkAuth(epoch);
+        verificationStarted = true;
+        await this.api("/browser/login/verify", {
+          message: challenge.message,
+          signature,
+        });
+        this.checkAuth(epoch);
+        const raw = await this.api("/browser/session", {});
+        this.checkAuth(epoch);
+        const account = this.sessionAccount(raw);
+        if (account.address.toLowerCase() !== address.toLowerCase())
+          throw Error("DENIED");
+        await this.checkWallet(account, epoch);
+        this.checkAuth(epoch);
+        this.set({
+          account,
+          sessionScope: crypto.randomUUID(),
+          notice: "Signed in. Review a pairing request or load your devices.",
+        });
+      } catch (e) {
+        if (verificationStarted && !this.signingOut)
+          await this.clearServerSession();
+        throw e;
+      }
+    }, true);
   }
-  async logout() {
-    return this.act(async () => {
-      this.hide();
-      this.set({ account: null, devices: [], deviceCursor: null });
-      await this.api("/browser/logout", {});
+  logout() {
+    this.invalidateSession();
+    this.logoutRequired = true;
+    if (this.signingOut) return this.signingOut;
+    const active = this.authAction;
+    // Serialize cookie cleanup after any outstanding verification response. Keep
+    // new actions blocked until it settles, including repeated wallet changes.
+    const pending = Promise.resolve().then(async () => {
+      await active;
+      try {
+        await this.clearServerSession();
+      } catch {
+        this.set({
+          error:
+            "Local access is cleared, but server sign-out could not be confirmed. Refresh or sign in to retry cleanup.",
+        });
+      } finally {
+        this.signingOut = null;
+        this.set({ busy: !!this.activeAction });
+      }
     });
+    this.signingOut = pending;
+    this.set({ busy: true });
+    return pending;
   }
   async approve(details, confirmed) {
     if (!confirmed || !this.state.account) return;

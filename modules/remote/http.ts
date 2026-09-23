@@ -229,8 +229,14 @@ export function createRemoteApp(
   });
   app.post("/browser/logout", async (req, res) => {
     parse(z.strictObject({}), req.body);
-    await sessions.logout(cookie(req, sessionCookie));
+    // Clearing an already absent session is successful too. Still reject
+    // malformed/ambiguous supplied credentials instead of selecting one.
+    const supplied = (req.headers.cookie ?? "")
+      .split(";")
+      .some((part) => part.trim().startsWith(sessionCookie + "="));
+    if (supplied) await sessions.logout(cookie(req, sessionCookie));
     res.clearCookie(sessionCookie, cookieOptions);
+    res.clearCookie(loginCookie, cookieOptions);
     res.json({ loggedOut: true });
   });
   const browserCredential = (req: Request) => {

@@ -28,12 +28,14 @@ if (!settings || settings.origin !== location.origin) {
       ? `Verified wallet: ${s.account.address}. Session expires ${new Date(s.account.expiresAt).toLocaleString()}.`
       : "Not signed in.";
     el("login").hidden = !!s.account;
-    el("logout").hidden = !s.account;
+    el("logout").hidden = !s.account && !controller.authAction;
     el("pairing").hidden = !s.account;
     el("management").hidden = !s.account;
     el("confirmation-area").hidden = !s.confirmation;
     el("confirmation").value = s.confirmation;
     document.querySelectorAll("button").forEach((b) => (b.disabled = s.busy));
+    // Cancellation must stay available while a wallet or sign-in request waits.
+    el("logout").disabled = false;
     el("devices").replaceChildren();
     for (const d of s.devices) {
       const li = document.createElement("li"),
