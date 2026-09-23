@@ -179,10 +179,13 @@ try {
       () => binding,
       managedEntries,
     );
-  const manager = lifecycle(store);
+  const lifecycleManager = lifecycle(store);
   try {
-    const reserved = manager.begin({ expectedRevision: 0, confirmed: true });
-    const active = await manager.provision({
+    const reserved = lifecycleManager.begin({
+      expectedRevision: 0,
+      confirmed: true,
+    });
+    const active = await lifecycleManager.provision({
       keyId: reserved.keyId,
       expectedRevision: reserved.revision,
       confirmed: true,
@@ -205,7 +208,7 @@ try {
       "Packaged key lifecycle: SQLite selection, native key reopen, restore lock and native cleanup passed",
     );
   } finally {
-    await manager.clearAll({ confirmed: true });
+    await lifecycleManager.clearAll({ confirmed: true });
     for (const database of stores) database.close();
     await rm(folder, { recursive: true, force: true });
   }
