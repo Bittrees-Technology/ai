@@ -60,9 +60,9 @@ const harness = {
       recoveryKey,
     );
   },
-  async recovery() {
+  async recovery(keyId = authority!.keyId) {
     const kit = await provider.recovery({
-      keyId: authority!.keyId,
+      keyId,
       confirmed: true,
     });
     const recovered = await openBrowserKeyRecovery(kit, recoveryKey);

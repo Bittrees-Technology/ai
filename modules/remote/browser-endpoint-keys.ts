@@ -502,18 +502,29 @@ export class BrowserEndpointKeys {
       }),
     );
   }
+  /** Ciphertext-only offline export through the trusted local owner. It does not
+   * resolve a runtime key or require a still-live remote lease. */
   recovery(raw: unknown) {
     return this.exclusive(async (g) => {
       const input = z
-          .strictObject({ keyId: z.uuid(), confirmed: z.literal(true) })
-          .safeParse(raw),
-        a = this.authority();
-      if (!input.success || input.data.keyId !== a.keyId)
-        throw new BrowserKeyError("DENIED");
-      await this.load(a, g);
-      const record = await this.read(a, g);
-      if (!record.recovery) throw new BrowserKeyError("CONFLICT");
-      return browserKeyRecoverySchema.parse(record.recovery);
+        .strictObject({ keyId: z.uuid(), confirmed: z.literal(true) })
+        .safeParse(raw);
+      if (!input.success) throw new BrowserKeyError("DENIED");
+      return this.tx<z.infer<typeof browserKeyRecoverySchema>>(
+        null,
+        g,
+        "readonly",
+        (s, get, done) =>
+          get(s.get([this.scope, input.data.keyId]), (raw) => {
+            if (!raw) throw new BrowserKeyError("MISSING");
+            const record = this.record(raw, input.data.keyId);
+            if (record.state === "deleted")
+              throw new BrowserKeyError("DELETED");
+            if (!record.recovery)
+              throw new BrowserKeyError("CREATION_INCOMPLETE");
+            done(browserKeyRecoverySchema.parse(record.recovery));
+          }),
+      );
     });
   }
   invitation(raw: unknown) {

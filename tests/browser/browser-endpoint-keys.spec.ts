@@ -283,6 +283,17 @@ test("Offline deletion denies stale tabs and never deletes another owner slot", 
   await init(other, a, now);
   await other.evaluate(() => window.browserEndpointTest.resolve());
   await page.evaluate(() => window.browserEndpointTest.set(null));
+  expect(
+    (
+      await page.evaluate(
+        (id) => window.browserEndpointTest.recovery(id),
+        a.keyId,
+      )
+    ).publicKey,
+  ).toBe(
+    (await other.evaluate(() => window.browserEndpointTest.resolve()))
+      .publicKey,
+  );
   await expect(
     page.evaluate(
       (id) => window.browserEndpointTest.remove(id, false),
