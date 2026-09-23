@@ -31,7 +31,12 @@ async function fixture(
   page: Page,
   intercept?: (route: Route, path: string) => Promise<boolean>,
 ) {
-  const calls: string[] = [];
+  const calls: string[] = [],
+    errors: string[] = [];
+  page.on("pageerror", (error) => {
+    errors.push(error.message);
+    console.log("Workspace browser error:", error.message);
+  });
   await page.route("**/*", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (!(path.startsWith("/v1/") || path === "/pair" || path === "/logout"))
@@ -72,14 +77,26 @@ async function fixture(
     await route.fulfill({ json: body });
   });
   await page.goto("/?workspace");
-  await expect(
-    page.getByRole("button", { name: "Lock workspace" }),
-  ).toBeVisible();
-  await expect(
-    page
-      .locator(".queue")
-      .getByRole("button", { name: /First synthetic task/ }),
-  ).toBeVisible();
+  try {
+    await expect(
+      page.getByRole("button", { name: "Lock workspace" }),
+    ).toBeVisible();
+    await expect(
+      page
+        .locator(".queue")
+        .getByRole("button", { name: /First synthetic task/ }),
+    ).toBeVisible();
+  } catch (error) {
+    console.log(
+      "Workspace startup diagnostics:",
+      JSON.stringify({
+        calls,
+        errors,
+        visible: await page.locator("body").innerText(),
+      }),
+    );
+    throw error;
+  }
   return calls;
 }
 async function select(page: Page, name: "First" | "Second") {
