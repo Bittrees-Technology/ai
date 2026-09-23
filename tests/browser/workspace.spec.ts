@@ -42,6 +42,7 @@ async function fixture(
     if (path === "/v1/requests") body = { items: tasks };
     else if (path === "/v1/profiles")
       body = { items: [{ id: "test", model: "synthetic:local" }] };
+    else if (path === "/v1/imports") body = { items: [] };
     else if (path === "/v1/memories") body = { items: [] };
     else if (path === "/v1/device")
       body = {
@@ -302,4 +303,48 @@ test("confirmed deletion discards delayed reads and remounts controls with a usa
       .getByRole("button", { name: /First synthetic task/ }),
   ).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("a delayed poll cannot replace a newer task snapshot after an action", async ({
+  page,
+}) => {
+  let held: Route | undefined,
+    reads = 0;
+  await fixture(page, async (route, path) => {
+    if (path !== "/v1/requests" || route.request().method() !== "GET")
+      return false;
+    reads++;
+    if (reads === 2) {
+      held = route;
+      return true;
+    }
+    if (reads > 2) {
+      await route.fulfill({ json: { items: [tasks[1]] } });
+      return true;
+    }
+    return false;
+  });
+  await expect.poll(() => !!held).toBe(true);
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Use by default", exact: true })
+    .click();
+  await expect.poll(() => reads).toBeGreaterThan(2);
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(
+    page
+      .locator(".queue")
+      .getByRole("button", { name: /First synthetic task/ }),
+  ).toHaveCount(0);
+  await deliver(page, held!, { items: tasks });
+  await expect(
+    page
+      .locator(".queue")
+      .getByRole("button", { name: /First synthetic task/ }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .locator(".queue")
+      .getByRole("button", { name: /Second synthetic task/ }),
+  ).toBeVisible();
 });
