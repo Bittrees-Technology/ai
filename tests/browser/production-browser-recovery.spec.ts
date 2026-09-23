@@ -198,7 +198,12 @@ test("logout during key identity verification destroys the mounted view and prev
   await signedOut(page);
   await login(page);
   await recovery(page);
-  await refreshKeys(page);
+  await keys(page)
+    .getByRole("button", { name: "Refresh keys", exact: true })
+    .click();
+  await expect(keys(page).getByRole("status")).toContainText(
+    "Register this browser again",
+  );
   await expect(
     keys(page).getByText("No browser keys saved.", { exact: true }),
   ).toBeVisible();

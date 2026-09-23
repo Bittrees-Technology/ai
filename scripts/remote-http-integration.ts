@@ -157,6 +157,9 @@ export async function checkRemoteHttp(pool: Pool) {
       1,
     );
     assert.equal((await call("/app.js", {}, {}, server, "GET")).status, 200);
+    const icon = await call("/favicon.svg", {}, {}, server, "GET");
+    assert.equal(icon.status, 200);
+    assert.match(String(icon.headers["content-type"]), /image\/svg\+xml/);
     const stylesheet = String(page.body).match(
       /href="(\/assets\/remote-[^"]+\.css)"/,
     )?.[1];

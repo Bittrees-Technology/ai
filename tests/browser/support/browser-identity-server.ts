@@ -160,6 +160,7 @@ async function startIdentityServer() {
           [
             "/remote-panel",
             "/app.js",
+            "/favicon.svg",
             "/controller.js",
             "/style.css",
             "/settings.json",

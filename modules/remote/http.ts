@@ -135,6 +135,7 @@ export function createRemoteApp(
       const files: Record<string, string> = {
         "/": "index.html",
         "/app.js": "app.js",
+        "/favicon.svg": "favicon.svg",
       };
       const file = Object.hasOwn(files, req.path)
         ? files[req.path]
@@ -146,7 +147,7 @@ export function createRemoteApp(
       if (file) {
         res.set(
           "Content-Security-Policy",
-          "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+          "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         );
         return res.sendFile(file, {
           root: resolve(config.assets),
