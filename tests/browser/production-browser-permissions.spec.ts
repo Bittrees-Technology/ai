@@ -105,6 +105,29 @@ async function preview(p: Page, engine: string, state: string) {
         })),
         { message: `${engine} ${name} ${state} must fit the viewport` },
       ).toEqual({ overflow: 0, offenders: [] });
+    } catch (e) {
+      console.error("Permission layout diagnostics", await p.evaluate(() => {
+        const x = scrollX, y = scrollY;
+        scrollTo(100000, y);
+        const maxScrollX = scrollX;
+        scrollTo(x, y);
+        const measure = (n: Element) => ({
+          tag: n.tagName, id: n.id, className: n.className,
+          client: n.clientWidth, scroll: n.scrollWidth,
+          left: n.getBoundingClientRect().left,
+          right: n.getBoundingClientRect().right,
+          overflowX: getComputedStyle(n).overflowX,
+          text: n.textContent?.slice(0, 140),
+        });
+        return {
+          innerWidth, maxScrollX, visualWidth: visualViewport?.width,
+          root: measure(document.documentElement), body: measure(document.body),
+          overflowing: [...document.querySelectorAll("body *")]
+            .filter((n) => n.scrollWidth > n.clientWidth)
+            .map(measure),
+        };
+      }));
+      throw e;
     } finally {
       await panel(p).screenshot({
         path: `test-results/browser-permission-controls-${engine}-${name}-${state}.png`,
