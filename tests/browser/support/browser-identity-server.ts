@@ -22,6 +22,8 @@ async function startIdentityServer() {
     cert: Buffer,
     holdPath = "",
     dropPath = "",
+    rejectPath = "",
+    rejectSkip = 0,
     offline = false,
     heldIdentity = false,
     releaseIdentity: (() => void) | undefined;
@@ -117,6 +119,13 @@ async function startIdentityServer() {
         ) {
           events.push(url.pathname);
           if (offline) {
+            res
+              .writeHead(503, { "content-type": "application/json" })
+              .end('{"error":"UNAVAILABLE"}');
+            return;
+          }
+          if (rejectPath === url.pathname && rejectSkip-- <= 0) {
+            rejectPath = "";
             res
               .writeHead(503, { "content-type": "application/json" })
               .end('{"error":"UNAVAILABLE"}');
@@ -229,6 +238,8 @@ async function startIdentityServer() {
         releaseIdentity?.();
         holdPath = "";
         dropPath = "";
+        rejectPath = "";
+        rejectSkip = 0;
         heldIdentity = false;
         releaseIdentity = undefined;
         offline = false;
@@ -248,6 +259,10 @@ async function startIdentityServer() {
       },
       drop(path: string) {
         dropPath = path;
+      },
+      reject(path: string, skip = 0) {
+        rejectPath = path;
+        rejectSkip = skip;
       },
       close,
     };

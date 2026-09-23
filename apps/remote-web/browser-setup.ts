@@ -5,6 +5,7 @@ import type {
   browserRegistrationSchema,
 } from "../../modules/remote/browser-device-contracts.js";
 import { mountBrowserKeys } from "./browser-keys.js";
+import { mountBrowserPeers } from "./browser-peers.js";
 type Inspection = z.infer<typeof browserDeviceInspectionSchema>;
 type Registration = z.infer<typeof browserRegistrationSchema>;
 type Review = {
@@ -108,6 +109,14 @@ export function mountBrowserSetup(
     () => host.keyContext(),
     now,
   );
+  const peerRoot = el("div");
+  root.append(peerRoot);
+  const peerView = mountBrowserPeers(peerRoot, host, now, monotonic, () => {
+    // One host owns all three views. A peer action closes the other reviews
+    // synchronously, before it captures the host cancellation version.
+    reset("Registration review closed while reviewing device identities.");
+    keyView.invalidate();
+  });
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;
@@ -178,6 +187,7 @@ export function mountBrowserSetup(
     reset("Account or access changed. Refresh registration to continue.");
     clearSnapshot();
     keyView.invalidate();
+    peerView.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -400,6 +410,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      peerView.destroy();
+      peerRoot.remove();
       keyView.destroy();
       host.close();
       keyRoot.remove();

@@ -337,3 +337,12 @@ jobs:
           path: test-results/production-recovery-*.png
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain browser device identity controls previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-peer-controls-ui-preview
+          path: test-results/browser-peer-controls-*.png
+          if-no-files-found: error
+          retention-days: 7
