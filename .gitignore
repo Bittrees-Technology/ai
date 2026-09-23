@@ -22,3 +22,6 @@ tests/browser/fixture/public/legacy-keys.js
 
 .legacy-browser-lifecycle/
 tests/browser/fixture/public/legacy-lifecycle.js
+
+.legacy-browser-private/
+tests/browser/fixture/public/legacy-private/

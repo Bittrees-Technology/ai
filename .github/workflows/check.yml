@@ -136,7 +136,7 @@ jobs:
 
   browser-private-protocol:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
@@ -160,8 +160,10 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin 84132a15d0ddf6027bc9bc8d8d9dbf4217fa69f0
           git fetch --no-tags --depth=1 origin 99a3c5e3a408305438f718e3326363b656234c9e
+          git fetch --no-tags --depth=1 origin 3d692912ebecb14a04748b92226435ef1eb36e9f
           node scripts/prepare-legacy-browser-keys.mjs
           node scripts/prepare-legacy-browser-lifecycle.mjs
+          node scripts/prepare-legacy-browser-private.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote

@@ -1,3 +1,4 @@
+import { openBrowserPrivateDatabase } from "./browser-outbox-migration.js";
 import { z } from "zod";
 import {
   privateBindingSchema,
@@ -15,6 +16,24 @@ import {
   privateResultPayloadSchema,
 } from "./private-task-contracts.js";
 
+import {
+  browserDeliveryContextSchema,
+  browserOutboxMetaSchema as metaSchema,
+  browserOutboxEntrySchema as entrySchema,
+  type BrowserDeliveryContext,
+  type BrowserOutboxEntry as Entry,
+  type BrowserOutboxMeta as Meta,
+  BrowserOutboxError,
+  browserPrivateIdentity,
+  browserPrivateDigest as digest,
+  browserPrivateChannel,
+  reserveBrowserSequence,
+} from "./browser-outbox-state.js";
+export {
+  browserDeliveryContextSchema,
+  BrowserOutboxError,
+} from "./browser-outbox-state.js";
+export type { BrowserDeliveryContext } from "./browser-outbox-state.js";
 /** Supplied by verified client key/peer state, never by a response or stored row. */
 export type BrowserReceiptAuthority = {
   context: BrowserDeliveryContext;
@@ -22,104 +41,11 @@ export type BrowserReceiptAuthority = {
   senderPublicKey: CryptoKey;
   resultsEnabled?: boolean;
 };
-const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  hex = z.string().regex(/^[a-f0-9]{64}$/);
-export const browserDeliveryContextSchema = z.strictObject({
-  binding: privateBindingSchema,
-  senderKeyEpoch: positive,
-  peerId: z.uuid(),
-  peerKeyEpoch: positive,
-  peerRevision: positive,
-  peerFingerprint: hex,
-  permissionRevision: positive,
-  sendingEnabled: z.literal(true),
-});
-export type BrowserDeliveryContext = z.infer<
-  typeof browserDeliveryContextSchema
->;
-const metaSchema = z.strictObject({
-  scope: hex,
-  deviceHash: hex,
-  revision: positive,
-  locked: z.boolean(),
-});
-const entrySchema = z
-  .strictObject({
-    id: z.uuid(),
-    scope: hex,
-    revision: positive,
-    context: browserDeliveryContextSchema,
-    header: privateHeaderSchema,
-    state: z.enum(["reserved", "pending", "stopped", "accepted"]),
-    envelope: privateEnvelopeSchema.nullable(),
-    receiptEnvelope: privateEnvelopeSchema.nullable().default(null),
-    receiptHash: hex.nullable().default(null),
-    resultEnvelope: privateEnvelopeSchema.nullable().default(null),
-    resultHash: hex.nullable().default(null),
-    resultReceivedAt: positive.nullable().default(null),
-    attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  })
-  .refine(
-    (e) =>
-      (e.state === "accepted") === !!e.receiptHash &&
-      !!e.receiptHash === (!!e.receiptEnvelope || !!e.resultEnvelope) &&
-      !!e.resultEnvelope === !!e.resultHash &&
-      !!e.resultEnvelope === !!e.resultReceivedAt &&
-      [e.receiptEnvelope, e.resultEnvelope].every(
-        (response) =>
-          !response ||
-          (!!e.envelope &&
-            response.header.ownerId === e.header.ownerId &&
-            response.header.operationId === e.header.operationId &&
-            response.header.senderId === e.header.recipientId &&
-            response.header.recipientId === e.header.senderId &&
-            response.header.senderKeyEpoch === e.header.recipientKeyEpoch &&
-            response.header.recipientKeyEpoch === e.header.senderKeyEpoch),
-      ) &&
-      (!e.resultEnvelope ||
-        (e.resultReceivedAt! < e.resultEnvelope.header.expiresAt &&
-          e.resultReceivedAt! >= e.resultEnvelope.header.issuedAt - 30000)) &&
-      e.id === e.header.operationId &&
-      e.header.ownerId === e.context.binding.ownerId &&
-      e.header.senderId === e.context.binding.deviceId &&
-      e.header.recipientId === e.context.peerId &&
-      e.header.senderKeyEpoch === e.context.senderKeyEpoch &&
-      e.header.recipientKeyEpoch === e.context.peerKeyEpoch &&
-      e.header.senderId !== e.header.recipientId &&
-      (e.state !== "pending" || !!e.envelope) &&
-      (e.state !== "reserved" || !e.envelope) &&
-      (!e.envelope ||
-        JSON.stringify(e.header) === JSON.stringify(e.envelope.header)),
-  );
-type Entry = z.infer<typeof entrySchema>;
-type Meta = z.infer<typeof metaSchema>;
+const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 type Identity = { binding: PrivateBinding; scope: string; deviceHash: string };
-export class BrowserOutboxError extends Error {
-  constructor(
-    readonly code:
-      | "DENIED"
-      | "CONFLICT"
-      | "CAPACITY"
-      | "SETUP_REQUIRED"
-      | "STORAGE_UNAVAILABLE",
-  ) {
-    super(code);
-  }
-}
-const dbName = "org.bittrees.ai.private-outbox",
-  stores = ["meta", "entries", "channels"];
+const stores = ["meta", "entries", "channels"];
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
-const digest = async (value: unknown) =>
-  Array.from(
-    new Uint8Array(
-      await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(JSON.stringify(value)),
-      ),
-    ),
-    (b) => b.toString(16).padStart(2, "0"),
-  ).join("");
 function wire(raw: unknown): PrivateEnvelope {
   const e = privateEnvelopeSchema.parse(raw);
   for (const [s, min, max] of [
@@ -175,7 +101,7 @@ export class BrowserPrivateOutbox {
       this.closed = true;
     };
   }
-  static open(
+  static async open(
     current: () => PrivateBinding | null,
     permission: (peerId: string) => BrowserDeliveryContext | null,
     freshRegistration: () => PrivateBinding | null = () => null,
@@ -183,59 +109,16 @@ export class BrowserPrivateOutbox {
     receiptAuthority: (peerId: string) => BrowserReceiptAuthority | null = () =>
       null,
   ): Promise<BrowserPrivateOutbox> {
-    return new Promise((resolve, reject) => {
-      let ended = false;
-      const fail = () => {
-        if (!ended) {
-          ended = true;
-          clearTimeout(timer);
-          reject(new BrowserOutboxError("STORAGE_UNAVAILABLE"));
-        }
-      };
-      const timer = setTimeout(fail, 10000);
-      let request: IDBOpenDBRequest;
-      try {
-        request = indexedDB.open(dbName, 1);
-      } catch {
-        fail();
-        return;
-      }
-      request.onblocked = fail;
-      request.onerror = fail;
-      request.onupgradeneeded = () => {
-        if (ended) {
-          request.transaction?.abort();
-          return;
-        }
-        const db = request.result;
-        db.createObjectStore("meta", { keyPath: "scope" });
-        const entries = db.createObjectStore("entries", { keyPath: "id" });
-        entries.createIndex("scope", "scope");
-        const channels = db.createObjectStore("channels", {
-          keyPath: ["scope", "channel"],
-        });
-        channels.createIndex("scope", "scope");
-      };
-      request.onsuccess = () => {
-        if (ended) {
-          request.result.close();
-          return;
-        }
-        ended = true;
-        clearTimeout(timer);
-        resolve(
-          new BrowserPrivateOutbox(
-            request.result,
-            current,
-            permission,
-            freshRegistration,
-            now,
-            receiptAuthority,
-          ),
-        );
-      };
-    });
+    return new BrowserPrivateOutbox(
+      await openBrowserPrivateDatabase(),
+      current,
+      permission,
+      freshRegistration,
+      now,
+      receiptAuthority,
+    );
   }
+
   close() {
     this.closed = true;
     this.db.close();
@@ -248,10 +131,7 @@ export class BrowserPrivateOutbox {
   }
   private async identity() {
     const binding = this.binding();
-    const [scope, deviceHash] = await Promise.all([
-      digest(["browser-owner:v1", binding.ownerId]),
-      digest(["browser-device:v1", binding.ownerId, binding.deviceId]),
-    ]);
+    const { scope, deviceHash } = await browserPrivateIdentity(binding);
     if (!same(binding, this.binding())) throw new BrowserOutboxError("DENIED");
     return { binding, scope, deviceHash };
   }
@@ -463,14 +343,7 @@ export class BrowserPrivateOutbox {
           .parse(raw),
         identity = await this.identity(),
         context = this.authority(input.peerId);
-      const channel = await digest([
-        "browser-channel:v1",
-        identity.scope,
-        identity.deviceHash,
-        context.senderKeyEpoch,
-        context.peerId,
-        context.peerKeyEpoch,
-      ]);
+      const channel = await browserPrivateChannel(identity, context);
       return this.tx<Entry>(identity, "readwrite", (io) => {
         io.gate(() => {
           if (!same(context, this.authority(input.peerId)))
@@ -482,25 +355,11 @@ export class BrowserPrivateOutbox {
             io.store("entries").index("scope").count(identity.scope),
             (count) => {
               if (count >= 256) throw new BrowserOutboxError("CAPACITY");
-              io.request(
-                io.store("channels").get([identity.scope, channel]),
-                (raw) => {
-                  const previous =
-                    raw === undefined
-                      ? { scope: identity.scope, channel, next: 1 }
-                      : z
-                          .strictObject({
-                            scope: hex,
-                            channel: hex,
-                            next: positive,
-                          })
-                          .parse(raw);
-                  if (
-                    previous.scope !== identity.scope ||
-                    previous.channel !== channel ||
-                    previous.next >= Number.MAX_SAFE_INTEGER
-                  )
-                    throw new BrowserOutboxError("CAPACITY");
+              reserveBrowserSequence(
+                io,
+                identity.scope,
+                channel,
+                (sequence) => {
                   const issuedAt = this.now(),
                     header = privateHeaderSchema.parse({
                       version: 1,
@@ -512,7 +371,7 @@ export class BrowserPrivateOutbox {
                       recipientKeyEpoch: context.peerKeyEpoch,
                       messageId: crypto.randomUUID(),
                       operationId: crypto.randomUUID(),
-                      sequence: previous.next,
+                      sequence,
                       issuedAt,
                       expiresAt: Math.min(
                         issuedAt + 86400000,
@@ -531,9 +390,7 @@ export class BrowserPrivateOutbox {
                     envelope: null,
                     attempts: 0,
                   });
-                  previous.next++;
                   this.bump(meta);
-                  io.store("channels").put(previous);
                   io.store("entries").add(entry);
                   io.store("meta").put(meta);
                   io.done(entry);
@@ -932,12 +789,12 @@ export class BrowserPrivateOutbox {
               },
             );
           };
-          remove("entries", () =>
-            remove("channels", () => {
-              io.store("meta").put(meta);
-              io.done(meta);
-            }),
-          );
+          // Counters are shared with possession checks; keep the minimal replay
+          // fence when deleting task ciphertext. A new identity is still required.
+          remove("entries", () => {
+            io.store("meta").put(meta);
+            io.done(meta);
+          });
         });
       });
     });

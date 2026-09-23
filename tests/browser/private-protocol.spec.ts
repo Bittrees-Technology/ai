@@ -838,7 +838,7 @@ test("Browser expiry, connection closure and database version changes fail witho
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.private-outbox", 2);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
           r.onerror = () => reject(r.error);
           r.onblocked = () => reject(Error("blocked"));
           r.onsuccess = () => {
@@ -893,7 +893,7 @@ test("Browser storage capacity retains existing history and missing storage does
       window.privateStorageTest.close();
       await new Promise<void>((resolve, reject) => {
         const request = indexedDB.deleteDatabase(
-          "org.bittrees.ai.private-outbox",
+          "org.bittrees.ai.browser-endpoint-keys",
         );
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
@@ -1164,7 +1164,10 @@ test("Earlier browser rows remain readable while expired, deleted and other-acco
     await page.evaluate(async (id) => {
       window.privateStorageTest.close();
       await new Promise<void>((resolve, reject) => {
-        const request = indexedDB.open("org.bittrees.ai.private-outbox", 1);
+        const request = indexedDB.open(
+          "org.bittrees.ai.browser-endpoint-keys",
+          4,
+        );
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const db = request.result,
@@ -1746,7 +1749,7 @@ test("Authenticated malformed, wrong-task, wrong-key and impossible-time results
     };
     await page.evaluate(
       async ({ id, envelope }) => {
-        const r = indexedDB.open("org.bittrees.ai.private-outbox", 1);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
         await new Promise<void>((resolve, reject) => {
           r.onerror = () => reject(r.error);
           r.onsuccess = () => {

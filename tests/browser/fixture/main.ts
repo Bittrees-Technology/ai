@@ -353,3 +353,6 @@ if (new URLSearchParams(location.search).has("browser-setup"))
 
 if (new URLSearchParams(location.search).has("browser-peers"))
   void import("./browser-peers.js");
+
+if (new URLSearchParams(location.search).has("private-migration"))
+  void import("./private-migration.js");

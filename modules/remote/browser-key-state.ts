@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 3;
+export const browserKeyDatabaseVersion = 4;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -111,6 +111,27 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         r.result.createObjectStore("lifecycle", { keyPath: "scope" });
       if (event.oldVersion < 3)
         r.result.createObjectStore("peers", { keyPath: "scope" });
+      if (event.oldVersion < 4) {
+        r.result.createObjectStore("meta", { keyPath: "scope" });
+        const entries = r.result.createObjectStore("entries", {
+          keyPath: "id",
+        });
+        entries.createIndex("scope", "scope");
+        const channels = r.result.createObjectStore("channels", {
+          keyPath: ["scope", "channel"],
+        });
+        channels.createIndex("scope", "scope");
+        r.result.createObjectStore("private_migrations", { keyPath: "id" });
+        const checks = r.result.createObjectStore("peer_checks", {
+          keyPath: ["scope", "id"],
+        });
+        checks.createIndex("scope", "scope");
+        checks.createIndex(
+          "operation",
+          ["scope", "role", "senderId", "operationId"],
+          { unique: true },
+        );
+      }
     };
     r.onsuccess = () => {
       if (ended) {
