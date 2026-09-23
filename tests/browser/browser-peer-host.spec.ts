@@ -546,7 +546,6 @@ test("verified task host requires explicit initialization and carries reviewed i
 }) => {
   const p = await taskHostReady(page);
   try {
-    await expect(reviewTask(page, p)).rejects.toThrow("SETUP_REQUIRED");
     expect(
       (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
     ).toBeNull();
@@ -780,6 +779,24 @@ test("scope loss during held task verification cannot restore a consumed content
     );
   } finally {
     identityServer.release();
+    p.mac.close();
+  }
+});
+
+test("task review before initialization fails closed and cannot reuse fresh registration after that failure", async ({
+  page,
+}) => {
+  const p = await taskHostReady(page);
+  try {
+    await expect(reviewTask(page, p)).rejects.toThrow("SETUP_REQUIRED");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toBeNull();
+    await expect(initializeTasks(page, p)).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toBeNull();
+  } finally {
     p.mac.close();
   }
 });

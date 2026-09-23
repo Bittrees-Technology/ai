@@ -623,7 +623,7 @@ test("Future database version change closes peer handles and refuses old clients
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
         r.onsuccess = () => {
           r.result.close();
           resolve();
