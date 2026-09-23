@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Bittrees-Technology/news
-          ref: 41d7f2c9849d4d09e5b3fd56255154ccee465c24
+          ref: ff0c47f4d66e56ba3ea457350b8bfeff7f7ac537
           path: .integration/news
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -66,7 +66,7 @@ jobs:
           DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/autonote_test
           AUTONOTE_REPO: .integration/autonote
           CRM_REPO: .integration/crm
-      - name: Actual News read-only companion acceptance
+      - name: Actual News read and reviewed curation acceptance
         run: npx tsx scripts/news-integration-check.ts
         env:
           NEWS_MCP_TEST_DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/autonote_test
@@ -265,5 +265,13 @@ jobs:
         with:
           name: news-connection-ui-preview
           path: test-results/news-connection-*.png
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain reviewed News curation previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-curation-ui-preview
+          path: test-results/news-curation-*.png
           if-no-files-found: error
           retention-days: 7

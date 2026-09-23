@@ -530,6 +530,16 @@ export function localApi({
       z.strictObject({}).parse(req.body);
       res.json(await news.read());
     });
+    app.post("/v1/connections/news/preview", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await news.preview());
+    });
+    app.post("/v1/connections/news/curation/review", async (req, res) =>
+      res.json(await news.reviewEdit(req.body)),
+    );
+    app.post("/v1/connections/news/curation/confirm", async (req, res) =>
+      res.json(await news.confirmEdit(req.body)),
+    );
     app.post("/v1/connections/news/forget", async (req, res) =>
       res.json(await news.forget(req.body)),
     );

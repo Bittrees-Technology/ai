@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { AsyncEntry } from "@napi-rs/keyring";
 import { z } from "zod";
 import { ConnectorError, type ConnectorSecret } from "./crm.js";
@@ -52,13 +52,79 @@ const article = z.object({
   published_at: z.iso.datetime(),
 });
 export type NewsArticle = z.infer<typeof article>;
+const previewArticle = article.extend({
+  user_edited: z.boolean().optional(),
+  original_title: z.string().max(2000).optional(),
+});
+const sourcePreview = z.object({
+  name: z.string().max(100),
+  draft_revision: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER - 1),
+  draft: z
+    .object({
+      front: z
+        .array(previewArticle)
+        .max(100)
+        .refine(
+          (items) => new Set(items.map((i) => i.id)).size === items.length,
+        ),
+      feeds: z.array(z.unknown()).max(100),
+    })
+    .nullable(),
+});
+export type NewsPreview = {
+  name: string;
+  revision: number;
+  front: z.infer<typeof previewArticle>[];
+  feedCount: number;
+  exists: boolean;
+  checkedAt: string;
+};
+const editInput = z.strictObject({
+  revision: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER - 1),
+  itemId: z.string().regex(/^[a-f0-9]{64}$/),
+  title: z.string().trim().min(1).max(250),
+  summary: z.string().trim().max(2000),
+});
+export type NewsEditInput = z.infer<typeof editInput>;
+export type NewsEditReview = {
+  id: string;
+  expiresAt: string;
+  revision: number;
+  name: string;
+  before: z.infer<typeof previewArticle>;
+  after: NewsEditInput;
+  feedCount: number;
+};
+const previewFingerprint = (preview: NewsPreview) =>
+  createHash("sha256")
+    .update(JSON.stringify({ ...preview, checkedAt: undefined }))
+    .digest("hex");
+
 export function newsKeychainEntry(profile: string): ConnectorSecret {
   if (process.platform !== "darwin" || !/^[A-Za-z0-9_-]{1,80}$/.test(profile))
     throw Error("News credentials require a valid macOS profile");
   return new AsyncEntry("org.bittrees.ai.connector.news", profile);
 }
-/** Fixed News read methods only. Source text and advertised tools never choose a call. */
+/** Fixed News methods only. Curation requires an exact, expiring, explicitly confirmed review. */
 export class NewsConnector {
+  private editReview?: {
+    review: NewsEditReview;
+    fingerprint: string;
+    saved: string;
+    timer: ReturnType<typeof setTimeout>;
+  };
+  private clearEditReview() {
+    if (this.editReview) clearTimeout(this.editReview.timer);
+    this.editReview = undefined;
+  }
   private active?: { kind: "read" | "write"; abort: AbortController };
   private pending?: {
     id: string;
@@ -120,6 +186,7 @@ export class NewsConnector {
     return {
       manageUrl,
       mode: "read_only" as const,
+      curation: "per_action_review" as const,
       connection: value
         ? {
             ...value.connection,
@@ -320,6 +387,7 @@ export class NewsConnector {
     if (this.active?.kind === "write")
       throw new ConnectorError("CONNECTION_BUSY");
     this.clearPending();
+    this.clearEditReview();
   }
   async read() {
     return this.operation("read", async (signal) => {
@@ -370,12 +438,187 @@ export class NewsConnector {
       };
     });
   }
+  private async checkedSaved(signal: AbortSignal, curate = false) {
+    const saved = await this.saved();
+    if (!saved) throw new ConnectorError("CONNECTION_REQUIRED");
+    this.current(saved.connection);
+    if (curate && !saved.connection.scopes.includes("curate"))
+      throw new ConnectorError("CURATION_REQUIRED");
+    await this.handshake(saved.token, signal);
+    await this.verifySaved(saved, signal);
+    return saved;
+  }
+  private async verifySaved(
+    saved: z.infer<typeof savedSchema>,
+    signal: AbortSignal,
+  ) {
+    const current = await this.metadata(saved.token, signal);
+    if (
+      JSON.stringify(current) !== JSON.stringify(saved.connection) ||
+      JSON.stringify(await this.saved()) !== JSON.stringify(saved)
+    )
+      throw new ConnectorError("SOURCE_CONFLICT");
+    this.current(saved.connection);
+    signal.throwIfAborted();
+  }
+  private parsePreview(result: any): NewsPreview {
+    try {
+      const content = z
+        .array(z.strictObject({ type: z.literal("text"), text: z.string() }))
+        .length(1)
+        .parse(result.content);
+      const value = sourcePreview.parse(JSON.parse(content[0]!.text));
+      return {
+        name: value.name,
+        revision: value.draft_revision,
+        front: value.draft?.front ?? [],
+        feedCount: value.draft?.feeds.length ?? 0,
+        exists: !!value.draft,
+        checkedAt: new Date(this.now()).toISOString(),
+      };
+    } catch {
+      throw new ConnectorError("INVALID_SOURCE");
+    }
+  }
+  private async fetchPreview(token: string, signal: AbortSignal) {
+    return this.parsePreview(
+      await this.rpc(
+        token,
+        "tools/call",
+        { name: "get_preview", arguments: {} },
+        signal,
+        8 * 1024 * 1024,
+      ),
+    );
+  }
+  async preview() {
+    return this.operation("read", async (signal) => {
+      this.clearEditReview();
+      const saved = await this.checkedSaved(signal),
+        value = await this.fetchPreview(saved.token, signal);
+      await this.verifySaved(saved, signal);
+      return value;
+    });
+  }
+  async reviewEdit(raw: unknown) {
+    const input = editInput.parse(raw);
+    return this.operation("read", async (signal) => {
+      this.clearEditReview();
+      const saved = await this.checkedSaved(signal, true),
+        preview = await this.fetchPreview(saved.token, signal);
+      await this.verifySaved(saved, signal);
+      const before = preview.front.find((item) => item.id === input.itemId);
+      if (!before || preview.revision !== input.revision)
+        throw new ConnectorError("SOURCE_CONFLICT");
+      if (
+        before.title === input.title &&
+        (before.summary ?? before.excerpt) === input.summary
+      )
+        throw new ConnectorError("NO_CHANGE");
+      const id = randomUUID(),
+        expires = Math.min(
+          this.now() + 120000,
+          Date.parse(saved.connection.expiresAt),
+        );
+      const review: NewsEditReview = {
+        id,
+        expiresAt: new Date(expires).toISOString(),
+        revision: preview.revision,
+        name: preview.name,
+        before,
+        after: input,
+        feedCount: preview.feedCount,
+      };
+      const timer = setTimeout(
+        () => {
+          if (this.editReview?.review.id === id) this.clearEditReview();
+        },
+        Math.max(1, expires - this.now()),
+      );
+      timer.unref();
+      this.editReview = {
+        review,
+        fingerprint: previewFingerprint(preview),
+        saved: JSON.stringify(saved),
+        timer,
+      };
+      return review;
+    });
+  }
+  async confirmEdit(raw: unknown) {
+    const input = z
+      .strictObject({
+        id: z.uuid(),
+        confirmed: z.literal(true),
+        curate: z.literal(true),
+      })
+      .parse(raw);
+    return this.operation("write", async (signal) => {
+      const pending = this.editReview;
+      // Consume before any await. Duplicate requests cannot invoke the write twice.
+      this.clearEditReview();
+      if (
+        !pending ||
+        pending.review.id !== input.id ||
+        Date.parse(pending.review.expiresAt) <= this.now()
+      )
+        throw new ConnectorError("REVIEW_EXPIRED");
+      const saved = await this.checkedSaved(signal, true);
+      if (JSON.stringify(saved) !== pending.saved)
+        throw new ConnectorError("SOURCE_CONFLICT");
+      const current = await this.fetchPreview(saved.token, signal);
+      if (previewFingerprint(current) !== pending.fingerprint)
+        throw new ConnectorError("SOURCE_CONFLICT");
+      await this.verifySaved(saved, signal);
+      if (Date.parse(pending.review.expiresAt) <= this.now())
+        throw new ConnectorError("REVIEW_EXPIRED");
+      try {
+        const result = this.parsePreview(
+          await this.rpc(
+            saved.token,
+            "tools/call",
+            { name: "edit_preview_item", arguments: pending.review.after },
+            signal,
+            8 * 1024 * 1024,
+          ),
+        );
+        const after = pending.review.after;
+        const expected = current.front.map((item) =>
+          item.id === after.itemId
+            ? {
+                ...item,
+                title: after.title,
+                summary: after.summary,
+                user_edited: true,
+                summary_kind: "user_edited",
+                original_title: item.original_title || item.title,
+              }
+            : item,
+        );
+        if (
+          result.revision !== current.revision + 1 ||
+          result.name !== current.name ||
+          result.feedCount !== current.feedCount ||
+          !result.exists ||
+          JSON.stringify(result.front) !==
+            JSON.stringify(expected.map((item) => previewArticle.parse(item)))
+        )
+          throw new ConnectorError("INVALID_SOURCE");
+        await this.verifySaved(saved, signal);
+        return { saved: true, published: false, preview: result };
+      } catch {
+        // Source may already have committed. Reconcile with an explicit fresh read, never retry this write.
+        throw new ConnectorError("NEWS_SAVE_UNCONFIRMED");
+      }
+    });
+  }
   async forget(raw: unknown) {
     z.strictObject({ confirmed: z.literal(true) }).parse(raw);
     return this.operation(
       "write",
       async () => {
         this.clearPending();
+        this.clearEditReview();
         await this.secret.deleteCredential();
         if (await this.secret.getSecret())
           throw new ConnectorError("INVALID_CONNECTION");

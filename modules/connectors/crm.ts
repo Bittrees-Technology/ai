@@ -103,7 +103,11 @@ export class ConnectorError extends Error {
       | "SOURCE_DENIED"
       | "SOURCE_CONFLICT"
       | "SOURCE_CAPACITY"
-      | "INVALID_SOURCE",
+      | "INVALID_SOURCE"
+      | "CURATION_REQUIRED"
+      | "NO_CHANGE"
+      | "REVIEW_EXPIRED"
+      | "NEWS_SAVE_UNCONFIRMED",
   ) {
     super(code);
   }
