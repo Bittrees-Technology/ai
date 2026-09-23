@@ -1166,7 +1166,7 @@ test("Earlier browser rows remain readable while expired, deleted and other-acco
       await new Promise<void>((resolve, reject) => {
         const request = indexedDB.open(
           "org.bittrees.ai.browser-endpoint-keys",
-          5,
+          6,
         );
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {

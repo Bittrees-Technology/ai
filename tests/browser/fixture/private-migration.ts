@@ -456,7 +456,7 @@ const fixture = {
     for (const c of legacyConnections) c.close();
   },
   inspectLegacy: () => inspect(oldName, 2),
-  inspectCommon: () => inspect(keyName, 5),
+  inspectCommon: () => inspect(keyName, 6),
   async concurrentOpen() {
     const list = await Promise.all(
       Array.from({ length: 4 }, () => openBrowserPrivateDatabase()),
