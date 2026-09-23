@@ -1,3 +1,5 @@
+import { workspaceApi } from "./workspace-api.js";
+import { TaskRuns } from "./task-runs.js";
 import { DependencyFailureNotice } from "./dependency-failure.js";
 import { RecoveryCopies } from "./recovery-copies.js";
 import { requestBackup } from "./backup-download.js";
@@ -82,8 +84,12 @@ const explanations: Record<string, string> = {
   INVALID_OUTPUT:
     "The model’s answer did not meet the required format or evidence rules. Start a fresh draft with another model or a revised request.",
 };
-const api = createLocalApi();
+const transport = createLocalApi();
 function App() {
+  const requests = useRef<ReturnType<typeof workspaceApi> | null>(null);
+  requests.current ??= workspaceApi(transport);
+  const api = requests.current.api;
+  const refreshSequence = useRef(0);
   const [paired, setPaired] = useState(false),
     [page, setPage] = useState("Tasks"),
     [error, setError] = useState(""),
@@ -92,8 +98,7 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([]),
     [memories, setMemories] = useState<Memory[]>([]),
     [profiles, setProfiles] = useState<Profile[]>([]),
-    [models, setModels] = useState<{ name: string }[]>([]),
-    [runs, setRuns] = useState<any[]>([]);
+    [models, setModels] = useState<{ name: string }[]>([]);
   const [selected, setSelected] = useState(""),
     [prompt, setPrompt] = useState(""),
     [profile, setProfile] = useState(""),
@@ -107,6 +112,7 @@ function App() {
   useEffect(
     () => () => {
       epoch.current++;
+      requests.current?.invalidate();
       if (backupUrl.current) URL.revokeObjectURL(backupUrl.current);
     },
     [],
@@ -117,8 +123,14 @@ function App() {
     body: unknown;
   } | null>(null);
   const task = tasks.find((t) => t.id === selected);
-  function clear() {
+  function resetRequests() {
     epoch.current++;
+    requests.current!.invalidate();
+    requests.current = workspaceApi(transport);
+    setBusy(false);
+  }
+  function clear() {
+    resetRequests();
     if (backupUrl.current) URL.revokeObjectURL(backupUrl.current);
     backupUrl.current = null;
     submission.current = null;
@@ -128,7 +140,9 @@ function App() {
     setPaired(false);
     setTasks([]);
     setMemories([]);
-    setRuns([]);
+    setModel("");
+    setCode("");
+    setDeleteText("");
     setPrompt("");
     setCandidate("");
     setCandidateType("fact");
@@ -137,6 +151,7 @@ function App() {
   }
   function fail(e: unknown) {
     const key = e instanceof Error ? e.message : "";
+    if (key === "WORKSPACE_CHANGED") return;
     setError(
       explanations[key] ??
         "Could not complete the request. Check that the companion is running and try again.",
@@ -144,27 +159,36 @@ function App() {
     if (key === "UNAUTHORIZED") clear();
   }
   async function refresh() {
-    const version = epoch.current;
-    const [t, m, p] = await Promise.all([
-      api("/v1/requests"),
-      api("/v1/memories"),
-      api("/v1/profiles"),
-    ]);
-    if (version !== epoch.current) return;
-    setTasks(t.items);
-    setMemories(m.items);
-    setProfiles(p.items);
-    setProfile((old) => old || p.defaultProfile?.id || p.items[0]?.id || "");
+    const version = epoch.current,
+      sequence = ++refreshSequence.current;
+    const currentApi = requests.current!.api;
+    try {
+      const [t, m, p] = await Promise.all([
+        currentApi("/v1/requests"),
+        currentApi("/v1/memories"),
+        currentApi("/v1/profiles"),
+      ]);
+      if (version !== epoch.current || sequence !== refreshSequence.current)
+        return;
+      setTasks(t.items);
+      setMemories(m.items);
+      setProfiles(p.items);
+      setProfile((old) => old || p.defaultProfile?.id || p.items[0]?.id || "");
+    } catch (error) {
+      if (version === epoch.current && sequence === refreshSequence.current)
+        throw error;
+    }
   }
   async function action(fn: () => Promise<void>) {
+    const version = epoch.current;
     setBusy(true);
     setError("");
     try {
       await fn();
     } catch (e) {
-      fail(e);
+      if (version === epoch.current) fail(e);
     } finally {
-      setBusy(false);
+      if (version === epoch.current) setBusy(false);
     }
   }
   useEffect(() => {
@@ -196,29 +220,20 @@ function App() {
   }, [paired]);
   useEffect(() => {
     let active = true;
-    if (task?.sourceBound) {
-      setRuns([]);
-      return;
-    }
-    if (selected && paired)
-      api("/v1/requests/" + selected + "/runs")
-        .then((r) => {
-          if (active) setRuns(r.items);
-        })
-        .catch(fail);
-    return () => {
-      active = false;
-    };
-  }, [selected, task?.revision, task?.sourceBound, paired]);
-  useEffect(() => {
     if (page === "Models" && paired)
       api("/v1/models")
         .then((r) => {
+          if (!active) return;
           setModels(r.items);
           setModel(r.items[0]?.name ?? "");
         })
-        .catch(fail);
-  }, [page, paired]);
+        .catch((e) => {
+          if (active) fail(e);
+        });
+    return () => {
+      active = false;
+    };
+  }, [page, paired, api]);
   const command = (command: string) =>
     action(async () => {
       await api("/v1/requests/" + task!.id + "/commands", "POST", {
@@ -323,7 +338,7 @@ function App() {
             </p>
           </section>
         ) : (
-          <>
+          <React.Fragment key={epoch.current}>
             {page === "Tasks" && (
               <div className="workspace">
                 <section className="queue">
@@ -591,35 +606,20 @@ function App() {
                           Use prompt again
                         </button>
                       )}
-                      <h3>Run history</h3>
-                      {runs.map((r) => (
-                        <div key={r.id}>
-                          <p>
-                            {r.outcome === "invalid_model_output"
-                              ? "Answer rejected"
-                              : (r.outcome ?? "Running")}{" "}
-                            · {r.model?.profile?.model ?? "Model not started"}
-                          </p>
-                          {r.outcome === "invalid_model_output" && (
-                            <p className="hint">
-                              {explanations.INVALID_OUTPUT} No draft result was
-                              saved.
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                      {!runs.length && (
-                        <p className="hint">
-                          {[
-                            "failed",
-                            "cancelled",
-                            "expired",
-                            "completed",
-                          ].includes(task.status)
-                            ? "No model run history to show here."
-                            : "Waiting to start."}
-                        </p>
-                      )}
+                      <TaskRuns
+                        key={
+                          task.id +
+                          ":" +
+                          task.revision +
+                          ":" +
+                          !!task.sourceBound
+                        }
+                        taskId={task.id}
+                        sourceBound={task.sourceBound}
+                        status={task.status}
+                        api={api}
+                        onError={fail}
+                      />
                     </>
                   ) : (
                     <div className="empty">
@@ -675,9 +675,11 @@ function App() {
                     });
                   }}
                 >
-                  <label>
-                    Installed model
+                  <label htmlFor="installed-model">
+                    <span id="installed-model-label">Installed model</span>
                     <select
+                      id="installed-model"
+                      aria-labelledby="installed-model-label"
                       value={model}
                       required
                       onChange={(e) => setModel(e.target.value)}
@@ -965,7 +967,10 @@ function App() {
                         await api("/v1/data", "DELETE", undefined, {
                           "X-Confirm-Delete": "all-local-task-data",
                         });
-                        epoch.current++;
+                        resetRequests();
+                        setTasks([]);
+                        setMemories([]);
+                        setProfiles([]);
                         setDeleteText("");
                         setSelected("");
                         setMemoryIds([]);
@@ -979,7 +984,7 @@ function App() {
                 </div>
               </section>
             )}
-          </>
+          </React.Fragment>
         )}
       </main>
     </div>
