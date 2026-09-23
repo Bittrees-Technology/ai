@@ -334,7 +334,35 @@ test("worker does not send a stale approved memory to inference after an edit du
     memory,
   );
   try {
-    const item = await memory.add(alice, candidate);
+    const source = store.create(
+      alice,
+      {
+        conversationId: "origin",
+        kind: "query",
+        prompt: "Source",
+        modelProfileId: "p",
+      },
+      "origin",
+    );
+    const seed = store.claim(alice, "seed")!;
+    const completed = store.complete(
+      alice,
+      source.id,
+      "seed",
+      seed.generation,
+      { text: "Source" },
+    );
+    const item = await memory.add(alice, {
+      ...candidate,
+      sources: [
+        {
+          app: "local",
+          tenantId: alice.tenantId,
+          resourceId: source.id,
+          revision: String(completed.revision),
+        },
+      ],
+    });
     await memory.review(alice, item.id, 1, { approve: true });
     const task = store.create(
       alice,

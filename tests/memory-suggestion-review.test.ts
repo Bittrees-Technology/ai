@@ -233,9 +233,9 @@ test("actual authenticated request, worker, review and selected save preserve mo
         index: 0,
         confirmed: true,
       }),
-      /CONFLICT/,
+      /NOT_FOUND/,
     );
-    await assert.rejects(review.load(), /CONFLICT/);
+    await assert.rejects(review.load(), /NOT_FOUND/);
     assert.equal(review.review, null);
     store.db
       .prepare("UPDATE tasks SET revision=? WHERE id=?")

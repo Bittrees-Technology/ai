@@ -1,3 +1,4 @@
+import { localTaskDependencies } from "./memory.js";
 import {
   defaultExecutionLimits,
   type ExecutionControls,
@@ -120,7 +121,19 @@ export class LocalWorker {
       }
     }, 5000);
     heartbeat.unref();
+    const checkDependencies = () => {
+      if (
+        !localTaskDependencies(
+          this.store,
+          this.owner,
+          claim.task.id,
+          this.memory,
+        )
+      )
+        throw new Error("Local memory dependencies changed");
+    };
     try {
+      checkDependencies();
       const extraction = this.store.memoryExtractions.context(
         this.owner,
         claim.task.id,
@@ -175,6 +188,7 @@ export class LocalWorker {
             : {}),
         },
       );
+      checkDependencies();
       const batched =
         source &&
         "message" in source &&
@@ -248,6 +262,7 @@ export class LocalWorker {
           )
         : null;
       checkDeadline();
+      checkDependencies();
       this.store.complete(
         this.owner,
         claim.task.id,

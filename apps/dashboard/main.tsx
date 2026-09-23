@@ -25,6 +25,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 type Task = {
   sourceBound?: boolean;
+  dependencyAccess?: "unavailable";
   sourceApp?: string;
   id: string;
   status: string;
@@ -553,6 +554,14 @@ function App() {
                           </button>
                         )}
                       </div>
+                      {task.dependencyAccess === "unavailable" && (
+                        <p role="status">
+                          A local reference used by this task is no longer
+                          available or has changed. Its content and history are
+                          hidden. Create a new task with current references to
+                          continue.
+                        </p>
+                      )}
                       {task.sourceBound && (
                         <SourceDraftDetail
                           key={task.id}
@@ -564,6 +573,7 @@ function App() {
                       )}
                       {task.status === "completed" &&
                         !task.sourceBound &&
+                        !task.dependencyAccess &&
                         (task.result?.text ||
                           task.result?.kind === "memory_candidates") && (
                           <MemorySuggestions
@@ -633,23 +643,25 @@ function App() {
                       )}
                       {["failed", "cancelled", "expired", "completed"].includes(
                         task.status,
-                      ) && (
-                        <button
-                          onClick={() => {
-                            setPrompt(task.input.prompt);
-                            setProfile(task.input.modelProfileId);
-                          }}
-                        >
-                          Use prompt again
-                        </button>
-                      )}
-                      {task.status === "completed" && (
-                        <TaskQualityReview
-                          key={task.id + ":" + task.revision}
-                          taskId={task.id}
-                          api={api}
-                        />
-                      )}
+                      ) &&
+                        !task.dependencyAccess && (
+                          <button
+                            onClick={() => {
+                              setPrompt(task.input.prompt);
+                              setProfile(task.input.modelProfileId);
+                            }}
+                          >
+                            Use prompt again
+                          </button>
+                        )}
+                      {task.status === "completed" &&
+                        !task.dependencyAccess && (
+                          <TaskQualityReview
+                            key={task.id + ":" + task.revision}
+                            taskId={task.id}
+                            api={api}
+                          />
+                        )}
                       <TaskRuns
                         key={
                           task.id +
@@ -660,6 +672,7 @@ function App() {
                         }
                         taskId={task.id}
                         sourceBound={task.sourceBound}
+                        dependencyUnavailable={!!task.dependencyAccess}
                         status={task.status}
                         api={api}
                         onError={fail}
