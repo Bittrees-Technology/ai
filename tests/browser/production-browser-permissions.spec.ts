@@ -87,7 +87,7 @@ async function preview(p: Page, engine: string, state: string) {
     ["phone", 390, 844],
   ] as const) {
     await p.setViewportSize({ width, height });
-    // WebKit can resolve viewport resizing before the responsive layout settles.
+    // Allow responsive layout to settle after resizing.
     // Keep the full-document overflow assertion and retain measured offenders
     // plus the actual panel if it still fails after the bounded layout wait.
     try {

@@ -68,7 +68,9 @@ export function mountBrowserPermissions(
       input = el("select");
     input.id = `browser-permission-${crypto.randomUUID()}`;
     label.htmlFor = input.id;
-    return { label, input };
+    const wrapper = el("div", "", "browser-permission-select");
+    wrapper.append(input);
+    return { label, input, wrapper };
   };
   const box = el("section", "", "browser-keys browser-permissions");
   box.setAttribute("aria-label", "Browser task permissions");
@@ -123,11 +125,11 @@ export function mountBrowserPermissions(
       "Complete this browser’s device check first. Your Mac separately decides whether to accept tasks, which local model to use and whether to share results.",
     ),
     peer.label,
-    peer.input,
+    peer.wrapper,
     send.label,
     results.label,
     duration.label,
-    duration.input,
+    duration.wrapper,
     el(
       "p",
       "Permission ends sooner if this browser’s registration expires. Expiry stops access; it does not delete saved task content.",

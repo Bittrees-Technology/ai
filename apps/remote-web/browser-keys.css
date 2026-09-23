@@ -196,10 +196,30 @@
   font-weight: 600;
 }
 
-/* A native WebKit select can propagate its long option's intrinsic width to
- * ancestors even when its own box fits. Keep the select label within that box;
- * the complete Mac identity is shown again in the permission review. */
-.browser-permissions select {
+/* WebKit's native select appearance propagates long option overflow despite
+ * width limits. Retain semantic select behavior with a contained label and a
+ * CSS arrow; the full Mac identity remains visible in the review. */
+.browser-permission-select {
+  position: relative;
+  min-width: 0;
+  margin-top: 8px;
+}
+.browser-permission-select select {
+  appearance: none;
+  margin-top: 0;
+  padding-right: 34px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.browser-permission-select::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
 }
