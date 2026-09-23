@@ -1,5 +1,6 @@
 /** Non-secret coordination only. Server identity checks remain authoritative. */
 const storageKey = "bittrees.browser-session.v1";
+const acknowledgmentKey = storageKey + ".ack";
 const lockName = "bittrees.browser-auth.v1";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Record = { version: 1; revision: string; cleanupRequired: boolean };
@@ -16,7 +17,9 @@ export class BrowserSessionCoordinator {
     this.storageChanged = (event) => {
       if (
         event.storageArea !== localStorage ||
-        (event.key !== storageKey && event.key !== null)
+        (event.key !== storageKey &&
+          event.key !== acknowledgmentKey &&
+          event.key !== null)
       )
         return;
       try {
@@ -42,7 +45,10 @@ export class BrowserSessionCoordinator {
           revision: crypto.randomUUID(),
           cleanupRequired: true,
         };
-        localStorage.setItem(storageKey, JSON.stringify(record));
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({ version: 1, revision: record.revision }),
+        );
         return record;
       }
       const r = JSON.parse(text);
@@ -51,18 +57,22 @@ export class BrowserSessionCoordinator {
         r.version !== 1 ||
         typeof r.revision !== "string" ||
         !uuid.test(r.revision) ||
-        typeof r.cleanupRequired !== "boolean" ||
-        Object.keys(r).length !== 3
+        Object.keys(r).length !== 2
       )
         throw Error();
-      return r;
+      const acknowledged = localStorage.getItem(acknowledgmentKey);
+      if (acknowledged !== null && !uuid.test(acknowledged)) throw Error();
+      return { ...r, cleanupRequired: acknowledged !== r.revision };
     } catch {
       throw Error("SESSION_STORAGE_REQUIRED");
     }
   }
   private write(record: Record) {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(record));
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({ version: 1, revision: record.revision }),
+      );
     } catch {
       throw Error("SESSION_STORAGE_REQUIRED");
     }
@@ -89,7 +99,14 @@ export class BrowserSessionCoordinator {
   }
   accepted(turn: SessionTurn) {
     if (!this.current(turn)) throw Error("DENIED");
-    this.write({ version: 1, revision: turn.revision, cleanupRequired: false });
+    // Never rewrite the head when acknowledging an older operation. A concurrent
+    // cancellation can replace it between reads; an old ack cannot erase that intent.
+    try {
+      localStorage.setItem(acknowledgmentKey, turn.revision);
+    } catch {
+      throw Error("SESSION_STORAGE_REQUIRED");
+    }
+    if (!this.current(turn, true)) throw Error("DENIED");
   }
   clearing(turn: SessionTurn) {
     if (!this.current(turn)) return;

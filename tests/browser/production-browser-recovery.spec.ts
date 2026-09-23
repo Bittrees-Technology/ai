@@ -217,7 +217,9 @@ test("failed logout stays pending across reload and requires cleanup before cook
   await signedOut(page);
   expect(
     await page.evaluate(
-      (k) => JSON.parse(localStorage.getItem(k)!).cleanupRequired,
+      (k) =>
+        JSON.parse(localStorage.getItem(k)!).revision !==
+        localStorage.getItem(k + ".ack"),
       marker,
     ),
   ).toBe(true);
@@ -236,7 +238,9 @@ test("failed logout stays pending across reload and requires cleanup before cook
   ).toBe(false);
   expect(
     await page.evaluate(
-      (k) => JSON.parse(localStorage.getItem(k)!).cleanupRequired,
+      (k) =>
+        JSON.parse(localStorage.getItem(k)!).revision !==
+        localStorage.getItem(k + ".ack"),
       marker,
     ),
   ).toBe(false);
@@ -388,4 +392,40 @@ test("observed session expiry removes mounted recovery without waiting for a use
   });
   await expect(page.locator("#account")).toHaveText("Not signed in.");
   await expect(reg(page)).toHaveCount(0);
+});
+
+test("a newer cancellation cannot be erased by an older login acknowledgment", async ({
+  page,
+}) => {
+  await open(page);
+  await login(page);
+  await recovery(page);
+  await page.evaluate((key) => {
+    const original = Storage.prototype.setItem;
+    let armed = true;
+    Storage.prototype.setItem = function (name, value) {
+      if (this === localStorage && name === key + ".ack" && armed) {
+        armed = false;
+        original.call(
+          this,
+          key,
+          JSON.stringify({ version: 1, revision: crypto.randomUUID() }),
+        );
+      }
+      original.call(this, name, value);
+    };
+  }, marker);
+  await page
+    .getByRole("button", { name: "Refresh session", exact: true })
+    .click();
+  await signedOut(page);
+  await expect(reg(page)).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      (k) =>
+        JSON.parse(localStorage.getItem(k)!).revision !==
+        localStorage.getItem(k + ".ack"),
+      marker,
+    ),
+  ).toBe(true);
 });
