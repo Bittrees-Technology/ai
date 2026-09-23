@@ -288,7 +288,7 @@ test("built device controls complete both directions with retained Mac keys, exa
       (await rows(page)).filter((r) => r.state === "verified"),
     ).toHaveLength(1);
     await f.mac.checks.complete({ envelope: browserAnswer, confirmed: true });
-    expect(f.mac.checks.list().find((c) => c.id === own.id)?.state).toBe(
+    expect(f.mac.checks.list().find((c) => c.id === own.id)?.value.state).toBe(
       "verified",
     );
     await refresh(page);
