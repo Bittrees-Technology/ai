@@ -1,0 +1,165 @@
+{
+  "date": "2026-09-23",
+  "baselineRevision": "8f50aa10459ceff95949bb51dc7dd16eb8a522af",
+  "baselineMemorySourceSha256": "c50392e821b34a0fa77da2b277a979cb3ba392d8409c57a5f6c6174cf3c83f82",
+  "currentMemorySourceSha256": "27e5f0ccb6a3af0e8250fbf7b561c7bffda5b3f05c58b7a0c5af96f45c7de442",
+  "evaluationScriptSha256": "35fced13e97af3b19f1babaa1ff2dca43251e56028251b966daa7a99f7805b5d",
+  "baseline": {
+    "fixture": "memory-token-coverage-and-feedback-v1",
+    "syntheticOnly": true,
+    "cases": [
+      {
+        "query": "art report",
+        "fullText": "art report",
+        "partialText": "quarterly report",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 1,
+        "topText": "quarterly report",
+        "fullFirst": false
+      },
+      {
+        "query": "red account",
+        "fullText": "red account",
+        "partialText": "credit account",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 1,
+        "topText": "credit account",
+        "fullFirst": false
+      },
+      {
+        "query": "net change",
+        "fullText": "net change",
+        "partialText": "internet change",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 1,
+        "topText": "internet change",
+        "fullFirst": false
+      },
+      {
+        "query": "2026 report",
+        "fullText": "2026 report",
+        "partialText": "12026 report",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 1,
+        "topText": "12026 report",
+        "fullFirst": false
+      },
+      {
+        "query": "cafe deadline",
+        "fullText": "caf\u00e9 deadline",
+        "partialText": "deadline only",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 0.5,
+        "actualPartialCoverage": 0.5,
+        "topText": "deadline only",
+        "fullFirst": false
+      },
+      {
+        "query": "resume approved",
+        "fullText": "r\u00e9sum\u00e9 approved",
+        "partialText": "approved only",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 0.5,
+        "actualPartialCoverage": 0.5,
+        "topText": "approved only",
+        "fullFirst": false
+      }
+    ],
+    "correctCoverageValues": 6,
+    "totalCoverageValues": 12,
+    "fullMatchFirst": 0,
+    "queries": 6,
+    "feedbackAfterEdit": 0.2,
+    "expectedFeedbackAfterEdit": 0,
+    "limits": "Six manually labeled lexical cases and one content-edit case; no semantic relevance, factual correctness, model quality or live-source acceptance."
+  },
+  "current": {
+    "fixture": "memory-token-coverage-and-feedback-v1",
+    "syntheticOnly": true,
+    "cases": [
+      {
+        "query": "art report",
+        "fullText": "art report",
+        "partialText": "quarterly report",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 0.5,
+        "topText": "art report",
+        "fullFirst": true
+      },
+      {
+        "query": "red account",
+        "fullText": "red account",
+        "partialText": "credit account",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 0.5,
+        "topText": "red account",
+        "fullFirst": true
+      },
+      {
+        "query": "net change",
+        "fullText": "net change",
+        "partialText": "internet change",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 0.5,
+        "topText": "net change",
+        "fullFirst": true
+      },
+      {
+        "query": "2026 report",
+        "fullText": "2026 report",
+        "partialText": "12026 report",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 0.5,
+        "topText": "2026 report",
+        "fullFirst": true
+      },
+      {
+        "query": "cafe deadline",
+        "fullText": "caf\u00e9 deadline",
+        "partialText": "deadline only",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 0.5,
+        "topText": "caf\u00e9 deadline",
+        "fullFirst": true
+      },
+      {
+        "query": "resume approved",
+        "fullText": "r\u00e9sum\u00e9 approved",
+        "partialText": "approved only",
+        "expectedFullCoverage": 1,
+        "expectedPartialCoverage": 0.5,
+        "actualFullCoverage": 1,
+        "actualPartialCoverage": 0.5,
+        "topText": "r\u00e9sum\u00e9 approved",
+        "fullFirst": true
+      }
+    ],
+    "correctCoverageValues": 12,
+    "totalCoverageValues": 12,
+    "fullMatchFirst": 6,
+    "queries": 6,
+    "feedbackAfterEdit": 0,
+    "expectedFeedbackAfterEdit": 0,
+    "limits": "Six manually labeled lexical cases and one content-edit case; no semantic relevance, factual correctness, model quality or live-source acceptance."
+  }
+}

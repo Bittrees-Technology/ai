@@ -950,10 +950,17 @@ export function localApi({
       const body = z
         .strictObject({
           id: z.string(),
+          revision: z.number().int().positive(),
           outcome: z.enum(["accepted", "edited", "rejected"]),
         })
         .parse(req.body);
-      await memory.feedback(owner, req.params.id, body.id, body.outcome);
+      await memory.feedback(
+        owner,
+        req.params.id,
+        body.id,
+        body.outcome,
+        body.revision,
+      );
       res.status(204).end();
     });
     app.delete("/v1/memories", (req, res) => {

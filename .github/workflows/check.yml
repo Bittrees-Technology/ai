@@ -231,3 +231,11 @@ jobs:
           path: test-results/execution-limits-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain memory ranking explanation previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-ranking-ui-preview
+          path: test-results/memory-ranking-*.png
+          if-no-files-found: error
+          retention-days: 7
