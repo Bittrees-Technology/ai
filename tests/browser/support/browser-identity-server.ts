@@ -30,8 +30,14 @@ async function startIdentityServer() {
   const sockets = new Set<Socket>();
   const events: string[] = [];
 
+  function releaseHeld() {
+    const resume = releaseIdentity;
+    releaseIdentity = undefined;
+    heldIdentity = false;
+    resume?.();
+  }
   async function close() {
-    releaseIdentity?.();
+    releaseHeld();
     for (const socket of sockets) socket.destroy();
     if (proxy) await new Promise<void>((r) => proxy.close(() => r()));
     if (server) {
@@ -94,17 +100,19 @@ async function startIdentityServer() {
       { stdio: "ignore" },
     );
     cert = await readFile(join(folder, "cert.pem"));
-    const app = createRemoteApp(pool, {
-      origin,
-      chainId: 1,
-      sessionMs: 3600000,
-      deviceMs: 7200000,
-      retentionMs: 86400000,
-      requestsPerMinute: 1000,
-      assets: fileURLToPath(
-        new URL("../../../dist/remote-web/", import.meta.url),
-      ),
-    });
+    const newApp = () =>
+      createRemoteApp(pool, {
+        origin,
+        chainId: 1,
+        sessionMs: 3600000,
+        deviceMs: 7200000,
+        retentionMs: 86400000,
+        requestsPerMinute: 1000,
+        assets: fileURLToPath(
+          new URL("../../../dist/remote-web/", import.meta.url),
+        ),
+      });
+    let app = newApp();
     server = createServer(
       { key: await readFile(join(folder, "key.pem")), cert },
       async (req, res) => {
@@ -235,7 +243,11 @@ async function startIdentityServer() {
       proxyUrl: `http://127.0.0.1:${(proxy.address() as { port: number }).port}`,
       events,
       reset() {
-        releaseIdentity?.();
+        releaseHeld();
+        // Each test gets an independent in-memory per-IP request budget. The
+        // real limiter still applies within that test, including all its tabs.
+        // Retained server authority remains in the same disposable PostgreSQL.
+        app = newApp();
         holdPath = "";
         dropPath = "";
         rejectPath = "";

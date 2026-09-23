@@ -196,6 +196,40 @@ function aad(
     ]),
   );
 }
+/** Read all rows in the caller's same transaction as a permission/task write.
+ * A historical summary or a cached validFor() result is not authority. */
+export function browserStoredCheckMatches(
+  rows: unknown[],
+  scope: string,
+  deviceHash: string,
+  local: BrowserKeyProof,
+  peer: BrowserPeerProof,
+  now: number,
+) {
+  if (rows.length > 257) throw new BrowserPeerCheckError("CAPACITY");
+  const parsed = rows.map((raw) => {
+    const m = metaSchema.safeParse(raw);
+    return m.success ? m.data : read(raw, scope);
+  });
+  const meta = parsed.find((r) => r.kind === "meta");
+  if (
+    !meta ||
+    meta.scope !== scope ||
+    meta.locked ||
+    meta.deviceHash !== deviceHash ||
+    !same(local, peer.key)
+  )
+    return false;
+  return parsed.some(
+    (e) =>
+      e.kind === "check" &&
+      e.role === "challenge" &&
+      e.state === "verified" &&
+      e.verifiedAt! <= now &&
+      same(e.local, local) &&
+      same(e.peer, peer),
+  );
+}
 /** Retained local proof records, not task permission or a network sender. Each side
  * independently challenges. No preparation key/nonce leaves the metadata API.
  * A fresh nonextractable AES key protects each immutable preparation in IndexedDB;
@@ -875,20 +909,15 @@ export class BrowserPeerChecks {
           io.request(
             io.store("peer_checks").index("scope").getAll(this.scope, 258),
             (rows) => {
-              if (rows.length > 257)
-                throw new BrowserPeerCheckError("CAPACITY");
               io.done(
-                rows
-                  .filter((r) => r.id !== metaId)
-                  .map((r) => read(r, this.scope))
-                  .some(
-                    (e) =>
-                      e.role === "challenge" &&
-                      e.state === "verified" &&
-                      e.verifiedAt! <= this.now() &&
-                      same(e.local, l) &&
-                      same(e.peer, p),
-                  ),
+                browserStoredCheckMatches(
+                  rows,
+                  this.scope,
+                  identity.deviceHash,
+                  l,
+                  p,
+                  this.now(),
+                ),
               );
             },
           );

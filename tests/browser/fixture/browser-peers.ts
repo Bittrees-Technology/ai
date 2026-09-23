@@ -1,3 +1,5 @@
+import { BrowserTaskConsent } from "../../../modules/remote/browser-task-consent.js";
+import { BrowserPrivateOutbox } from "../../../modules/remote/browser-outbox.js";
 import { BrowserPeerChecks } from "../../../modules/remote/browser-peer-checks.js";
 import { BrowserPeerEnrollment } from "../../../modules/remote/browser-peers.js";
 import {
@@ -20,6 +22,19 @@ let keys: BrowserKeyLifecycle,
   peers: BrowserPeerEnrollment,
   host: BrowserKeyHost | null = null;
 let checks: BrowserPeerChecks | undefined;
+let consents: BrowserTaskConsent | undefined;
+let sender: Awaited<ReturnType<BrowserTaskConsent["authorize"]>> | undefined;
+let previousOutbox: typeof BrowserPrivateOutbox | undefined;
+async function consentStore() {
+  return (consents ??= await BrowserTaskConsent.open(
+    owner,
+    () => binding,
+    keys,
+    peers,
+    () => now,
+    () => mono,
+  ));
+}
 async function checkStore() {
   return (checks ??= await BrowserPeerChecks.open(
     owner,
@@ -86,7 +101,11 @@ async function mount(id: string) {
 }
 const legacyUrl = "/legacy-lifecycle.js";
 const fixture = {
-  async init(o: string, b: PrivateBinding, time: number) {
+  async init(o: string, b: PrivateBinding, time: number, previous = false) {
+    sender?.outbox.close();
+    sender = undefined;
+    consents?.close();
+    consents = undefined;
     checks?.close();
     checks = undefined;
     keys?.close();
@@ -98,18 +117,32 @@ const fixture = {
     now = time;
     mono = 0;
     current = null;
-    keys = await BrowserKeyLifecycle.open(
+    const previousUrl = "/legacy-consent/index.js";
+    const providers = previous
+      ? await import(/* @vite-ignore */ previousUrl)
+      : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
+    previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
+    keys = await providers.BrowserKeyLifecycle.open(
       owner,
       () => binding,
       () => true,
       () => now,
     );
-    peers = await BrowserPeerEnrollment.open(
+    peers = await providers.BrowserPeerEnrollment.open(
       owner,
       () => current,
       () => now,
       () => mono,
     );
+    if (previous)
+      checks = await providers.BrowserPeerChecks.open(
+        owner,
+        () => binding,
+        keys,
+        peers,
+        () => now,
+        () => mono,
+      );
   },
   async activate() {
     const slot = await keys.begin({
@@ -150,6 +183,7 @@ const fixture = {
   set(b: PrivateBinding | null) {
     binding = b;
     checks?.invalidate();
+    consents?.invalidate();
     keys.invalidate();
     peers.invalidate();
     current = null;
@@ -181,6 +215,7 @@ const fixture = {
   },
   invalidate() {
     checks?.invalidate();
+    consents?.invalidate();
     peers?.invalidate();
     host?.peerAPI.invalidate();
   },
@@ -359,7 +394,7 @@ const fixture = {
   },
   async removeCheckMarker() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -384,7 +419,7 @@ const fixture = {
   },
   async inspectChecks() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -410,6 +445,133 @@ const fixture = {
     } finally {
       db.close();
     }
+  },
+  consentStatus: () =>
+    host ? host.consentAPI.status() : consentStore().then((c) => c.status()),
+  consentPrepare: (raw: unknown) =>
+    host
+      ? host.consentAPI.prepare(raw)
+      : withKey(async () => (await consentStore()).prepare(raw)),
+  consentApprove: (raw: unknown) =>
+    host
+      ? host.consentAPI.approve(raw)
+      : withKey(async () => (await consentStore()).approve(raw)),
+  consentRevoke: (raw: unknown) =>
+    host
+      ? host.consentAPI.revoke(raw)
+      : consentStore().then((c) => c.revoke(raw)),
+  consentClear: (raw: unknown) =>
+    host
+      ? host.consentAPI.clear(raw)
+      : consentStore().then((c) => c.clear(raw)),
+  consentReset: (raw: unknown) =>
+    host
+      ? host.consentAPI.reset(raw)
+      : withKey(async () => (await consentStore()).reset(raw)),
+  async authorize(id: string, epoch: number) {
+    sender?.outbox.close();
+    sender = await withKey(async () =>
+      (await consentStore()).authorize(id, epoch, () => binding),
+    );
+    return sender.context;
+  },
+  taskInitialize: (raw: unknown) => sender!.outbox.initialize(raw),
+  taskCreate: (raw: unknown) => sender!.prepareTask(raw),
+  taskDelivery: (id: string) => sender!.outbox.delivery(id),
+  taskReceipt: (raw: unknown) => sender!.outbox.acceptReceipt(raw),
+  taskResult: (raw: unknown) => sender!.outbox.acceptResult(raw),
+  taskRead: (raw: unknown) => sender!.outbox.readResult(raw),
+  taskExport: () => sender!.outbox.export(),
+  async inspectConsent() {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      const rows = await new Promise<any[]>((resolve, reject) => {
+        const r = db
+          .transaction("task_consents")
+          .objectStore("task_consents")
+          .getAll();
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      let exportDenied = true;
+      for (const r of rows)
+        if (r.key)
+          try {
+            await crypto.subtle.exportKey("raw", r.key);
+            exportDenied = false;
+          } catch {}
+      return { json: JSON.stringify(rows), exportDenied };
+    } finally {
+      db.close();
+    }
+  },
+  async dropConsentRow() {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("task_consents", "readwrite");
+        tx.objectStore("task_consents").clear();
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  },
+  async seedPreviousTask(id: string, epoch: number) {
+    if (!previousOutbox) throw Error("Not a previous-provider fixture");
+    return withKey(async () => {
+      const p = await peers.resolve(id, epoch);
+      const context = {
+        binding: binding!,
+        senderKeyEpoch: current!.keyEpoch,
+        peerId: id,
+        peerKeyEpoch: epoch,
+        peerRevision: p.proof.revision,
+        peerFingerprint: p.proof.fingerprint,
+        permissionRevision: 7,
+        sendingEnabled: true as const,
+      };
+      const outbox = await previousOutbox!.open(
+        () => binding,
+        () => context,
+        () => binding,
+        () => now,
+      );
+      try {
+        await outbox.initialize({ expectedRevision: 0, confirmed: true });
+        const reserved = await outbox.reserve({ peerId: id, confirmed: true });
+        const k = await keys.resolve();
+        const envelope = await sealPrivateEnvelope(
+          reserved.header,
+          new TextEncoder().encode(
+            JSON.stringify({
+              version: 1,
+              type: "task.submit",
+              kind: "query",
+              prompt: "synthetic previous task",
+            }),
+          ),
+          { senderKey: k.pair, recipientPublicKey: p.publicKey },
+          () => now,
+        );
+        return await outbox.commit({
+          id: reserved.id,
+          expectedRevision: reserved.revision,
+          envelope,
+        });
+      } finally {
+        outbox.close();
+      }
+    });
   },
   challenge: (address: string) => api("/browser/login/challenge", { address }),
   async login(message: string, signature: string) {

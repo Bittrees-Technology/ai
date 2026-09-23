@@ -1,3 +1,10 @@
+import type { BrowserStorageIO } from "./browser-storage.js";
+/** Internal retained provider: checked inside the outbox's own transaction. */
+export type BrowserOutboxAuthorization = {
+  stores: string[];
+  check(): void;
+  validate(io: BrowserStorageIO<unknown>, next: () => void): void;
+};
 import { openBrowserPrivateDatabase } from "./browser-outbox-migration.js";
 import { z } from "zod";
 import {
@@ -95,6 +102,7 @@ export class BrowserPrivateOutbox {
     private receiptAuthority: (
       peerId: string,
     ) => BrowserReceiptAuthority | null,
+    private retained?: BrowserOutboxAuthorization,
   ) {
     db.onversionchange = () => this.close();
     db.onclose = () => {
@@ -117,6 +125,35 @@ export class BrowserPrivateOutbox {
       now,
       receiptAuthority,
     );
+  }
+
+  /** Production retained permissions supply this guard. The unguarded open()
+   * remains only for isolated protocol fixtures and legacy compatibility. */
+  static async openVerified(
+    current: () => PrivateBinding | null,
+    permission: (peerId: string) => BrowserDeliveryContext | null,
+    freshRegistration: () => PrivateBinding | null,
+    now: () => number,
+    receiptAuthority: (peerId: string) => BrowserReceiptAuthority | null,
+    retained: BrowserOutboxAuthorization,
+  ) {
+    retained.check();
+    const db = await openBrowserPrivateDatabase();
+    try {
+      retained.check();
+      return new BrowserPrivateOutbox(
+        db,
+        current,
+        permission,
+        freshRegistration,
+        now,
+        receiptAuthority,
+        retained,
+      );
+    } catch (e) {
+      db.close();
+      throw e;
+    }
   }
 
   close() {
@@ -170,12 +207,17 @@ export class BrowserPrivateOutbox {
         if (this.closed) throw new BrowserOutboxError("STORAGE_UNAVAILABLE");
         if (!same(this.binding(), identity.binding))
           throw new BrowserOutboxError("DENIED");
+        this.retained?.check();
         extra();
       };
       let tx: IDBTransaction;
       try {
         check();
-        tx = this.db.transaction(stores, mode, { durability: "strict" });
+        tx = this.db.transaction(
+          [...new Set([...stores, ...(this.retained?.stores ?? [])])],
+          mode,
+          { durability: "strict" },
+        );
       } catch (e) {
         reject(
           e instanceof BrowserOutboxError
@@ -232,8 +274,8 @@ export class BrowserPrivateOutbox {
           reject(e);
         }
       };
-      guard(() =>
-        work({
+      guard(() => {
+        const io: IO<T> = {
           store: (name) => tx.objectStore(name),
           request: (req, cb) => {
             req.onsuccess = () => guard(() => cb(req.result));
@@ -246,8 +288,10 @@ export class BrowserPrivateOutbox {
             check();
             result = value;
           },
-        }),
-      );
+        };
+        if (this.retained) this.retained.validate(io, () => work(io));
+        else work(io);
+      });
     });
   }
   private meta(raw: unknown, identity: Identity, active = true) {

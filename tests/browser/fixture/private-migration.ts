@@ -456,7 +456,7 @@ const fixture = {
     for (const c of legacyConnections) c.close();
   },
   inspectLegacy: () => inspect(oldName, 2),
-  inspectCommon: () => inspect(keyName, 4),
+  inspectCommon: () => inspect(keyName, 5),
   async concurrentOpen() {
     const list = await Promise.all(
       Array.from({ length: 4 }, () => openBrowserPrivateDatabase()),
@@ -533,7 +533,7 @@ const fixture = {
     c: Config,
   ) {
     const legacy = which === "counter" || which === "orphan",
-      db = await rawDB(legacy ? oldName : keyName, legacy ? 1 : 4);
+      db = await rawDB(legacy ? oldName : keyName, legacy ? 1 : 5);
     const identity = await browserPrivateIdentity(c.binding),
       channel = await browserPrivateChannel(identity, c.context);
     try {

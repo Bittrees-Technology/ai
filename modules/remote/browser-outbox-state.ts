@@ -14,6 +14,8 @@ export const browserDeliveryContextSchema = z.strictObject({
   peerRevision: positive,
   peerFingerprint: hex,
   permissionRevision: positive,
+  // Legacy ciphertext has no grant ID; retained production permissions always do.
+  permissionId: z.uuid().optional(),
   sendingEnabled: z.literal(true),
 });
 export type BrowserDeliveryContext = z.infer<

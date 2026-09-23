@@ -1,3 +1,7 @@
+import { PrivateTaskConsent } from "../../../modules/remote/private-task-consent.js";
+import { PrivateTaskReceiver } from "../../../modules/remote/private-task-receiver.js";
+import { PrivateTaskResponses } from "../../../modules/remote/private-task-responses.js";
+import { LocalWorker } from "../../../apps/companion/worker.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -78,8 +82,98 @@ export async function retainedMac(browser: PrivateBinding, now: number) {
     rmSync(dir, { recursive: true, force: true });
     throw e;
   }
+  const consent = new PrivateTaskConsent(
+    store,
+    vault,
+    owner,
+    () => binding,
+    keys,
+    peers,
+    () => now,
+  );
+  const profile = {
+    id: "synthetic-browser-tasks",
+    runtime: "ollama" as const,
+    model: "synthetic",
+    contextTokens: 4096,
+    maxOutputTokens: 512,
+    temperature: 0.2,
+  };
+  store.addProfile(owner, profile);
   return {
     binding,
+    consent,
+    async allowTasks(peerId: string, peerKeyEpoch: number, results = true) {
+      const review = await consent.prepare({
+        expectedRevision: consent.list().revision,
+        choices: {
+          peerId,
+          peerKeyEpoch,
+          receiveTasks: true,
+          sendTasks: false,
+          sendReceipts: true,
+          sendResults: results,
+          modelProfileId: profile.id,
+          expiresAt: now + 300000,
+        },
+      });
+      return consent.approve({
+        reviewId: review.id,
+        expectedRevision: review.revision,
+        confirmed: true,
+        acknowledged: true,
+      });
+    },
+    async executeTask(envelope: unknown) {
+      const peerId = browser.deviceId;
+      const providers = await consent.resolve(peerId);
+      const receiver = new PrivateTaskReceiver(
+        store,
+        vault,
+        owner,
+        () => binding,
+        providers.receive,
+        () => now,
+      );
+      const receipt = await receiver.accept(envelope);
+      const responses = new PrivateTaskResponses(
+        store,
+        vault,
+        owner,
+        () => binding,
+        providers.respond,
+        () => now,
+      );
+      const accepted = await responses.prepare({
+        operationId: receipt.header.operationId,
+        peerId,
+        kind: "accepted",
+        confirmed: true,
+      });
+      const worker = new LocalWorker(
+        store,
+        owner,
+        {
+          pin: async () => ({ profile, digest: "a".repeat(64) }),
+          generate: async () =>
+            "Synthetic result from independently consented Mac task.",
+        },
+        (id) => store.profile(owner, id),
+      );
+      await worker.runOnce();
+      const result = await responses.prepare({
+        operationId: receipt.header.operationId,
+        peerId,
+        kind: "result",
+        confirmed: true,
+      });
+      return {
+        receipt,
+        acceptance: accepted.value.envelope!,
+        result: result.value.envelope!,
+        task: store.get(owner, receipt.taskId),
+      };
+    },
     keys,
     peers,
     checks: new PrivatePeerChecks(

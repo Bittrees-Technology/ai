@@ -46,17 +46,36 @@ export async function openRemotePanel(
       blur: () => window.dispatchEvent(new Event("blur")),
     };
   }, wallet.address);
-  const response = await page.goto(origin + "/remote-panel");
-  expect(response?.headers()["content-security-policy"]).toContain(
-    "script-src 'self'",
-  );
-  if (resume)
-    await expect(page.locator("#account")).toContainText("Verified wallet:");
-  else {
-    await expect(
-      page.getByRole("button", { name: "Sign in with wallet" }),
-    ).toBeEnabled();
-    await expect(page.locator("#account")).toHaveText("Not signed in.");
+  const diagnostics: string[] = [];
+  const onError = (error: Error) => diagnostics.push(error.message);
+  const onResponse = (response: import("@playwright/test").Response) => {
+    if (response.status() >= 400)
+      diagnostics.push(
+        `${new URL(response.url()).pathname}: ${response.status()}`,
+      );
+  };
+  page.on("pageerror", onError);
+  page.on("response", onResponse);
+  try {
+    const response = await page.goto(origin + "/remote-panel");
+    expect(response?.headers()["content-security-policy"]).toContain(
+      "script-src 'self'",
+    );
+    if (resume)
+      await expect(page.locator("#account")).toContainText("Verified wallet:");
+    else {
+      await expect(
+        page.getByRole("button", { name: "Sign in with wallet" }),
+      ).toBeEnabled();
+      await expect(page.locator("#account")).toHaveText("Not signed in.");
+    }
+  } catch (error) {
+    throw new Error(
+      `${String(error)}\nPage startup diagnostics: ${JSON.stringify(diagnostics)}`,
+    );
+  } finally {
+    page.off("pageerror", onError);
+    page.off("response", onResponse);
   }
   return wallet;
 }

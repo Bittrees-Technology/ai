@@ -838,7 +838,7 @@ test("Browser expiry, connection closure and database version changes fail witho
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
           r.onerror = () => reject(r.error);
           r.onblocked = () => reject(Error("blocked"));
           r.onsuccess = () => {
@@ -1166,7 +1166,7 @@ test("Earlier browser rows remain readable while expired, deleted and other-acco
       await new Promise<void>((resolve, reject) => {
         const request = indexedDB.open(
           "org.bittrees.ai.browser-endpoint-keys",
-          4,
+          5,
         );
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
@@ -1749,7 +1749,7 @@ test("Authenticated malformed, wrong-task, wrong-key and impossible-time results
     };
     await page.evaluate(
       async ({ id, envelope }) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
         await new Promise<void>((resolve, reject) => {
           r.onerror = () => reject(r.error);
           r.onsuccess = () => {

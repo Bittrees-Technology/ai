@@ -1,3 +1,4 @@
+import { BrowserTaskConsent } from "./browser-task-consent.js";
 import { z } from "zod";
 import {
   BrowserDeviceClient,
@@ -32,6 +33,7 @@ export class BrowserKeyHost {
   private keys!: BrowserKeyLifecycle;
   private peers!: BrowserPeerEnrollment;
   private checks?: BrowserPeerChecks;
+  private consents?: BrowserTaskConsent;
   private peerKey: BrowserKeyProof | null = null;
   private client: BrowserDeviceClient;
   readonly localOwner: string;
@@ -139,6 +141,7 @@ export class BrowserKeyHost {
     this.keys?.invalidate();
     this.peers?.invalidate();
     this.checks?.invalidate();
+    this.consents?.invalidate();
   }
   /** Trusted host calls this immediately on logout, lock or account/scope change. */
   invalidate() {
@@ -155,6 +158,7 @@ export class BrowserKeyHost {
     this.keys?.close();
     this.peers?.close();
     this.checks?.close();
+    this.consents?.close();
   }
   private check(g: number) {
     if (g !== this.generation || !this.currentContext()) throw Error("DENIED");
@@ -187,6 +191,7 @@ export class BrowserKeyHost {
           this.keys.invalidate();
           this.peers.invalidate();
           this.checks?.invalidate();
+          this.consents?.invalidate();
           this.freshUntil = 0;
         }
         this.binding = next ? { ...next } : null;
@@ -344,6 +349,43 @@ export class BrowserKeyHost {
       throw e;
     }
   }
+  private async consentStore() {
+    if (this.consents) return this.consents;
+    const g = this.generation;
+    const created = await BrowserTaskConsent.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      this.keys,
+      this.peers,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(g);
+      this.consents = created;
+      return created;
+    } catch (e) {
+      created.close();
+      throw e;
+    }
+  }
+  /** Saved permission choices are not a task route. Every online review obtains
+   * fresh verified identity; offline metadata/revocation never grant authority. */
+  readonly consentAPI = {
+    status: () =>
+      this.operation(async () => (await this.consentStore()).status()),
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.consentStore()).prepare(raw)),
+    approve: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.consentStore()).approve(raw)),
+    revoke: (raw: unknown) =>
+      this.operation(async () => (await this.consentStore()).revoke(raw)),
+    clear: (raw: unknown) =>
+      this.operation(async () => (await this.consentStore()).clear(raw)),
+    reset: (raw: unknown) =>
+      this.verified(async () => (await this.consentStore()).reset(raw)),
+    invalidate: () => this.cancelKeys(),
+  };
   /** Explicit manual device checks only. Public callers receive metadata and the
    * original encrypted envelope, never retained key handles or task permission. */
   readonly checkAPI = {
