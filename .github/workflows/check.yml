@@ -136,6 +136,18 @@ jobs:
   browser-private-protocol:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: integration
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: browser_identity_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BROWSER_TEST_DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/browser_identity_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -1,3 +1,4 @@
+import { RemoteBrowserDeviceStore } from "./browser-devices.js";
 import { RemoteTemplateStore } from "./templates.js";
 import { resolve } from "node:path";
 import express, { type Request, type Response } from "express";
@@ -9,7 +10,8 @@ import { remoteControlSchema } from "./status.js";
 import { RemoteDeviceStore } from "./devices.js";
 import { RemoteStatusError, RemoteStatusStore } from "./status-store.js";
 const loginCookie = "__Host-bittrees-login",
-  sessionCookie = "__Host-bittrees-session";
+  sessionCookie = "__Host-bittrees-session",
+  browserDeviceCookie = "__Host-bittrees-browser-device";
 const opaque = /^[A-Za-z0-9_-]{43}$/;
 function cookie(req: Request, name: string) {
   const values = (req.headers.cookie ?? "")
@@ -80,6 +82,14 @@ export function createRemoteApp(
     config.retentionMs,
     now,
     config.templateQuotas,
+  );
+  const browserDevices = new RemoteBrowserDeviceStore(
+    pool,
+    config.origin,
+    config.chainId,
+    config.deviceMs,
+    now,
+    config.quotas?.devicesPerOwner,
   );
   const host = new URL(config.origin).host;
   const budget = config.requestsPerMinute ?? 120;
@@ -222,6 +232,55 @@ export function createRemoteApp(
     await sessions.logout(cookie(req, sessionCookie));
     res.clearCookie(sessionCookie, cookieOptions);
     res.json({ loggedOut: true });
+  });
+  const browserCredential = (req: Request) => {
+    const parts = (req.headers.cookie ?? "")
+      .split(";")
+      .map((x) => x.trim())
+      .filter((x) => x.startsWith(browserDeviceCookie + "="));
+    if (!parts.length) return null;
+    return cookie(req, browserDeviceCookie);
+  };
+  const browserAuthority = (req: Request) => {
+    const account = req.headers["x-bittrees-account"];
+    if (typeof account !== "string") throw new RemoteStatusError("DENIED");
+    return { session: cookie(req, sessionCookie), account };
+  };
+  app.post("/browser/registration/inspect", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    const { session, account } = browserAuthority(req);
+    res.json(
+      await browserDevices.inspect(session, account, browserCredential(req)),
+    );
+  });
+  app.post("/browser/registration/identity", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    const { session, account } = browserAuthority(req);
+    res.json(
+      await browserDevices.identify(session, account, browserCredential(req)),
+    );
+  });
+  app.post("/browser/registration/create", async (req, res) => {
+    const { session, account } = browserAuthority(req);
+    const made = await browserDevices.register(
+      session,
+      account,
+      browserCredential(req),
+      req.body,
+    );
+    res.cookie(browserDeviceCookie, made.credential, {
+      ...cookieOptions,
+      maxAge: Math.max(0, made.identity.binding.expiresAt - now()),
+    });
+    res.json(made.identity);
+  });
+  app.post("/browser/registration/list", async (req, res) => {
+    const { session, account } = browserAuthority(req);
+    res.json(await browserDevices.list(session, account, req.body));
+  });
+  app.post("/browser/registration/revoke", async (req, res) => {
+    const { session, account } = browserAuthority(req);
+    res.json(await browserDevices.revoke(session, account, req.body));
   });
   app.post("/browser/pairings/approve", async (req, res) => {
     const input = parse(

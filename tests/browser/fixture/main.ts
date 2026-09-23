@@ -344,3 +344,6 @@ if (new URLSearchParams(location.search).has("browser-key-lifecycle"))
 
 if (new URLSearchParams(location.search).has("browser-key-controls"))
   void import("./browser-key-controls.js");
+
+if (new URLSearchParams(location.search).has("browser-device-identity"))
+  void import("./browser-device-identity.js");
