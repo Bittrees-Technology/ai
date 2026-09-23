@@ -1,3 +1,4 @@
+import { browserKeyDatabaseVersion } from "../../../modules/remote/browser-key-state.js";
 // Actual pinned PR151 providers create all legacy rows. Raw IndexedDB access below
 // is limited to disposable failure injection and independently inspecting results.
 import {
@@ -456,7 +457,7 @@ const fixture = {
     for (const c of legacyConnections) c.close();
   },
   inspectLegacy: () => inspect(oldName, 2),
-  inspectCommon: () => inspect(keyName, 6),
+  inspectCommon: () => inspect(keyName, browserKeyDatabaseVersion),
   async concurrentOpen() {
     const list = await Promise.all(
       Array.from({ length: 4 }, () => openBrowserPrivateDatabase()),
@@ -533,7 +534,10 @@ const fixture = {
     c: Config,
   ) {
     const legacy = which === "counter" || which === "orphan",
-      db = await rawDB(legacy ? oldName : keyName, legacy ? 1 : 5);
+      db = await rawDB(
+        legacy ? oldName : keyName,
+        legacy ? 1 : browserKeyDatabaseVersion,
+      );
     const identity = await browserPrivateIdentity(c.binding),
       channel = await browserPrivateChannel(identity, c.context);
     try {
