@@ -228,7 +228,9 @@ try {
         {
           conversationId: "mail",
           kind: includePlain ? "draft" : "summarize",
-          prompt: "Summarize selected mail",
+          prompt: includePlain
+            ? "Acknowledge receipt only; no commitment."
+            : "Summarize selected mail",
           modelProfileId: "p",
           dependencies: [],
           priority: "normal",
@@ -237,21 +239,42 @@ try {
         includePlain ? "plain" : "metadata",
         "source-task",
       );
+      const generationStages: string[] = [];
       await new LocalWorker(
         store,
         owner,
         {
           pin: async () => ({ profile, digest: "c".repeat(64) }),
-          generate: async (_p, prompt) => {
+          generate: async (_p, prompt, _signal, format) => {
             assert.ok(!prompt.includes("PRIVATE_UNSELECTED"));
             assert.equal(prompt.includes("Untrusted mail:"), includePlain);
+            const keys = includePlain
+              ? Object.keys((format as any).properties).sort()
+              : ["reply", "summary"];
+            if (!includePlain) assert.equal(format, undefined);
+            if (keys.join(",") === "evidence,text") {
+              assert.equal(includePlain, true);
+              assert.deepEqual(generationStages, ["summary"]);
+              assert.ok(
+                prompt.includes("Acknowledge receipt only; no commitment."),
+              );
+              generationStages.push("reply");
+              return JSON.stringify({
+                text: "Thank you for your message.",
+                evidence: ["body-1"],
+              });
+            }
+            assert.deepEqual(keys, ["reply", "summary"]);
+            assert.equal(generationStages.length, 0);
+            assert.ok(
+              !prompt.includes("Acknowledge receipt only; no commitment."),
+            );
+            generationStages.push("summary");
             return JSON.stringify({
               summary: [
                 { text: "Selected synthetic mail", evidence: ["subject"] },
               ],
-              reply: includePlain
-                ? { text: "Thank you for your message.", evidence: ["body-1"] }
-                : null,
+              reply: null,
             });
           },
         },
@@ -261,9 +284,64 @@ try {
         new SourceTasks(undefined, undefined, tasks),
       ).runOnce();
       const result = store.get(owner, task.id);
-      assert.equal(result.status, "completed");
+      assert.equal(result.status, "completed", JSON.stringify(result));
+      assert.deepEqual(
+        generationStages,
+        includePlain ? ["summary", "reply"] : ["summary"],
+      );
       assert.equal((result.result as any).mail.sent, false);
       assert.equal((result.result as any).mail.savedToMail, false);
+      if (includePlain) {
+        const cancelled = await tasks.create(
+          store,
+          {
+            conversationId: "mail-revoked-between-stages",
+            kind: "draft",
+            prompt: "Acknowledge receipt only.",
+            modelProfileId: "p",
+            dependencies: [],
+            priority: "normal",
+            tags: [],
+          },
+          "plain",
+          "revoked-between-stages",
+        );
+        let calls = 0;
+        await new LocalWorker(
+          store,
+          owner,
+          {
+            pin: async () => ({ profile, digest: "c".repeat(64) }),
+            generate: async () => {
+              calls++;
+              assert.equal(
+                calls,
+                1,
+                "Revoked source must prevent the reply generation",
+              );
+              db.exec("UPDATE ai_mail_grants SET revoked=1,token_hash=NULL");
+              return JSON.stringify({
+                summary: [
+                  { text: "Selected synthetic mail", evidence: ["subject"] },
+                ],
+                reply: null,
+              });
+            },
+          },
+          () => profile,
+          "revoked-worker",
+          undefined,
+          new SourceTasks(undefined, undefined, tasks),
+        ).runOnce();
+        assert.equal(calls, 1);
+        const revokedResult = store.get(owner, cancelled.id);
+        assert.equal(revokedResult.status, "failed");
+        assert.equal(
+          revokedResult.result,
+          null,
+          "Partial summary must not become a completed draft",
+        );
+      }
     } finally {
       store.close();
     }
@@ -415,7 +493,7 @@ try {
   await assert.rejects(broker.read("attachment-text"), /SOURCE_CONFLICT/);
   await broker.disconnect();
   console.log(
-    "Actual Mail source consent/PKCE, Python selected reads, companion scope/hash checks, source-bound synthetic summary/reply generation, freeze denial, disabled disconnect and selected-attachment v2/version isolation passed. Synthetic data only; no live mailbox or browser acceptance claimed.",
+    "Actual Mail source consent/PKCE, Python selected reads, companion scope/hash checks, source-bound synthetic summary/reply generation, separated-stage formats and between-stage source revocation with no partial draft, freeze denial, disabled disconnect and selected-attachment v2/version isolation passed. Synthetic data only; no live mailbox or browser acceptance claimed.",
   );
 } finally {
   db.close();
