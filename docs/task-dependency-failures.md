@@ -16,7 +16,7 @@ Revisions, encrypted reason, run termination, event and outbox writes commit or 
 
 ## Interface and compatibility
 
-The Tasks detail notice lists the direct prerequisite IDs/statuses with a clear terminal explanation. It does not display an inferred model answer. Terminal tasks with no model runs now say **No model run was started** instead of **Waiting to start**. Inspecting failure details does not retry, publish or change grants.
+The Tasks detail notice lists the direct prerequisite IDs/statuses with a clear terminal explanation. It does not display an inferred model answer. Terminal tasks with no model runs now say **No model run history to show here** instead of **Waiting to start**. Inspecting failure details does not retry, publish or change grants.
 
 Task schema19 and browser schema1 are unchanged. Existing schema19 stores reopen without a migration; saved encrypted failure results survive restart and supported backup/restore. Older schema19 code preserves these terminal records but does not reconcile additional queued dependency failures. The [separately retained compatibility receipt](evidence/dependency-failure-schema-compatibility-2026-09-23.json) tests current Store source with the actual prepared PR104 schema12 engine: task preservation after upgrade, old-engine refusal and separate original-backup rollback. No personal app, Keychain or data was used.
 

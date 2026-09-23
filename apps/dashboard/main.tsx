@@ -616,7 +616,7 @@ function App() {
                             "expired",
                             "completed",
                           ].includes(task.status)
-                            ? "No model run was started."
+                            ? "No model run history to show here."
                             : "Waiting to start."}
                         </p>
                       )}
