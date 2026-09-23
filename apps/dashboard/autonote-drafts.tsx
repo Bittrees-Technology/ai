@@ -1,3 +1,4 @@
+import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (
   path: string,
@@ -131,7 +132,7 @@ export function AutoNoteDrafts({
             <option value="">Choose a profile</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.model}
+                {profileLabel(p)}
               </option>
             ))}
           </select>

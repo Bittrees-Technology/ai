@@ -1,3 +1,4 @@
+import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useState } from "react";
 import { TemplateController } from "./template-state.js";
 export function Templates({
@@ -111,7 +112,7 @@ export function Templates({
               <option value="">Choose a saved model</option>
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
-                  {profile.model} · {profile.id}
+                  {profileLabel(profile)}
                 </option>
               ))}
             </select>

@@ -613,3 +613,52 @@ summary {
 .dependency-failure ul {
   padding-left: 20px;
 }
+
+.model-profile-settings {
+  margin: 20px 0;
+  min-width: 0;
+  border: 1px solid #c6d9dd;
+  border-radius: 7px;
+  padding: 16px;
+}
+.model-profile-settings legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.model-profile-fields input {
+  min-width: 0;
+}
+.model-profile-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.model-profile-fields label {
+  min-width: 0;
+}
+.saved-model-profile > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.saved-model-profile button {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .model-profile-fields {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .saved-model-profile {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+/* Long model/profile names must not enlarge the workspace grid. */
+.workspace > .queue {
+  min-width: 0;
+}
+.workspace select {
+  min-width: 0;
+  max-width: 100%;
+}

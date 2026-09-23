@@ -1,9 +1,17 @@
+import { profileSettingsText } from "./model-profile-settings.js";
 import React, { useEffect, useState } from "react";
 
 type Run = {
   id: string;
   outcome: string | null;
-  model?: { profile?: { model?: string } } | null;
+  model?: {
+    profile?: {
+      model?: string;
+      contextTokens?: number;
+      maxOutputTokens?: number;
+      temperature?: number;
+    };
+  } | null;
 };
 /** Mount with a task/revision key so previous history is absent on the first render. */
 export function TaskRuns({
@@ -69,6 +77,11 @@ export function TaskRuns({
                 : (run.outcome ?? "Running")}{" "}
               · {run.model?.profile?.model ?? "Model not started"}
             </p>
+            {run.model?.profile && profileSettingsText(run.model.profile) && (
+              <p className="hint">
+                Recorded settings: {profileSettingsText(run.model.profile)}
+              </p>
+            )}
             {run.outcome === "invalid_model_output" && (
               <p className="hint">
                 The model’s answer did not meet the required format or evidence

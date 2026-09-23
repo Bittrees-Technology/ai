@@ -1,3 +1,4 @@
+import { profileLabel } from "./model-profile-settings.js";
 import { MailEvidenceReview } from "./mail-evidence.js";
 import { AutoNoteReviewControls } from "./autonote-reviews.js";
 import { CrmPublicationControls } from "./crm-publications.js";
@@ -143,7 +144,7 @@ export function CrmDrafts({
             <option value="">Choose a profile</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.model}
+                {profileLabel(p)}
               </option>
             ))}
           </select>

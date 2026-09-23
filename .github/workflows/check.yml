@@ -199,3 +199,11 @@ jobs:
           path: test-results/workspace-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain configurable model profile previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-profiles-ui-preview
+          path: test-results/model-profiles-*.png
+          if-no-files-found: error
+          retention-days: 7

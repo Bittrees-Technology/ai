@@ -1,3 +1,10 @@
+import { ModelProfileFields } from "./model-profile-fields.js";
+import {
+  defaultProfileFields,
+  readProfileFields,
+  profileLabel,
+  profileSettingsText,
+} from "./model-profile-settings.js";
 import { workspaceApi } from "./workspace-api.js";
 import { TaskRuns } from "./task-runs.js";
 import { DependencyFailureNotice } from "./dependency-failure.js";
@@ -35,7 +42,13 @@ type Memory = {
   state: string;
   pinned: boolean;
 };
-type Profile = { id: string; model: string };
+type Profile = {
+  id: string;
+  model: string;
+  contextTokens: number;
+  maxOutputTokens: number;
+  temperature: number;
+};
 const explanations: Record<string, string> = {
   LOCAL_TIMEOUT:
     "The companion took too long to respond. A submitted action may already have completed. Check task history before retrying it; drafts stay here.",
@@ -90,6 +103,10 @@ function App() {
   requests.current ??= workspaceApi(transport);
   const api = requests.current.api;
   const refreshSequence = useRef(0);
+  const [profileFields, setProfileFields] = useState({
+    ...defaultProfileFields,
+  });
+  const checkedProfile = readProfileFields(profileFields);
   const [paired, setPaired] = useState(false),
     [page, setPage] = useState("Tasks"),
     [error, setError] = useState(""),
@@ -141,6 +158,7 @@ function App() {
     setTasks([]);
     setMemories([]);
     setModel("");
+    setProfileFields({ ...defaultProfileFields });
     setCode("");
     setDeleteText("");
     setPrompt("");
@@ -397,7 +415,7 @@ function App() {
                         <option value="">Choose a profile</option>
                         {profiles.map((p) => (
                           <option key={p.id} value={p.id}>
-                            {p.model}
+                            {profileLabel(p)}
                           </option>
                         ))}
                       </select>
@@ -658,14 +676,14 @@ function App() {
                   onSubmit={(e) => {
                     e.preventDefault();
                     void action(async () => {
+                      const settings = readProfileFields(profileFields).value;
+                      if (!settings) throw Error("INVALID_INPUT");
                       const id = crypto.randomUUID();
                       await api("/v1/profiles", "POST", {
                         id,
                         runtime: "ollama",
                         model,
-                        contextTokens: 4096,
-                        maxOutputTokens: 512,
-                        temperature: 0.2,
+                        ...settings,
                       });
                       await api("/v1/profiles/default", "PUT", {
                         profileId: id,
@@ -690,19 +708,25 @@ function App() {
                       ))}
                     </select>
                   </label>
-                  <p className="hint">
-                    Profiles use 4,096 context tokens and up to 512 output
-                    tokens.
-                  </p>
-                  <button className="primary" disabled={busy || !model}>
+                  <ModelProfileFields
+                    value={profileFields}
+                    change={setProfileFields}
+                    disabled={busy}
+                  />
+                  <button
+                    className="primary"
+                    disabled={busy || !model || !checkedProfile.value}
+                  >
                     Create profile and use by default
                   </button>
                 </form>
                 <h3>Saved profiles</h3>
                 {profiles.map((p) => (
-                  <div className="row" key={p.id}>
+                  <div className="row saved-model-profile" key={p.id}>
                     <span>
-                      {p.model}
+                      <strong>{p.model}</strong>
+                      <small>{profileSettingsText(p)}</small>
+                      <small>Profile {p.id}</small>
                       <small>
                         {p.id === profile
                           ? "Selected for new work"
