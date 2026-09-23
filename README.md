@@ -646,3 +646,5 @@ The internal [browser encrypted outbox](docs/browser-encrypted-outbox.md) reserv
 The internal [private response review screen](docs/private-results-review.md) provides explicit plaintext review, hide, encrypted download, retry stop and reviewed browser deletion. It is mounted only in the disposable synthetic browser fixture; production pairing, keys and transport are still required.
 
 The internal [Mac private endpoint key provider](docs/private-endpoint-keys.md) adds immutable Keychain storage, explicit public invitations and deletion fencing, with packaged native CI verification. Its [durable key coordinator](docs/private-key-lifecycle.md) saves reviewed selection/replacement, restore locks and pending native cleanup in task schema17. Production registration/consent wiring, user-held endpoint recovery and live pairing remain open.
+
+[Verified device identity](docs/verified-device-identity.md) connects short private-operation scopes to the existing paired-device credential through an authenticated service check. It grants no content permissions and has no production companion caller yet.

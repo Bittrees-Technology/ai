@@ -1,0 +1,29 @@
+# Verified companion identity for private operations
+
+Status: service/client integration for the existing paired-device credential. The private-key modules can now use a scope obtained from a real authenticated identity check instead of a test-injected binding. The production companion does not call this method yet. No hosted service, private transport, key creation, browser key storage or user-facing pairing control is activated. Mac schema17, browser database version1, installed PR40 and prepared PR104 remain unchanged. Acer-server's existing model and news jobs remain separate and unchanged.
+
+## Service contract
+
+`POST /device/identity` takes an empty JSON object and the existing status bearer credential. The device row is checked under a PostgreSQL shared row lock using the credential hash; missing, revoked, expired or replaced credentials are denied. The response contains only `version:1`, `ownerId`, `deviceId`, `credentialEpoch` and `expiresAt`, validated by the portable strict `deviceIdentitySchema`.
+
+The route neither extends the lease nor changes credentials, sequence counters, metadata retention, controls or template grants. Request fields cannot choose the account or device. Existing direct-TLS, exact host, no-cookie/device-origin, content-type, request-size and rate-limit policies apply; responses are not cacheable. Browser sessions and separately scoped control credentials cannot use this route. This establishes registration identity only. It grants no source access, task submission, result sharing, peer trust or content approval.
+
+## Bounded client operation
+
+The trusted host calls `RemoteClient.withVerifiedDevice(action)`. It validates the active local credential, checks the fixed HTTPS service endpoint and requires every returned identity field to match that credential exactly. It rereads saved credentials before invoking the action. The action receives a frozen object with `current()`, which returns a fresh copy of the verified binding or `null`.
+
+The scope is valid only during that callback, for at most thirty seconds from the start of verification, and never beyond the original credential lease. Both wall-clock validity and monotonic elapsed time are checked. Slow verification consumes the same allowance. Clock rollback, expiry, host invalidation or completion makes the scope unusable; a later operation cannot revive an earlier scope. `invalidatePrivateIdentity()` lets host lock or consent changes fence an in-flight operation immediately. Other operations on that client are excluded while verification/action runs. The host must use one managed client per profile and coordinate any other process that can change the credential.
+
+The callback must supply `scope.current` to key/peer/receiver/response authority checks and recheck it at the final local commit boundary, alongside separate peer pins and current operation consent. Keep this callback limited to a short operation such as key setup, invitation preparation, admission or response preparation; do not place inference or indefinite user review inside it. User review happens before the explicitly confirmed operation.
+
+Saved credentials are reread after the callback, and changed credentials or expired/invalidated scopes suppress its returned result. That final check cannot undo a side effect already committed by a callback that ignored its authority checks. Independent remote revocation or out-of-process credential changes after verification are not instantaneously observable: this is a bounded snapshot, not a live revocation subscription. Future transport must authenticate each delivery and implement coordinated revocation/reconnect. The thirty-second scope is an internal operation bound, not an offline execution grant.
+
+No positive verified state survives return, failure or restart. There is no automatic retry, credential renewal, fallback to a saved paired label or background identity request. Local key deletion remains available without online registration. Fresh-registration reset after restore is a separate explicit protocol; an identity response alone does not satisfy the lifecycle's fresh-registration callback.
+
+## Evidence and remaining work
+
+Engine tests cover exact binding, explicit network requests, restart/revocation, substituted fields and extra authority, network failure, expiry and monotonic time, host invalidation, changed local credentials, concurrent mutations, callback errors and permanently invalid old scopes. Actual `PrivateKeyLifecycle` tests create/reopen retained keys and public invitations under verified scopes and deny old scopes while retaining offline local deletion.
+
+Disposable PostgreSQL integration verifies unchanged device rows, bad credentials, replacement, expiry, revocation and an identity query observed waiting behind a revocation lock. The real HTTPS service/client integration verifies the response projection, transport/authentication boundaries, credential rotation and revoked-device denial. These checks use synthetic accounts and do not deploy a service or access personal Keychain data.
+
+Production key/consent controls and startup cleanup wiring, fresh registration after restore, persistent browser keys, user-held endpoint recovery, peer rotation, encrypted transport, scoped resume and independent/personal native acceptance remain open. The existing storage recovery kit does not contain endpoint private keys.

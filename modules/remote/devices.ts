@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { z } from "zod";
 import { RemoteStatusError } from "./status-store.js";
+import { deviceIdentitySchema } from "./device-identity.js";
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const verifierSchema = z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/);
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -155,8 +156,7 @@ export class RemoteDeviceStore {
       };
     });
   }
-  /** Only status publication is granted. Never interpret this as an owner browser session. */
-  async authenticate(credential: string) {
+  private async credentialIdentity(credential: string) {
     if (!opaque.safeParse(credential).success)
       throw new RemoteStatusError("DENIED");
     return this.transaction(async (db) => {
@@ -176,7 +176,25 @@ export class RemoteDeviceStore {
         ownerId: row.owner_id as string,
         deviceId: row.id as string,
         epoch: row.epoch as number,
+        expiresAt: Number(row.expires_at),
       };
+    });
+  }
+  /** Only status publication is granted. Never interpret this as an owner browser session. */
+  async authenticate(credential: string) {
+    const { ownerId, deviceId, epoch } =
+      await this.credentialIdentity(credential);
+    return { ownerId, deviceId, epoch };
+  }
+  /** Read the current authenticated registration without renewing or granting scopes. */
+  async identify(credential: string) {
+    const identity = await this.credentialIdentity(credential);
+    return deviceIdentitySchema.parse({
+      version: 1,
+      ownerId: identity.ownerId,
+      deviceId: identity.deviceId,
+      credentialEpoch: identity.epoch,
+      expiresAt: identity.expiresAt,
     });
   }
   /** Replace the bearer secret without extending the approved lease or scope.

@@ -417,6 +417,10 @@ export function createRemoteApp(
     const auth = await devices.authenticate(token(req));
     res.json(await status.publish(auth, req.body));
   });
+  app.post("/device/identity", async (req, res) => {
+    parse(z.strictObject({}), req.body);
+    res.json(await devices.identify(token(req)));
+  });
   app.post("/device/rotate", async (req, res) => {
     parse(z.strictObject({}), req.body);
     res.json(await devices.rotate(token(req)));

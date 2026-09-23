@@ -13,6 +13,10 @@ import { remoteTemplateSchema } from "./status.js";
 import { AsyncEntry } from "@napi-rs/keyring";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
+import {
+  deviceIdentitySchema,
+  type VerifiedDeviceScope,
+} from "./device-identity.js";
 import type { ConnectorSecret } from "../connectors/crm.js";
 import type { Store, Task } from "../storage/store.js";
 import {
@@ -104,6 +108,7 @@ export function remoteKeychainEntry(profile: string): ConnectorSecret {
 export class RemoteClient {
   private busy = false;
   private failedStorage = false;
+  private identityGeneration = 0;
   private pendingPair?: { id: string; verifier: string; expiresAt: number };
   constructor(
     private localOwner: string,
@@ -112,6 +117,7 @@ export class RemoteClient {
     private now = Date.now,
     private executor?: RemoteControlExecutor,
     private templateExecutor?: RemoteTemplateExecutor,
+    private monotonicNow = () => performance.now(),
   ) {
     z.string().min(1).max(256).parse(localOwner);
   }
@@ -181,6 +187,77 @@ export class RemoteClient {
     if (!s || s.mode !== "active" || s.grant.expiresAt <= this.now())
       throw new RemoteClientError("PAIRING_REQUIRED");
     return s;
+  }
+  /** Immediately fence an in-flight identity operation on host lock/consent changes. */
+  invalidatePrivateIdentity() {
+    this.identityGeneration++;
+  }
+  /** Short explicit host operation only. No persistent verified cache, permission
+   * grant, key creation, upload or automatic retry. Consumers must use current()
+   * at their final commit boundary and keep separate peer/operation consent checks.
+   */
+  async withVerifiedDevice<T>(
+    action: (scope: VerifiedDeviceScope) => Promise<T>,
+  ): Promise<T> {
+    return this.exclusive(async () => {
+      const generation = ++this.identityGeneration,
+        started = this.now(),
+        monotonicStart = this.monotonicNow();
+      try {
+        if (
+          !Number.isSafeInteger(started) ||
+          started <= 0 ||
+          !Number.isFinite(monotonicStart)
+        )
+          throw new RemoteClientError("DENIED");
+        const before = await this.active();
+        const expected = {
+          ownerId: before.grant.ownerId,
+          deviceId: before.grant.deviceId,
+          credentialEpoch: before.grant.epoch,
+          expiresAt: before.grant.expiresAt,
+        };
+        const response = deviceIdentitySchema.safeParse(
+          await this.post("identity", {}, before.grant.credential),
+        );
+        if (
+          !response.success ||
+          response.data.ownerId !== expected.ownerId ||
+          response.data.deviceId !== expected.deviceId ||
+          response.data.credentialEpoch !== expected.credentialEpoch ||
+          response.data.expiresAt !== expected.expiresAt
+        )
+          throw new RemoteClientError("INVALID_RESPONSE");
+        const sameCredential = async () => {
+          const saved = await this.active();
+          if (JSON.stringify(saved.grant) !== JSON.stringify(before.grant))
+            throw new RemoteClientError("PAIRING_REQUIRED");
+        };
+        await sameCredential();
+        const deadline = Math.min(started + 30000, expected.expiresAt);
+        const current = () => {
+          const now = this.now(),
+            elapsed = this.monotonicNow() - monotonicStart;
+          return this.identityGeneration === generation &&
+            !this.failedStorage &&
+            Number.isSafeInteger(now) &&
+            now >= started &&
+            now < deadline &&
+            Number.isFinite(elapsed) &&
+            elapsed >= 0 &&
+            elapsed < 30000
+            ? { ...expected }
+            : null;
+        };
+        if (!current()) throw new RemoteClientError("DENIED");
+        const result = await action(Object.freeze({ current }));
+        await sameCredential();
+        if (!current()) throw new RemoteClientError("DENIED");
+        return result;
+      } finally {
+        this.invalidatePrivateIdentity();
+      }
+    });
   }
   private async post(
     path: string,
