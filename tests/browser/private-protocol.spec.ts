@@ -1,7 +1,7 @@
 import { PrivateTaskResponses } from "../../modules/remote/private-task-responses.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../../modules/storage/store.js";
@@ -1316,7 +1316,11 @@ test("Real companion response outbox delivers encrypted acceptance and local-wor
   }
 });
 
-async function finished(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
+async function finished(
+  page: Page,
+  f: Awaited<ReturnType<typeof fixture>>,
+  answer = "PRIVATE_DURABLE_RESULT",
+) {
   const task = await submitted(page, f);
   const accepted = await f.responses.prepare({
     operationId: task.receipt.header.operationId,
@@ -1330,7 +1334,7 @@ async function finished(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
     owner,
     {
       pin: async () => ({ profile, digest: "a".repeat(64) }),
-      generate: async () => "PRIVATE_DURABLE_RESULT",
+      generate: async () => answer,
     },
     (id) => f.store.profile(owner, id),
   );
@@ -1777,6 +1781,251 @@ test("Authenticated malformed, wrong-task, wrong-key and impossible-time results
       ),
     ).rejects.toThrow("DENIED");
   } finally {
+    f.close();
+  }
+});
+
+async function reviewedUI(
+  page: Page,
+  f: Awaited<ReturnType<typeof fixture>>,
+  answer?: string,
+) {
+  const value = await finished(page, f, answer);
+  await page.evaluate(
+    (wire) => window.privateStorageTest.acceptResult(wire),
+    value.wire,
+  );
+  await page.bringToFront();
+  await page.evaluate(() => window.privateResultsUI.mount());
+  await page
+    .getByRole("button", { name: "Refresh history", exact: true })
+    .click();
+  await expect(
+    page.getByText("Response available", { exact: true }),
+  ).toBeVisible();
+  return value;
+}
+
+test("Private result review renders untrusted output as text and hides it on Escape and focus loss", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const malicious =
+      '<img src="https://invalid.example/private" onerror="window.injected=true">\n<script>window.injected=true</script>';
+    await reviewedUI(page, f, malicious);
+    const preview = page.locator(".private-results-output");
+    await page
+      .getByRole("button", { name: "Review response", exact: true })
+      .click();
+    await expect(preview).toHaveText(malicious);
+    expect(await preview.locator("img,script,a").count()).toBe(0);
+    expect(await page.evaluate(() => "injected" in window)).toBe(false);
+    expect(f.external).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(preview).toHaveText("");
+    await expect(preview).toBeHidden();
+    await page
+      .getByRole("button", { name: "Review response", exact: true })
+      .click();
+    await expect(preview).toHaveText(malicious);
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(preview).toHaveText("");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(preview).toHaveText("");
+  } finally {
+    await page.evaluate(() => window.privateResultsUI.destroy());
+    f.close();
+  }
+});
+
+test("Hidden, invalidated or revoked previews reject late decrypted responses and periodic access loss", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    await reviewedUI(page, f);
+    const preview = page.locator(".private-results-output");
+    await page.evaluate(() => window.privateResultsUI.hold());
+    await page
+      .getByRole("button", { name: "Review response", exact: true })
+      .click();
+    await page.waitForFunction(() => window.privateResultsUI.held());
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("blur"));
+      window.privateResultsUI.release();
+    });
+    await expect(preview).toHaveText("");
+    await expect(preview).toBeHidden();
+    await page
+      .getByRole("button", { name: "Review response", exact: true })
+      .click();
+    await expect(preview).toHaveText("PRIVATE_DURABLE_RESULT");
+    await page.evaluate(() => window.privateResultsUI.silentRevoke());
+    await expect(preview).toHaveText("", { timeout: 5000 });
+    await expect(page.getByRole("status")).toContainText("Access changed");
+    await page.evaluate(() => window.privateStorageTest.resultPermission(true));
+    await page
+      .getByRole("button", { name: "Refresh history", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Review response", exact: true })
+      .click();
+    await expect(preview).toHaveText("PRIVATE_DURABLE_RESULT");
+    await page.evaluate(() => window.privateResultsUI.invalidate());
+    await expect(preview).toHaveText("");
+    await expect(
+      page.getByRole("button", { name: "Review response", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.privateResultsUI.destroy());
+    f.close();
+  }
+});
+
+test("History deletion requires a fresh confirmed review and never leaves a decrypted preview", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    await reviewedUI(page, f);
+    await page
+      .getByRole("button", { name: "Review response", exact: true })
+      .click();
+    await expect(page.locator(".private-results-output")).toHaveText(
+      "PRIVATE_DURABLE_RESULT",
+    );
+    await page
+      .getByRole("button", { name: "Review deletion", exact: true })
+      .click();
+    await expect(page.locator(".private-results-output")).toHaveText("");
+    const remove = page.getByRole("button", {
+      name: "Delete browser history",
+      exact: true,
+    });
+    await expect(remove).toBeDisabled();
+    await page.getByLabel("I understand what will be deleted.").check();
+    // A second operation makes this reviewed deletion stale.
+    await page.evaluate(
+      (peerId) => window.privateStorageTest.reserve(peerId),
+      f.binding.deviceId,
+    );
+    await remove.click();
+    await expect(page.getByRole("alert")).toContainText("History changed");
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).entries,
+    ).toHaveLength(2);
+    await page
+      .getByRole("button", { name: "Refresh history", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Review deletion", exact: true })
+      .click();
+    await page.getByLabel("I understand what will be deleted.").check();
+    await remove.click();
+    await expect(page.getByRole("status")).toContainText(
+      "Browser history deleted",
+    );
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).entries,
+    ).toEqual([]);
+    expect(f.store.list(owner)).toHaveLength(1);
+    await expect(page.locator(".private-results-output")).toHaveText("");
+  } finally {
+    await page.evaluate(() => window.privateResultsUI.destroy());
+    f.close();
+  }
+});
+
+test("Encrypted history downloads omit plaintext and local retry stop makes no cancellation claim", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    await reviewedUI(page, f);
+    const downloadPromise = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Download encrypted history", exact: true })
+      .click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(
+      "bittrees-encrypted-history.json",
+    );
+    const stream = await download.createReadStream();
+    if (!stream) throw Error("Missing download");
+    let text = "";
+    for await (const chunk of stream) text += chunk.toString();
+    expect(text).not.toContain("PRIVATE_DURABLE_RESULT");
+    expect(JSON.parse(text).entries[0].resultEnvelope).toBeTruthy();
+    const queued = await page.evaluate(
+      (peerId) => window.privateStorageTest.reserve(peerId),
+      f.binding.deviceId,
+    );
+    await page
+      .getByRole("button", { name: "Refresh history", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Stop retries", exact: true })
+      .click();
+    await expect(page.getByRole("status")).toContainText("may still run");
+    expect(
+      (
+        await page.evaluate(() => window.privateStorageTest.snapshot())
+      ).entries.find((x) => x.id === queued.id)!.state,
+    ).toBe("stopped");
+  } finally {
+    await page.evaluate(() => window.privateResultsUI.destroy());
+    f.close();
+  }
+});
+
+test("Private result review remains readable and keyboard accessible at desktop and narrow widths", async ({
+  page,
+}, testInfo) => {
+  const f = await fixture(page);
+  try {
+    await reviewedUI(
+      page,
+      f,
+      "Project handoff\n\nThe Mac companion handles local drafting.\nThe Acer server continues the news briefing.\n\nNext: review this draft, then choose where to use it.",
+    );
+    await page.setViewportSize({ width: 1280, height: 950 });
+    const open = page.getByRole("button", {
+      name: "Review response",
+      exact: true,
+    });
+    await open.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "Draft result", exact: true }),
+    ).toBeFocused();
+    await expect(page.locator(".private-results-output")).toContainText(
+      "Project handoff",
+    );
+    mkdirSync("test-results", { recursive: true });
+    await page.screenshot({
+      path: `test-results/private-results-desktop-${testInfo.project.name}.png`,
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await expect(
+      page.getByRole("button", { name: "Hide response", exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: `test-results/private-results-mobile-${testInfo.project.name}.png`,
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Hide response", exact: true })
+      .click();
+    await expect(page.locator(".private-results-output")).toHaveText("");
+  } finally {
+    await page.evaluate(() => window.privateResultsUI.destroy());
     f.close();
   }
 });
