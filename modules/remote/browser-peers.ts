@@ -1,12 +1,18 @@
 import { z } from "zod";
-import { browserEndpointRecordSchema } from "./browser-endpoint-keys.js";
+import { browserStoredKeyMatches } from "./browser-private-authority.js";
+import {
+  browserPeerRecordSchema as recordSchema,
+  browserPeerProofSchema as proofSchema,
+  type BrowserPeerRecord as Record,
+  type BrowserPeerProof,
+} from "./browser-peer-state.js";
+export type { BrowserPeerProof } from "./browser-peer-state.js";
 import {
   browserKeyProofSchema,
   type BrowserKeyProof,
 } from "./browser-key-lifecycle.js";
 import {
   browserKeyScope,
-  browserLifecycleSchema,
   openBrowserKeyDatabase,
 } from "./browser-key-state.js";
 import {
@@ -14,10 +20,7 @@ import {
   privateInvitationTime,
   type PrivateInvitation,
 } from "./private-peer-contracts.js";
-import {
-  privatePeerStateSchema,
-  type PrivatePeerState,
-} from "./private-peer-state.js";
+import { type PrivatePeerState } from "./private-peer-state.js";
 
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const positive = revision.refine((v) => v > 0);
@@ -26,21 +29,6 @@ const checked = z.strictObject({
   expectedRevision: revision,
   confirmed: z.literal(true),
 });
-const recordSchema = z
-  .strictObject({
-    scope: hex,
-    revision: positive,
-    deviceAnchor: hex,
-    locked: z.boolean(),
-    key: browserKeyProofSchema.nullable(),
-    state: privatePeerStateSchema.nullable(),
-  })
-  .refine((r) =>
-    r.locked
-      ? r.key === null && r.state === null
-      : !!r.key && !!r.state && same(r.key.binding, r.state.binding),
-  );
-type Record = z.infer<typeof recordSchema>;
 type Review = {
   id: string;
   revision: number;
@@ -52,20 +40,6 @@ type Review = {
   startedAt: number;
   startedMono: number;
 };
-export type BrowserPeerProof = {
-  revision: number;
-  key: BrowserKeyProof;
-  peerId: string;
-  keyEpoch: number;
-  fingerprint: string;
-};
-const proofSchema = z.strictObject({
-  revision: positive,
-  key: browserKeyProofSchema,
-  peerId: z.uuid(),
-  keyEpoch: positive,
-  fingerprint: hex,
-});
 function same(a: unknown, b: unknown) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -252,38 +226,17 @@ export class BrowserPeerEnrollment {
         const meta = tx.objectStore("lifecycle").get(this.scope);
         meta.onsuccess = () =>
           guard(() => {
-            const state = browserLifecycleSchema.parse(meta.result);
-            const slot = state.slots.find((s) => s.state === "active");
-            if (
-              state.scope !== this.scope ||
-              state.locked ||
-              state.revision !== key.revision ||
-              state.ownerId !== key.binding.ownerId ||
-              state.deviceId !== key.binding.deviceId ||
-              !slot ||
-              slot.id !== key.keyId ||
-              slot.keyEpoch !== key.keyEpoch ||
-              slot.publicKey !== key.publicKey ||
-              !same(slot.binding, key.binding)
-            )
-              throw new BrowserPeerError("DENIED");
             const saved = tx.objectStore("slots").get([this.scope, key.keyId]);
             saved.onsuccess = () =>
               guard(() => {
-                const row = browserEndpointRecordSchema.parse(saved.result);
                 if (
-                  row.scope !== this.scope ||
-                  row.keyId !== key.keyId ||
-                  row.state !== "ready" ||
-                  row.identity.localOwner !== this.owner ||
-                  row.identity.keyId !== key.keyId ||
-                  row.identity.keyEpoch !== key.keyEpoch ||
-                  !same(row.identity.binding, key.binding) ||
-                  row.publicKey !== key.publicKey ||
-                  !row.recovery ||
-                  !(row.privateHandle instanceof CryptoKey) ||
-                  row.privateHandle.type !== "private" ||
-                  row.privateHandle.extractable
+                  !browserStoredKeyMatches(
+                    meta.result,
+                    saved.result,
+                    this.owner,
+                    this.scope,
+                    key,
+                  )
                 )
                   throw new BrowserPeerError("DENIED");
                 run();

@@ -4,6 +4,15 @@ export type BrowserStorageIO<T> = {
   request<R>(request: IDBRequest<R>, done: (value: R) => void): void;
   done(value: T): void;
 };
+export function browserStorageError(e: unknown): Error {
+  return e instanceof BrowserOutboxError
+    ? e
+    : new BrowserOutboxError(
+        e instanceof DOMException && e.name === "QuotaExceededError"
+          ? "CAPACITY"
+          : "STORAGE_UNAVAILABLE",
+      );
+}
 /** Short IndexedDB transactions only: no crypto, network or awaited work inside
  * request callbacks. Publication returns only after transaction completion. */
 export function browserStorageTransaction<T>(
@@ -12,6 +21,7 @@ export function browserStorageTransaction<T>(
   mode: IDBTransactionMode,
   check: () => void,
   work: (io: BrowserStorageIO<T>) => void,
+  normalizeError: (e: unknown) => Error = browserStorageError,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     let tx: IDBTransaction,
@@ -22,22 +32,11 @@ export function browserStorageTransaction<T>(
       check();
       tx = db.transaction(stores, mode, { durability: "strict" });
     } catch (e) {
-      reject(
-        e instanceof BrowserOutboxError
-          ? e
-          : new BrowserOutboxError("STORAGE_UNAVAILABLE"),
-      );
+      reject(normalizeError(e));
       return;
     }
     const fail = (e: unknown) => {
-      failure =
-        e instanceof BrowserOutboxError
-          ? e
-          : new BrowserOutboxError(
-              e instanceof DOMException && e.name === "QuotaExceededError"
-                ? "CAPACITY"
-                : "STORAGE_UNAVAILABLE",
-            );
+      failure = normalizeError(e);
       try {
         tx.abort();
       } catch {
