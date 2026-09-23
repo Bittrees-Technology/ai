@@ -46,11 +46,18 @@ jobs:
           ref: daa4ef1ca690c67d0a837838a4a5575a0b3136eb
           path: .integration/crm
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Bittrees-Technology/news
+          ref: 41d7f2c9849d4d09e5b3fd56255154ccee465c24
+          path: .integration/news
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm ci --prefix .integration/news
       - run: npm ci --prefix .integration/autonote
       - run: npm ci --prefix .integration/crm
       - name: Actual companion, AutoNote and CRM synthetic acceptance
@@ -59,6 +66,11 @@ jobs:
           DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/autonote_test
           AUTONOTE_REPO: .integration/autonote
           CRM_REPO: .integration/crm
+      - name: Actual News read-only companion acceptance
+        run: npx tsx scripts/news-integration-check.ts
+        env:
+          NEWS_MCP_TEST_DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/autonote_test
+          NEWS_REPO: .integration/news
 
   remote-status-integration:
     runs-on: ubuntu-latest
@@ -245,5 +257,13 @@ jobs:
         with:
           name: local-memory-dependencies-ui-preview
           path: test-results/local-memory-dependencies-*.png
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain News connection review and read previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-connection-ui-preview
+          path: test-results/news-connection-*.png
           if-no-files-found: error
           retention-days: 7

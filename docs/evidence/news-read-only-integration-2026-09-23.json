@@ -1,0 +1,16 @@
+{
+  "verifiedAt": "2026-09-23T08:05:00.704731+00:00",
+  "newsRevision": "41d7f2c9849d4d09e5b3fd56255154ccee465c24",
+  "newsPR": "https://github.com/Bittrees-Technology/news/pull/2",
+  "runtime": "Node24.21.0",
+  "database": "Disposable local PostgreSQL16.15 schema; CI repeats on PostgreSQL17",
+  "clientSourceSha256": "405b15aa0c35dffaec23712cd1bf5c29fd6a23c3620083c12c1078f9a056bbe0",
+  "checks": "Actual News MCP + companion: reviewed reused keys, own-account reads, local-owner isolation, source expiry/revocation, fixed read-only calls and unchanged curation/processing/delivery tables pass.",
+  "credentialProvider": "In-memory synthetic entry; no native Keychain access",
+  "limits": [
+    "No personal key or live authenticated News account was used",
+    "No source task generation, saving, curation, publication or delivery path",
+    "No Acer/model/runtime/schedule change",
+    "No native or personal acceptance"
+  ]
+}

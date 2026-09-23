@@ -1,3 +1,4 @@
+import { NewsConnectionPanel } from "./news-connection.js";
 import { PrivateCheckPanel } from "./private-checks.js";
 import { PrivatePermissionPanel } from "./private-permissions.js";
 import { PrivatePeerPanel } from "./private-peers.js";
@@ -293,12 +294,7 @@ export function Connections(props: {
       <ConnectionCard app="autonote" {...props} />
       <RolesConnection api={props.api} onError={props.onError} />
       <MailConnection {...props} />
-      {["News"].map((name) => (
-        <div className="row" key={name}>
-          <h3>{name}</h3>
-          <span>Not connected</span>
-        </div>
-      ))}
+      <NewsConnectionPanel api={props.api} />
     </section>
   );
 }

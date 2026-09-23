@@ -1,3 +1,4 @@
+import type { NewsConnector } from "../../modules/connectors/news.js";
 import { localTaskDependencies } from "./memory.js";
 import type { ExecutionControls } from "./execution-limits.js";
 import { PrivatePeerCheckError } from "../../modules/remote/private-peer-checks.js";
@@ -49,6 +50,7 @@ export interface LocalApiOptions {
   activeTasks?: () => number;
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
+  news?: NewsConnector;
   roles?: RolesConnector;
   mail?: MailConnector;
   mailSources?: MailTasks;
@@ -82,6 +84,7 @@ export function localApi({
   cancelRun,
   crm,
   roles,
+  news,
   mail,
   mailSources,
   sources,
@@ -503,6 +506,33 @@ export function localApi({
       z.strictObject({}).parse(req.body);
       res.json(await roles.read());
     });
+  }
+  app.get("/v1/connections/news", async (_req, res) => {
+    res.json(
+      news
+        ? { available: true, ...(await news.status()) }
+        : { available: false, connection: null },
+    );
+  });
+  if (news) {
+    app.post("/v1/connections/news/review", async (req, res) =>
+      res.json(await news.prepare(req.body)),
+    );
+    app.post("/v1/connections/news/confirm", async (req, res) =>
+      res.json(await news.confirm(req.body)),
+    );
+    app.post("/v1/connections/news/cancel", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      await news.cancel();
+      res.status(204).end();
+    });
+    app.post("/v1/connections/news/articles", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await news.read());
+    });
+    app.post("/v1/connections/news/forget", async (req, res) =>
+      res.json(await news.forget(req.body)),
+    );
   }
   const dependenciesCurrent = (id: string) =>
     localTaskDependencies(store, owner, id, memory);
