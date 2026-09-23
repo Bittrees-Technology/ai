@@ -86,8 +86,10 @@ export function DeviceResources({
             </dd>
             <dt>Local generation</dt>
             <dd>
-              {status.limits.parallelGenerations} task(s) at once. Cloud
-              fallback is off.
+              {status.execution
+                ? "Controlled by the local execution limits below."
+                : `${status.limits.parallelGenerations} task(s) at once.`}{" "}
+              Cloud fallback is off.
             </dd>
           </dl>
           {status.execution && (

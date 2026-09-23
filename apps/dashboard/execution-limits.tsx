@@ -139,7 +139,7 @@ export function ExecutionSettings({
             task, not a memory reservation or a hard limit on Ollama. Model
             context and output size remain in Models.
           </p>
-          <label>
+          <label className="execution-checkbox">
             <input
               type="checkbox"
               checked={draft.pauseNewTasks}
@@ -153,7 +153,7 @@ export function ExecutionSettings({
             slot stays occupied until the pending call returns. Queued deadlines
             still expire while waiting.
           </p>
-          <label>
+          <label className="execution-checkbox">
             <input
               type="checkbox"
               checked={confirmed}

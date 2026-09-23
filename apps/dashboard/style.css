@@ -721,3 +721,14 @@ select.model-profile-select {
   width: min(100%, 12rem);
   box-sizing: border-box;
 }
+
+.execution-settings .execution-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.execution-settings input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0.2rem 0 0;
+}
