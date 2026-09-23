@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   PrivatePermissionPanelState,
   emptyPermissionForm,
@@ -32,6 +32,7 @@ export function PrivatePermissionPanel({
 }: {
   api: (path: string, method?: string, body?: unknown) => Promise<any>;
 }) {
+  const labelId = useId();
   const [, render] = useState(0),
     ref = useRef<PrivatePermissionPanelState | null>(null);
   if (!ref.current)
@@ -174,8 +175,9 @@ export function PrivatePermissionPanel({
             <fieldset disabled={state.busy} className="private-permission-form">
               <legend>Choose permissions for one device</legend>
               <label className="private-peer-text-label">
-                Reviewed device
+                <span id={`${labelId}-device`}>Reviewed device</span>
                 <select
+                  aria-labelledby={`${labelId}-device`}
                   value={form.peerId}
                   onChange={(e) => change({ peerId: e.target.value })}
                 >
@@ -208,8 +210,11 @@ export function PrivatePermissionPanel({
               </label>
               {form.receiveTasks && (
                 <label className="private-peer-text-label">
-                  Local model for incoming tasks
+                  <span id={`${labelId}-model`}>
+                    Local model for incoming tasks
+                  </span>
                   <select
+                    aria-labelledby={`${labelId}-model`}
                     value={form.modelProfileId ?? ""}
                     onChange={(e) =>
                       change({ modelProfileId: e.target.value || null })
@@ -262,8 +267,9 @@ export function PrivatePermissionPanel({
                 results from older tasks.
               </p>
               <label className="private-peer-text-label">
-                Permission duration
+                <span id={`${labelId}-duration`}>Permission duration</span>
                 <select
+                  aria-labelledby={`${labelId}-duration`}
                   value={form.minutes}
                   onChange={(e) =>
                     change({ minutes: Number(e.target.value) as 15 | 60 })
