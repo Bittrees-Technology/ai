@@ -1,3 +1,4 @@
+import { checkBrowserDevices } from "./browser-device-integration.js";
 import { checkRemoteTemplates } from "./remote-template-integration.js";
 import { checkRemoteQuotas } from "./remote-quota-integration.js";
 import { checkRemoteMaintenance } from "./remote-maintenance-integration.js";
@@ -331,6 +332,16 @@ try {
       "utf8",
     ),
   );
+  await pool.query(
+    await readFile(
+      new URL(
+        "../modules/remote/migrations/008-browser-devices.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  await checkBrowserDevices(pool);
   await checkRemoteHttp(pool);
   await checkRemoteCommands(pool);
   await checkRemoteControlScope(pool);

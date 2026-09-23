@@ -1,3 +1,4 @@
+import { checkBrowserDeviceHttp } from "./browser-device-http-integration.js";
 import { RemoteTemplateReceiver } from "../modules/remote/template-receiver.js";
 import { checkTemplateHttp } from "./remote-template-http-integration.js";
 import { RemoteReceiver } from "../modules/remote/receiver.js";
@@ -136,6 +137,9 @@ export async function checkRemoteHttp(pool: Pool) {
         req.end(payload);
       });
     }
+    await checkBrowserDeviceHttp((path, body, headers) =>
+      call(path, body, headers),
+    );
     const browser = {
       Origin: origin,
       "X-Bittrees-Request": "1",
