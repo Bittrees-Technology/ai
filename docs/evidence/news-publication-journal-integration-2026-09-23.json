@@ -1,0 +1,21 @@
+{
+  "verifiedAt": "2026-09-23T09:26:00.642781+00:00",
+  "sourceCommit": "2d0059e75be2012bcdd19451b69c625ae695070d",
+  "runtime": "Node 24.21.0 / PostgreSQL 16.15",
+  "sourceHashes": {
+    "scripts/news-publication-integration.ts": "f0d8e34700a1cfbb826b731d75e115f62049c0deb6aa464c527138ab1a3fc0e1",
+    "scripts/news-integration-check.ts": "f2ecf877e4b49ad95aacbdea2e7b9993c7361873efd1951333ec996237d6fe69",
+    "modules/connectors/news.ts": "9dbefb29f8d4422c3c4d14dc6f4d94a300d66bd20565e4a0deea04b2c346b12b",
+    "modules/storage/news-publications.ts": "dc6a85d27afd6377309c5d548216dcc472bf0d69f48bcdf96dd38a41b6d479e7",
+    "modules/connectors/news-publication-contracts.ts": "a29c28db8c7799ed580b1092cfea572110a30d26e71f662afa648758fd1ce20d",
+    "modules/storage/store.ts": "caa257d425503d64ef20f48eb6df954c0a2640dd134dc89fc991e675adc372ea"
+  },
+  "localResult": "Actual News MCP + companion: reviewed reused keys, own-account reads, local-owner isolation, source expiry/revocation, explicit exact curation review, read-scope denial, stale/revoked authority, unchanged unrelated source content/snapshots/schedules, lost-response reconciliation and zero publishing/delivery/processing effects pass.\nActual News publication + Mac journal: exact full projection, durable pre-dispatch intent, one write per approval, stale navigation/private-feed denial, response loss, restart and encrypted restore, historical read-only reconciliation after visibility withdrawal, revoked/read-only replacement key, unchanged schedules and zero delivery/processing effects pass.",
+  "disposableDatabaseStoppedAndRemoved": true,
+  "limits": [
+    "Synthetic local PostgreSQL accounts, in-memory credential stub and temporary encrypted SQLite stores only.",
+    "No live News account, publication, native UI, Keychain or personal data access.",
+    "Normal app startup and HTTP do not expose publication methods.",
+    "Installed PR40/prepared PR134 unchanged; Acer model/runtime/news jobs and Mac models unchanged."
+  ]
+}

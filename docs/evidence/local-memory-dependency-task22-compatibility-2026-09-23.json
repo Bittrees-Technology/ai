@@ -1,0 +1,28 @@
+{
+  "date": "2026-09-23T09:23:23.963Z",
+  "runtime": "v24.21.0",
+  "fromTaskSchema": 20,
+  "toTaskSchema": 22,
+  "memorySchema": 2,
+  "legacySourceCommit": "119571fe7ccb36ae349a20470bfab8cba568473c",
+  "legacyCompiledStoreSha256": "c716111adf9327d5dcecfc2e32182dd5b496b0d4e4cc6f910511a2f2bc414eeb",
+  "sourceHashes": {
+    "modules/storage/store.ts": "caa257d425503d64ef20f48eb6df954c0a2640dd134dc89fc991e675adc372ea",
+    "modules/memory/store.ts": "05b6cf9460185b648b350405fe5956499f9f3cb87c78eb4461ec1bdf9823fe80",
+    "apps/companion/memory.ts": "5af8f0f4f8b4af7d033f1a536ec4fc496f38d0b3bdb0ab36c5ec6ef6c934d4ec"
+  },
+  "checks": [
+    "Actual prepared PR134 worker seeded a three-task/two-memory chain, exact used versions and a quality review.",
+    "Wrong-key upgrade failed; task20 to22 preserved every task, result, memory revision, pin and approval.",
+    "Deleting the ancestor memory denied both derived tasks and the remaining derived memory without deleting retained results/review.",
+    "Coordinated encrypted backup/restore retained data and dependency denial.",
+    "Actual prepared PR134 engine refused both upgraded and restored task22 stores.",
+    "Original coordinated backup reopened separately through the actual older task20/memory2 helpers."
+  ],
+  "limits": [
+    "Disposable synthetic data and fake inference only; no personal data/key access, installed app replacement or Acer change.",
+    "Raw storage/backup preserves history; companion content APIs and worker enforce current local dependency checks.",
+    "Original-backup rollback contains historical data and older access behavior, and does not carry forward later edits or deletions.",
+    "External-source memories, independent/native/personal acceptance remain open."
+  ]
+}
