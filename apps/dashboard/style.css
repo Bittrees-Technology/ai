@@ -579,3 +579,14 @@ summary {
   padding-left: 22px;
   line-height: 1.6;
 }
+
+.private-check-panel select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+}
+.private-check-panel .row {
+  justify-content: flex-start;
+}

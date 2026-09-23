@@ -115,6 +115,10 @@ export function PrivatePermissionPanel({
         connected apps, memory, tools or publishing. Private task delivery is
         not active in this build.
       </p>
+      <p>
+        Complete a check in Verify a private device before reviewing new
+        permissions. Each device checks the other separately.
+      </p>
       {state.error && <p role="alert">{state.error}</p>}
       {state.notice && <p role="status">{state.notice}</p>}
       {!status ? (
