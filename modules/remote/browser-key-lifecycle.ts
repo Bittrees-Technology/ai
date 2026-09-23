@@ -318,6 +318,7 @@ export class BrowserKeyLifecycle {
       revision: s?.revision ?? 0,
       locked: s?.locked ?? true,
       requiresFreshRegistration: !s || s.locked,
+      registrationDeviceId: s?.deviceId ?? null,
       legacySlots: s ? 0 : rows.length,
       slots: s
         ? structuredClone(s.slots)

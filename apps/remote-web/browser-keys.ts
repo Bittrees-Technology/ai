@@ -395,6 +395,14 @@ export function mountBrowserKeys(
     account.textContent = "";
     controls();
   }
+  function registrationChanged() {
+    const binding = ctx()?.binding;
+    return (
+      !!binding &&
+      !!status?.registrationDeviceId &&
+      status.registrationDeviceId !== binding.deviceId
+    );
+  }
   function controls() {
     const ready = !!loaded && loaded === scope() && focused() && !busy,
       canOnline = ready && online(),
@@ -404,6 +412,7 @@ export function mountBrowserKeys(
       !canOnline ||
       !status ||
       status.legacySlots > 0 ||
+      registrationChanged() ||
       (status.locked && status.revision > 0) ||
       (status.requiresFreshRegistration && !c?.freshRegistration);
     clearButton.disabled =
@@ -413,11 +422,17 @@ export function mountBrowserKeys(
       status.slots.every((x) => x.state === "deleted");
     resetButton.hidden =
       !status ||
-      !((status.locked && status.revision > 0) || status.legacySlots > 0);
+      !(
+        (status.locked && status.revision > 0) ||
+        status.legacySlots > 0 ||
+        registrationChanged()
+      );
     resetButton.disabled = !canOnline || !c?.freshRegistration;
     checkButton.disabled = !ready;
     for (const b of list.querySelectorAll("button"))
-      b.disabled = !ready || (b.dataset.online === "true" && !canOnline);
+      b.disabled =
+        !ready ||
+        (b.dataset.online === "true" && (!canOnline || registrationChanged()));
     idle.hidden = mode !== "none";
     reviewBox.hidden = mode !== "review";
     codeBox.hidden = mode !== "code";
@@ -537,11 +552,13 @@ export function mountBrowserKeys(
     render();
     notice.textContent =
       outcome ??
-      (status.legacySlots
-        ? "Earlier key storage found. Keep its backups before reviewing a fresh browser registration."
-        : status.locked && status.revision > 0
-          ? "Key material was cleared. Register a different browser identity before setup."
-          : "Key history loaded. Private task access is separate.");
+      (registrationChanged()
+        ? "Browser registration changed. Review the new registration for local keys; existing backups remain available."
+        : status.legacySlots
+          ? "Earlier key storage found. Keep its backups before reviewing a fresh browser registration."
+          : status.locked && status.revision > 0
+            ? "Key material was cleared. Register a different browser identity before setup."
+            : "Key history loaded. Private task access is separate.");
   }
   function showReview(action: Action, keyId?: string) {
     if (!status || !loaded || loaded !== scope() || busy || !focused()) return;
