@@ -9,6 +9,7 @@ import {
 import { retainedMac } from "./support/retained-mac.js";
 import { mkdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { openRemotePanel, loginRemotePanel } from "./support/remote-panel.js";
 import { inspectPrivateInvitation } from "../../modules/remote/private-peer-contracts.js";
 const peers = (p: Page) =>
   p.getByRole("region", { name: "Browser device identities", exact: true });
@@ -114,6 +115,12 @@ test("built signed-in controls exchange actual Mac invitations, retain reviewed 
     await expect(create).toBeDisabled();
     await peers(page).getByRole("checkbox").check();
     await create.click();
+    await expect(
+      peers(page).getByRole("heading", {
+        name: "Public invitation for your Mac",
+        exact: true,
+      }),
+    ).toBeFocused();
     const text = await peers(page)
       .getByLabel("Public invitation to share", { exact: true })
       .inputValue();
@@ -521,6 +528,44 @@ test("a dropped post-commit verification reports uncertainty and refresh reveals
       "Refresh saved devices",
     );
     expect((await records(page))[0]?.revision).toBe(1);
+  } finally {
+    mac.close();
+  }
+});
+
+test("another signed-in owner sees none of the previous owner's public identities", async ({
+  page,
+  context,
+}) => {
+  const binding = await setupRecovery(page),
+    mac = await retainedMac(binding, Date.now());
+  try {
+    await refresh(page);
+    const i = await mac.invitation();
+    await prepare(page, i.invitation);
+    await compare(page, i.fingerprint);
+    await approve(page);
+    await saved(page);
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(page.locator("#account")).toHaveText("Not signed in.");
+    const other = await context.newPage();
+    await openRemotePanel(other);
+    await loginRemotePanel(other);
+    await openRecovery(other);
+    await refresh(other);
+    await expect(peers(other)).toContainText("No saved devices in this list");
+    await expect(peers(other)).not.toContainText(mac.binding.deviceId);
+    await expect(peers(other)).not.toContainText(i.fingerprint);
+    await expect(
+      peers(other).getByRole("button", {
+        name: "Review invitation from Mac",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    // Prior owner's retained data is not deleted or adopted by the new session.
+    expect((await records(other))[0]?.state?.peers[0]?.peerId).toBe(
+      mac.binding.deviceId,
+    );
   } finally {
     mac.close();
   }

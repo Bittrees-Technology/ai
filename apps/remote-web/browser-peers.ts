@@ -572,6 +572,7 @@ export function mountBrowserPeers(
         outputInfo.textContent = `Intended Mac ${value.invitation.recipientId}. Expires ${new Date(value.invitation.expiresAt).toLocaleString()}. Creating this invitation has not saved a Mac identity or allowed tasks.`;
         notice.textContent =
           "Public invitation created. Compare the full fingerprint on your Mac.";
+        controls();
         outputHeading.focus();
       } else {
         const result =
