@@ -6,6 +6,7 @@ import type {
 } from "../../modules/remote/browser-device-contracts.js";
 import { mountBrowserKeys } from "./browser-keys.js";
 import { mountBrowserPeers } from "./browser-peers.js";
+import { mountBrowserChecks } from "./browser-checks.js";
 type Inspection = z.infer<typeof browserDeviceInspectionSchema>;
 type Registration = z.infer<typeof browserRegistrationSchema>;
 type Review = {
@@ -117,6 +118,14 @@ export function mountBrowserSetup(
     reset("Registration review closed while reviewing device identities.");
     keyView.invalidate();
   });
+  const checkRoot = el("div");
+  root.append(checkRoot);
+  const checkView = mountBrowserChecks(checkRoot, host, now, monotonic, () => {
+    reset("Registration review closed while reviewing device checks.");
+    keyView.invalidate();
+    peerView.invalidate();
+    checkView.invalidate();
+  });
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;
@@ -188,6 +197,7 @@ export function mountBrowserSetup(
     clearSnapshot();
     keyView.invalidate();
     peerView.invalidate();
+    checkView.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -410,6 +420,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      checkView.destroy();
+      checkRoot.remove();
       peerView.destroy();
       peerRoot.remove();
       keyView.destroy();

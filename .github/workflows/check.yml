@@ -348,3 +348,12 @@ jobs:
           path: test-results/browser-peer-controls-*.png
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain browser device check controls previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-check-controls-ui-preview
+          path: test-results/browser-check-controls-*.png
+          if-no-files-found: error
+          retention-days: 7
