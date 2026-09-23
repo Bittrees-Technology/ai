@@ -1,3 +1,4 @@
+import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useState } from "react";
 import { TemplateController } from "./template-state.js";
 export function Templates({
@@ -71,7 +72,7 @@ export function Templates({
         ))}
       </ul>
       {draft && (
-        <fieldset disabled={controller.busy}>
+        <fieldset className="template-definition" disabled={controller.busy}>
           <legend>
             {draft.revision
               ? `Review version ${draft.revision}`
@@ -100,9 +101,14 @@ export function Templates({
               <option value="draft">Draft</option>
             </select>
           </label>
-          <label>
-            Model
+          <label
+            className="model-profile-choice"
+            htmlFor="template-model-profile"
+          >
+            <span id="template-model-profile-label">Model</span>
             <select
+              id="template-model-profile"
+              aria-labelledby="template-model-profile-label"
               value={draft.definition.modelProfileId}
               onChange={(e) =>
                 controller.edit({ modelProfileId: e.target.value })
@@ -111,7 +117,7 @@ export function Templates({
               <option value="">Choose a saved model</option>
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
-                  {profile.model} · {profile.id}
+                  {profileLabel(profile)}
                 </option>
               ))}
             </select>

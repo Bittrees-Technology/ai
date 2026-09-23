@@ -613,3 +613,77 @@ summary {
 .dependency-failure ul {
   padding-left: 20px;
 }
+
+.model-profile-settings {
+  margin: 20px 0;
+  min-width: 0;
+  border: 1px solid #c6d9dd;
+  border-radius: 7px;
+  padding: 16px;
+}
+.model-profile-settings legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.model-profile-fields input {
+  min-width: 0;
+}
+.model-profile-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.model-profile-fields label {
+  min-width: 0;
+}
+.saved-model-profile > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.saved-model-profile button {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .model-profile-fields {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .saved-model-profile {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+/* Long model/profile names must not enlarge the workspace grid. */
+.workspace > .queue {
+  min-width: 0;
+}
+.workspace select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* WebKit's intrinsic select width must not size an implicit label grid track. */
+.model-profile-choice {
+  display: block;
+  min-width: 0;
+}
+.model-profile-choice select,
+select.model-profile-select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 7px;
+  /* WebKit's native painted text can overflow even a correctly sized select. */
+  appearance: none;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23183945' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+}
+.template-definition {
+  min-width: 0;
+}

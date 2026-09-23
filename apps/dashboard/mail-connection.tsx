@@ -1,3 +1,4 @@
+import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (
   path: string,
@@ -259,7 +260,7 @@ export function MailConnection({
                     </option>
                   </select>
                   <label htmlFor="mail-profile">Local model profile</label>
-                  <select
+                  <select className="model-profile-select"
                     id="mail-profile"
                     value={profile}
                     disabled={busy}
@@ -268,7 +269,7 @@ export function MailConnection({
                     <option value="">Choose a profile</option>
                     {profiles.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.model}
+                        {profileLabel(p)}
                       </option>
                     ))}
                   </select>
