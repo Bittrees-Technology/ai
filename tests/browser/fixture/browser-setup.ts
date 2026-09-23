@@ -1,3 +1,7 @@
+import {
+  openBrowserKeyRecovery,
+  browserRecoveryKey,
+} from "../../../modules/remote/browser-key-recovery.js";
 import { BrowserKeyHost } from "../../../modules/remote/browser-key-host.js";
 import { mountBrowserSetup } from "../../../apps/remote-web/browser-setup.js";
 let owner: string | null = null,
@@ -75,6 +79,13 @@ const fixture = {
   },
   advance(ms: number) {
     offset += ms;
+  },
+  async backupIdentity(kit: unknown, code: string) {
+    const opened = await openBrowserKeyRecovery(
+      kit,
+      await browserRecoveryKey(code),
+    );
+    return { identity: opened.identity, publicKey: opened.publicKey };
   },
   context: () => host.keyContext(),
   transportCalls: () => [...transportCalls],

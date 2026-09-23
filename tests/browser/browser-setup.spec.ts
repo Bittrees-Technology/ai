@@ -577,6 +577,14 @@ test("A wrong activation code leaves the original prepared key resumable after f
   const code = await start(page),
     kit = await prepare(page, code),
     before = (await status(page)).slots[0]!;
+  expect(before.state).toBe("preparing");
+  expect(before.publicKey).toBeNull();
+  const saved = await page.evaluate(
+    ({ kit, code }) => window.browserSetupTest.backupIdentity(kit, code),
+    { kit, code },
+  );
+  expect(saved.identity.keyId).toBe(before.id);
+  expect(saved.identity.binding).toEqual(before.binding);
   await keys(page)
     .getByLabel("Saved encrypted backup file", { exact: true })
     .setInputFiles({
@@ -609,6 +617,6 @@ test("A wrong activation code leaves the original prepared key resumable after f
   await activate(page, code, again);
   const after = (await status(page)).slots[0]!;
   expect(after.id).toBe(before.id);
-  expect(after.publicKey).toBe(before.publicKey);
+  expect(after.publicKey).toBe(saved.publicKey);
   expect(after.state).toBe("active");
 });
