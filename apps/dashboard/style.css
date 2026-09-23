@@ -687,3 +687,7 @@ select.model-profile-select {
 .template-definition {
   min-width: 0;
 }
+.model-import-job {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

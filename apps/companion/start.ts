@@ -93,6 +93,7 @@ const store = new Store(join(content.directory, "tasks.db"), new Vault(key)),
 const importDirectory = join(directory, "model-imports");
 await mkdir(importDirectory, { recursive: true, mode: 0o700 });
 const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
+await imports.maintain();
 const memory = new MemoryStore(
   join(content.directory, "memory.db"),
   new Vault(key),
@@ -233,6 +234,7 @@ async function stop() {
   stopping = true;
   process.stdin.pause();
   clearInterval(timer);
+  clearInterval(importMaintenance);
   worker.stop();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
@@ -259,6 +261,14 @@ const timer = setInterval(() => {
       });
   }
 }, 500);
+const importMaintenance = setInterval(() => {
+  if (started && !stopping)
+    void imports.maintain().catch(() => {
+      console.error(
+        "Temporary model files could not be cleaned up. Import history is retained.",
+      );
+    });
+}, 60000);
 const requestShutdown = bindProcessLifetime(stop);
 {
   pairingWrite = writeFile(codePath, pairCode + "\n", { mode: 0o600 });
