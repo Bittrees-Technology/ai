@@ -1161,6 +1161,7 @@ export function localApi({
       privateTaskReceipts: store.exportPrivateTaskReceipts(owner),
       privateTaskOutbox: store.exportPrivateTaskOutbox(owner),
       privateTaskResponses: store.exportPrivateTaskResponses(owner),
+      newsPublications: store.newsPublications.list(owner),
       templates: store.templates(owner),
       remoteTemplates: store.remoteTemplates.export(owner),
       memoryExtractions: store.memoryExtractions
@@ -1185,6 +1186,7 @@ export function localApi({
       throw new StoreError("INVALID_INPUT");
     await receivingPaused(async () => {
       if (
+        news?.publicationBusy ||
         publications?.busy ||
         autoReviews?.busy ||
         remote?.running ||
@@ -1209,6 +1211,7 @@ export function localApi({
       }
       const remove = () => {
         store.deleteAll(owner, () => {
+          news?.invalidatePublicationReview();
           // Remote journal cleanup may await storage. Fence another connection's
           // new key selection at the actual deletion commit, under a write lock.
           const currentKeys = store.exportPrivateEndpointKeys(owner);

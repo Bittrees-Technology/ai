@@ -1,0 +1,36 @@
+# News publication backend and durable journal
+
+This backend is implemented but **not enabled in the shipped companion interface**. Normal startup supplies no publication journal to `NewsConnector`, and no publication review/confirm/reconcile HTTP route exists. Publication methods return `PUBLICATION_UNAVAILABLE` without an explicitly supplied owner-bound journal. The full public-content review screen and visible operation-history controls are the next work package. No personal key, live publication or installed-app update was used to verify this step.
+
+## Reviewed intent and source contract
+
+The fixed `https://news.bittrees.org/api/mcp` endpoint uses the source protocol `news-reviewed-publication-v1`, implemented by News commit `2d0059e75be2012bcdd19451b69c625ae695070d`. The connector calls only `get_publication_review`, `publish_reviewed_preview` and `get_publication_receipt` for this path. It never calls legacy publication, generation, delivery, scheduling or arbitrary advertised methods.
+
+`reviewPublication()` freshly checks the separately stored source key, local owner and publish scope. It returns a two-minute review capped by source-key expiry. The full public payload includes name/slug/description, live navigation, every front-page and named-feed story, effective translations, owner-edit labels, attribution, excerpts and links. Live navigation names and stored feed names are both retained. Unknown fields at any level fail validation; they cannot be silently omitted from a publication review. Blocked private/foreign/changed source stories remain inspectable but cannot be confirmed. Source content is data, never instructions.
+
+`confirmPublication({id, confirmed: true, audience: "public"})` consumes the held review before its first asynchronous step. It freshly verifies the saved key and source metadata, rereads the complete source projection, checks all content and both revisions, previous public state, scope and eligibility, and checks the short lifetime. A changed observation timestamp alone does not invalidate unchanged content. The held source projection is detached from the caller's copy. Cancellation, a new publication/curation review, curation confirmation, source forget and local-data deletion invalidate held publication reviews. A cancellation that arrives during a read cannot restore a review when that read completes.
+
+## Before and after dispatch
+
+A new `news_publications` table stores the exact approved intent, operation UUID, original source account/credential IDs, review, timestamps and optional historical receipt. Payloads are encrypted using owner-and-operation-bound authenticated encryption; no bearer key or Keychain value is stored in the journal or its exports. Local account identifiers and random operation IDs are table keys. Schema **task22** adds this table; memory2/browser1/import1 are unchanged.
+
+The operation UUID is the consumed local review ID. A standalone SQLite `synchronous=FULL` transaction and a separate exact readback happen before the only source publication call. Nested transactions and weaker durability settings are rejected. Reservation failure, even an error after a committed insert, cannot dispatch a write. A failed response or failed receipt save leaves the preexisting intent; after restart it remains **unconfirmed**, with no automatic resend, replacement ID or resume queue. An unconfirmed intent blocks another publication for that source account until it is reconciled or explicitly forgotten. Pilot journal bounds are 100 total records, 8 MiB per encrypted record and 24 MiB total payload; normal backup size limits still apply.
+
+The source provides one durable historical receipt per operation. Receipt verification matches the operation ID, review digest, draft revision, next publication version and exact public destination. The connector rechecks authority before saving it locally. A later absent response cannot erase an already verified historical receipt. A receipt proves a past commit, **not current public visibility, delivery, fact checking or model quality**.
+
+`reconcilePublication({operationId})` is a read-only source lookup, with no source publication call. After source-key revocation a newly reviewed read-scoped key for the same source account can recover the receipt; a different source account cannot. A missing receipt never proves an in-flight publication failed. Closing a window, deleting history, disconnecting or restoring a backup cannot cancel an already dispatched write.
+
+## Retention, export and recovery
+
+Only explicitly confirmed publication intents are persisted; loading/reviewing source material alone does not create a record. The standard authenticated local export includes this retained publication history without bearer credentials. Local owner-scoped deletion removes it and invalidates unconfirmed in-memory reviews. Source forget leaves the history available for explicit receipt recovery. Individual journal removal requires explicit confirmation plus acknowledgement that publication tracking is being forgotten; it does not withdraw the source edition. The future UI must explain these consequences before exposing deletion.
+
+Encrypted backups retain exact pending intents and committed receipts. Restored records never activate consent or dispatch writes. A backup predating a later publication cannot contain that later operation: preserve/export newer tracking before rollback. The actual previous task21 engine and prepared task20 engine reject task22 stores; original backups remain separately usable with their respective older helpers. Old backup rollback contains historical data and older access rules; it does not carry forward later deletions, memory rules or publication tracking.
+
+## Verification
+
+- Thirteen new engine/database/HTTP suites cover complete payloads, strict confirmation, isolation, invalid source contracts, scope/content changes, cancellation, lifetime, detached reviews, journal durability, local write/readback faults, post-commit response loss, receipt mismatch, replacement keys, restart (including abrupt child-process exit with committed WAL), backup/restore and deletion/export.
+- The real pinned News MCP and PostgreSQL integration checks exact public snapshots, unchanged private drafts and schedules, stale navigation, private named-feed denial, actual source commit with lost response, encrypted restore, historical reconciliation after visibility withdrawal, revoked/read-scoped replacement keys, and zero delivery or processing jobs.
+- Actual task21→22 compatibility uses the compiled PR137 engine; prepared task20→22 compatibility also reruns local-memory dependency preservation and denial through coordinated encrypted restore. Evidence is retained alongside this document.
+- Existing browser checks run only in disposable GitHub CI. This step changes no dashboard UI. Personal/native review acceptance, visible tracking and publication controls, signed distribution and the broader X1 workflow remain open.
+
+Acer-server's model, runtime and existing news jobs remain unchanged. Mac inference/default models, cloud fallback and the installed companion are unchanged.

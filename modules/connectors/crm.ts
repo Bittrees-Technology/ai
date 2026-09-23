@@ -107,7 +107,11 @@ export class ConnectorError extends Error {
       | "CURATION_REQUIRED"
       | "NO_CHANGE"
       | "REVIEW_EXPIRED"
-      | "NEWS_SAVE_UNCONFIRMED",
+      | "NEWS_SAVE_UNCONFIRMED"
+      | "PUBLICATION_UNAVAILABLE"
+      | "PUBLICATION_REQUIRED"
+      | "PUBLICATION_BLOCKED"
+      | "NEWS_PUBLICATION_UNCONFIRMED",
   ) {
     super(code);
   }

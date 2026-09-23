@@ -2,6 +2,15 @@ import { randomUUID, createHash } from "node:crypto";
 import { AsyncEntry } from "@napi-rs/keyring";
 import { z } from "zod";
 import { ConnectorError, type ConnectorSecret } from "./crm.js";
+import type { NewsPublicationJournal } from "../storage/news-publications.js";
+import {
+  newsPublicationReviewSchema,
+  newsPublicationReceiptSchema,
+  publicationContract,
+  publicationFingerprint,
+  matchingPublicationReceipt,
+  type NewsPublicationReview,
+} from "./news-publication-contracts.js";
 
 const endpoint = "https://news.bittrees.org/api/mcp";
 const manageUrl = "https://news.bittrees.org/account/ai";
@@ -115,6 +124,26 @@ export function newsKeychainEntry(profile: string): ConnectorSecret {
 }
 /** Fixed News methods only. Curation requires an exact, expiring, explicitly confirmed review. */
 export class NewsConnector {
+  private publicationReview?: {
+    id: string;
+    expiresAt: string;
+    source: NewsPublicationReview;
+    saved: string;
+    timer: ReturnType<typeof setTimeout>;
+  };
+  private publicationGeneration = 0;
+  get publicationBusy() {
+    return !!this.journal && this.active?.kind === "write";
+  }
+  invalidatePublicationReview() {
+    if (this.publicationBusy) throw new ConnectorError("CONNECTION_BUSY");
+    this.clearPublicationReview();
+  }
+  private clearPublicationReview() {
+    this.publicationGeneration++;
+    if (this.publicationReview) clearTimeout(this.publicationReview.timer);
+    this.publicationReview = undefined;
+  }
   private editReview?: {
     review: NewsEditReview;
     fingerprint: string;
@@ -138,8 +167,11 @@ export class NewsConnector {
     private secret: ConnectorSecret,
     private transport: typeof fetch = fetch,
     private now = Date.now,
+    private journal?: NewsPublicationJournal,
   ) {
     z.string().min(1).max(256).parse(owner);
+    if (journal && journal.owner !== owner)
+      throw new ConnectorError("INVALID_CONNECTION");
   }
   private clearPending() {
     if (this.pending) clearTimeout(this.pending.timer);
@@ -388,6 +420,7 @@ export class NewsConnector {
       throw new ConnectorError("CONNECTION_BUSY");
     this.clearPending();
     this.clearEditReview();
+    this.clearPublicationReview();
   }
   async read() {
     return this.operation("read", async (signal) => {
@@ -492,6 +525,7 @@ export class NewsConnector {
     );
   }
   async preview() {
+    this.clearPublicationReview();
     return this.operation("read", async (signal) => {
       this.clearEditReview();
       const saved = await this.checkedSaved(signal),
@@ -501,6 +535,7 @@ export class NewsConnector {
     });
   }
   async reviewEdit(raw: unknown) {
+    this.clearPublicationReview();
     const input = editInput.parse(raw);
     return this.operation("read", async (signal) => {
       this.clearEditReview();
@@ -546,6 +581,7 @@ export class NewsConnector {
     });
   }
   async confirmEdit(raw: unknown) {
+    this.clearPublicationReview();
     const input = z
       .strictObject({
         id: z.uuid(),
@@ -619,6 +655,7 @@ export class NewsConnector {
       async () => {
         this.clearPending();
         this.clearEditReview();
+        this.clearPublicationReview();
         await this.secret.deleteCredential();
         if (await this.secret.getSecret())
           throw new ConnectorError("INVALID_CONNECTION");
@@ -626,5 +663,216 @@ export class NewsConnector {
       },
       true,
     );
+  }
+
+  private publicationJournal() {
+    if (!this.journal) throw new ConnectorError("PUBLICATION_UNAVAILABLE");
+    return this.journal;
+  }
+  private toolValue(result: unknown): unknown {
+    try {
+      const body = z
+        .object({
+          content: z
+            .array(
+              z.strictObject({ type: z.literal("text"), text: z.string() }),
+            )
+            .length(1),
+        })
+        .parse(result);
+      return JSON.parse(body.content[0]!.text);
+    } catch {
+      throw new ConnectorError("INVALID_SOURCE");
+    }
+  }
+  private async fetchPublication(token: string, signal: AbortSignal) {
+    const result = await this.rpc(
+      token,
+      "tools/call",
+      { name: "get_publication_review", arguments: {} },
+      signal,
+      8 * 1024 * 1024,
+    );
+    const parsed = newsPublicationReviewSchema.safeParse(
+      this.toolValue(result),
+    );
+    if (!parsed.success) throw new ConnectorError("INVALID_SOURCE");
+    return parsed.data;
+  }
+  private canPublish(saved: z.infer<typeof savedSchema>) {
+    if (!saved.connection.scopes.includes("publish"))
+      throw new ConnectorError("PUBLICATION_REQUIRED");
+  }
+  /** Trusted backend only until a complete public-content review UI is shipped. */
+  async reviewPublication() {
+    const journal = this.publicationJournal();
+    return this.operation("read", async (signal) => {
+      this.clearPublicationReview();
+      this.clearEditReview();
+      const generation = this.publicationGeneration;
+      const saved = await this.checkedSaved(signal);
+      this.canPublish(saved);
+      if (
+        journal
+          .list()
+          .some(
+            (r) =>
+              r.identity.accountId === saved.connection.accountId && !r.receipt,
+          )
+      )
+        throw new ConnectorError("NEWS_PUBLICATION_UNCONFIRMED");
+      const source = await this.fetchPublication(saved.token, signal);
+      await this.verifySaved(saved, signal);
+      if (generation !== this.publicationGeneration)
+        throw new ConnectorError("REVIEW_EXPIRED");
+      const id = randomUUID(),
+        expiresAt = new Date(
+          Math.min(this.now() + 120000, Date.parse(saved.connection.expiresAt)),
+        ).toISOString();
+      const timer = setTimeout(
+        () => {
+          if (this.publicationReview?.id === id) this.clearPublicationReview();
+        },
+        Math.max(1, Date.parse(expiresAt) - this.now()),
+      );
+      timer.unref();
+      // Return a detached copy: a UI caller cannot change the held approved intent.
+      this.publicationReview = {
+        id,
+        expiresAt,
+        source: structuredClone(source),
+        saved: JSON.stringify(saved),
+        timer,
+      };
+      return { id, expiresAt, source };
+    });
+  }
+  async confirmPublication(raw: unknown) {
+    const journal = this.publicationJournal();
+    const input = z
+      .strictObject({
+        id: z.uuid(),
+        confirmed: z.literal(true),
+        audience: z.literal("public"),
+      })
+      .parse(raw);
+    return this.operation("write", async (signal) => {
+      const pending = this.publicationReview;
+      this.clearPublicationReview();
+      if (
+        !pending ||
+        pending.id !== input.id ||
+        Date.parse(pending.expiresAt) <= this.now()
+      )
+        throw new ConnectorError("REVIEW_EXPIRED");
+      if (!pending.source.eligibility.eligible)
+        throw new ConnectorError("PUBLICATION_BLOCKED");
+      const saved = await this.checkedSaved(signal);
+      this.canPublish(saved);
+      if (JSON.stringify(saved) !== pending.saved)
+        throw new ConnectorError("SOURCE_CONFLICT");
+      const current = await this.fetchPublication(saved.token, signal);
+      if (
+        publicationFingerprint(current) !==
+        publicationFingerprint(pending.source)
+      )
+        throw new ConnectorError("SOURCE_CONFLICT");
+      await this.verifySaved(saved, signal);
+      if (Date.parse(pending.expiresAt) <= this.now())
+        throw new ConnectorError("REVIEW_EXPIRED");
+      const intent = {
+        operationId: pending.id,
+        identity: {
+          accountId: saved.connection.accountId,
+          credentialId: saved.connection.credentialId,
+        },
+        review: pending.source,
+        confirmed: true as const,
+        audience: "public" as const,
+      };
+      // Synchronous FULL commit and readback precede the only write dispatch. Failure (even after
+      // a committed local insert) cannot send. A retained intent remains unconfirmed after restart.
+      journal.reserve(intent);
+      const recorded = journal.read(pending.id);
+      if (
+        recorded.receipt ||
+        JSON.stringify({
+          ...recorded,
+          recordedAt: undefined,
+          receipt: undefined,
+          lastCheckedAt: undefined,
+        }) !== JSON.stringify(intent)
+      )
+        throw new ConnectorError("SOURCE_CONFLICT");
+      if (Date.parse(pending.expiresAt) <= this.now())
+        throw new ConnectorError("REVIEW_EXPIRED");
+      try {
+        const result = await this.rpc(
+          saved.token,
+          "tools/call",
+          {
+            name: "publish_reviewed_preview",
+            arguments: {
+              operationId: pending.id,
+              revision: pending.source.revision,
+              publicationVersion: pending.source.publicationVersion,
+              reviewDigest: pending.source.reviewDigest,
+              confirmed: true,
+              audience: "public",
+            },
+          },
+          signal,
+        );
+        const receipt = newsPublicationReceiptSchema.parse(
+          this.toolValue(result),
+        );
+        if (!matchingPublicationReceipt(pending.id, pending.source, receipt))
+          throw new ConnectorError("INVALID_SOURCE");
+        await this.verifySaved(saved, signal);
+        return journal.reconcile(pending.id, receipt);
+      } catch {
+        // Includes source denial, timeouts, malformed responses and failed local receipt persistence.
+        // None prove that publication failed; only read-only reconciliation is permitted next.
+        throw new ConnectorError("NEWS_PUBLICATION_UNCONFIRMED");
+      }
+    });
+  }
+  async reconcilePublication(raw: unknown) {
+    const journal = this.publicationJournal();
+    const { operationId } = z
+      .strictObject({ operationId: z.uuid() })
+      .parse(raw);
+    return this.operation("read", async (signal) => {
+      this.clearPublicationReview();
+      const intent = journal.read(operationId);
+      const saved = await this.checkedSaved(signal);
+      // Read-scoped replacement keys for the same source account may recover historical receipts.
+      if (saved.connection.accountId !== intent.identity.accountId)
+        throw new ConnectorError("SOURCE_CONFLICT");
+      const result = await this.rpc(
+        saved.token,
+        "tools/call",
+        { name: "get_publication_receipt", arguments: { operationId } },
+        signal,
+      );
+      const parsed = z
+        .strictObject({
+          contractVersion: z.literal(publicationContract),
+          receipt: newsPublicationReceiptSchema.nullable(),
+        })
+        .safeParse(this.toolValue(result));
+      if (
+        !parsed.success ||
+        (parsed.data.receipt &&
+          !matchingPublicationReceipt(
+            operationId,
+            intent.review,
+            parsed.data.receipt,
+          ))
+      )
+        throw new ConnectorError("INVALID_SOURCE");
+      await this.verifySaved(saved, signal);
+      return journal.reconcile(operationId, parsed.data.receipt);
+    });
   }
 }

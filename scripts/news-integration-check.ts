@@ -1,4 +1,5 @@
 /** Actual News MCP and companion with disposable local/CI accounts; no live credentials. */
+import { checkNewsPublication } from "./news-publication-integration.js";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -313,6 +314,7 @@ try {
   console.log(
     "Actual News MCP + companion: reviewed reused keys, own-account reads, local-owner isolation, source expiry/revocation, explicit exact curation review, read-scope denial, stale/revoked authority, unchanged unrelated source content/snapshots/schedules, lost-response reconciliation and zero publishing/delivery/processing effects pass.",
   );
+  await checkNewsPublication(pool(), mcp, createMcpToken);
 } finally {
   await (globalThis as any).newsPool?.end();
   await control.query(`DROP SCHEMA IF EXISTS ${namespace} CASCADE`);
