@@ -158,7 +158,10 @@ export function NewsPublicContent({
       <section aria-label="Public front page">
         <h4>
           Front page{" "}
-          <span className="hint">({snapshot.front.length} stories)</span>
+          <span className="hint">
+            ({snapshot.front.length}{" "}
+            {snapshot.front.length === 1 ? "story" : "stories"})
+          </span>
         </h4>
         {snapshot.front.map((i) => (
           <PublicStory
@@ -171,7 +174,10 @@ export function NewsPublicContent({
       {snapshot.feeds.map((f) => (
         <section key={f.id} aria-label={"Public feed " + f.name}>
           <h4 className="news-exact-text">
-            {f.name} <span className="hint">({f.items.length} stories)</span>
+            {f.name}{" "}
+            <span className="hint">
+              ({f.items.length} {f.items.length === 1 ? "story" : "stories"})
+            </span>
           </h4>
           <p className="hint">
             Saved section /{f.slug}. Navigation label:{" "}
