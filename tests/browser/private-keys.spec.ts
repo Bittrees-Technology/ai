@@ -102,9 +102,14 @@ test("Mac key review supports keyboard dismissal and readable desktop/mobile lay
     .getByRole("button", { name: "Set up device key", exact: true })
     .click();
   const checkbox = page.getByRole("checkbox");
-  await checkbox.focus();
+  await page
+    .getByRole("button", { name: "Set up device key", exact: true })
+    .focus();
+  await page.keyboard.press("Tab");
+  await expect(checkbox).toBeFocused();
   await page.keyboard.press("Space");
   await expect(checkbox).toBeChecked();
+  expect((await checkbox.boundingBox())!.width).toBeLessThanOrEqual(24);
   await page.screenshot({
     path: `test-results/private-keys-desktop-${info.project.name}.png`,
     fullPage: true,
@@ -118,6 +123,9 @@ test("Mac key review supports keyboard dismissal and readable desktop/mobile lay
     .getByRole("button", { name: "Set up device key", exact: true })
     .click();
   await expect(page.getByRole("checkbox")).not.toBeChecked();
+  expect(
+    (await page.getByRole("checkbox").boundingBox())!.width,
+  ).toBeLessThanOrEqual(24);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
