@@ -145,7 +145,8 @@ export function exportPrivateTaskResponses(
 }
 /** Internal producer. Payload/routing come only from locally authenticated admission records.
  * Trusted providers must supply separate current response consent and current endpoint keys.
- * No HTTP route, transport, scheduler, endpoint key persistence or remote acknowledgement.
+ * The Mac local controller supplies scoped providers. No transport, scheduler
+ * or remote acknowledgement is provided by this module.
  */
 export class PrivateTaskResponses {
   private peers: PrivatePeerEnrollment;

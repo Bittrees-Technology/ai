@@ -1,4 +1,7 @@
 import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
+import { PrivateTaskError } from "../../modules/remote/private-task-receiver.js";
+import { PrivateResponseError } from "../../modules/remote/private-task-responses.js";
+import { PrivateConsentError } from "../../modules/remote/private-task-consent.js";
 import type { CompanionPrivateKeys } from "./private-keys.js";
 import { PrivateKeyLifecycleError } from "../../modules/remote/private-key-lifecycle.js";
 import { readMailEvidence } from "./mail-evidence.js";
@@ -117,7 +120,43 @@ export function localApi({
       return reject(401, "UNAUTHORIZED");
     next();
   });
+  // A 64KiB envelope payload expands under base64url. Only this authenticated
+  // ciphertext route gets the larger bound; ordinary local requests remain 64KiB.
+  app.post(
+    "/v1/private-tasks/receive",
+    express.json({ limit: "96kb", strict: true }),
+  );
   app.use(express.json({ limit: "64kb", strict: true }));
+  app.get("/v1/private-tasks", (_req, res) =>
+    res.json(
+      privateKeys?.taskStatus() ?? {
+        available: false,
+        enabled: false,
+        transportActive: false,
+        responses: [],
+      },
+    ),
+  );
+  app.post("/v1/private-tasks/receive", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.receiveTask(req.body));
+  });
+  app.post("/v1/private-tasks/responses/prepare", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareTaskResponse(req.body));
+  });
+  app.post("/v1/private-tasks/responses/resume", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.resumeTaskResponse(req.body));
+  });
+  app.post("/v1/private-tasks/responses/envelope", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.taskResponseEnvelope(req.body));
+  });
+  app.post("/v1/private-tasks/responses/stop", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.stopTaskResponse(req.body));
+  });
   app.get("/v1/private-keys", (_req, res) =>
     res.json(
       privateKeys?.status() ?? {
@@ -1029,31 +1068,38 @@ export function localApi({
   );
   const errors: ErrorRequestHandler = (err, _req, res, _next) => {
     const code =
-      err instanceof PrivateKeyError ||
-      err instanceof PrivateKeyLifecycleError ||
-      err instanceof RemoteClientError ||
-      err instanceof ImportError ||
-      err instanceof MemoryCandidateError ||
-      err instanceof StoreError ||
-      err instanceof ModelError ||
-      err instanceof ConnectorError
-        ? err.code
-        : err instanceof ZodError || err instanceof SyntaxError
-          ? "INVALID_INPUT"
-          : "INTERNAL";
+      err?.type === "entity.too.large"
+        ? "PAYLOAD_TOO_LARGE"
+        : err instanceof PrivateTaskError ||
+            err instanceof PrivateResponseError ||
+            err instanceof PrivateConsentError ||
+            err instanceof PrivateKeyError ||
+            err instanceof PrivateKeyLifecycleError ||
+            err instanceof RemoteClientError ||
+            err instanceof ImportError ||
+            err instanceof MemoryCandidateError ||
+            err instanceof StoreError ||
+            err instanceof ModelError ||
+            err instanceof ConnectorError
+          ? err.code
+          : err instanceof ZodError || err instanceof SyntaxError
+            ? "INVALID_INPUT"
+            : "INTERNAL";
     const status =
-      code === "MODEL_UNAVAILABLE" ||
-      ((err instanceof PrivateKeyError ||
-        err instanceof PrivateKeyLifecycleError) &&
-        code === "STORAGE_UNAVAILABLE")
-        ? 503
-        : code === "NOT_FOUND"
-          ? 404
-          : code === "CONFLICT" || code === "STALE_CLAIM"
-            ? 409
-            : code === "INTERNAL"
-              ? 500
-              : 400;
+      code === "PAYLOAD_TOO_LARGE"
+        ? 413
+        : code === "MODEL_UNAVAILABLE" ||
+            ((err instanceof PrivateKeyError ||
+              err instanceof PrivateKeyLifecycleError) &&
+              code === "STORAGE_UNAVAILABLE")
+          ? 503
+          : code === "NOT_FOUND"
+            ? 404
+            : code === "CONFLICT" || code === "STALE_CLAIM"
+              ? 409
+              : code === "INTERNAL"
+                ? 500
+                : 400;
     // Do not echo parser errors, submitted content, headers or secrets into responses/logs.
     res
       .status(status)

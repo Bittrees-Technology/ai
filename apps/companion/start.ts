@@ -177,6 +177,8 @@ const privateKeys =
           ),
         remote,
         process.env.BITTREES_PRIVATE_KEYS === "1",
+        Date.now,
+        process.env.BITTREES_PRIVATE_TASKS === "1",
       )
     : undefined;
 const templateReceiver = remote

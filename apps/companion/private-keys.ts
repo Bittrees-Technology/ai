@@ -1,4 +1,5 @@
 import { CompanionPrivateTaskPermissions } from "./private-task-permissions.js";
+import { CompanionPrivateTasks } from "./private-tasks.js";
 import { CompanionPrivatePeers } from "./private-peers.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -35,6 +36,7 @@ type Review = z.infer<typeof request> & {
 export class CompanionPrivateKeys {
   private peers: CompanionPrivatePeers;
   private permissions: CompanionPrivateTaskPermissions;
+  private tasks: CompanionPrivateTasks;
   private review?: Review;
   private running = false;
   constructor(
@@ -45,8 +47,18 @@ export class CompanionPrivateKeys {
     private remote?: RemoteClient,
     private setupEnabled = false,
     private now = Date.now,
+    privateTasksEnabled = false,
   ) {
     this.owner = { ...owner };
+    this.tasks = new CompanionPrivateTasks(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled && privateTasksEnabled,
+      now,
+    );
     this.permissions = new CompanionPrivateTaskPermissions(
       store,
       vault,
@@ -115,6 +127,30 @@ export class CompanionPrivateKeys {
   }
   permissionStatus() {
     return this.permissions.status();
+  }
+  taskStatus() {
+    return this.tasks.status();
+  }
+  private taskOperation<T>(fn: () => Promise<T> | T) {
+    return this.exclusive(async () => {
+      this.invalidate();
+      return fn();
+    });
+  }
+  receiveTask(raw: unknown) {
+    return this.taskOperation(() => this.tasks.receive(raw));
+  }
+  prepareTaskResponse(raw: unknown) {
+    return this.taskOperation(() => this.tasks.prepareResponse(raw));
+  }
+  resumeTaskResponse(raw: unknown) {
+    return this.taskOperation(() => this.tasks.resumeResponse(raw));
+  }
+  taskResponseEnvelope(raw: unknown) {
+    return this.taskOperation(() => this.tasks.responseEnvelope(raw));
+  }
+  stopTaskResponse(raw: unknown) {
+    return this.taskOperation(() => this.tasks.stopResponse(raw));
   }
   preparePermission(raw: unknown) {
     return this.exclusive(async () => {
