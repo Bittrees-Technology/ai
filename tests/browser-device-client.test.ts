@@ -413,3 +413,17 @@ test("browser transport preserves bounded status codes and never exposes network
     /DENIED/,
   );
 });
+
+test("caller edits to returned registration data cannot forge a fresh observation for another cookie identity", async () => {
+  const f = fixture();
+  const returned = await f.client.register(f.request());
+  const otherBinding = { ...returned.binding, deviceId: randomUUID() };
+  Object.assign(returned.binding, otherBinding);
+  // A different valid same-owner cookie may be selected by another tab, but it
+  // was not the registration this client explicitly observed being created.
+  f.answer(async () => Response.json({ ...f.identity, binding: otherBinding }));
+  await f.client.withVerifiedDevice(otherBinding, async (scope) => {
+    assert.deepEqual(scope.current(), otherBinding);
+    assert.equal(scope.freshRegistration(otherBinding), false);
+  });
+});

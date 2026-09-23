@@ -223,7 +223,7 @@ export class BrowserDeviceClient {
       if (!same(made, checked) || !guard(this.deadline(checked)))
         throw Error("DENIED");
       this.fresh = {
-        binding: checked.binding,
+        binding: { ...checked.binding },
         context: JSON.stringify(c),
         at: this.now(),
         monotonicAt: this.monotonic(),
