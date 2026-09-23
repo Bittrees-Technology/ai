@@ -472,7 +472,16 @@ test("source-blocked feeds cannot publish and a read-only connection cannot requ
   expect(f.calls.some((c) => c.path.endsWith("/publication/confirm"))).toBe(
     false,
   );
-  await page.unrouteAll();
+  const cancelled = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/publication/cancel") &&
+      r.request().method() === "POST",
+  );
+  await review
+    .getByRole("button", { name: "Cancel publication review" })
+    .click();
+  await cancelled;
+  await page.unrouteAll({ behavior: "wait" });
   const reader = await fixture(page, { publish: false });
   await expect(
     reader.panel.getByRole("button", {
