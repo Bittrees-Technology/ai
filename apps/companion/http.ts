@@ -1,3 +1,5 @@
+import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
+import { PrivateKeyLifecycleError } from "../../modules/remote/private-key-lifecycle.js";
 import { readMailEvidence } from "./mail-evidence.js";
 import { contentIdPattern, type retainedContent } from "./retained-content.js";
 import { MemoryCandidateError } from "../../modules/memory/candidates.js";
@@ -29,6 +31,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  privateKeyCleanup?: () => Promise<void>;
   retainedCopies?: ReturnType<typeof retainedContent>;
   backupDownload?: () => Promise<Buffer>;
   remote?: RemoteClient;
@@ -53,6 +56,7 @@ export interface LocalApiOptions {
   cancelRun?: (id: string) => void;
 }
 export function localApi({
+  privateKeyCleanup,
   retainedCopies,
   backupDownload,
   store,
@@ -885,6 +889,7 @@ export function localApi({
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
+      privateEndpointKeys: store.exportPrivateEndpointKeys(owner),
       privateTaskReceipts: store.exportPrivateTaskReceipts(owner),
       privateTaskOutbox: store.exportPrivateTaskOutbox(owner),
       privateTaskResponses: store.exportPrivateTaskResponses(owner),
@@ -908,6 +913,20 @@ export function localApi({
     await receivingPaused(async () => {
       if (publications?.busy || autoReviews?.busy || remote?.running)
         throw new StoreError("CONFLICT");
+      const keyState = store.exportPrivateEndpointKeys(owner);
+      if (
+        keyState.slots.some((v) => v.state !== "deleted") ||
+        keyState.pendingKeyDeletionCount
+      ) {
+        if (!privateKeyCleanup) throw new StoreError("CONFLICT");
+        await privateKeyCleanup();
+        const remaining = store.exportPrivateEndpointKeys(owner);
+        if (
+          remaining.slots.some((v) => v.state !== "deleted") ||
+          remaining.pendingKeyDeletionCount
+        )
+          throw new StoreError("CONFLICT");
+      }
       const remove = () => {
         memory?.deleteAll(owner);
         store.deleteAll(owner);
@@ -924,6 +943,8 @@ export function localApi({
   );
   const errors: ErrorRequestHandler = (err, _req, res, _next) => {
     const code =
+      err instanceof PrivateKeyError ||
+      err instanceof PrivateKeyLifecycleError ||
       err instanceof RemoteClientError ||
       err instanceof ImportError ||
       err instanceof MemoryCandidateError ||
@@ -935,7 +956,10 @@ export function localApi({
           ? "INVALID_INPUT"
           : "INTERNAL";
     const status =
-      code === "MODEL_UNAVAILABLE"
+      code === "MODEL_UNAVAILABLE" ||
+      ((err instanceof PrivateKeyError ||
+        err instanceof PrivateKeyLifecycleError) &&
+        code === "STORAGE_UNAVAILABLE")
         ? 503
         : code === "NOT_FOUND"
           ? 404

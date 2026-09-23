@@ -1,3 +1,7 @@
+import {
+  exportPrivateKeyLifecycle,
+  queuePrivateKeyDeletion,
+} from "../remote/private-key-lifecycle.js";
 import { exportPrivateTaskResponses } from "../remote/private-task-responses.js";
 import { exportPrivateTaskOutbox } from "../remote/private-task-outbox.js";
 import { exportPrivateTaskReceipts } from "../remote/private-task-receipts.js";
@@ -146,7 +150,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 16) {
+    if (version > 17) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -231,7 +235,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_task_responses(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,operation_hash TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id),UNIQUE(user_id,tenant_id,operation_hash,kind))",
         );
-        this.db.pragma("user_version = 16");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_key_lifecycle(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,anchor TEXT NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB,PRIMARY KEY(user_id,tenant_id))",
+        );
+        this.db.pragma("user_version = 17");
       })();
     } catch (error) {
       this.db.close();
@@ -1331,6 +1338,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
       )
       .run(this.now(), eventId, owner.userId, owner.tenantId);
   }
+  exportPrivateEndpointKeys(owner: Owner) {
+    return exportPrivateKeyLifecycle(this, this.vault, owner);
+  }
   exportPrivateTaskResponses(owner: Owner) {
     return exportPrivateTaskResponses(this, this.vault, owner);
   }
@@ -1613,6 +1623,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   deleteAll(owner: Owner) {
     this.db
       .transaction(() => {
+        queuePrivateKeyDeletion(this, this.vault, owner);
         this.db
           .prepare(
             "UPDATE private_peer_states SET payload=NULL,locked=1,revision=revision+1 WHERE user_id=? AND tenant_id=?",
