@@ -72,7 +72,7 @@ export function Templates({
         ))}
       </ul>
       {draft && (
-        <fieldset disabled={controller.busy}>
+        <fieldset className="template-definition" disabled={controller.busy}>
           <legend>
             {draft.revision
               ? `Review version ${draft.revision}`
@@ -101,9 +101,14 @@ export function Templates({
               <option value="draft">Draft</option>
             </select>
           </label>
-          <label>
-            Model
+          <label
+            className="model-profile-choice"
+            htmlFor="template-model-profile"
+          >
+            <span id="template-model-profile-label">Model</span>
             <select
+              id="template-model-profile"
+              aria-labelledby="template-model-profile-label"
               value={draft.definition.modelProfileId}
               onChange={(e) =>
                 controller.edit({ modelProfileId: e.target.value })

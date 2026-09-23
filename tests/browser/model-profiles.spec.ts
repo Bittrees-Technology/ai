@@ -194,4 +194,21 @@ test("profile settings and saved configurations remain usable at desktop and nar
       () => document.documentElement.scrollWidth <= innerWidth + 1,
     ),
   ).toBe(true);
+  await page.getByRole("button", { name: "Templates", exact: true }).click();
+  await page.getByRole("button", { name: "New template", exact: true }).click();
+  await expect(
+    page
+      .getByRole("combobox", { name: "Model", exact: true })
+      .locator("option")
+      .filter({ hasText: /8,192 context/ }),
+  ).toHaveCount(1);
+  await page.screenshot({
+    path: `test-results/model-profiles-template-${info.project.name}-390.png`,
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
 });
