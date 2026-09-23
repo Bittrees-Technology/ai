@@ -936,3 +936,10 @@ select.model-profile-select {
     padding: 0.6rem;
   }
 }
+.mail-send-panel input[type="checkbox"] {
+  width: auto;
+  margin-right: 0.6rem;
+}
+.mail-send-panel button {
+  max-width: 100%;
+}

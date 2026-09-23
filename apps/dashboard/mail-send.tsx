@@ -244,6 +244,10 @@ export function MailSendPanel({
                 Mailbox: {connection.mailbox}. Expires{" "}
                 {new Date(connection.expiresAt).toLocaleString()}.
               </p>
+              <p>
+                Mail sign-in wallet:{" "}
+                <span className="mail-operation">{connection.wallet}</span>
+              </p>
               <button
                 disabled={c.busy}
                 onClick={() => void c.load(connection.operationId)}
