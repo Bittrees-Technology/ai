@@ -1036,3 +1036,19 @@ test("publication controller receipt inspection and deletion cannot publish or t
     forgetPublicationTracking: true,
   });
 });
+
+test("forgetting the News key preserves local publication-history capability while clearing private views", async () => {
+  const c = new NewsConnectionController(async (path) =>
+    path.endsWith("/history") ? { items: [] } : {},
+  );
+  c.status = {
+    available: true,
+    publication: "per_action_review",
+    connection: null,
+  };
+  await c.forget();
+  assert.equal(c.status.publication, "per_action_review");
+  assert.equal(c.status.connection, null);
+  await c.loadPublicationHistory();
+  assert.deepEqual(c.publicationHistory, []);
+});

@@ -1,12 +1,12 @@
 {
-  "verifiedAt": "2026-09-23T09:47:30.572191+00:00",
+  "verifiedAt": "2026-09-23T09:50:44.789873+00:00",
   "sourceCommit": "2d0059e75be2012bcdd19451b69c625ae695070d",
   "runtime": "Node 24.21.0",
   "sourceHashes": {
     "scripts/news-publication-integration.ts": "cd1d96ebdb4623d58a9db84a3555b1a9a1485469b7acb6808a14b8902847dafc",
     "apps/companion/http.ts": "57ac9773791ebddce2169d6d991fd278629e7e83cbad475514b5a0fd6962e367",
     "apps/companion/start.ts": "b34dea1f19fd705ba028766ca2c1e41ff9697d42079c3b3fd9717027a2c95ee0",
-    "apps/dashboard/news-state.ts": "551d3cbfa9af09f00edba7c35cf20aa3f55c49ed82c9ba182cfda949d9e2a4a6",
+    "apps/dashboard/news-state.ts": "a68af964d7b647ffbb342df8ab5678b6fdf9ca5a40674c30af15d0b59fb10077",
     "apps/dashboard/news-publication.tsx": "baf4537f27f586fc2537af852a5fecb104bb1d3942bcfc0a0d12c625c3b73c7a",
     "modules/connectors/news.ts": "e705530a1c81ae2c1d2b7807db09dfcd92f187c2b959c02e3571f325ae3d68f6",
     "modules/storage/news-publications.ts": "150dbe332d641119d8c346ace838f5b82b016d6d55cc334ca8a036c86a98dcba",
@@ -14,7 +14,7 @@
   },
   "localResult": "Actual News MCP + companion: reviewed reused keys, own-account reads, local-owner isolation, source expiry/revocation, explicit exact curation review, read-scope denial, stale/revoked authority, unchanged unrelated source content/snapshots/schedules, lost-response reconciliation and zero publishing/delivery/processing effects pass.\nActual News MCP + authenticated Mac HTTP/controller publication: exact full projection, durable pre-dispatch intent, one write per approval, stale navigation/private-feed denial, response loss, restart and encrypted restore, historical read-only reconciliation after visibility withdrawal, revoked/read-only replacement key, unchanged schedules and zero delivery/processing effects pass.",
   "disposableDatabaseStoppedAndRemoved": true,
-  "engineTests": 513,
+  "engineTests": 514,
   "limits": [
     "Disposable accounts, fake local key storage and temporary encrypted stores only.",
     "Actual controller/authenticated local HTTP/News MCP/PostgreSQL; no personal key or live publication.",

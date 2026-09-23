@@ -159,7 +159,7 @@ export class NewsConnectionController {
         confirmed: true,
       });
       if (epoch === this.epoch)
-        this.status = { available: true, connection: null };
+        this.status = { ...this.status, available: true, connection: null };
     });
   }
   async cancel() {

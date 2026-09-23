@@ -262,7 +262,9 @@ test("public review shows every section and public text; separate keyboard confi
     review.getByRole("heading", { name: "Named feed headline", exact: true }),
   ).toBeVisible();
   await expect(
-    review.getByText("Named feed text must be reviewed.", { exact: true }),
+    review
+      .getByText("Named feed text must be reviewed.", { exact: true })
+      .first(),
   ).toBeVisible();
   await expect(
     review.getByText("Latest science", { exact: true }),
@@ -323,6 +325,26 @@ test("public review shows every section and public text; separate keyboard confi
       body: { id: operation, confirmed: true, audience: "public" },
     },
   ]);
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page
+    .getByRole("article", { name: "News connection", exact: true })
+    .getByRole("button", { name: "Remove from this Mac", exact: true })
+    .click();
+  await expect(
+    f.panel.getByRole("button", { name: "Review public edition", exact: true }),
+  ).toBeDisabled();
+  await f.panel
+    .getByRole("button", { name: "Load publication history" })
+    .click();
+  await f.panel
+    .getByRole("button", { name: "Open publication record" })
+    .click();
+  await expect(
+    f.panel.getByRole("button", { name: "Check publication receipt" }),
+  ).toBeDisabled();
+  await expect(
+    f.panel.getByRole("article", { name: "Selected publication record" }),
+  ).toBeVisible();
   expect(f.errors).toEqual([]);
 });
 test("unconfirmed publication loads durable history, checks absent receipt without resending, then deletes only after separate acknowledgement", async ({
