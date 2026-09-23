@@ -3,7 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Bittrees AI — Remote status</title>
+    <title>Bittrees AI — Your companion</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/style.css" />
     <script type="module" src="/app.js"></script>
   </head>
@@ -11,16 +12,16 @@
     <main>
       <header>
         <a href="/">Bittrees AI</a>
-        <h1>Remote task status</h1>
+        <h1>Your companion, connected</h1>
         <p>
-          Your Mac does the work. This page shows only the task statuses you
-          choose to share, plus template codes you explicitly approve on that
-          Mac.
+          Your Mac does the work. Manage this browser’s recovery, pair your Mac,
+          and view the task statuses you choose to share. Private task access
+          requires its own setup and permissions.
         </p>
       </header>
       <p id="error" role="alert"></p>
       <p id="notice" role="status"></p>
-      <section aria-labelledby="account-title">
+      <section data-status-controls aria-labelledby="account-title">
         <h2 id="account-title">Your account</h2>
         <p id="account">Checking your session…</p>
         <p id="network"></p>
@@ -35,7 +36,27 @@
           ><button id="logout" hidden>Sign out</button>
         </div>
       </section>
-      <section id="pairing" hidden aria-labelledby="pairing-title">
+      <section
+        id="browser-recovery"
+        hidden
+        aria-labelledby="browser-recovery-title"
+      >
+        <h2 id="browser-recovery-title">Browser recovery</h2>
+        <p>
+          Register this browser and keep your recovery code and encrypted backup
+          in separate places. Bittrees cannot recover lost keys for you. This
+          does not pair your Mac or allow private tasks.
+        </p>
+        <button id="browser-recovery-open">Open recovery controls</button>
+        <p id="browser-recovery-notice" role="status"></p>
+        <div id="browser-setup"></div>
+      </section>
+      <section
+        data-status-controls
+        id="pairing"
+        hidden
+        aria-labelledby="pairing-title"
+      >
         <h2 id="pairing-title">Pair your Mac</h2>
         <p>
           Start pairing in your companion, then paste its five-minute pairing
@@ -66,7 +87,12 @@
           </p>
         </div>
       </section>
-      <section id="management" hidden aria-labelledby="devices-title">
+      <section
+        data-status-controls
+        id="management"
+        hidden
+        aria-labelledby="devices-title"
+      >
         <h2 id="devices-title">Your devices</h2>
         <p>
           Only identifiers, states and update times appear here. Status reflects
@@ -88,13 +114,19 @@
         <ul id="templates" aria-labelledby="templates-title"></ul>
         <button id="templates-more" hidden>Load more templates</button>
       </section>
-      <section id="command-review" hidden aria-labelledby="command-title">
+      <section
+        data-status-controls
+        id="command-review"
+        hidden
+        aria-labelledby="command-title"
+      >
         <h2 id="command-title">Review task command</h2>
         <p id="command-details"></p>
         <button id="command-submit">Confirm this command</button>
         <button id="command-dismiss">Dismiss review</button>
       </section>
       <section
+        data-status-controls
         id="command-result"
         hidden
         aria-labelledby="command-result-title"
@@ -104,6 +136,7 @@
         <button id="command-refresh">Check command receipt</button>
       </section>
       <section
+        data-status-controls
         id="template-review"
         hidden
         aria-labelledby="template-review-title"
@@ -114,6 +147,7 @@
         <button id="template-dismiss">Dismiss review</button>
       </section>
       <section
+        data-status-controls
         id="template-result"
         hidden
         aria-labelledby="template-result-title"
