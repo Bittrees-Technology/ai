@@ -124,7 +124,7 @@ export function AutoNoteDrafts({
             {records[0]?.version}
           </p>
           <label htmlFor="autonote-draft-profile">Local model profile</label>
-          <select
+          <select className="model-profile-select"
             id="autonote-draft-profile"
             value={profile}
             onChange={(e) => setProfile(e.target.value)}

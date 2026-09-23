@@ -260,7 +260,7 @@ export function MailConnection({
                     </option>
                   </select>
                   <label htmlFor="mail-profile">Local model profile</label>
-                  <select
+                  <select className="model-profile-select"
                     id="mail-profile"
                     value={profile}
                     disabled={busy}

@@ -668,12 +668,21 @@ summary {
   display: block;
   min-width: 0;
 }
-.model-profile-choice select {
+.model-profile-choice select,
+select.model-profile-select {
   display: block;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   margin-top: 7px;
+  /* WebKit's native painted text can overflow even a correctly sized select. */
+  appearance: none;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23183945' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
 }
 .template-definition {
   min-width: 0;
