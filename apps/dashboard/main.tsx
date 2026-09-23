@@ -675,9 +675,11 @@ function App() {
                     });
                   }}
                 >
-                  <label>
-                    Installed model
+                  <label htmlFor="installed-model">
+                    <span id="installed-model-label">Installed model</span>
                     <select
+                      id="installed-model"
+                      aria-labelledby="installed-model-label"
                       value={model}
                       required
                       onChange={(e) => setModel(e.target.value)}
