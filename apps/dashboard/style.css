@@ -662,3 +662,13 @@ summary {
   min-width: 0;
   max-width: 100%;
 }
+
+/* WebKit's intrinsic select width must not size an implicit label grid track. */
+.model-profile-choice {
+  display: block;
+  min-width: 0;
+}
+.model-profile-choice select {
+  display: block;
+  margin-top: 7px;
+}

@@ -182,6 +182,13 @@ test("profile settings and saved configurations remain usable at desktop and nar
   await expect(
     page.locator(".queue select option").filter({ hasText: /8,192 context/ }),
   ).toHaveCount(1);
+  await expect(page.locator("#task-profile-settings")).toContainText(
+    "8,192 context",
+  );
+  await page.screenshot({
+    path: `test-results/model-profiles-task-${info.project.name}-390.png`,
+    fullPage: true,
+  });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,

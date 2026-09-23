@@ -140,6 +140,9 @@ function App() {
     body: unknown;
   } | null>(null);
   const task = tasks.find((t) => t.id === selected);
+  const selectedProfileSettings = profileSettingsText(
+    profiles.find((p) => p.id === profile) ?? {},
+  );
   function resetRequests() {
     epoch.current++;
     requests.current!.invalidate();
@@ -405,9 +408,19 @@ function App() {
                         placeholder="Ask a question or draft something…"
                       />
                     </label>
-                    <label>
-                      Model profile
+                    <label
+                      className="model-profile-choice"
+                      htmlFor="task-model-profile"
+                    >
+                      <span id="task-model-profile-label">Model profile</span>
                       <select
+                        id="task-model-profile"
+                        aria-labelledby="task-model-profile-label"
+                        aria-describedby={
+                          selectedProfileSettings
+                            ? "task-profile-settings"
+                            : undefined
+                        }
                         required
                         value={profile}
                         onChange={(e) => setProfile(e.target.value)}
@@ -420,6 +433,11 @@ function App() {
                         ))}
                       </select>
                     </label>
+                    {selectedProfileSettings && (
+                      <p id="task-profile-settings" className="hint">
+                        {selectedProfileSettings}
+                      </p>
+                    )}
                     {!profiles.length && (
                       <p className="hint">
                         Create a profile in Models to begin.
