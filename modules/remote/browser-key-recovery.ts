@@ -183,3 +183,30 @@ export async function createBrowserKeyMaterial(
     plaintext?.fill(0);
   }
 }
+
+/** Random user-held code, kept separately from the encrypted kit. Not a password. */
+export function newBrowserRecoveryCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  try {
+    return "btre1_" + encode(bytes);
+  } finally {
+    bytes.fill(0);
+  }
+}
+export async function browserRecoveryKey(code: string) {
+  let bytes: Uint8Array<ArrayBuffer> | undefined;
+  try {
+    if (typeof code !== "string" || !/^btre1_[A-Za-z0-9_-]{43}$/.test(code))
+      throw Error();
+    bytes = decode(code.slice(6));
+    if (bytes.length !== 32) throw Error();
+    return await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, [
+      "encrypt",
+      "decrypt",
+    ]);
+  } catch {
+    throw Error("BROWSER_KEY_RECOVERY_FAILED");
+  } finally {
+    bytes?.fill(0);
+  }
+}

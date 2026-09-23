@@ -1,0 +1,122 @@
+import { z } from "zod";
+import { privateBindingSchema } from "./private-peer-contracts.js";
+const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+export const browserLifecycleSlotSchema = z.strictObject({
+  id: z.uuid(),
+  keyEpoch: positive,
+  binding: privateBindingSchema,
+  createdAt: positive,
+  state: z.enum(["preparing", "active", "retired", "deleted"]),
+  publicKey: z
+    .string()
+    .length(87)
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .nullable(),
+});
+export const browserLifecycleSchema = z
+  .strictObject({
+    scope: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: positive,
+    ownerId: z.uuid(),
+    deviceId: z.uuid(),
+    locked: z.boolean(),
+    slots: z.array(browserLifecycleSlotSchema).max(20),
+  })
+  .refine(
+    (s) =>
+      new Set(s.slots.map((x) => x.id)).size === s.slots.length &&
+      s.slots.filter((x) => x.state === "active" || x.state === "preparing")
+        .length <= 1 &&
+      s.slots.every(
+        (x) =>
+          x.binding.ownerId === s.ownerId &&
+          ((x.state !== "active" && x.state !== "preparing") ||
+            x.binding.deviceId === s.deviceId) &&
+          (x.state !== "active" || !!x.publicKey) &&
+          ((x.state !== "deleted" && x.state !== "preparing") ||
+            x.publicKey === null),
+      ) &&
+      (!s.locked ||
+        s.slots.every((x) => x.state !== "active" && x.state !== "preparing")),
+  );
+export type BrowserLifecycleState = z.infer<typeof browserLifecycleSchema>;
+export class BrowserKeyError extends Error {
+  constructor(
+    readonly code:
+      | "DENIED"
+      | "CONFLICT"
+      | "MISSING"
+      | "DELETED"
+      | "CREATION_INCOMPLETE"
+      | "STORAGE_UNAVAILABLE"
+      | "CAPACITY"
+      | "BUSY"
+      | "SETUP_REQUIRED",
+  ) {
+    super(code);
+  }
+}
+export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
+export const browserKeyDatabaseVersion = 2;
+export async function browserKeyScope(localOwner: string) {
+  if (
+    !z.string().min(1).max(256).safeParse(localOwner).success ||
+    !globalThis.isSecureContext
+  )
+    throw new BrowserKeyError("DENIED");
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(
+          JSON.stringify(["browser-endpoint-owner:v1", localOwner]),
+        ),
+      ),
+    ),
+    (b) => b.toString(16).padStart(2, "0"),
+  ).join("");
+}
+export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    let ended = false;
+    const fail = () => {
+      if (!ended) {
+        ended = true;
+        clearTimeout(timer);
+        reject(new BrowserKeyError("STORAGE_UNAVAILABLE"));
+      }
+    };
+    const timer = setTimeout(fail, 10000);
+    let r: IDBOpenDBRequest;
+    try {
+      r = indexedDB.open(browserKeyDatabaseName, browserKeyDatabaseVersion);
+    } catch {
+      fail();
+      return;
+    }
+    r.onerror = fail;
+    r.onblocked = fail;
+    r.onupgradeneeded = (event) => {
+      if (ended) {
+        r.transaction?.abort();
+        return;
+      }
+      if (event.oldVersion === 0) {
+        const slots = r.result.createObjectStore("slots", {
+          keyPath: ["scope", "keyId"],
+        });
+        slots.createIndex("scope", "scope");
+      }
+      r.result.createObjectStore("lifecycle", { keyPath: "scope" });
+    };
+    r.onsuccess = () => {
+      if (ended) {
+        r.result.close();
+        return;
+      }
+      ended = true;
+      clearTimeout(timer);
+      resolve(r.result);
+    };
+  });
+}
