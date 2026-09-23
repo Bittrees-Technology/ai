@@ -650,3 +650,5 @@ The internal [Mac private endpoint key provider](docs/private-endpoint-keys.md) 
 [Verified device identity](docs/verified-device-identity.md) connects short private-operation scopes to the existing paired-device credential through an authenticated service check. It grants no content permissions. The [Mac key controls](docs/mac-private-key-controls.md) use it for explicit setup review and confirmation; the normal launcher keeps setup disabled.
 
 Mac Connections includes [reviewed public-device invitations and local revocation](docs/mac-private-peer-controls.md). New setup remains off in the normal launcher; reciprocal pairing, endpoint recovery and private task access remain unfinished.
+
+[Persisted private-task consent](docs/private-task-consent.md) supplies separate internal receive/send/receipt/result permissions with encrypted storage and restore invalidation. It does not enable private task access; permission controls and production transport remain open.
