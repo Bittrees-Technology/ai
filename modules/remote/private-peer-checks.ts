@@ -23,19 +23,17 @@ import {
   type PrivateEnvelope,
 } from "./private-envelope.js";
 import { reservePrivateSequence } from "./private-send-sequence.js";
+import {
+  peerChallengeSchema,
+  peerResponseSchema,
+  peerEnvelopeCanonical,
+} from "./peer-check-contracts.js";
+export {
+  peerChallengeSchema,
+  peerResponseSchema,
+} from "./peer-check-contracts.js";
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   hex = z.string().regex(/^[a-f0-9]{64}$/);
-export const peerChallengeSchema = z.strictObject({
-  version: z.literal(1),
-  type: z.literal("peer.key.challenge"),
-  challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-});
-export const peerResponseSchema = z.strictObject({
-  version: z.literal(1),
-  type: z.literal("peer.key.response"),
-  challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  requestHash: hex,
-});
 const localSchema = z.strictObject({
   revision: positive,
   keyId: z.uuid(),
@@ -84,9 +82,7 @@ type Entry = {
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 export const peerEnvelopeHash = (envelope: PrivateEnvelope) =>
-  createHash("sha256")
-    .update(JSON.stringify(privateEnvelopeSchema.parse(envelope)))
-    .digest("hex");
+  createHash("sha256").update(peerEnvelopeCanonical(envelope)).digest("hex");
 const purpose = (owner: Owner, id: string) =>
   JSON.stringify(["private-peer-check:v1", owner.tenantId, owner.userId, id]);
 export class PrivatePeerCheckError extends Error {

@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { hashPeerEnvelope } from "../modules/remote/peer-check-contracts.js";
+import { peerEnvelopeHash } from "../modules/remote/private-peer-checks.js";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -11,6 +13,7 @@ import { CompanionPrivateKeys } from "../apps/companion/private-keys.js";
 import { localApi } from "../apps/companion/http.js";
 import { PrivatePeerEnrollment } from "../modules/remote/private-peers.js";
 import {
+  privateEnvelopeSchema,
   openPrivateEnvelope,
   sealPrivateEnvelope,
   type PrivateEnvelope,
@@ -66,6 +69,29 @@ test("Reviewed pins alone grant nothing; each endpoint must finish its own chall
     await assert.rejects(f.grant(f.a, f.b, false), /DENIED/);
     await assert.rejects(f.grant(f.b, f.a, true), /DENIED/);
     const { start, challenge, response, envelope } = await exchange(f);
+    // Compare the portable WebCrypto implementation with the exact pre-extraction
+    // Mac serialization/hash on actual challenge and response ciphertext.
+    for (const wire of [challenge, envelope]) {
+      const original = createHash("sha256")
+        .update(JSON.stringify(privateEnvelopeSchema.parse(wire)))
+        .digest("hex");
+      assert.equal(await hashPeerEnvelope(wire), original);
+      assert.equal(peerEnvelopeHash(wire), original);
+      assert.equal(
+        await hashPeerEnvelope(
+          Object.fromEntries(Object.entries(wire).reverse()),
+        ),
+        original,
+      );
+      await assert.rejects(hashPeerEnvelope({ ...wire, unexpected: true }));
+      assert.notEqual(
+        await hashPeerEnvelope({
+          ...wire,
+          header: { ...wire.header, sequence: wire.header.sequence + 1 },
+        }),
+        original,
+      );
+    }
     assert.equal(f.b.controls.peerCheckStatus().checks[0]!.state, "pending");
     await assert.rejects(f.grant(f.b, f.a, true), /DENIED/);
     const before = f.a.identities(),

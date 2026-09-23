@@ -511,7 +511,7 @@ test("Reviews are bounded and malformed peer storage fails closed", async ({
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 3);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
           r.onsuccess = () => {
             const db = r.result,
               tx = db.transaction("peers", "readwrite"),
@@ -575,7 +575,7 @@ test("Actual version-two keys and recovery kits survive upgrade and the older pr
     ),
   ).rejects.toThrow("STORAGE_UNAVAILABLE");
 });
-test("Aborted version-three migration leaves the original version-two key usable", async ({
+test("Aborted version-four migration leaves the original version-two key usable", async ({
   page,
 }) => {
   const f = make();
@@ -623,7 +623,7 @@ test("Future database version change closes peer handles and refuses old clients
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
         r.onsuccess = () => {
           r.result.close();
           resolve();
@@ -668,7 +668,7 @@ test("Peer and retired-key storage bounds refuse further enrollment without drop
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 3);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
           r.onsuccess = () => {
             const db = r.result,
               tx = db.transaction("peers", "readwrite"),
@@ -703,7 +703,7 @@ test("Peer and retired-key storage bounds refuse further enrollment without drop
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 3);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
           r.onsuccess = () => {
             const db = r.result,
               tx = db.transaction("peers", "readwrite"),
