@@ -1,6 +1,6 @@
 # Mac private endpoint key storage
 
-Status: internal retained-key provider and packaged native helper. The companion launcher and HTTP routes do not construct it yet. The separate [durable key coordinator](private-key-lifecycle.md) now provides internal reviewed selection/replacement, restore locks and cleanup tracking in Mac task schema17. Registration, complete key rotation across peers, browser persistence, user-held endpoint recovery and live pairing remain open. Browser database version1, installed PR40 and prepared PR104 are unchanged; the new helper is included only in newly built development packages. Acer news processing and Mac model settings are unchanged and independent.
+Status: internal retained-key provider and packaged native helper. The [local Mac key controls](mac-private-key-controls.md) now construct it through the lifecycle coordinator; normal launcher setup remains off and key creation requires explicit review. The separate [durable key coordinator](private-key-lifecycle.md) now provides internal reviewed selection/replacement, restore locks and cleanup tracking in Mac task schema17. Registration, complete key rotation across peers, browser persistence, user-held endpoint recovery and live pairing remain open. Browser database version1, installed PR40 and prepared PR104 are unchanged; the new helper is included only in newly built development packages. Acer news processing and Mac model settings are unchanged and independent.
 
 ## Explicit creation and current authority
 

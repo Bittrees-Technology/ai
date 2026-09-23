@@ -1,4 +1,5 @@
 import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
+import type { CompanionPrivateKeys } from "./private-keys.js";
 import { PrivateKeyLifecycleError } from "../../modules/remote/private-key-lifecycle.js";
 import { readMailEvidence } from "./mail-evidence.js";
 import { contentIdPattern, type retainedContent } from "./retained-content.js";
@@ -31,6 +32,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  privateKeys?: CompanionPrivateKeys;
   privateKeyCleanup?: () => Promise<void>;
   retainedCopies?: ReturnType<typeof retainedContent>;
   backupDownload?: () => Promise<Buffer>;
@@ -56,6 +58,7 @@ export interface LocalApiOptions {
   cancelRun?: (id: string) => void;
 }
 export function localApi({
+  privateKeys,
   privateKeyCleanup,
   retainedCopies,
   backupDownload,
@@ -115,6 +118,23 @@ export function localApi({
     next();
   });
   app.use(express.json({ limit: "64kb", strict: true }));
+  app.get("/v1/private-keys", (_req, res) =>
+    res.json(
+      privateKeys?.status() ?? {
+        available: false,
+        canSetup: false,
+        state: store.exportPrivateEndpointKeys(owner),
+      },
+    ),
+  );
+  app.post("/v1/private-keys/review", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepare(req.body));
+  });
+  app.post("/v1/private-keys/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirm(req.body));
+  });
   app.get("/v1/remote", async (_req, res) =>
     res.json({
       available: !!remote,
@@ -911,15 +931,22 @@ export function localApi({
     if (req.header("X-Confirm-Delete") !== "all-local-task-data")
       throw new StoreError("INVALID_INPUT");
     await receivingPaused(async () => {
-      if (publications?.busy || autoReviews?.busy || remote?.running)
+      if (
+        publications?.busy ||
+        autoReviews?.busy ||
+        remote?.running ||
+        privateKeys?.busy
+      )
         throw new StoreError("CONFLICT");
+      privateKeys?.invalidate();
       const keyState = store.exportPrivateEndpointKeys(owner);
       if (
         keyState.slots.some((v) => v.state !== "deleted") ||
         keyState.pendingKeyDeletionCount
       ) {
-        if (!privateKeyCleanup) throw new StoreError("CONFLICT");
-        await privateKeyCleanup();
+        if (privateKeys) await privateKeys.clearAll();
+        else if (privateKeyCleanup) await privateKeyCleanup();
+        else throw new StoreError("CONFLICT");
         const remaining = store.exportPrivateEndpointKeys(owner);
         if (
           remaining.slots.some((v) => v.state !== "deleted") ||

@@ -647,4 +647,4 @@ The internal [private response review screen](docs/private-results-review.md) pr
 
 The internal [Mac private endpoint key provider](docs/private-endpoint-keys.md) adds immutable Keychain storage, explicit public invitations and deletion fencing, with packaged native CI verification. Its [durable key coordinator](docs/private-key-lifecycle.md) saves reviewed selection/replacement, restore locks and pending native cleanup in task schema17. Production registration/consent wiring, user-held endpoint recovery and live pairing remain open.
 
-[Verified device identity](docs/verified-device-identity.md) connects short private-operation scopes to the existing paired-device credential through an authenticated service check. It grants no content permissions and has no production companion caller yet.
+[Verified device identity](docs/verified-device-identity.md) connects short private-operation scopes to the existing paired-device credential through an authenticated service check. It grants no content permissions. The [Mac key controls](docs/mac-private-key-controls.md) use it for explicit setup review and confirmation; the normal launcher keeps setup disabled.
