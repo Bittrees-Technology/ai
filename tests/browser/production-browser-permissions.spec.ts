@@ -87,14 +87,29 @@ async function preview(p: Page, engine: string, state: string) {
     ["phone", 390, 844],
   ] as const) {
     await p.setViewportSize({ width, height });
-    expect(
-      await p.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
-    await panel(p).screenshot({
-      path: `test-results/browser-permission-controls-${engine}-${name}-${state}.png`,
-    });
+    // WebKit can resolve viewport resizing before the responsive layout settles.
+    // Keep the full-document overflow assertion and retain measured offenders
+    // plus the actual panel if it still fails after the bounded layout wait.
+    try {
+      await expect.poll(
+        () => p.evaluate(() => ({
+          overflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),
+          offenders: [...document.querySelectorAll("body *")]
+            .filter((n) => n.getBoundingClientRect().right > innerWidth)
+            .map((n) => ({
+              tag: n.tagName,
+              className: n.className,
+              width: n.getBoundingClientRect().width,
+              right: n.getBoundingClientRect().right,
+            })),
+        })),
+        { message: `${engine} ${name} ${state} must fit the viewport` },
+      ).toEqual({ overflow: 0, offenders: [] });
+    } finally {
+      await panel(p).screenshot({
+        path: `test-results/browser-permission-controls-${engine}-${name}-${state}.png`,
+      });
+    }
   }
 }
 
