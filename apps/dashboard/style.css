@@ -602,3 +602,14 @@ summary {
     align-items: stretch;
   }
 }
+
+.dependency-failure {
+  border-left: 4px solid #28685c;
+  background: #f5f9fa;
+  padding: 4px 16px 12px;
+  margin: 20px 0;
+  overflow-wrap: anywhere;
+}
+.dependency-failure ul {
+  padding-left: 20px;
+}

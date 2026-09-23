@@ -1,3 +1,4 @@
+import { dependencyFailureSchema } from "./dependency-failure.js";
 import { exportPrivateTaskConsent } from "../remote/private-task-consent.js";
 import { exportPrivatePeerChecks } from "../remote/private-peer-checks.js";
 import {
@@ -1122,6 +1123,53 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         receipt,
       }));
   }
+  /** Runs only inside claim's write transaction. Bound transitions per worker tick;
+   * later ticks settle deeper chains without recursively holding the write lock. */
+  private failImpossibleDependencies(owner: Owner, now: number) {
+    const candidates = this.db
+      .prepare(
+        `
+      SELECT t.id FROM tasks t
+      WHERE t.user_id=? AND t.tenant_id=?
+        AND t.status NOT IN ('completed','failed','cancelled','expired')
+        AND EXISTS (
+          SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on
+          WHERE d.task_id=t.id AND p.user_id=t.user_id AND p.tenant_id=t.tenant_id
+            AND p.status IN ('failed','cancelled','expired')
+        )
+      ORDER BY t.created_at,t.id LIMIT 128
+    `,
+      )
+      .all(owner.userId, owner.tenantId) as { id: string }[];
+    for (const { id } of candidates) {
+      const prerequisites = this.db
+        .prepare(
+          `
+        SELECT p.id AS taskId,p.status FROM dependencies d JOIN tasks p ON p.id=d.depends_on
+        WHERE d.task_id=? AND p.user_id=? AND p.tenant_id=?
+          AND p.status IN ('failed','cancelled','expired') ORDER BY p.id LIMIT 33
+      `,
+        )
+        .all(id, owner.userId, owner.tenantId);
+      const result = dependencyFailureSchema.parse({
+        kind: "dependency_failure",
+        prerequisites,
+      });
+      this.db
+        .prepare(
+          `UPDATE tasks SET status='failed',revision=revision+1,generation=generation+1,
+        result=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE id=?
+      `,
+        )
+        .run(this.vault.seal(result, "result:" + id), now, id);
+      this.db
+        .prepare(
+          "UPDATE runs SET finished_at=?,outcome='dependency_failed' WHERE task_id=? AND finished_at IS NULL",
+        )
+        .run(now, id);
+      this.event(id, "dependency_failed");
+    }
+  }
   claim(owner: Owner, workerId: string, leaseMs = 30_000): Claim | null {
     if (!workerId || leaseMs < 100 || leaseMs > 300_000)
       throw new StoreError("INVALID_INPUT");
@@ -1147,6 +1195,7 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
             .run(now, id);
           this.event(id, "expired");
         }
+        this.failImpossibleDependencies(owner, now);
         const r = this.db
           .prepare(
             `SELECT t.* FROM tasks t WHERE user_id=? AND tenant_id=? AND (status='queued' OR(status='running' AND lease_until<=?)) AND next_attempt_at<=?

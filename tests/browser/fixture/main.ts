@@ -329,3 +329,6 @@ if (new URLSearchParams(location.search).has("permissions"))
 
 if (new URLSearchParams(location.search).has("checks"))
   void import("./checks.js");
+
+if (new URLSearchParams(location.search).has("dependencies"))
+  void import("./dependencies.js");
