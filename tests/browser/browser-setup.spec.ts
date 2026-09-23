@@ -200,6 +200,9 @@ test("Revocation stops online setup but preserves offline export and confirmed l
     "Review deletion of all keys",
     "Confirm delete all browser keys",
   );
+  await expect(keys(page).getByRole("status")).toContainText(
+    "Key material deleted locally",
+  );
   expect((await status(page)).slots.every((x) => x.state === "deleted")).toBe(
     true,
   );
@@ -320,7 +323,7 @@ test("A committed registration acknowledged after scope loss cannot become fresh
     ).rows[0].count,
   ).toBe("1");
 });
-test("Lost registration responses never auto-retry or claim setup authority", async ({
+test("Lost acknowledgments keep browser transport retries idempotent and grant no setup authority", async ({
   page,
   identityServer,
 }) => {
@@ -334,10 +337,23 @@ test("Lost registration responses never auto-retry or claim setup authority", as
   await reg(page)
     .getByRole("button", { name: "Confirm registration", exact: true })
     .click();
-  await expect(reg(page).getByRole("alert")).toContainText("not confirmed");
+  await expect(reg(page).getByRole("alert")).toContainText(
+    /not confirmed|registration changed/,
+  );
+  await expect(reg(page).getByRole("status")).not.toContainText(
+    "registered until",
+  );
+  // Native Chromium may replay a POST after a dropped persistent connection.
+  // The application makes one fetch; replay of its operation ID has no new effect.
   expect(
-    identityServer.events.filter((x) => x === "/browser/registration/create"),
+    (
+      await page.evaluate(() => window.browserSetupTest.transportCalls())
+    ).filter((x) => x === "/browser/registration/create"),
   ).toHaveLength(1);
+  expect(
+    identityServer.events.filter((x) => x === "/browser/registration/create")
+      .length,
+  ).toBeGreaterThanOrEqual(1);
   expect(
     (
       await identityServer.pool.query(
@@ -522,6 +538,9 @@ test("Replacing registration requires a separate local reset and retains the pre
     page,
     "Review new registration",
     "Confirm use new browser registration",
+  );
+  await expect(keys(page).getByRole("status")).toContainText(
+    "New registration selected",
   );
   expect((await status(page)).slots[0]!.state).toBe("retired");
   await expect(

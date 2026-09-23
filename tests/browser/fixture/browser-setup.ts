@@ -5,6 +5,7 @@ let owner: string | null = null,
   offset = 0,
   host: BrowserKeyHost,
   view: ReturnType<typeof mountBrowserSetup> | undefined;
+const transportCalls: string[] = [];
 const context = () => (owner ? { ownerId: owner, scope: String(scope) } : null);
 async function api(path: string, body: unknown) {
   const response = await fetch(path, {
@@ -28,9 +29,13 @@ async function mount(id: string) {
   owner = id;
   scope++;
   offset = 0;
+  transportCalls.length = 0;
   host = await BrowserKeyHost.open(
     context,
-    (...args) => globalThis.fetch(...args),
+    (...args) => {
+      transportCalls.push(new URL(String(args[0])).pathname);
+      return globalThis.fetch(...args);
+    },
     () => Date.now() + offset,
     () => performance.now() + offset,
   );
@@ -72,6 +77,7 @@ const fixture = {
     offset += ms;
   },
   context: () => host.keyContext(),
+  transportCalls: () => [...transportCalls],
   status: () => host.keyAPI.status(),
   begin: (raw: unknown) => host.keyAPI.begin(raw),
   inspect: () => host.inspect(),
