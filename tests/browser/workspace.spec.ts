@@ -219,7 +219,7 @@ test("completed task history stays readable at desktop and narrow widths", async
   for (const width of [1200, 390]) {
     await page.setViewportSize({ width, height: 950 });
     await page.screenshot({
-      path: info.outputPath(`workspace-${width}.png`),
+      path: `test-results/workspace-${info.project.name}-${width}.png`,
       fullPage: true,
     });
     expect(

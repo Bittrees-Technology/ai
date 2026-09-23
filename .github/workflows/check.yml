@@ -190,3 +190,12 @@ jobs:
           path: test-results/dependency-failure-*.png
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain complete local workspace previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-ui-preview
+          path: test-results/workspace-*.png
+          if-no-files-found: error
+          retention-days: 7
