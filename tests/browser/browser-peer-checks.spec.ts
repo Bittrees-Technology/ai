@@ -603,3 +603,30 @@ test("Wrong route, owner, key epoch and expired envelopes never create completio
     p.mac.close();
   }
 });
+
+test("An orphaned proof cannot reconstruct its missing deletion marker or regain authority", async ({
+  page,
+}) => {
+  const p = await paired(page);
+  try {
+    const { wire } = await answer(page, p);
+    await browserComplete(page, wire);
+    expect(await p.browserValid()).toBe(true);
+    await page.evaluate(() => window.browserPeersTest.removeCheckMarker());
+    expect(await p.browserValid()).toBe(false);
+    await expect(p.begin()).rejects.toThrow("STORAGE_UNAVAILABLE");
+    await expect(
+      page.evaluate(() => window.browserPeersTest.checkStatus()),
+    ).rejects.toThrow("STORAGE_UNAVAILABLE");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.key())).proof,
+    ).toEqual(p.local);
+    const raw = await page.evaluate(() =>
+      window.browserPeersTest.inspectChecks(),
+    );
+    expect(raw.json).toContain("verified");
+    expect(raw.json).not.toContain('"kind":"meta"');
+  } finally {
+    p.mac.close();
+  }
+});

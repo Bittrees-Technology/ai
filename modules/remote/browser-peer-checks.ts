@@ -513,6 +513,8 @@ export class BrowserPeerChecks {
             io.request(
               io.store("peer_checks").index("scope").count(this.scope),
               (count) => {
+                if (!meta && count > 0)
+                  throw new BrowserPeerCheckError("STORAGE_UNAVAILABLE");
                 if (count - (meta ? 1 : 0) >= 256)
                   throw new BrowserPeerCheckError("CAPACITY");
                 reserveBrowserSequence(

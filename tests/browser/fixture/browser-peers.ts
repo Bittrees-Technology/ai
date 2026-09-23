@@ -357,6 +357,31 @@ const fixture = {
       return original.apply(this, args);
     };
   },
+  async removeCheckMarker() {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("peer_checks", "readwrite"),
+          store = tx.objectStore("peer_checks"),
+          r = store.openCursor();
+        r.onsuccess = () => {
+          const c = r.result;
+          if (c) {
+            if (c.value.kind === "meta") c.delete();
+            c.continue();
+          }
+        };
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  },
   async inspectChecks() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
