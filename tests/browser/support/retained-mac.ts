@@ -11,11 +11,12 @@ import type { PrivateKeyEntries } from "../../../modules/remote/private-endpoint
 class Slot {
   private bytes?: Uint8Array;
   async getSecret() {
-    return this.bytes?.slice();
+    return this.bytes ? Uint8Array.from(this.bytes) : undefined;
   }
   async addSecretIfAbsent(bytes: Uint8Array) {
     if (this.bytes) return false;
-    this.bytes = bytes.slice();
+    // Buffer.slice() shares memory; the actual provider wipes its owned buffers.
+    this.bytes = Uint8Array.from(bytes);
     return true;
   }
   async deleteCredential() {
