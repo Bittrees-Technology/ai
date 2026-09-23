@@ -332,3 +332,6 @@ if (new URLSearchParams(location.search).has("checks"))
 
 if (new URLSearchParams(location.search).has("dependencies"))
   void import("./dependencies.js");
+
+if (new URLSearchParams(location.search).has("workspace"))
+  void import("./workspace.js");
