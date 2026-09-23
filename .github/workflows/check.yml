@@ -104,6 +104,8 @@ jobs:
       - run: bash scripts/package-macos.sh
       - name: Packaged recovery with disposable Keychain profile
         run: '"dist/macos/Bittrees AI.app/Contents/Resources/node" scripts/check-packaged-key-recovery.mjs "$PWD/dist/macos/Bittrees AI.app/Contents/Resources"'
+      - name: Packaged private endpoint keys with disposable Keychain slots
+        run: '"dist/macos/Bittrees AI.app/Contents/Resources/node" scripts/check-packaged-private-keys.mjs "$PWD/dist/macos/Bittrees AI.app/Contents/Resources"'
       - name: Deleted outputs must not survive packaging
         run: |
           test ! -e 'dist/macos/Bittrees AI.app/Contents/Resources/engine/dist/apps/stale-build-probe.js'

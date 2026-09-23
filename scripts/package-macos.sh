@@ -27,6 +27,7 @@ cp "$node_license" "$resources/Node-LICENSE.txt"
 (cd "$resources/engine" && npm ci --omit=dev --no-audit --no-fund)
 xcrun swiftc -O -target "$(uname -m)-apple-macosx13.0" apps/macos/Companion.swift apps/macos/RecoveryLifecycle.swift apps/macos/RecoverySetup.swift apps/macos/RecoverySetupUI.swift apps/macos/KitRecovery.swift apps/macos/KitRecoveryUI.swift -o "$bundle/Contents/MacOS/BittreesAI" -framework Cocoa -framework WebKit
 xcrun swiftc -O -target "$(uname -m)-apple-macosx13.0" apps/macos/StorageKeyInstall.swift apps/macos/KeyInstallMain.swift -o "$resources/KeyInstall" -framework Security
+xcrun swiftc -O -target "$(uname -m)-apple-macosx13.0" apps/macos/PrivateKeyInstall.swift apps/macos/PrivateKeyInstallMain.swift -o "$resources/PrivateKeyInstall" -framework Security
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

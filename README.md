@@ -644,3 +644,5 @@ The internal [browser encrypted outbox](docs/browser-encrypted-outbox.md) reserv
 [Durable companion receipts and results](docs/private-task-responses.md) documents internal private-task response production, shared channel sequences, schema16 recovery fences and the remaining transport/key/UI work.
 
 The internal [private response review screen](docs/private-results-review.md) provides explicit plaintext review, hide, encrypted download, retry stop and reviewed browser deletion. It is mounted only in the disposable synthetic browser fixture; production pairing, keys and transport are still required.
+
+The internal [Mac private endpoint key provider](docs/private-endpoint-keys.md) adds immutable Keychain storage, explicit public invitations and deletion fencing, with packaged native CI verification. It is not connected to startup or HTTP; durable registration/rotation, user-held endpoint recovery and live pairing remain open.
