@@ -435,7 +435,7 @@ test("Private peer review and enrollment capacity are bounded, and migration pre
     f.store.db.exec("DROP TABLE private_peer_states; PRAGMA user_version=12");
     const migrated = new Store(f.path, f.vault);
     try {
-      assert.equal(migrated.db.pragma("user_version", { simple: true }), 19);
+      assert.equal(migrated.db.pragma("user_version", { simple: true }), 20);
       assert.equal(migrated.get(owner, task.id).input.prompt, "retained");
     } finally {
       migrated.close();

@@ -7,6 +7,7 @@ import {
 } from "./model-profile-settings.js";
 import { workspaceApi } from "./workspace-api.js";
 import { TaskRuns } from "./task-runs.js";
+import { TaskQualityReview } from "./task-quality-review.js";
 import { DependencyFailureNotice } from "./dependency-failure.js";
 import { RecoveryCopies } from "./recovery-copies.js";
 import { requestBackup } from "./backup-download.js";
@@ -641,6 +642,13 @@ function App() {
                         >
                           Use prompt again
                         </button>
+                      )}
+                      {task.status === "completed" && (
+                        <TaskQualityReview
+                          key={task.id + ":" + task.revision}
+                          taskId={task.id}
+                          api={api}
+                        />
                       )}
                       <TaskRuns
                         key={
