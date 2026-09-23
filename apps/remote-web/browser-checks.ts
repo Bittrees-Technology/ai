@@ -93,7 +93,8 @@ export function mountBrowserChecks(
   );
   const peerLabel = el("label", "Reviewed Mac"),
     peerSelect = el("select");
-  peerLabel.append(peerSelect);
+  peerSelect.id = `browser-check-peer-${crypto.randomUUID()}`;
+  peerLabel.htmlFor = peerSelect.id;
   const start = button("Review new Mac check", () => openReview("begin"));
   const incomingLabel = el("label", "Encrypted check message from your Mac"),
     incoming = el("textarea");
@@ -112,6 +113,7 @@ export function mountBrowserChecks(
       "First review both device identities. Start a check here and take its encrypted message to the Mac. Bring the Mac’s reply back to save the result. Separately, answer a check started on the Mac so it can verify this browser.",
     ),
     peerLabel,
+    peerSelect,
     start,
     incomingLabel,
     respond,

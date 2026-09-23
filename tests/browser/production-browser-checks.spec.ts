@@ -133,6 +133,9 @@ async function setup(p: Page) {
       binding,
       mac,
       review: async () => {
+        await expect(
+          checks(p).getByLabel("Reviewed Mac", { exact: true }),
+        ).toBeEnabled();
         await checks(p)
           .getByLabel("Reviewed Mac", { exact: true })
           .selectOption(mac.binding.deviceId);
