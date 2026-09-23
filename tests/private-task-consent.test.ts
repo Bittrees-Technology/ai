@@ -1,3 +1,5 @@
+import { PrivatePeerChecks } from "../modules/remote/private-peer-checks.js";
+import { peerCheckResponse } from "./helpers/peer-check-response.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes } from "node:crypto";
@@ -131,6 +133,29 @@ async function fixture() {
     comparedFingerprint: review.fingerprint,
     confirmed: true,
   });
+  const checks = new PrivatePeerChecks(
+    store,
+    vault,
+    owner,
+    current,
+    keys,
+    peers,
+    clock,
+  );
+  const check = await checks.begin({
+    peerId,
+    expectedKeyRevision: keys.list().revision,
+    expectedPeerRevision: peers.list().revision,
+    confirmed: true,
+  });
+  const challenge = checks.delivery({ id: check.id, confirmed: true });
+  const response = await peerCheckResponse(
+    challenge,
+    sender,
+    (await keys.resolve()).pair.publicKey,
+    clock,
+  );
+  await checks.complete({ envelope: response, confirmed: true });
   const choices = {
     peerId,
     peerKeyEpoch: 1,
@@ -621,7 +646,7 @@ test("Schema17 migration preserves tasks without granting consent; authenticated
     );
     f.store.db.exec("DROP TABLE private_task_consents; PRAGMA user_version=17");
     migrated = new Store(f.path, f.vault, f.clock);
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 18);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 19);
     assert.equal(migrated.get(owner, task.id).input.prompt, "preserve");
     assert.deepEqual(migrated.exportPrivateTaskConsent(owner), {
       revision: 0,

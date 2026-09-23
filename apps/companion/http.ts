@@ -1,3 +1,4 @@
+import { PrivatePeerCheckError } from "../../modules/remote/private-peer-checks.js";
 import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
 import { PrivateTaskError } from "../../modules/remote/private-task-receiver.js";
 import { PrivateResponseError } from "../../modules/remote/private-task-responses.js";
@@ -198,6 +199,39 @@ export function localApi({
   app.post("/v1/private-peers/confirm", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.confirmPeer(req.body));
+  });
+  app.get("/v1/private-peer-checks", (_req, res) =>
+    res.json(
+      privateKeys?.peerCheckStatus() ?? {
+        available: false,
+        enabled: false,
+        checks: [],
+      },
+    ),
+  );
+  app.post("/v1/private-peer-checks/begin", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.beginPeerCheck(req.body));
+  });
+  app.post("/v1/private-peer-checks/respond", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.respondPeerCheck(req.body));
+  });
+  app.post("/v1/private-peer-checks/complete", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.completePeerCheck(req.body));
+  });
+  app.post("/v1/private-peer-checks/resume", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.resumePeerCheck(req.body));
+  });
+  app.post("/v1/private-peer-checks/envelope", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.peerCheckEnvelope(req.body));
+  });
+  app.post("/v1/private-peer-checks/stop", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.stopPeerCheck(req.body));
   });
   app.get("/v1/private-task-permissions", (_req, res) => {
     res.json(
@@ -997,6 +1031,7 @@ export function localApi({
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
+      privatePeerChecks: store.exportPrivatePeerChecks(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
       privateEndpointKeys: store.exportPrivateEndpointKeys(owner),
       privateTaskReceipts: store.exportPrivateTaskReceipts(owner),
@@ -1070,7 +1105,8 @@ export function localApi({
     const code =
       err?.type === "entity.too.large"
         ? "PAYLOAD_TOO_LARGE"
-        : err instanceof PrivateTaskError ||
+        : err instanceof PrivatePeerCheckError ||
+            err instanceof PrivateTaskError ||
             err instanceof PrivateResponseError ||
             err instanceof PrivateConsentError ||
             err instanceof PrivateKeyError ||

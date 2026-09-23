@@ -1,4 +1,5 @@
 import { exportPrivateTaskConsent } from "../remote/private-task-consent.js";
+import { exportPrivatePeerChecks } from "../remote/private-peer-checks.js";
 import {
   exportPrivateKeyLifecycle,
   queuePrivateKeyDeletion,
@@ -151,7 +152,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 18) {
+    if (version > 19) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -242,7 +243,16 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_task_consents(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB,PRIMARY KEY(user_id,tenant_id))",
         );
-        this.db.pragma("user_version = 18");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_peer_checks(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,role TEXT NOT NULL,operation_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id),UNIQUE(user_id,tenant_id,role,operation_hash))",
+        );
+        // Previously approved choices cannot become active merely because a new
+        // possession check succeeds. Require a fresh permission review after upgrade.
+        if (version < 19)
+          this.db.exec(
+            "UPDATE private_task_consents SET locked=1,revision=revision+1",
+          );
+        this.db.pragma("user_version = 19");
       })();
     } catch (error) {
       this.db.close();
@@ -1345,6 +1355,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateTaskConsent(owner: Owner) {
     return exportPrivateTaskConsent(this, this.vault, owner);
   }
+  exportPrivatePeerChecks(owner: Owner) {
+    return exportPrivatePeerChecks(this, this.vault, owner);
+  }
   exportPrivateEndpointKeys(owner: Owner) {
     return exportPrivateKeyLifecycle(this, this.vault, owner);
   }
@@ -1644,6 +1657,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           )
           .run(owner.userId, owner.tenantId);
         for (const table of [
+          "private_peer_checks",
           "private_task_responses",
           "private_task_outbox",
           "private_send_channels",

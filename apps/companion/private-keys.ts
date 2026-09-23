@@ -1,3 +1,4 @@
+import { CompanionPeerChecks } from "./private-peer-checks.js";
 import { CompanionPrivateTaskPermissions } from "./private-task-permissions.js";
 import { CompanionPrivateTasks } from "./private-tasks.js";
 import { CompanionPrivatePeers } from "./private-peers.js";
@@ -35,6 +36,7 @@ type Review = z.infer<typeof request> & {
  */
 export class CompanionPrivateKeys {
   private peers: CompanionPrivatePeers;
+  private peerChecks: CompanionPeerChecks;
   private permissions: CompanionPrivateTaskPermissions;
   private tasks: CompanionPrivateTasks;
   private review?: Review;
@@ -50,6 +52,15 @@ export class CompanionPrivateKeys {
     privateTasksEnabled = false,
   ) {
     this.owner = { ...owner };
+    this.peerChecks = new CompanionPeerChecks(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled,
+      now,
+    );
     this.tasks = new CompanionPrivateTasks(
       store,
       vault,
@@ -128,29 +139,50 @@ export class CompanionPrivateKeys {
   permissionStatus() {
     return this.permissions.status();
   }
+  peerCheckStatus() {
+    return this.peerChecks.status();
+  }
+  beginPeerCheck(raw: unknown) {
+    return this.protocolOperation(() => this.peerChecks.begin(raw));
+  }
+  respondPeerCheck(raw: unknown) {
+    return this.protocolOperation(() => this.peerChecks.respond(raw));
+  }
+  completePeerCheck(raw: unknown) {
+    return this.protocolOperation(() => this.peerChecks.complete(raw));
+  }
+  resumePeerCheck(raw: unknown) {
+    return this.protocolOperation(() => this.peerChecks.resume(raw));
+  }
+  peerCheckEnvelope(raw: unknown) {
+    return this.protocolOperation(() => this.peerChecks.envelope(raw));
+  }
+  stopPeerCheck(raw: unknown) {
+    return this.protocolOperation(() => this.peerChecks.stop(raw));
+  }
   taskStatus() {
     return this.tasks.status();
   }
-  private taskOperation<T>(fn: () => Promise<T> | T) {
+  private protocolOperation<T>(fn: () => Promise<T> | T) {
     return this.exclusive(async () => {
       this.invalidate();
       return fn();
     });
   }
   receiveTask(raw: unknown) {
-    return this.taskOperation(() => this.tasks.receive(raw));
+    return this.protocolOperation(() => this.tasks.receive(raw));
   }
   prepareTaskResponse(raw: unknown) {
-    return this.taskOperation(() => this.tasks.prepareResponse(raw));
+    return this.protocolOperation(() => this.tasks.prepareResponse(raw));
   }
   resumeTaskResponse(raw: unknown) {
-    return this.taskOperation(() => this.tasks.resumeResponse(raw));
+    return this.protocolOperation(() => this.tasks.resumeResponse(raw));
   }
   taskResponseEnvelope(raw: unknown) {
-    return this.taskOperation(() => this.tasks.responseEnvelope(raw));
+    return this.protocolOperation(() => this.tasks.responseEnvelope(raw));
   }
   stopTaskResponse(raw: unknown) {
-    return this.taskOperation(() => this.tasks.stopResponse(raw));
+    return this.protocolOperation(() => this.tasks.stopResponse(raw));
   }
   preparePermission(raw: unknown) {
     return this.exclusive(async () => {
