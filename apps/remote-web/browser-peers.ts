@@ -106,7 +106,8 @@ export function mountBrowserPeers(
     details = el("p"),
     identity = el("p", "", "browser-keys-reference"),
     fingerprint = el("p", "", "browser-peers-fingerprint"),
-    comparison = field("Full fingerprint from your Mac’s display"),
+    comparison = field("Full fingerprint from your Mac’s display", true),
+    comparisonHint = el("p", "", "browser-keys-reference"),
     checkLabel = el("label", "", "browser-keys-check"),
     check = el("input"),
     checkText = el("span"),
@@ -147,6 +148,10 @@ export function mountBrowserPeers(
   recipient.input.maxLength = 36;
   incoming.input.maxLength = 4096;
   comparison.input.maxLength = 64;
+  (comparison.input as HTMLTextAreaElement).rows = 3;
+  comparisonHint.id = "peer-fingerprint-" + crypto.randomUUID();
+  comparisonHint.setAttribute("aria-live", "polite");
+  comparison.input.setAttribute("aria-describedby", comparisonHint.id);
   outputText.input.readOnly = true;
   (incoming.input as HTMLTextAreaElement).rows = 6;
   (outputText.input as HTMLTextAreaElement).rows = 9;
@@ -159,6 +164,7 @@ export function mountBrowserPeers(
     identity,
     fingerprint,
     comparison.label,
+    comparisonHint,
     checkLabel,
     confirm,
     cancel,
@@ -281,7 +287,20 @@ export function mountBrowserPeers(
     idle.hidden = !!review || !!outgoing;
     reviewBox.hidden = !review;
     output.hidden = !outgoing;
-    comparison.label.hidden = review?.action !== "incoming";
+    comparison.label.hidden = comparisonHint.hidden =
+      review?.action !== "incoming";
+    const compared = comparison.input.value,
+      matches = compared === review?.prepared?.fingerprint;
+    comparisonHint.textContent =
+      compared.length !== 64
+        ? "Enter all 64 characters from your Mac’s fingerprint."
+        : matches
+          ? "The fingerprints match. Acknowledge the review to save this identity."
+          : "These fingerprints do not match. Check the Mac’s invitation before continuing.";
+    comparison.input.setAttribute(
+      "aria-invalid",
+      String(compared.length === 64 && !matches),
+    );
     fingerprint.hidden = review?.action !== "incoming";
     comparison.input.disabled = busy;
     check.disabled = busy;

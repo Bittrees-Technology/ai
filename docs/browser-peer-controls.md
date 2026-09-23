@@ -8,7 +8,7 @@ Refresh saved devices reads owner-local public peer history and browser key meta
 
 An outgoing invitation starts with the intended Mac device ID and an unchecked review. Confirmation produces a five-minute public invitation, the full fingerprint, selectable text and a public JSON download. No private key or recovery code is displayed by this view. The Mac must independently review this invitation.
 
-An incoming invitation is parsed by the actual registry. Review displays the exact account, browser recipient, Mac identity, key version, prior identity if replaced and original fingerprint. The independent comparison field starts empty; its exact 64-character fingerprint and an unchecked acknowledgement are required. Confirmation submits the original review ID and list revision, never a reconstructed or silently refreshed review. Each review is single-use.
+An incoming invitation is parsed by the actual registry. Review displays the exact account, browser recipient, Mac identity, key version, prior identity if replaced and original fingerprint. The independent comparison field starts empty, wraps the entire fingerprint at desktop and phone widths, and reports whether the full value matches; its exact 64-character fingerprint and an unchecked acknowledgement are required. Confirmation submits the original review ID and list revision, never a reconstructed or silently refreshed review. Each review is single-use.
 
 ## Local maintenance
 

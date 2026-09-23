@@ -85,6 +85,20 @@ async function preview(p: Page, browser: string, state: string) {
         p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       )
       .toBe(true);
+    const comparison = peers(p).getByLabel(
+      "Full fingerprint from your Mac’s display",
+      { exact: true },
+    );
+    if (state === "review") {
+      expect(
+        await comparison.evaluate((node) => ({
+          tag: node.tagName,
+          full:
+            node.scrollWidth <= node.clientWidth &&
+            node.scrollHeight <= node.clientHeight,
+        })),
+      ).toEqual({ tag: "TEXTAREA", full: true });
+    }
     await peers(p).screenshot({
       path: `test-results/browser-peer-controls-${browser}-${name}-${state}.png`,
     });
@@ -218,7 +232,15 @@ test("full independent fingerprint and unchecked acknowledgement remain required
     await expect(save).toBeDisabled();
     await compare(page, "0".repeat(64));
     await expect(save).toBeDisabled();
+    await expect(field).toHaveAttribute("aria-invalid", "true");
+    await expect(
+      peers(page).getByText(
+        "These fingerprints do not match. Check the Mac’s invitation before continuing.",
+        { exact: true },
+      ),
+    ).toBeVisible();
     await field.fill(i.fingerprint);
+    await expect(field).toHaveAttribute("aria-invalid", "false");
     await peers(page).getByRole("checkbox").uncheck();
     await expect(save).toBeDisabled();
     await page
