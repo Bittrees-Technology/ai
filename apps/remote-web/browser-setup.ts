@@ -124,7 +124,6 @@ export function mountBrowserSetup(
     reset("Registration review closed while reviewing device checks.");
     keyView.invalidate();
     peerView.invalidate();
-    checkView.invalidate();
   });
   const stamp = () => {
     const c = host.session();
