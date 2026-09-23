@@ -1,6 +1,6 @@
 # Shared browser private storage
 
-Browser endpoint database version4 combined existing key slots, lifecycle and public peer pins with ciphertext task history and durable channel counters. Current **version5** additionally stores [retained browser task permissions](browser-task-consent.md). The [browser check backend](browser-peer-checks.md) uses the shared store and has visible exchange controls. Task permission/page controls, host dispatch and network transport remain unfinished. The Mac wire contracts are shared without changing their encoded fields or hashes.
+Browser endpoint database version4 combined existing key slots, lifecycle and public peer pins with ciphertext task history and durable channel counters. Current **version5** additionally stores [retained browser task permissions](browser-task-consent.md). The [browser check backend](browser-peer-checks.md) uses the shared store and has visible exchange controls. [Permission controls](browser-permission-controls.md) are mounted on the signed-in page; task composition, host dispatch and network transport remain unfinished. The Mac wire contracts are shared without changing their encoded fields or hashes.
 
 ## Upgrade and recovery
 

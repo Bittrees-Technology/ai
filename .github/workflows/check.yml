@@ -359,3 +359,12 @@ jobs:
           path: test-results/browser-check-controls-*.png
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain browser task permission previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-permission-controls-ui-preview
+          path: test-results/browser-permission-controls-*.png
+          if-no-files-found: error
+          retention-days: 7
