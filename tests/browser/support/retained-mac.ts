@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../../../modules/storage/store.js";
 import { Vault } from "../../../modules/storage/vault.js";
 import { PrivateKeyLifecycle } from "../../../modules/remote/private-key-lifecycle.js";
+import { PrivatePeerChecks } from "../../../modules/remote/private-peer-checks.js";
 import { PrivatePeerEnrollment } from "../../../modules/remote/private-peers.js";
 import type { PrivateBinding } from "../../../modules/remote/private-peer-contracts.js";
 import type { PrivateKeyEntries } from "../../../modules/remote/private-endpoint-keys.js";
@@ -81,6 +82,15 @@ export async function retainedMac(browser: PrivateBinding, now: number) {
     binding,
     keys,
     peers,
+    checks: new PrivatePeerChecks(
+      store,
+      vault,
+      owner,
+      () => binding,
+      keys,
+      peers,
+      () => now,
+    ),
     activate,
     invitation: (recipientId = browser.deviceId) =>
       keys.invitation({ recipientId, confirmed: true }),

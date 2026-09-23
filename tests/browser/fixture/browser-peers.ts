@@ -1,3 +1,4 @@
+import { BrowserPeerChecks } from "../../../modules/remote/browser-peer-checks.js";
 import { BrowserPeerEnrollment } from "../../../modules/remote/browser-peers.js";
 import {
   BrowserKeyLifecycle,
@@ -18,6 +19,17 @@ import {
 let keys: BrowserKeyLifecycle,
   peers: BrowserPeerEnrollment,
   host: BrowserKeyHost | null = null;
+let checks: BrowserPeerChecks | undefined;
+async function checkStore() {
+  return (checks ??= await BrowserPeerChecks.open(
+    owner,
+    () => binding,
+    keys,
+    peers,
+    () => now,
+    () => mono,
+  ));
+}
 let owner = "",
   binding: PrivateBinding | null = null,
   current: BrowserKeyProof | null = null,
@@ -75,6 +87,8 @@ async function mount(id: string) {
 const legacyUrl = "/legacy-lifecycle.js";
 const fixture = {
   async init(o: string, b: PrivateBinding, time: number) {
+    checks?.close();
+    checks = undefined;
     keys?.close();
     peers?.close();
     host?.close();
@@ -135,6 +149,7 @@ const fixture = {
   keyReset: (raw: unknown) => keys.reset(raw),
   set(b: PrivateBinding | null) {
     binding = b;
+    checks?.invalidate();
     keys.invalidate();
     peers.invalidate();
     current = null;
@@ -165,6 +180,7 @@ const fixture = {
     }
   },
   invalidate() {
+    checks?.invalidate();
     peers?.invalidate();
     host?.peerAPI.invalidate();
   },
@@ -272,6 +288,102 @@ const fixture = {
       return (await k.resolve()).proof;
     } finally {
       k.close();
+    }
+  },
+  checkStatus: () =>
+    host ? host.checkAPI.status() : checkStore().then((c) => c.status()),
+  checkBegin: (raw: unknown) =>
+    host
+      ? host.checkAPI.begin(raw)
+      : withKey(async () => (await checkStore()).begin(raw)),
+  checkRespond: (raw: unknown) =>
+    host
+      ? host.checkAPI.respond(raw)
+      : withKey(async () => (await checkStore()).respond(raw)),
+  checkComplete: (raw: unknown) =>
+    host
+      ? host.checkAPI.complete(raw)
+      : withKey(async () => (await checkStore()).complete(raw)),
+  checkResume: (raw: unknown) =>
+    host
+      ? host.checkAPI.resume(raw)
+      : withKey(async () => (await checkStore()).resume(raw)),
+  checkEnvelope: (raw: unknown) =>
+    host
+      ? host.checkAPI.envelope(raw)
+      : withKey(async () => (await checkStore()).delivery(raw)),
+  checkStop: (raw: unknown) =>
+    host ? host.checkAPI.stop(raw) : checkStore().then((c) => c.stop(raw)),
+  checkClear: (raw: unknown) =>
+    host ? host.checkAPI.clear(raw) : checkStore().then((c) => c.clear(raw)),
+  checkReset: (raw: unknown) =>
+    host
+      ? host.checkAPI.reset(raw)
+      : withKey(async () => (await checkStore()).reset(raw)),
+  checkValid: (id: string, epoch: number) =>
+    withKey(async () => {
+      const k = await keys.resolve(),
+        p = await peers.resolve(id, epoch);
+      return (await checkStore()).validFor(k.proof, p.proof);
+    }),
+  holdEncryption(skip = 1) {
+    const original = crypto.subtle.encrypt.bind(crypto.subtle);
+    crypto.subtle.encrypt = (async (
+      ...args: Parameters<SubtleCrypto["encrypt"]>
+    ) => {
+      if (skip-- === 0) {
+        crypto.subtle.encrypt = original;
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      return original(...args);
+    }) as SubtleCrypto["encrypt"];
+  },
+  failCheckPublication(state = "pending") {
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      const row = args[0];
+      if (
+        this.name === "peer_checks" &&
+        row.kind === "check" &&
+        row.state === state
+      ) {
+        IDBObjectStore.prototype.put = original;
+        throw new DOMException(
+          "Synthetic publication quota",
+          "QuotaExceededError",
+        );
+      }
+      return original.apply(this, args);
+    };
+  },
+  async inspectChecks() {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      const rows = await new Promise<any[]>((resolve, reject) => {
+        const r = db
+          .transaction("peer_checks", "readonly")
+          .objectStore("peer_checks")
+          .getAll();
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      let denied = true;
+      for (const row of rows.filter((r) => r.kind === "check"))
+        try {
+          await crypto.subtle.exportKey("raw", row.preparationKey);
+          denied = false;
+        } catch {}
+      return {
+        json: JSON.stringify(rows),
+        privatePreparationExportDenied: denied,
+      };
+    } finally {
+      db.close();
     }
   },
   challenge: (address: string) => api("/browser/login/challenge", { address }),

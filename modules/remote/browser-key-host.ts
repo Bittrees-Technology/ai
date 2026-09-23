@@ -7,6 +7,7 @@ import {
   BrowserKeyLifecycle,
   type BrowserKeyProof,
 } from "./browser-key-lifecycle.js";
+import { BrowserPeerChecks } from "./browser-peer-checks.js";
 import { BrowserPeerEnrollment } from "./browser-peers.js";
 import type { VerifiedBrowserDeviceScope } from "./browser-device-contracts.js";
 import type { PrivateBinding } from "./private-peer-contracts.js";
@@ -30,6 +31,7 @@ export class BrowserKeyHost {
   private active: VerifiedBrowserDeviceScope | null = null;
   private keys!: BrowserKeyLifecycle;
   private peers!: BrowserPeerEnrollment;
+  private checks?: BrowserPeerChecks;
   private peerKey: BrowserKeyProof | null = null;
   private client: BrowserDeviceClient;
   readonly localOwner: string;
@@ -136,6 +138,7 @@ export class BrowserKeyHost {
     this.peerKey = null;
     this.keys?.invalidate();
     this.peers?.invalidate();
+    this.checks?.invalidate();
   }
   /** Trusted host calls this immediately on logout, lock or account/scope change. */
   invalidate() {
@@ -151,6 +154,7 @@ export class BrowserKeyHost {
     this.invalidate();
     this.keys?.close();
     this.peers?.close();
+    this.checks?.close();
   }
   private check(g: number) {
     if (g !== this.generation || !this.currentContext()) throw Error("DENIED");
@@ -182,6 +186,7 @@ export class BrowserKeyHost {
         if (!same(next, this.binding)) {
           this.keys.invalidate();
           this.peers.invalidate();
+          this.checks?.invalidate();
           this.freshUntil = 0;
         }
         this.binding = next ? { ...next } : null;
@@ -316,6 +321,50 @@ export class BrowserKeyHost {
     reset: (raw: unknown) => this.verifiedPeer(() => this.peers.reset(raw)),
     revoke: (raw: unknown) => this.operation(() => this.peers.revoke(raw)),
     clear: (raw: unknown) => this.operation(() => this.peers.clear(raw)),
+    invalidate: () => this.cancelKeys(),
+  };
+  // Lazy opening keeps ordinary key recovery usable when history needs repair.
+  private async checkStore() {
+    if (this.checks) return this.checks;
+    const g = this.generation;
+    const created = await BrowserPeerChecks.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      this.keys,
+      this.peers,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(g);
+      this.checks = created;
+      return created;
+    } catch (e) {
+      created.close();
+      throw e;
+    }
+  }
+  /** Explicit manual device checks only. Public callers receive metadata and the
+   * original encrypted envelope, never retained key handles or task permission. */
+  readonly checkAPI = {
+    status: () =>
+      this.operation(async () => (await this.checkStore()).status()),
+    begin: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.checkStore()).begin(raw)),
+    respond: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.checkStore()).respond(raw)),
+    complete: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.checkStore()).complete(raw)),
+    resume: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.checkStore()).resume(raw)),
+    envelope: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.checkStore()).delivery(raw)),
+    stop: (raw: unknown) =>
+      this.operation(async () => (await this.checkStore()).stop(raw)),
+    clear: (raw: unknown) =>
+      this.operation(async () => (await this.checkStore()).clear(raw)),
+    reset: (raw: unknown) =>
+      this.verified(async () => (await this.checkStore()).reset(raw)),
     invalidate: () => this.cancelKeys(),
   };
 }

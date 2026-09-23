@@ -196,3 +196,152 @@ test("Scope loss after local commit rejects the response and refresh reveals the
     mac.close();
   }
 });
+
+async function checkPair(page: Page) {
+  const p = await active(page),
+    r = await review(page, (await p.mac.invitation()).invitation),
+    pin = await approve(page, r);
+  const invitation = await page.evaluate(
+      (id) =>
+        window.browserPeersTest.invitation({
+          recipientId: id,
+          confirmed: true,
+        }),
+      p.mac.binding.deviceId,
+    ),
+    mr = await p.mac.peers.prepare(invitation.invitation);
+  p.mac.peers.approve({
+    reviewId: mr.reviewId,
+    expectedRevision: mr.expectedRevision,
+    comparedFingerprint: invitation.fingerprint,
+    confirmed: true,
+  });
+  const start = await page.evaluate(
+    (input) => window.browserPeersTest.checkBegin(input),
+    {
+      peerId: pin.peerId,
+      expectedKeyRevision: p.proof.revision,
+      expectedPeerRevision: pin.revision,
+      confirmed: true,
+    },
+  );
+  const challenge = await page.evaluate(
+      (id) => window.browserPeersTest.checkEnvelope({ id, confirmed: true }),
+      start.id,
+    ),
+    response = await p.mac.checks.respond({
+      envelope: challenge,
+      confirmed: true,
+    }),
+    wire = p.mac.checks.delivery({ id: response.id, confirmed: true });
+  return { ...p, pin, start, wire };
+}
+test("Verified host completes a real retained Mac exchange and requires fresh server authority after remote revoke", async ({
+  page,
+  context,
+}) => {
+  const p = await checkPair(page);
+  try {
+    const completed = await page.evaluate(
+      (envelope) =>
+        window.browserPeersTest.checkComplete({ envelope, confirmed: true }),
+      p.wire,
+    );
+    expect(completed.state).toBe("verified");
+    const challenge = await p.mac.checks.begin({
+        peerId: p.registration.binding.deviceId,
+        expectedKeyRevision: p.mac.keys.list().revision,
+        expectedPeerRevision: p.mac.peers.list().revision,
+        confirmed: true,
+      }),
+      incoming = p.mac.checks.delivery({ id: challenge.id, confirmed: true });
+    const response = await page.evaluate(
+        (envelope) =>
+          window.browserPeersTest.checkRespond({ envelope, confirmed: true }),
+        incoming,
+      ),
+      outgoing = await page.evaluate(
+        (id) => window.browserPeersTest.checkEnvelope({ id, confirmed: true }),
+        response.id,
+      );
+    await p.mac.checks.complete({ envelope: outgoing, confirmed: true });
+    expect(
+      p.mac.checks.validFor(
+        (await p.mac.keys.resolve()).proof,
+        (
+          await p.mac.peers.resolve(
+            p.registration.binding.deviceId,
+            p.proof.keyEpoch,
+          )
+        ).proof,
+      ),
+    ).toBe(true);
+    const other = await context.newPage();
+    await open(other);
+    await other.evaluate(() => window.browserPeersTest.resume());
+    await other.evaluate(
+      (b) =>
+        window.browserPeersTest.registerRevoke({
+          deviceId: b.deviceId,
+          credentialEpoch: b.credentialEpoch,
+          confirmed: true,
+        }),
+      p.registration.binding,
+    );
+    await other.close();
+    await expect(
+      page.evaluate(
+        (id) => window.browserPeersTest.checkEnvelope({ id, confirmed: true }),
+        response.id,
+      ),
+    ).rejects.toThrow();
+    const status = await page.evaluate(() =>
+      window.browserPeersTest.checkStatus(),
+    );
+    expect(status.checks.some((c) => c.state === "verified")).toBe(true);
+    expect(status).not.toHaveProperty("taskPermission");
+    expect(JSON.stringify(status)).not.toContain("preparation");
+  } finally {
+    p.mac.close();
+  }
+});
+test("Lost verification after proof commit reports uncertainty; fresh status reveals the saved proof without repeating the check", async ({
+  page,
+  identityServer,
+}) => {
+  const p = await checkPair(page);
+  try {
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(
+      page.evaluate(
+        (envelope) =>
+          window.browserPeersTest.checkComplete({ envelope, confirmed: true }),
+        p.wire,
+      ),
+    ).rejects.toThrow();
+    await open(page);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const status = await page.evaluate(() =>
+      window.browserPeersTest.checkStatus(),
+    );
+    expect(status.checks).toHaveLength(1);
+    expect(status.checks[0]).toMatchObject({
+      id: p.start.id,
+      state: "verified",
+    });
+    identityServer.offline(true);
+    await expect(
+      page.evaluate(
+        (id) => window.browserPeersTest.checkResume({ id, confirmed: true }),
+        p.start.id,
+      ),
+    ).rejects.toThrow();
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.checkStatus()))
+        .checks[0]!.state,
+    ).toBe("verified");
+  } finally {
+    identityServer.offline(false);
+    p.mac.close();
+  }
+});

@@ -1,6 +1,6 @@
 # Shared browser private storage
 
-Browser endpoint database **version4** now retains the existing key slots, lifecycle and public peer pins alongside ciphertext task history and durable channel counters. This is preparation for atomic browser possession-check publication. No browser possession-check API, task consent, network sender or production outbox is enabled by this change. The Mac wire contracts are shared without changing their encoded fields or hashes.
+Browser endpoint database **version4** now retains the existing key slots, lifecycle and public peer pins alongside ciphertext task history and durable channel counters. This is preparation for atomic browser possession-check publication. The subsequent [browser check backend](browser-peer-checks.md) uses that store. Visible exchange controls, task consent, network sending and production outbox integration remain unfinished. The Mac wire contracts are shared without changing their encoded fields or hashes.
 
 ## Upgrade and recovery
 
