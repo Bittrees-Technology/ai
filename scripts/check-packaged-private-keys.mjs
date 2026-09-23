@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
 if (process.env.GITHUB_ACTIONS !== "true" || process.platform !== "darwin")
   throw Error("Run on disposable macOS CI only");
 const resources = process.argv[2];
@@ -18,21 +17,10 @@ const { macPrivateKeyEntries, privateKeyAccount } = await load(
 );
 const { sealPrivateEnvelope, openPrivateEnvelope, privateEnvelopeSuite } =
   await load("modules/remote/private-envelope.js");
-const { AsyncEntry } = createRequire(join(resources, "engine/package.json"))(
-  "@napi-rs/keyring",
-);
 const profile = "endpoint-test-" + randomUUID(),
   localOwner = "synthetic-endpoint-owner",
   keyId = randomUUID();
-const account = privateKeyAccount(profile, localOwner, keyId),
-  services = [
-    "org.bittrees.ai.endpoint-keys",
-    "org.bittrees.ai.endpoint-key-attempts",
-    "org.bittrees.ai.endpoint-key-deletions",
-  ];
-const credentials = services.map((service) => new AsyncEntry(service, account));
-for (const entry of credentials)
-  assert.equal((await entry.getSecret()) == null, true);
+const account = privateKeyAccount(profile, localOwner, keyId);
 let authority = {
   localOwner,
   binding: {
@@ -80,10 +68,14 @@ try {
   const first = await manager().create({ keyId, keyEpoch: 1, confirmed: true });
   phase = "untrusted reader probe";
   assert.ok(process.argv[3]?.startsWith("/"));
-  const denied = spawnSync(process.argv[3], [account], {
-    timeout: 15000,
-    encoding: "utf8",
-  });
+  const denied = spawnSync(
+    process.argv[3],
+    [account, join(resources, "PrivateKeyInstall")],
+    {
+      timeout: 15000,
+      encoding: "utf8",
+    },
+  );
   assert.equal(
     denied.status,
     0,
@@ -143,17 +135,16 @@ try {
   authority = null;
   const removed = await reopened.remove({ keyId, confirmed: true });
   assert.equal(removed.remoteRevocationConfirmed, false);
-  assert.equal((await credentials[0].getSecret()) == null, true);
-  assert.ok(await credentials[1].getSecret());
-  assert.ok(await credentials[2].getSecret());
+  assert.equal(await entryFor(keyId).key.getSecret(), undefined);
+  assert.ok(await entryFor(keyId).attempt.getSecret());
+  assert.ok(await entryFor(keyId).deleted.getSecret());
   console.log(
     "Packaged endpoint keys: native add-only storage, denied untrusted reader, reopen, nonextractable runtime handles, HPKE and reviewed deletion passed",
   );
 } finally {
-  // Only the three random synthetic test entries, never a personal profile.
-  for (const entry of credentials)
-    if (await entry.getSecret()) await entry.deleteCredential();
-  for (const entry of credentials)
-    assert.equal((await entry.getSecret()) == null, true);
+  // Remove any remaining key bytes. Minimal safety markers remain until this
+  // disposable CI runner is destroyed; no production marker-deletion API exists.
+  await entryFor(keyId).key.deleteCredential();
+  assert.equal(await entryFor(keyId).key.getSecret(), undefined);
   clearTimeout(watchdog);
 }
