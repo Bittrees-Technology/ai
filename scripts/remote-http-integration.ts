@@ -340,6 +340,36 @@ export async function checkRemoteHttp(pool: Pool) {
     });
     assert.equal(redeemed.status, 200);
     const device = { Authorization: "Bearer " + redeemed.body.credential };
+    const deviceIdentity = await call("/device/identity", {}, device);
+    assert.equal(deviceIdentity.status, 200);
+    assert.deepEqual(deviceIdentity.body, {
+      version: 1,
+      ownerId: redeemed.body.ownerId,
+      deviceId: redeemed.body.deviceId,
+      credentialEpoch: 1,
+      expiresAt: redeemed.body.expiresAt,
+    });
+    assert.equal(deviceIdentity.headers["cache-control"], "no-store");
+    assert.equal(
+      deviceIdentity.headers["access-control-allow-origin"],
+      undefined,
+    );
+    assert.equal(
+      (await call("/device/identity", { ownerId: randomUUID() }, device))
+        .status,
+      400,
+    );
+    assert.equal((await call("/device/identity", {}, {})).status, 403);
+    assert.equal((await call("/device/identity", {}, owner)).status, 403);
+    assert.equal(
+      (await call("/device/identity", {}, { ...device, Cookie: sessionCookie }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (await call("/device/identity", {}, device, plain)).status,
+      403,
+    );
     const item = {
       id: randomUUID(),
       deviceId: redeemed.body.deviceId,
@@ -538,6 +568,7 @@ export async function checkRemoteHttp(pool: Pool) {
     assert.equal(controlGrant.scope, "controls:pause-cancel");
     assert.equal(controlGrant.expiresAt, redeemed.body.expiresAt);
     const controls = { Authorization: "Bearer " + controlGrant.credential };
+    assert.equal((await call("/device/identity", {}, controls)).status, 403);
     assert.equal(
       (await call("/device/status", { sequence: 1, items: [item] }, controls))
         .status,
@@ -876,6 +907,18 @@ export async function checkRemoteHttp(pool: Pool) {
     );
     await client.finish(otherVerified.body.ownerId);
     try {
+      let previousIdentity: (() => unknown) | undefined;
+      await client.withVerifiedDevice(async (scope) => {
+        const saved = (await client.status())!;
+        assert.deepEqual(scope.current(), {
+          ownerId: saved.ownerId,
+          deviceId: saved.deviceId,
+          credentialEpoch: saved.epoch,
+          expiresAt: saved.expiresAt,
+        });
+        previousIdentity = scope.current;
+      });
+      assert.equal(previousIdentity!(), null);
       const localTask = local.create(
         { userId: "synthetic-local-owner", tenantId: "personal" },
         {
@@ -1107,6 +1150,11 @@ export async function checkRemoteHttp(pool: Pool) {
       );
       await reopened.publish([local.get(clientOwner, localTask.id)]);
       const state = (await reopened.status())!;
+      await reopened.withVerifiedDevice(async (scope) => {
+        assert.equal(scope.current()?.credentialEpoch, 2);
+        assert.equal(scope.current()?.deviceId, state.deviceId);
+        assert.equal(previousIdentity!(), null);
+      });
       const remote = await call(
         "/browser/status",
         { deviceId: state.deviceId },
@@ -1121,6 +1169,12 @@ export async function checkRemoteHttp(pool: Pool) {
       );
       await assert.rejects(
         reopened.publish([{ ...localTask, revision: 3 }]),
+        /DENIED/,
+      );
+      await assert.rejects(
+        reopened.withVerifiedDevice(async () =>
+          assert.fail("revoked identity reached host"),
+        ),
         /DENIED/,
       );
       assert.equal(

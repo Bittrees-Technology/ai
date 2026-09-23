@@ -67,6 +67,23 @@ export async function checkRemoteDevices(pool: Pool) {
     deviceId: issued.deviceId,
     epoch: 1,
   });
+  assert.deepEqual(await devices.identify(issued.credential), {
+    version: 1,
+    ownerId: owner,
+    deviceId: issued.deviceId,
+    credentialEpoch: 1,
+    expiresAt: issued.expiresAt,
+  });
+  assert.deepEqual(
+    (
+      await pool.query("SELECT * FROM remote_devices WHERE id=$1", [
+        issued.deviceId,
+      ])
+    ).rows[0],
+    stored,
+  );
+  await assert.rejects(devices.identify(wrong), /DENIED/);
+  await assert.rejects(devices.identify("malformed"), /DENIED/);
   await assert.rejects(devices.authenticate(wrong), /DENIED/);
   await assert.rejects(devices.authenticate("malformed"), /DENIED/);
   const item = {
@@ -95,6 +112,8 @@ export async function checkRemoteDevices(pool: Pool) {
   assert.equal(current.expiresAt, issued.expiresAt);
   assert.equal(current.scope, "status:publish");
   await assert.rejects(devices.authenticate(issued.credential), /DENIED/);
+  await assert.rejects(devices.identify(issued.credential), /DENIED/);
+  assert.equal((await devices.identify(current.credential)).credentialEpoch, 2);
   await assert.rejects(devices.rotate(issued.credential), /DENIED/);
   await assert.rejects(
     status.publish(auth, { sequence: 2, items: [item] }),
@@ -126,6 +145,7 @@ export async function checkRemoteDevices(pool: Pool) {
   assert.equal(Number(rotatedRow.last_sequence), 2);
   await status.revoke(owner, issued.deviceId);
   await assert.rejects(devices.authenticate(current.credential), /DENIED/);
+  await assert.rejects(devices.identify(current.credential), /DENIED/);
   await assert.rejects(devices.rotate(current.credential), /DENIED/);
   // Current-epoch identity authenticated before revocation must also fail.
   await assert.rejects(
@@ -159,6 +179,7 @@ export async function checkRemoteDevices(pool: Pool) {
   const lease = await devices.redeem(contested.id, verifier, winner);
   now += 3600000;
   await assert.rejects(devices.authenticate(lease.credential), /DENIED/);
+  await assert.rejects(devices.identify(lease.credential), /DENIED/);
   await assert.rejects(devices.rotate(lease.credential), /DENIED/);
 
   // Mid-rotation expiry must preserve the old hash and epoch, not half-rotate.
@@ -219,6 +240,48 @@ export async function checkRemoteDevices(pool: Pool) {
     "1",
   );
   await devices.cancel(owner, late.id);
+  // Verify the identity lookup actually waits behind revocation, then denies
+  // the updated row instead of returning the pre-lock registration snapshot.
+  const identityPair = await devices.begin(challenge);
+  await devices.approve(owner, identityPair.id, identityPair.approvalCode);
+  const identityLease = await devices.redeem(identityPair.id, verifier, owner);
+  const lock = await pool.connect();
+  try {
+    await lock.query("BEGIN");
+    const blocker = (await lock.query("SELECT pg_backend_pid() AS pid")).rows[0]
+      .pid;
+    await lock.query("SELECT id FROM remote_devices WHERE id=$1 FOR UPDATE", [
+      identityLease.deviceId,
+    ]);
+    const pendingIdentity = devices.identify(identityLease.credential);
+    const deniedIdentity = assert.rejects(pendingIdentity, /DENIED/);
+    let observedWaiting = false;
+    for (let i = 0; i < 100; i++) {
+      const waiting = await pool.query(
+        "SELECT 1 FROM pg_stat_activity WHERE $1::integer = ANY(pg_blocking_pids(pid))",
+        [blocker],
+      );
+      if (waiting.rowCount) {
+        observedWaiting = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await lock.query("UPDATE remote_devices SET revoked_at=$2 WHERE id=$1", [
+      identityLease.deviceId,
+      now,
+    ]);
+    await lock.query("COMMIT");
+    await deniedIdentity;
+    assert.equal(
+      observedWaiting,
+      true,
+      "identity lookup must wait on the revocation lock",
+    );
+  } finally {
+    await lock.query("ROLLBACK");
+    lock.release();
+  }
   for (const bad of ["", "a".repeat(42), "=".repeat(43)])
     await assert.rejects(devices.begin(bad), /INVALID_INPUT/);
   assert.throws(() => new RemoteDeviceStore(pool, 0), /INVALID_INPUT/);
