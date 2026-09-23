@@ -1,6 +1,6 @@
 # Verified companion identity for private operations
 
-Status: service/client integration for the existing paired-device credential. The private-key modules can now use a scope obtained from a real authenticated identity check instead of a test-injected binding. The production companion does not call this method yet. No hosted service, private transport, key creation, browser key storage or user-facing pairing control is activated. Mac schema17, browser database version1, installed PR40 and prepared PR104 remain unchanged. Acer-server's existing model and news jobs remain separate and unchanged.
+Status: service/client integration for the existing paired-device credential. The private-key modules can now use a scope obtained from a real authenticated identity check instead of a test-injected binding. The [local Mac key controls](mac-private-key-controls.md) now use this method for reviewed setup; normal launcher setup remains disabled. No hosted service, private transport, key creation, browser key storage or user-facing pairing control is activated. Mac schema17, browser database version1, installed PR40 and prepared PR104 remain unchanged. Acer-server's existing model and news jobs remain separate and unchanged.
 
 ## Service contract
 

@@ -318,3 +318,5 @@ declare global {
   }
 }
 window.privateResultsUI = panelHarness;
+
+if (new URLSearchParams(location.search).has("keys")) void import("./keys.js");

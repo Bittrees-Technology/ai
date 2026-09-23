@@ -433,3 +433,69 @@ summary {
     flex-wrap: wrap;
   }
 }
+
+.private-key-panel {
+  max-width: 880px;
+}
+.private-key-list {
+  list-style: none;
+  padding: 0;
+}
+.private-key-list li {
+  border-top: 1px solid #c6d9dd;
+  padding: 16px 0;
+}
+.private-key-review {
+  border-left: 4px solid #28685c;
+  padding: 4px 20px 16px;
+  margin-top: 20px;
+  background: #f5f9fa;
+}
+.private-key-review h4 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+.private-key-review p {
+  max-width: 70ch;
+}
+.private-key-review dd {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.private-key-review dt {
+  font-weight: 600;
+}
+.private-key-review label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 16px 0;
+  min-height: 44px;
+  padding: 10px 0;
+}
+.private-key-review input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 2px 0 0;
+  accent-color: #28685c;
+}
+.private-key-review .row {
+  justify-content: flex-start;
+}
+.private-key-panel button {
+  min-height: 44px;
+}
+@media (max-width: 600px) {
+  .private-key-panel .row {
+    align-items: stretch;
+  }
+  .private-key-panel button {
+    white-space: normal;
+  }
+  .private-key-review {
+    padding-left: 12px;
+    padding-right: 8px;
+  }
+}

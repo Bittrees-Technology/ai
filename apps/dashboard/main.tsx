@@ -927,10 +927,16 @@ function App() {
                   Download encrypted backup
                 </button>
                 <div className="danger">
-                  <h3>Delete local tasks, templates and memory</h3>
+                  <h3>Delete local tasks, templates, memory and device keys</h3>
                   <p>
                     This clears the current copy. Delete older recovery copies
                     above and backup files saved elsewhere separately.
+                  </p>
+                  <p>
+                    This also removes this Mac’s private device keys. History
+                    encrypted to them may become unreadable. The storage
+                    recovery kit does not include these keys. Remote copies and
+                    earlier exports are not deleted.
                   </p>
                   <label>
                     Type DELETE to confirm

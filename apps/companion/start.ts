@@ -1,4 +1,7 @@
 import { retainedContent } from "./retained-content.js";
+import { CompanionPrivateKeys } from "./private-keys.js";
+import { macPrivateKeyEntries } from "./private-key-entry.js";
+import { endpointKeyOwner } from "../../modules/remote/private-key-lifecycle.js";
 import { resolveActiveContent } from "./active-content.js";
 import { localBackupDownload } from "./backup.js";
 import { RemoteTemplateReceiver } from "../../modules/remote/template-receiver.js";
@@ -34,7 +37,7 @@ import {
 import { createServer } from "node:http";
 import { mkdir, stat, writeFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { Store } from "../../modules/storage/store.js";
 import { Vault } from "../../modules/storage/vault.js";
@@ -156,6 +159,26 @@ const remote =
       )
     : undefined;
 const receiver = remote ? new RemoteReceiver(remote) : undefined;
+// Only the packaged sibling helper can access its own native key items. Merely
+// constructing controls performs no native read/write or network request.
+const privateKeyHelper = join(dirname(process.execPath), "PrivateKeyInstall");
+const privateKeys =
+  process.platform === "darwin" && (await exists(privateKeyHelper))
+    ? new CompanionPrivateKeys(
+        store,
+        new Vault(key),
+        owner,
+        (id) =>
+          macPrivateKeyEntries(
+            privateKeyHelper,
+            "personal",
+            endpointKeyOwner(owner),
+            id,
+          ),
+        remote,
+        process.env.BITTREES_PRIVATE_KEYS === "1",
+      )
+    : undefined;
 const templateReceiver = remote
   ? new RemoteTemplateReceiver(remote)
   : undefined;
@@ -165,6 +188,7 @@ const codePath = join(directory, "pairing-code.txt");
 server.on(
   "request",
   dashboardServer({
+    privateKeys,
     retainedCopies: retainedContent(directory, content.directory),
     backupDownload: localBackupDownload(store, memory, new Vault(key)),
     deviceStatus: () => deviceStatus(directory),
