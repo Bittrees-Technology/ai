@@ -17,6 +17,7 @@ import {
 } from "./private-peer-contracts.js";
 import {
   browserRecoveryKey,
+  browserKeyRecoverySchema,
   openBrowserKeyRecovery,
 } from "./browser-key-recovery.js";
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -370,6 +371,137 @@ export class BrowserKeyLifecycle {
       return { revision: s.revision, keyId: slot.id, keyEpoch };
     });
   }
+  private async preparing(
+    g: number,
+    input: { keyId: string; expectedRevision: number },
+    b: PrivateBinding,
+  ) {
+    return this.tx(g, b, "readonly", (state) => {
+      this.expected(state, input.expectedRevision);
+      const s = this.live(state, b),
+        slot = this.selectedSlot(s, b);
+      if (slot.id !== input.keyId || slot.state !== "preparing")
+        throw new BrowserKeyError("DENIED");
+      this.select(s, slot);
+      return { state: s, slot };
+    });
+  }
+  private async material(
+    g: number,
+    input: { keyId: string; expectedRevision: number },
+    b: PrivateBinding,
+    key: CryptoKey,
+  ) {
+    const before = await this.preparing(g, input, b);
+    const created = await this.provider.create(
+      {
+        keyId: before.slot.id,
+        keyEpoch: before.slot.keyEpoch,
+        confirmed: true,
+      },
+      key,
+    );
+    const recovery = await this.provider.recovery({
+        keyId: before.slot.id,
+        confirmed: true,
+      }),
+      opened = await openBrowserKeyRecovery(recovery, key);
+    if (
+      opened.publicKey !== created.publicKey ||
+      !same(opened.identity, {
+        localOwner: this.owner,
+        binding: b,
+        keyId: before.slot.id,
+        keyEpoch: before.slot.keyEpoch,
+      })
+    )
+      throw new BrowserKeyError("CONFLICT");
+    await this.preparing(g, input, b);
+    return {
+      keyId: created.keyId,
+      keyEpoch: created.keyEpoch,
+      revision: input.expectedRevision,
+      publicKey: created.publicKey,
+      recovery,
+    };
+  }
+  private async publishPrepared(
+    g: number,
+    input: { keyId: string; expectedRevision: number },
+    b: PrivateBinding,
+    key: CryptoKey,
+    rawKit: unknown,
+  ) {
+    const recovery = this.input(browserKeyRecoverySchema, rawKit);
+    const before = await this.preparing(g, input, b),
+      saved = await this.provider.recovery({
+        keyId: input.keyId,
+        confirmed: true,
+      });
+    if (!same(saved, recovery)) throw new BrowserKeyError("CONFLICT");
+    const opened = await openBrowserKeyRecovery(recovery, key),
+      retained = await this.provider.resolve();
+    if (
+      opened.publicKey !== retained.publicKey ||
+      !same(opened.identity, {
+        localOwner: this.owner,
+        binding: b,
+        keyId: before.slot.id,
+        keyEpoch: before.slot.keyEpoch,
+      })
+    )
+      throw new BrowserKeyError("CONFLICT");
+    return this.tx(g, b, "readwrite", (state, rows, meta) => {
+      this.expected(state, input.expectedRevision);
+      const s = this.live(state, b),
+        slot = this.selectedSlot(s, b),
+        record = rows.find((r) => r.keyId === input.keyId);
+      if (
+        slot.id !== input.keyId ||
+        slot.state !== "preparing" ||
+        record?.state !== "ready" ||
+        record.publicKey !== opened.publicKey ||
+        !same(record.recovery, recovery)
+      )
+        throw new BrowserKeyError("CONFLICT");
+      slot.state = "active";
+      slot.publicKey = opened.publicKey;
+      this.save(s, meta);
+      this.select(s, slot);
+      return {
+        revision: s.revision,
+        keyId: slot.id,
+        keyEpoch: slot.keyEpoch,
+        binding: b,
+        publicKey: opened.publicKey,
+      };
+    });
+  }
+  /** Saves recoverable material without activating it, allowing an explicit download
+   * and file/code round trip before the separate final confirmation. */
+  prepareRecovery(raw: unknown, code: string) {
+    return this.exclusive(async (g) => {
+      const input = this.input(target, raw),
+        b = this.binding(),
+        key = await browserRecoveryKey(code);
+      this.check(g, b);
+      return this.material(g, input, b, key);
+    });
+  }
+  activatePrepared(raw: unknown, code: string, kit: unknown) {
+    return this.exclusive(async (g) => {
+      const input = this.input(
+          target.extend({ recoverySaved: z.literal(true) }),
+          raw,
+        ),
+        b = this.binding(),
+        key = await browserRecoveryKey(code);
+      this.check(g, b);
+      return this.publishPrepared(g, input, b, key, kit);
+    });
+  }
+  /** Existing trusted-host compound operation. The browser setup interface uses the
+   * split prepareRecovery/activatePrepared flow and supplies its selected file. */
   provision(raw: unknown, code: string) {
     return this.exclusive(async (g) => {
       const input = this.input(
@@ -379,64 +511,8 @@ export class BrowserKeyLifecycle {
         b = this.binding(),
         key = await browserRecoveryKey(code);
       this.check(g, b);
-      const before = await this.tx(g, b, "readonly", (state) => {
-        this.expected(state, input.expectedRevision);
-        const s = this.live(state, b),
-          slot = this.selectedSlot(s, b);
-        if (slot.id !== input.keyId || slot.state !== "preparing")
-          throw new BrowserKeyError("DENIED");
-        return { s, slot };
-      });
-      this.select(before.s, before.slot);
-      const created = await this.provider.create(
-        {
-          keyId: before.slot.id,
-          keyEpoch: before.slot.keyEpoch,
-          confirmed: true,
-        },
-        key,
-      );
-      const recovery = await this.provider.recovery({
-          keyId: before.slot.id,
-          confirmed: true,
-        }),
-        opened = await openBrowserKeyRecovery(recovery, key);
-      if (
-        opened.publicKey !== created.publicKey ||
-        !same(opened.identity, {
-          localOwner: this.owner,
-          binding: b,
-          keyId: before.slot.id,
-          keyEpoch: before.slot.keyEpoch,
-        })
-      )
-        throw new BrowserKeyError("CONFLICT");
-      const proof = await this.tx(g, b, "readwrite", (state, rows, meta) => {
-        this.expected(state, input.expectedRevision);
-        const s = this.live(state, b),
-          slot = this.selectedSlot(s, b),
-          saved = rows.find((r) => r.keyId === input.keyId);
-        if (
-          slot.id !== input.keyId ||
-          slot.state !== "preparing" ||
-          saved?.state !== "ready" ||
-          saved.publicKey !== created.publicKey ||
-          !same(saved.recovery, recovery)
-        )
-          throw new BrowserKeyError("CONFLICT");
-        slot.state = "active";
-        slot.publicKey = created.publicKey;
-        this.save(s, meta);
-        this.select(s, slot);
-        return {
-          revision: s.revision,
-          keyId: slot.id,
-          keyEpoch: slot.keyEpoch,
-          binding: b,
-          publicKey: created.publicKey,
-        };
-      });
-      return proof;
+      const material = await this.material(g, input, b, key);
+      return this.publishPrepared(g, input, b, key, material.recovery);
     });
   }
   private proof(

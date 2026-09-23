@@ -341,3 +341,6 @@ if (new URLSearchParams(location.search).has("browser-endpoint-keys"))
 
 if (new URLSearchParams(location.search).has("browser-key-lifecycle"))
   void import("./browser-key-lifecycle.js");
+
+if (new URLSearchParams(location.search).has("browser-key-controls"))
+  void import("./browser-key-controls.js");

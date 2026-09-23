@@ -1,0 +1,190 @@
+.browser-keys {
+  --ink: #183945;
+  --evergreen: #28685c;
+  --paper: #fff;
+  --mist: #edf3f6;
+  --line: #aabec5;
+  --error: #8a2630;
+  box-sizing: border-box;
+  max-width: 1120px;
+  margin: 32px auto;
+  padding: 28px;
+  color: var(--ink);
+  background: var(--mist);
+  font:
+    16px/1.5 Avenir,
+    "Avenir Next",
+    system-ui,
+    sans-serif;
+  border-top: 5px solid var(--evergreen);
+}
+.browser-keys * {
+  box-sizing: border-box;
+}
+.browser-keys [hidden] {
+  display: none !important;
+}
+.browser-keys h2 {
+  font-size: 2rem;
+  line-height: 1.2;
+  margin: 0 0 12px;
+}
+.browser-keys h3 {
+  font-size: 1.2rem;
+  line-height: 1.35;
+  margin: 0 0 14px;
+}
+.browser-keys h4 {
+  font-size: 1rem;
+  margin: 0 0 6px;
+}
+.browser-keys p {
+  max-width: 72ch;
+  margin: 0 0 14px;
+}
+.browser-keys-reference {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.browser-keys-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0 14px;
+}
+.browser-keys button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 14px;
+  cursor: pointer;
+  min-height: 44px;
+  max-width: 100%;
+  margin: 0 8px 8px 0;
+}
+.browser-keys button:hover {
+  background: #e0ecec;
+}
+.browser-keys button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.browser-keys :focus-visible {
+  outline: 3px solid #29658b;
+  outline-offset: 3px;
+}
+.browser-keys-notice {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.browser-keys-error {
+  color: var(--error);
+  font-weight: 600;
+}
+.browser-keys-error:empty {
+  display: none;
+}
+.browser-keys-columns {
+  display: grid;
+  grid-template-columns: minmax(215px, 1fr) minmax(0, 2fr);
+  gap: 28px;
+  margin-top: 24px;
+}
+.browser-keys ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 600px;
+  overflow: auto;
+}
+.browser-keys li {
+  border-bottom: 1px solid var(--line);
+  padding: 18px 0;
+  overflow-wrap: anywhere;
+}
+.browser-keys li:first-child {
+  padding-top: 0;
+}
+.browser-keys-stage {
+  min-width: 0;
+  background: var(--paper);
+  padding: 24px;
+  border-left: 3px solid var(--evergreen);
+}
+.browser-keys label {
+  display: block;
+  font-weight: 600;
+  margin: 18px 0 12px;
+}
+.browser-keys input:not([type="checkbox"]),
+.browser-keys textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  min-height: 44px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+.browser-keys input[type="file"] {
+  font-size: 0.875rem;
+  padding: 8px;
+}
+.browser-keys textarea {
+  resize: vertical;
+  word-break: break-all;
+}
+.browser-keys .browser-keys-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 400;
+}
+.browser-keys input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin: 3px 0 0;
+  accent-color: var(--evergreen);
+}
+.browser-keys-result {
+  padding-top: 18px;
+  overflow-wrap: anywhere;
+}
+.browser-keys-result:empty {
+  display: none;
+}
+@media (max-width: 700px) {
+  .browser-keys {
+    margin: 0;
+    padding: 20px 16px;
+  }
+  .browser-keys h2 {
+    font-size: 1.6rem;
+  }
+  .browser-keys-columns {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+  .browser-keys ul {
+    max-height: 300px;
+  }
+  .browser-keys-stage {
+    padding: 18px;
+  }
+  .browser-keys-actions {
+    gap: 4px;
+  }
+  .browser-keys button {
+    white-space: normal;
+    text-align: left;
+  }
+}
