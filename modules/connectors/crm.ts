@@ -111,7 +111,8 @@ export class ConnectorError extends Error {
       | "PUBLICATION_UNAVAILABLE"
       | "PUBLICATION_REQUIRED"
       | "PUBLICATION_BLOCKED"
-      | "NEWS_PUBLICATION_UNCONFIRMED",
+      | "NEWS_PUBLICATION_UNCONFIRMED"
+      | "MAIL_SEND_UNCONFIRMED",
   ) {
     super(code);
   }

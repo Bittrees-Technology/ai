@@ -120,7 +120,7 @@ try {
     vault,
     localMemoryAccess(current, () => memory),
   );
-  assert.equal(current.db.pragma("user_version", { simple: true }), 22);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 23);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(await memory.export(owner), beforeMemory);
   assert.equal(localTaskDependencies(current, owner, child.id, memory), true);
@@ -194,7 +194,7 @@ try {
     date: new Date().toISOString(),
     runtime: process.version,
     fromTaskSchema: 20,
-    toTaskSchema: 22,
+    toTaskSchema: 23,
     memorySchema: 2,
     legacySourceCommit: "119571fe7ccb36ae349a20470bfab8cba568473c",
     legacyCompiledStoreSha256: await sha(
@@ -211,10 +211,10 @@ try {
     ),
     checks: [
       "Actual prepared PR134 worker seeded a three-task/two-memory chain, exact used versions and a quality review.",
-      "Wrong-key upgrade failed; task20 to22 preserved every task, result, memory revision, pin and approval.",
+      "Wrong-key upgrade failed; task20 to23 preserved every task, result, memory revision, pin and approval.",
       "Deleting the ancestor memory denied both derived tasks and the remaining derived memory without deleting retained results/review.",
       "Coordinated encrypted backup/restore retained data and dependency denial.",
-      "Actual prepared PR134 engine refused both upgraded and restored task22 stores.",
+      "Actual prepared PR134 engine refused both upgraded and restored task23 stores.",
       "Original coordinated backup reopened separately through the actual older task20/memory2 helpers.",
     ],
     limits: [
@@ -228,11 +228,11 @@ try {
     process.argv[3] ??
     join(
       repo,
-      "docs/evidence/local-memory-dependency-task22-compatibility-2026-09-23.json",
+      "docs/evidence/local-memory-dependency-task23-compatibility-2026-09-23.json",
     );
   await writeFile(output, JSON.stringify(receipt, null, 2) + "\n");
   console.log(
-    "Actual prepared task20→22 preservation, dependency denial after restore, old-engine refusal and separate original-backup rollback passed.",
+    "Actual prepared task20→23 preservation, dependency denial after restore, old-engine refusal and separate original-backup rollback passed.",
   );
 } finally {
   old?.close();

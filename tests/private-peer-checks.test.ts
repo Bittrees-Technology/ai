@@ -409,7 +409,7 @@ test("Proof history is encrypted per owner, exported on request, locked by resto
     // Simulate the actual previous schema: saved permission, no possession table.
     f.b.store.db.exec("DROP TABLE private_peer_checks; PRAGMA user_version=18");
     f.b.reopen();
-    assert.equal(f.b.store.db.pragma("user_version", { simple: true }), 22);
+    assert.equal(f.b.store.db.pragma("user_version", { simple: true }), 23);
     assert.equal(
       f.b.store.get(f.b.owner, preserved.id).input.prompt,
       "prior-schema-task",

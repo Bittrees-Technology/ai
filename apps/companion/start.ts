@@ -1,4 +1,8 @@
 import {
+  MailSendConnector,
+  mailSendKeychainEntry,
+} from "../../modules/connectors/mail-send.js";
+import {
   NewsConnector,
   newsKeychainEntry,
 } from "../../modules/connectors/news.js";
@@ -125,6 +129,11 @@ const crm = new CrmConnector(
     JSON.stringify(owner),
     mailKeychainEntry("personal"),
   ),
+  mailSend = new MailSendConnector(
+    JSON.stringify(owner),
+    mailSendKeychainEntry("personal"),
+    store.mailSends.forOwner(owner),
+  ),
   mailSources = new MailTasks(mail, owner, "personal"),
   news = new NewsConnector(
     JSON.stringify(owner),
@@ -227,6 +236,7 @@ server.on(
     roles,
     news,
     mail,
+    mailSend,
     mailSources,
     autonoteSources,
     runtime,
