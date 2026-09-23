@@ -499,3 +499,40 @@ summary {
     padding-right: 8px;
   }
 }
+
+.private-peer-panel {
+  border-top: 2px solid #28685c;
+  margin-top: 32px;
+  padding-top: 24px;
+}
+.private-peer-panel p {
+  max-width: 75ch;
+}
+.private-peer-code {
+  overflow-wrap: anywhere;
+}
+.private-peer-forms {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+}
+.private-peer-forms label,
+.private-peer-panel .private-peer-text-label,
+.private-peer-panel label:has(textarea) {
+  display: block;
+}
+.private-peer-panel input:not([type="checkbox"]),
+.private-peer-panel textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  min-height: 44px;
+}
+.private-peer-panel textarea {
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+.private-peer-forms button {
+  justify-self: start;
+}

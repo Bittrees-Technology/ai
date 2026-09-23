@@ -158,3 +158,11 @@ jobs:
           path: test-results/private-keys-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain Mac peer review previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-peers-ui-preview
+          path: test-results/private-peers-*.png
+          if-no-files-found: error
+          retention-days: 7

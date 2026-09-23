@@ -1,6 +1,6 @@
 # Local private-peer enrollment foundation
 
-Status: internal enrollment/review and persistence backend. No invitation exchange, browser/native fingerprint UI, reciprocal enrollment, production endpoint key selection, relay route or live task dispatcher calls it yet. The separate [Mac endpoint key provider](private-endpoint-keys.md) now supplies internal immutable Keychain storage and public invitations, without live wiring or recovery. It must not be described as a completed device-pairing or private-remote-access feature. It supplies trusted public-key lookup for the [private-envelope codec](private-remote-envelopes.md), with explicit next-layer authority checks. The internal [private task receiver](private-task-admission.md) now uses those pins and rechecks them during atomic task admission; it has no live caller.
+Status: the enrollment/review backend is now connected to [Mac invitation and fingerprint controls](mac-private-peer-controls.md) through the authenticated loopback API, retained native keys and verified identity scopes. Users can manually transfer public invitations, explicitly review a full fingerprint and revoke a local pin. This remains one-sided trust: browser key storage, reciprocal proof, source/task consent, authenticated relay delivery and a live task dispatcher are unfinished. New setup stays disabled in the normal launcher. It must not be described as completed device pairing or private remote access. The [private task receiver](private-task-admission.md) uses pins internally and rechecks them during atomic admission; it still has no live caller.
 
 ## Review and approval
 
@@ -10,7 +10,7 @@ Status: internal enrollment/review and persistence backend. No invitation exchan
 
 Approval requires the one-use review ID, reviewed registry revision, exact compared fingerprint and explicit confirmation. The original internally captured invitation is used, not a caller-supplied replacement. A SQLite immediate transaction rechecks current pairing, expiry and registry revision before changing the pin. Concurrent approvals and stale reviews fail rather than overwriting each other. An uncertain caller outcome should be resolved by reading the current registry; blind replay is not an approval recovery mechanism.
 
-This backend enforces the confirmation contract; it cannot establish that a human actually compared the fingerprints. The eventual UI must make account/device identity and key replacement clear, must not auto-fill an assertion of out-of-band comparison, and must invalidate reviews when hidden or changed. Mutual possession/reciprocal enrollment, authenticated invitation exchange and actual user acceptance are still required before activation.
+This backend enforces the confirmation contract; it cannot establish that a human actually compared the fingerprints. The Mac UI makes account/device identity and key replacement clear, leaves the independent comparison empty, and invalidates reviews when hidden or changed. Mutual possession/reciprocal enrollment, authenticated invitation exchange and actual user acceptance are still required before activation.
 
 ## Rotation, revocation and use
 
