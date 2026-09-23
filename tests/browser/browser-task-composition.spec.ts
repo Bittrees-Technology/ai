@@ -715,3 +715,113 @@ test("delivery checks the reviewed revision in the publication transaction", asy
     f.mac.close();
   }
 });
+
+for (const stage of ["preparation", "publication"] as const)
+  test(`the original content review expires during ${stage} encryption even when confirmation started later`, async ({
+    page,
+  }) => {
+    const f = await ready(page);
+    try {
+      const r = await prepare(page, f);
+      await page.evaluate(
+        (wall) => window.browserPeersTest.time(wall, 60000),
+        f.f.now + 60000,
+      );
+      await page.evaluate(
+        (skip) => window.browserPeersTest.holdEncryption(skip),
+        stage === "preparation" ? 0 : 1,
+      );
+      const pending = approve(page, r.reviewId).then(
+        (value) => ({ value }),
+        (e) => ({ error: String(e) }),
+      );
+      await expect
+        .poll(() => page.evaluate(() => window.browserPeersTest.held()))
+        .toBe(true);
+      // The confirmation's own 120s window is still open, but the original review is expired.
+      await page.evaluate(
+        (wall) => window.browserPeersTest.time(wall, 120001),
+        f.f.now + 120001,
+      );
+      await page.evaluate(() => window.browserPeersTest.release());
+      expect(await pending).toMatchObject({
+        error: expect.stringMatching(/DENIED/),
+      });
+      const stored = await inspect(page);
+      expect(stored.entries).toHaveLength(stage === "preparation" ? 0 : 1);
+      expect(stored.entries.every((e) => e.envelope === null)).toBe(true);
+    } finally {
+      f.mac.close();
+    }
+  });
+
+for (const change of ["owner", "deletion"] as const)
+  test(`a late history export is withheld after ${change} during decryption`, async ({
+    page,
+    context,
+  }) => {
+    const f = await ready(page),
+      other = await context.newPage();
+    try {
+      await reserve(page, f);
+      await reopen(other, f.f);
+      const status = await page.evaluate(() =>
+        window.browserPeersTest.historyStatus(),
+      );
+      await page.evaluate(() => {
+        const w = window as typeof window & {
+            historyHeld?: boolean;
+            releaseHistory?: () => void;
+          },
+          original = crypto.subtle.decrypt.bind(crypto.subtle);
+        crypto.subtle.decrypt = (async (
+          ...args: Parameters<SubtleCrypto["decrypt"]>
+        ) => {
+          crypto.subtle.decrypt = original;
+          w.historyHeld = true;
+          await new Promise<void>((r) => {
+            w.releaseHistory = r;
+          });
+          return original(...args);
+        }) as SubtleCrypto["decrypt"];
+      });
+      const pending = page
+        .evaluate(
+          (r) =>
+            window.browserPeersTest.historyExport({
+              expectedRevision: r,
+              confirmed: true,
+            }),
+          status.meta!.revision,
+        )
+        .then(
+          (value) => ({ value }),
+          (e) => ({ error: String(e) }),
+        );
+      await expect
+        .poll(() => page.evaluate(() => (window as any).historyHeld))
+        .toBe(true);
+      if (change === "owner")
+        await page.evaluate(() =>
+          window.browserPeersTest.historyOwnerChange(null),
+        );
+      else
+        await other.evaluate(
+          (r) =>
+            window.browserPeersTest.historyClear({
+              expectedRevision: r,
+              confirmed: true,
+            }),
+          status.meta!.revision,
+        );
+      await page.evaluate(() => (window as any).releaseHistory());
+      expect(await pending).toMatchObject({
+        error: expect.stringMatching(
+          change === "owner" ? /DENIED/ : /CONFLICT/,
+        ),
+      });
+    } finally {
+      await other.close();
+      f.mac.close();
+    }
+  });
