@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useId } from "react";
 import type { NewsConnectionController } from "./news-state.js";
 export function NewsCuration({
   controller: c,
@@ -7,6 +7,7 @@ export function NewsCuration({
   controller: NewsConnectionController;
   changed: () => void;
 }) {
+  const formId = useId();
   const editable = c.status?.connection?.scopes.includes("curate"),
     expired = c.status?.connection?.state === "expired";
   return (
@@ -77,24 +78,22 @@ export function NewsCuration({
             void c.reviewStory();
           }}
         >
-          <label>
-            Headline
-            <input
-              value={c.edit.title}
-              maxLength={250}
-              disabled={c.busy}
-              onChange={(e) => c.changeStory("title", e.target.value)}
-            />
-          </label>
-          <label>
-            Summary
-            <textarea
-              value={c.edit.summary}
-              maxLength={2000}
-              disabled={c.busy}
-              onChange={(e) => c.changeStory("summary", e.target.value)}
-            />
-          </label>
+          <label htmlFor={formId + "-headline"}>Headline</label>
+          <input
+            id={formId + "-headline"}
+            value={c.edit.title}
+            maxLength={250}
+            disabled={c.busy}
+            onChange={(e) => c.changeStory("title", e.target.value)}
+          />
+          <label htmlFor={formId + "-summary"}>Summary</label>
+          <textarea
+            id={formId + "-summary"}
+            value={c.edit.summary}
+            maxLength={2000}
+            disabled={c.busy}
+            onChange={(e) => c.changeStory("summary", e.target.value)}
+          />
           <p className="hint">
             Headline: 1–250 characters. Summary: up to 2,000 characters.
             Existing long text is never shortened automatically.
