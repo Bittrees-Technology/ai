@@ -91,6 +91,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run build:remote
       - run: npx tsx scripts/remote-status-integration-check.ts
         env:
           REMOTE_TEST_DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/relay_test
@@ -161,6 +162,7 @@ jobs:
           node scripts/prepare-legacy-browser-keys.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run build:remote
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - uses: actions/upload-artifact@v4
@@ -322,5 +324,14 @@ jobs:
         with:
           name: browser-registration-ui-preview
           path: test-results/browser-registration-*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain production browser recovery previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-browser-recovery-preview
+          path: test-results/production-recovery-*.png
           if-no-files-found: error
           retention-days: 7

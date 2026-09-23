@@ -216,6 +216,8 @@ test("expired or wrong-network identities never yield a trusted session scope", 
     { expiresAt: Date.now() - 1 },
     { chainId: 2 },
     { ownerId: "bad-owner" },
+    { ownerId: ["11111111-1111-4111-8111-111111111111"] },
+    { address: [address] },
   ]) {
     const f = fixture();
     Object.assign(f.account, patch);

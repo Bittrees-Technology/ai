@@ -14,7 +14,7 @@ body {
   margin: 0;
 }
 main {
-  max-width: 780px;
+  max-width: 1120px;
   padding: 36px 24px;
   margin: auto;
 }
@@ -129,4 +129,14 @@ footer {
   h1 {
     font-size: 1.8rem;
   }
+}
+
+#browser-recovery {
+  border-top: 3px solid #28685c;
+}
+#browser-setup {
+  margin-top: 20px;
+}
+#browser-setup .browser-keys {
+  margin: 20px 0;
 }

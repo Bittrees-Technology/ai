@@ -48,7 +48,7 @@ export async function checkRemoteHttp(pool: Pool) {
   const origin = "https://ai.bittrees.org";
   const config = {
     origin,
-    assets: fileURLToPath(new URL("../apps/remote-web", import.meta.url)),
+    assets: fileURLToPath(new URL("../dist/remote-web", import.meta.url)),
     chainId: 1,
     sessionMs: 3600000,
     requestsPerMinute: 1000,
@@ -147,7 +147,7 @@ export async function checkRemoteHttp(pool: Pool) {
     };
     const page = await call("/", {}, {}, server, "GET");
     assert.equal(page.status, 200);
-    assert.match(page.body, /Remote task status/);
+    assert.match(page.body, /Your companion, connected/);
     assert.match(
       String(page.headers["content-security-policy"]),
       /script-src 'self'/,
@@ -157,6 +157,21 @@ export async function checkRemoteHttp(pool: Pool) {
       1,
     );
     assert.equal((await call("/app.js", {}, {}, server, "GET")).status, 200);
+    const stylesheet = String(page.body).match(
+      /href="(\/assets\/remote-[^"]+\.css)"/,
+    )?.[1];
+    assert.ok(stylesheet);
+    const css = await call(stylesheet, {}, {}, server, "GET");
+    assert.equal(css.status, 200);
+    assert.match(String(css.headers["content-type"]), /text\/css/);
+    for (const blocked of [
+      "/controller.js",
+      "/.env",
+      "/assets/remote-index-deadbeef.js.map",
+      "/modules/remote/browser-key-host.ts",
+    ])
+      assert.equal((await call(blocked, {}, {}, server, "GET")).status, 405);
+
     const wallet = Wallet.createRandom();
     assert.equal(
       (await call("/browser/login/challenge", { address: wallet.address }))

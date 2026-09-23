@@ -135,10 +135,14 @@ export function createRemoteApp(
       const files: Record<string, string> = {
         "/": "index.html",
         "/app.js": "app.js",
-        "/controller.js": "controller.js",
-        "/style.css": "style.css",
       };
-      const file = Object.hasOwn(files, req.path) ? files[req.path] : undefined;
+      const file = Object.hasOwn(files, req.path)
+        ? files[req.path]
+        : /^\/assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(
+              req.path,
+            )
+          ? req.path.slice(1)
+          : undefined;
       if (file) {
         res.set(
           "Content-Security-Policy",

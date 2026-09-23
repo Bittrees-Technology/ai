@@ -48,11 +48,13 @@ export class RemoteWebController {
   authAction = null;
   signingOut = null;
   logoutRequired = false;
-  constructor(api, wallet, settings, changed) {
+  sessionTurn = null;
+  constructor(api, wallet, settings, changed, sessions = null) {
     this.api = api;
     this.wallet = wallet;
     this.settings = settings;
     this.changed = changed;
+    this.sessions = sessions;
   }
   set(patch) {
     this.state = { ...this.state, ...patch };
@@ -84,6 +86,7 @@ export class RemoteWebController {
   invalidateSession() {
     this.authEpoch++;
     this.epoch++;
+    this.sessionTurn = null;
     this.set({
       ...this.concealed(),
       account: null,
@@ -95,16 +98,53 @@ export class RemoteWebController {
   }
   sessionContext() {
     const { account, sessionScope } = this.state;
-    return account && sessionScope && account.expiresAt > Date.now()
+    return account &&
+      sessionScope &&
+      account.expiresAt > Date.now() &&
+      (!this.sessions ||
+        (this.sessionTurn && this.sessions.current(this.sessionTurn, true)))
       ? { ownerId: account.ownerId, scope: sessionScope }
       : null;
   }
   checkAuth(epoch) {
-    if (epoch !== this.authEpoch) throw Error("DENIED");
+    if (
+      epoch !== this.authEpoch ||
+      (this.sessions &&
+        this.sessionTurn &&
+        !this.sessions.current(this.sessionTurn))
+    )
+      throw Error("DENIED");
+  }
+  peerSessionChanged() {
+    this.invalidateSession();
+    this.set({
+      notice:
+        "Account access changed in another tab. Refresh your session to continue.",
+    });
+  }
+  async authWork(kind, epoch, fn) {
+    if (!this.sessions) return fn();
+    return this.sessions.run(
+      kind,
+      async (turn) => {
+        this.checkAuth(epoch);
+        this.sessionTurn = turn;
+        if (turn.cleanupRequired) await this.clearServerSession();
+        this.checkAuth(epoch);
+        return fn();
+      },
+      () => this.checkAuth(epoch),
+    );
+  }
+  acceptSession(account) {
+    if (this.sessions) this.sessions.accepted(this.sessionTurn);
+    this.set({ account, sessionScope: crypto.randomUUID() });
   }
   sessionAccount(raw) {
     if (
       !raw ||
+      typeof raw.ownerId !== "string" ||
+      typeof raw.address !== "string" ||
       !uuid.test(raw.ownerId ?? "") ||
       !/^0x[0-9a-f]{40}$/i.test(raw.address ?? "") ||
       raw.chainId !== this.settings.chainId ||
@@ -137,15 +177,17 @@ export class RemoteWebController {
         if (epoch === this.authEpoch)
           this.set({
             error:
-              e?.message === "CAPACITY"
-                ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
-                : e?.message === "DENIED"
-                  ? "Your session or device access is unavailable. Sign in again or refresh the device list."
-                  : e?.message === "WALLET_REQUIRED"
-                    ? "Open this page in a browser with an Ethereum wallet."
-                    : e?.message === "CHAIN_MISMATCH"
-                      ? "Switch your wallet to the network shown on this page, then sign in again."
-                      : "The action could not be completed. Refresh and review before trying again.",
+              e?.message === "SESSION_STORAGE_REQUIRED"
+                ? "This browser must allow local storage and session coordination before you can sign in. Check its privacy settings, then refresh."
+                : e?.message === "CAPACITY"
+                  ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
+                  : e?.message === "DENIED"
+                    ? "Your session or device access is unavailable. Sign in again or refresh the device list."
+                    : e?.message === "WALLET_REQUIRED"
+                      ? "Open this page in a browser with an Ethereum wallet."
+                      : e?.message === "CHAIN_MISMATCH"
+                        ? "Switch your wallet to the network shown on this page, then sign in again."
+                        : "The action could not be completed. Refresh and review before trying again.",
           });
       } finally {
         this.activeAction = null;
@@ -160,8 +202,12 @@ export class RemoteWebController {
     // A failed cleanup stays sticky: refresh/login must retry it before they can
     // adopt cookies or begin another login. Never claim a remote logout on error.
     this.logoutRequired = true;
+    if (this.sessions && this.sessionTurn)
+      this.sessions.clearing(this.sessionTurn);
     await this.api("/browser/logout", {});
     this.logoutRequired = false;
+    if (this.sessions && this.sessionTurn)
+      this.sessions.cleaned(this.sessionTurn);
   }
   async checkWallet(account, epoch) {
     if (!this.wallet?.request) return;
@@ -180,92 +226,108 @@ export class RemoteWebController {
   }
   async refresh() {
     const epoch = this.invalidateSession();
-    return this.act(async () => {
-      try {
-        if (this.logoutRequired) await this.clearServerSession();
-        this.checkAuth(epoch);
-        const raw = await this.api("/browser/session", {});
-        this.checkAuth(epoch);
-        const account = this.sessionAccount(raw);
-        await this.checkWallet(account, epoch);
-        this.checkAuth(epoch);
-        this.set({ account, sessionScope: crypto.randomUUID() });
-      } catch (e) {
-        // Sign-out owns cleanup if requested; otherwise invalidate a mismatched
-        // or expired server identity before any subsequent attempt can adopt it.
-        if (e?.message === "DENIED" && !this.signingOut) {
-          await this.clearServerSession();
-          return;
-        }
-        throw e;
-      }
-    }, true);
+    return this.act(
+      () =>
+        this.authWork("refresh", epoch, async () => {
+          try {
+            if (this.logoutRequired) await this.clearServerSession();
+            this.checkAuth(epoch);
+            const raw = await this.api("/browser/session", {});
+            this.checkAuth(epoch);
+            const account = this.sessionAccount(raw);
+            await this.checkWallet(account, epoch);
+            this.checkAuth(epoch);
+            this.acceptSession(account);
+          } catch (e) {
+            // Sign-out owns cleanup if requested; otherwise invalidate a mismatched
+            // or expired server identity before any subsequent attempt can adopt it.
+            if (e?.message === "DENIED" && !this.signingOut) {
+              await this.clearServerSession();
+              return;
+            }
+            throw e;
+          }
+        }),
+      true,
+    );
   }
   async login() {
     if (this.state.busy) return;
     const epoch = this.invalidateSession();
-    return this.act(async () => {
-      let verificationStarted = false;
-      try {
-        if (this.logoutRequired) await this.clearServerSession();
-        this.checkAuth(epoch);
-        if (!this.wallet?.request) throw Error("WALLET_REQUIRED");
-        const [address] = await this.wallet.request({
-          method: "eth_requestAccounts",
-        });
-        this.checkAuth(epoch);
-        if (!/^0x[0-9a-f]{40}$/i.test(address ?? "")) throw Error("DENIED");
-        const chain = await this.wallet.request({ method: "eth_chainId" });
-        this.checkAuth(epoch);
-        if (Number(BigInt(chain)) !== this.settings.chainId)
-          throw Error("CHAIN_MISMATCH");
-        const challenge = await this.api("/browser/login/challenge", {
-          address,
-        });
-        this.checkAuth(epoch);
-        const hex =
-          "0x" +
-          Array.from(new TextEncoder().encode(challenge.message), (x) =>
-            x.toString(16).padStart(2, "0"),
-          ).join("");
-        const signature = await this.wallet.request({
-          method: "personal_sign",
-          params: [hex, address],
-        });
-        this.checkAuth(epoch);
-        await this.checkWallet(
-          { address, chainId: this.settings.chainId },
-          epoch,
-        );
-        this.checkAuth(epoch);
-        verificationStarted = true;
-        await this.api("/browser/login/verify", {
-          message: challenge.message,
-          signature,
-        });
-        this.checkAuth(epoch);
-        const raw = await this.api("/browser/session", {});
-        this.checkAuth(epoch);
-        const account = this.sessionAccount(raw);
-        if (account.address.toLowerCase() !== address.toLowerCase())
-          throw Error("DENIED");
-        await this.checkWallet(account, epoch);
-        this.checkAuth(epoch);
-        this.set({
-          account,
-          sessionScope: crypto.randomUUID(),
-          notice: "Signed in. Review a pairing request or load your devices.",
-        });
-      } catch (e) {
-        if (verificationStarted && !this.signingOut)
-          await this.clearServerSession();
-        throw e;
-      }
-    }, true);
+    return this.act(
+      () =>
+        this.authWork("login", epoch, async () => {
+          let verificationStarted = false;
+          try {
+            if (this.logoutRequired) await this.clearServerSession();
+            this.checkAuth(epoch);
+            if (!this.wallet?.request) throw Error("WALLET_REQUIRED");
+            const [address] = await this.wallet.request({
+              method: "eth_requestAccounts",
+            });
+            this.checkAuth(epoch);
+            if (!/^0x[0-9a-f]{40}$/i.test(address ?? "")) throw Error("DENIED");
+            const chain = await this.wallet.request({ method: "eth_chainId" });
+            this.checkAuth(epoch);
+            if (Number(BigInt(chain)) !== this.settings.chainId)
+              throw Error("CHAIN_MISMATCH");
+            const challenge = await this.api("/browser/login/challenge", {
+              address,
+            });
+            this.checkAuth(epoch);
+            const hex =
+              "0x" +
+              Array.from(new TextEncoder().encode(challenge.message), (x) =>
+                x.toString(16).padStart(2, "0"),
+              ).join("");
+            const signature = await this.wallet.request({
+              method: "personal_sign",
+              params: [hex, address],
+            });
+            this.checkAuth(epoch);
+            await this.checkWallet(
+              { address, chainId: this.settings.chainId },
+              epoch,
+            );
+            this.checkAuth(epoch);
+            verificationStarted = true;
+            await this.api("/browser/login/verify", {
+              message: challenge.message,
+              signature,
+            });
+            this.checkAuth(epoch);
+            const raw = await this.api("/browser/session", {});
+            this.checkAuth(epoch);
+            const account = this.sessionAccount(raw);
+            if (account.address.toLowerCase() !== address.toLowerCase())
+              throw Error("DENIED");
+            await this.checkWallet(account, epoch);
+            this.checkAuth(epoch);
+            this.acceptSession(account);
+            this.set({
+              notice:
+                "Signed in. Review a pairing request or load your devices.",
+            });
+          } catch (e) {
+            if (verificationStarted && !this.signingOut)
+              await this.clearServerSession();
+            throw e;
+          }
+        }),
+      true,
+    );
   }
   logout() {
     this.invalidateSession();
     this.logoutRequired = true;
+    try {
+      this.sessions?.cancel();
+    } catch {
+      this.set({
+        error:
+          "Local access is cleared, but this browser could not retain the sign-out request. Check storage settings and retry sign-out.",
+      });
+    }
     if (this.signingOut) return this.signingOut;
     const active = this.authAction;
     // Serialize cookie cleanup after any outstanding verification response. Keep
@@ -273,7 +335,12 @@ export class RemoteWebController {
     const pending = Promise.resolve().then(async () => {
       await active;
       try {
-        await this.clearServerSession();
+        if (this.sessions)
+          await this.sessions.run("logout", async (turn) => {
+            this.sessionTurn = turn;
+            await this.clearServerSession();
+          });
+        else await this.clearServerSession();
       } catch {
         this.set({
           error:

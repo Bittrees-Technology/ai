@@ -100,7 +100,7 @@ async function startIdentityServer() {
       retentionMs: 86400000,
       requestsPerMinute: 1000,
       assets: fileURLToPath(
-        new URL("../../../apps/remote-web/", import.meta.url),
+        new URL("../../../dist/remote-web/", import.meta.url),
       ),
     });
     server = createServer(
@@ -163,7 +163,8 @@ async function startIdentityServer() {
             "/controller.js",
             "/style.css",
             "/settings.json",
-          ].includes(url.pathname)
+          ].includes(url.pathname) ||
+          url.pathname.startsWith("/assets/remote-")
         ) {
           if (url.pathname === "/remote-panel") req.url = "/";
           app(req, res);

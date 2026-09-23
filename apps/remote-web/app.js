@@ -1,4 +1,6 @@
-import { RemoteWebController, browserApi } from "/controller.js";
+import { BrowserSessionCoordinator } from "./browser-session.ts";
+import { BrowserSetupMount } from "./browser-setup-mount.ts";
+import { RemoteWebController, browserApi } from "./controller.js";
 const el = (id) => document.getElementById(id);
 let accountId = null;
 const api = browserApi(fetch, () => accountId);
@@ -14,14 +16,27 @@ if (!settings || settings.origin !== location.origin) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
 } else {
   el("network").textContent = `Wallet network: ${settings.chainId}.`;
-  const controller = new RemoteWebController(
+  let controller;
+  const sessions = new BrowserSessionCoordinator(() =>
+    controller?.peerSessionChanged(),
+  );
+  const setup = new BrowserSetupMount(
+    el("browser-recovery"),
+    el("browser-setup"),
+    el("browser-recovery-open"),
+    el("browser-recovery-notice"),
+    () => controller?.sessionContext() ?? null,
+  );
+  controller = new RemoteWebController(
     api,
     window.ethereum,
     settings,
     render,
+    sessions,
   );
   function render(s) {
     accountId = s.account?.ownerId ?? null;
+    setup.sync();
     el("error").textContent = s.error;
     el("notice").textContent = s.notice;
     el("account").textContent = s.account
@@ -33,7 +48,9 @@ if (!settings || settings.origin !== location.origin) {
     el("management").hidden = !s.account;
     el("confirmation-area").hidden = !s.confirmation;
     el("confirmation").value = s.confirmation;
-    document.querySelectorAll("button").forEach((b) => (b.disabled = s.busy));
+    document
+      .querySelectorAll("[data-status-controls] button")
+      .forEach((b) => (b.disabled = s.busy));
     // Cancellation must stay available while a wallet or sign-in request waits.
     el("logout").disabled = false;
     el("devices").replaceChildren();
@@ -198,6 +215,29 @@ if (!settings || settings.origin !== location.origin) {
   };
   window.ethereum?.on?.("accountsChanged", changed);
   window.ethereum?.on?.("chainChanged", changed);
+  const expiry = setInterval(() => {
+    if (controller.state.account && !controller.sessionContext()) {
+      controller.invalidateSession();
+      controller.set({
+        notice:
+          "Session access changed or expired. Refresh your session to continue.",
+      });
+    }
+    setup.sync();
+  }, 1000);
+  window.addEventListener(
+    "pagehide",
+    () => {
+      clearInterval(expiry);
+      setup.destroy();
+      sessions.close();
+      controller.invalidateSession();
+    },
+    { once: true },
+  );
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) location.reload();
+  });
   render(controller.state);
   void controller.refresh();
 }
