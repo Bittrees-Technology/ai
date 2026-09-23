@@ -40,6 +40,13 @@ export class MemoryExtractions {
       ? this.vault.open<Binding>(row.payload, this.purpose(owner, id))
       : null;
   }
+  /** Recorded provenance only; callers must check the parent's current access. */
+  dependency(owner: Owner, id: string) {
+    const value = this.binding(owner, id);
+    return value
+      ? { parentId: value.parentId, parentRevision: value.parentRevision }
+      : null;
+  }
   private source(owner: Owner, id: string, revision: number) {
     const parent = this.store.get(owner, id);
     const result = z

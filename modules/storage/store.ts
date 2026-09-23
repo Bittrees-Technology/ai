@@ -155,7 +155,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 20) {
+    if (version > 21) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -258,7 +258,7 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS task_feedback(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,revision INTEGER NOT NULL,payload BLOB NOT NULL)",
         );
-        this.db.pragma("user_version = 20");
+        this.db.pragma("user_version = 21");
       })();
     } catch (error) {
       this.db.close();

@@ -1,3 +1,4 @@
+import { localTaskDependencies } from "./memory.js";
 import type { ExecutionControls } from "./execution-limits.js";
 import { PrivatePeerCheckError } from "../../modules/remote/private-peer-checks.js";
 import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
@@ -503,8 +504,25 @@ export function localApi({
       res.json(await roles.read());
     });
   }
-  const concealed = (task: Task) =>
-    task.input.sourceRefs.length
+  const dependenciesCurrent = (id: string) =>
+    localTaskDependencies(store, owner, id, memory);
+  const requireDependencies = (id: string) => {
+    if (!dependenciesCurrent(id)) throw new StoreError("NOT_FOUND");
+  };
+  const concealed = (task: Task) => {
+    if (!dependenciesCurrent(task.id))
+      return {
+        ...task,
+        input: {
+          ...task.input,
+          prompt: "Local reference unavailable",
+          sourceRefs: [],
+          memoryIds: [],
+        },
+        result: null,
+        dependencyAccess: "unavailable" as const,
+      };
+    return task.input.sourceRefs.length
       ? {
           ...task,
           input: { ...task.input, sourceRefs: [] },
@@ -514,22 +532,38 @@ export function localApi({
           sourceApp: task.input.sourceRefs[0]?.app,
         }
       : task;
+  };
   const project = async (task: Task) => {
-    if (!task.input.sourceRefs.length) return task;
+    if (!dependenciesCurrent(task.id) || !task.input.sourceRefs.length)
+      return concealed(task);
     try {
       const binding = store.sourceBinding(owner, task.id);
       if (!binding) return concealed(task);
       await sourceRouter.validate(binding);
+      const current = store.get(owner, task.id);
+      if (current.revision !== task.revision) throw new StoreError("CONFLICT");
+      requireDependencies(task.id);
       return {
-        ...task,
+        ...current,
         sourceAccess: "current",
         sourceBound: true,
         sourceApp: binding.authority.sourceApp,
       };
     } catch {
-      return concealed(task);
+      return concealed(store.get(owner, task.id));
     }
   };
+  // Recheck after awaiting projection so local invalidation cannot land between
+  // its resolved value and the response/export/review assembled by the handler.
+  const finalProject = <T extends Task>(task: T) => {
+    const current = store.get(owner, task.id);
+    return current.revision !== task.revision || !dependenciesCurrent(task.id)
+      ? concealed(current)
+      : task;
+  };
+  const unavailable = (task: ReturnType<typeof concealed>) =>
+    ("dependencyAccess" in task && task.dependencyAccess === "unavailable") ||
+    ("sourceAccess" in task && task.sourceAccess === "unavailable");
   if (sources) {
     app.post("/v1/connections/crm/records", async (req, res) => {
       z.strictObject({}).parse(req.body);
@@ -732,9 +766,8 @@ export function localApi({
     );
   });
   app.get("/v1/requests/:id/export", async (req, res) => {
-    const task = await project(store.get(owner, req.params.id));
-    if ("sourceAccess" in task && task.sourceAccess === "unavailable")
-      throw new ConnectorError("SOURCE_DENIED");
+    const task = finalProject(await project(store.get(owner, req.params.id)));
+    if (unavailable(task)) throw new ConnectorError("SOURCE_DENIED");
     res.json({
       task,
       runs: store.runHistory(owner, req.params.id),
@@ -773,7 +806,7 @@ export function localApi({
     res.json({ items: store.list(owner).map(concealed) }),
   );
   app.get("/v1/requests/:id", async (req, res) =>
-    res.json(await project(store.get(owner, req.params.id))),
+    res.json(finalProject(await project(store.get(owner, req.params.id)))),
   );
   const checkFeedbackAccess = async (id: string) => {
     const initial = store.get(owner, id),
@@ -782,6 +815,7 @@ export function localApi({
       if (!binding) throw new ConnectorError("SOURCE_DENIED");
       await sourceRouter.validate(binding);
     }
+    requireDependencies(id);
     // Source checks are asynchronous. A deleted or changed task cannot receive
     // a review based on the earlier snapshot after that check returns.
     if (store.get(owner, id).revision !== initial.revision)
@@ -789,25 +823,24 @@ export function localApi({
   };
   app.get("/v1/requests/:id/quality-review", async (req, res) => {
     await checkFeedbackAccess(req.params.id);
+    requireDependencies(req.params.id);
     res.json(store.taskFeedback.read(owner, req.params.id));
   });
   app.put("/v1/requests/:id/quality-review", async (req, res) => {
     await checkFeedbackAccess(req.params.id);
+    requireDependencies(req.params.id);
     res.json(store.taskFeedback.save(owner, req.params.id, req.body));
   });
   app.post("/v1/requests/:id/commands", async (req, res) => {
     const task = store.command(owner, req.params.id, req.body);
     if (task.status === "cancelled" || task.status === "paused")
       cancelRun?.(task.id);
-    res.json(await project(task));
+    res.json(finalProject(await project(task)));
   });
   app.get("/v1/requests/:id/runs", async (req, res) => {
-    const task = await project(store.get(owner, req.params.id));
+    const task = finalProject(await project(store.get(owner, req.params.id)));
     res.json({
-      items:
-        "sourceAccess" in task && task.sourceAccess === "unavailable"
-          ? []
-          : store.runHistory(owner, req.params.id),
+      items: unavailable(task) ? [] : store.runHistory(owner, req.params.id),
     });
   });
   app.post("/v1/requests/:id/model", async (req, res) => {
@@ -824,7 +857,7 @@ export function localApi({
       body.expectedRevision,
     );
     cancelRun?.(task.id);
-    res.json(await project(task));
+    res.json(finalProject(await project(task)));
   });
   app.get("/v1/models", async (_req, res) => {
     if (!runtime) throw new ModelError("MODEL_UNAVAILABLE");
@@ -848,14 +881,17 @@ export function localApi({
   });
   if (memory) {
     app.post("/v1/requests/:id/memory-suggestions", (req, res) => {
+      requireDependencies(req.params.id);
       res
         .status(201)
         .json(store.memoryExtractions.create(owner, req.params.id, req.body));
     });
     app.get("/v1/requests/:id/memory-suggestions", (req, res) => {
+      requireDependencies(req.params.id);
       res.json(store.memoryExtractions.review(owner, req.params.id));
     });
     app.post("/v1/requests/:id/memory-suggestions/save", async (req, res) => {
+      requireDependencies(req.params.id);
       const body = z
         .strictObject({
           expectedRevision: z.number().int().positive(),
@@ -883,6 +919,7 @@ export function localApi({
           ],
         },
         () => {
+          requireDependencies(req.params.id);
           const current = store.memoryExtractions.review(owner, req.params.id);
           if (JSON.stringify(current) !== JSON.stringify(review))
             throw new StoreError("CONFLICT");
@@ -912,6 +949,7 @@ export function localApi({
           ]),
         })
         .parse(req.body);
+      requireDependencies(req.params.id);
       const task = store.get(owner, req.params.id);
       if (task.status !== "completed" || task.input.sourceRefs.length)
         throw new StoreError("CONFLICT");
@@ -1085,8 +1123,12 @@ export function localApi({
       privateTaskResponses: store.exportPrivateTaskResponses(owner),
       templates: store.templates(owner),
       remoteTemplates: store.remoteTemplates.export(owner),
-      memoryExtractions: store.memoryExtractions.export(owner),
-      qualityReviews: store.taskFeedback.exportLocal(owner),
+      memoryExtractions: store.memoryExtractions
+        .export(owner)
+        .filter((item) => dependenciesCurrent(item.taskId)),
+      qualityReviews: store.taskFeedback
+        .exportLocal(owner)
+        .filter((item) => dependenciesCurrent(item.taskId)),
       profiles: store.profiles(owner),
       defaultProfile: store.defaultProfile(owner),
       memories,

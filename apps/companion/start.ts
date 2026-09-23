@@ -98,10 +98,10 @@ const importDirectory = join(directory, "model-imports");
 await mkdir(importDirectory, { recursive: true, mode: 0o700 });
 const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
 await imports.maintain();
-const memory = new MemoryStore(
+const memory: MemoryStore = new MemoryStore(
   join(content.directory, "memory.db"),
   new Vault(key),
-  localMemoryAccess(store),
+  localMemoryAccess(store, () => memory),
 );
 const crm = new CrmConnector(
     JSON.stringify(owner),

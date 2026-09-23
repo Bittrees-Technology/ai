@@ -239,3 +239,11 @@ jobs:
           path: test-results/memory-ranking-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain local memory dependency previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-memory-dependencies-ui-preview
+          path: test-results/local-memory-dependencies-*.png
+          if-no-files-found: error
+          retention-days: 7

@@ -25,10 +25,13 @@ interface Row {
   payload: Buffer;
   fingerprint: string;
 }
-export type AccessCheck = (
+export type AccessCheck = ((
   owner: Owner,
   sources: MemoryInput["sources"],
-) => Promise<boolean>;
+) => Promise<boolean>) & {
+  /** Optional synchronous final fence for local provenance after other awaits. */
+  current?: (owner: Owner, sources: MemoryInput["sources"]) => boolean;
+};
 export class MemoryStore {
   private db: Database.Database;
   constructor(
@@ -98,13 +101,17 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
         current.revision === snapshot.revision &&
         current.state === snapshot.state &&
         current.fingerprint === snapshot.fingerprint &&
-        this.unexpired(this.input(current))
+        this.unexpired(this.input(current)) &&
+        this.currentAccess(owner, this.input(current))
       );
     } catch (error) {
       if (error instanceof StoreError && error.code === "NOT_FOUND")
         return false;
       throw error;
     }
+  }
+  private currentAccess(owner: Owner, input: MemoryInput) {
+    return this.canRead.current?.(owner, input.sources) ?? true;
   }
   private visible(owner: Owner, input: MemoryInput) {
     return this.unexpired(input) && this.canRead(owner, input.sources);
@@ -114,7 +121,8 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     if (!(await this.visible(owner, input))) throw new StoreError("NOT_FOUND");
     return this.db
       .transaction(() => {
-        if (!this.unexpired(input)) throw new StoreError("NOT_FOUND");
+        if (!this.unexpired(input) || !this.currentAccess(owner, input))
+          throw new StoreError("NOT_FOUND");
         beforeCommit?.();
         const fingerprint = this.vault.fingerprint(input);
         const old = this.db
@@ -148,6 +156,18 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
         return { id: memoryId };
       })
       .immediate();
+  }
+  /** Metadata for the local dependency walker, never a content/access grant. */
+  dependencySources(owner: Owner, memoryId: string, revision?: number) {
+    const row = this.row(owner, memoryId),
+      input = this.input(row);
+    if (
+      row.state !== "approved" ||
+      !this.unexpired(input) ||
+      (revision !== undefined && row.revision !== revision)
+    )
+      throw new StoreError("NOT_FOUND");
+    return input.sources;
   }
   async get(owner: Owner, memoryId: string) {
     const r = this.row(owner, memoryId),
@@ -185,7 +205,10 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     this.db
       .transaction(() => {
         const current = this.row(owner, memoryId);
-        if (!this.unexpired(this.input(current)))
+        if (
+          !this.unexpired(this.input(current)) ||
+          !this.currentAccess(owner, this.input(current))
+        )
           throw new StoreError("NOT_FOUND");
         if (
           current.revision !== revision ||
@@ -229,7 +252,10 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     this.db
       .transaction(() => {
         const current = this.row(owner, memoryId);
-        if (!this.unexpired(this.input(current)))
+        if (
+          !this.unexpired(this.input(current)) ||
+          !this.currentAccess(owner, this.input(current))
+        )
           throw new StoreError("NOT_FOUND");
         if (
           current.revision !== snapshot.revision ||

@@ -22,12 +22,14 @@ type Run = {
 export function TaskRuns({
   taskId,
   sourceBound,
+  dependencyUnavailable,
   status,
   api,
   onError,
 }: {
   taskId: string;
   sourceBound?: boolean;
+  dependencyUnavailable?: boolean;
   status: string;
   api: (path: string) => Promise<any>;
   onError: (error: unknown) => void;
@@ -39,7 +41,7 @@ export function TaskRuns({
   }>({ items: [], error: false, loading: true });
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
-    if (sourceBound) return;
+    if (sourceBound || dependencyUnavailable) return;
     let active = true;
     setState({ items: [], error: false, loading: true });
     api("/v1/requests/" + taskId + "/runs")
@@ -56,11 +58,15 @@ export function TaskRuns({
     return () => {
       active = false;
     };
-  }, [taskId, sourceBound, refresh, api]);
+  }, [taskId, sourceBound, dependencyUnavailable, refresh, api]);
   return (
     <section aria-label="Run history">
       <h3>Run history</h3>
-      {sourceBound ? (
+      {dependencyUnavailable ? (
+        <p>
+          History is hidden because a local reference changed or is unavailable.
+        </p>
+      ) : sourceBound ? (
         <p className="hint">
           Run history is not shown here for connected-app tasks.
         </p>

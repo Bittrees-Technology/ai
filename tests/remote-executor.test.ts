@@ -258,7 +258,7 @@ test("version seven upgrade retains tasks and remote receipts remain disabled by
       "DROP TABLE remote_control_bindings; DROP TABLE remote_control_receipts; PRAGMA user_version=7",
     );
     f.reopen();
-    assert.equal(f.store.db.pragma("user_version", { simple: true }), 20);
+    assert.equal(f.store.db.pragma("user_version", { simple: true }), 21);
     assert.equal(f.store.get(owner, f.task.id).input.prompt, "PRIVATE");
     assert.throws(
       () => f.store.executeRemoteControl(owner, f.identity, f.command),
