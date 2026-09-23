@@ -158,6 +158,13 @@ test("News story edit shows exact before/after, invalidates changes and needs se
       ),
     ).toBe(true);
   }
+  await panel.getByRole("button", { name: "Cancel story review" }).click();
+  await expect(save).toHaveCount(0);
+  expect(f.calls.filter((c) => c.path.endsWith("/cancel"))).toHaveLength(1);
+  await panel
+    .getByRole("button", { name: "Load private preview", exact: true })
+    .click();
+  await review(page);
   await panel.getByRole("checkbox").check();
   await panel
     .getByLabel("Headline", { exact: true })
