@@ -1,6 +1,6 @@
 # Browser and Mac key-possession checks
 
-`BrowserPeerChecks` and the verified host's `checkAPI` implement explicit browser challenge/respond/complete operations using the existing Mac wire format. Each endpoint must finish its own independent challenge. Answering the other device's challenge grants no local proof or task permission. This is the retained backend and host API; visible browser controls, task consent and private task/result/approval transport remain unfinished.
+`BrowserPeerChecks` and the verified host's `checkAPI` implement explicit browser challenge/respond/complete operations using the existing Mac wire format. Each endpoint must finish its own independent challenge. Answering the other device's challenge grants no local proof or task permission. The signed-in page mounts manual browser controls over this retained backend and host API. Task consent and private task/result/approval transport remain unfinished.
 
 ## Retained exchange
 
@@ -29,3 +29,5 @@ Future task consent/use must validate completed proof and current key/peer/permi
 Disposable GitHub tests use actual browser IndexedDB/WebCrypto and actual Mac key, peer and check modules with encrypted disposable SQLite and simulated native slots. They cover bilateral exchange and reload, encrypted nonextractable preparations, immutable replies, altered payload/transcript/type/routes/epochs, failed publication/completion and exact retry, expiry versus current proof, cross-tab revocation during cryptography, scope/clock cancellation, offline stop/deletion/fresh-device reset, concurrent response reservation, and the actual host with SIWE/HTTPS/cookies/PostgreSQL, remote revocation and post-commit verification failure. Test status is recorded in the local checklist evidence after CI completes. These tests do not prove personal Safari/WKWebView behavior or independent protocol acceptance.
 
 Browser common database4, Mac task23 and remote8 remain unchanged. Installed PR40, prepared PR142, local model defaults and Acer-server's model/runtime/news jobs remain unchanged. No live deployment, personal-profile migration, local browser/native automation or task permission is enabled. Signed delivery, historical restore/rotation, lease renewal, relay retention and independent/personal/native acceptance remain open.
+
+The signed-in browser now mounts [manual device-check controls](browser-check-controls.md). Browser task consent and private transport remain separate work.

@@ -119,6 +119,7 @@
   margin: 18px 0 12px;
 }
 .browser-keys input:not([type="checkbox"]),
+.browser-keys select,
 .browser-keys textarea {
   display: block;
   width: 100%;
