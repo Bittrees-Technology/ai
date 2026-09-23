@@ -47,7 +47,8 @@ async function fixture(
     if (path === "/v1/requests") body = { items: tasks };
     else if (path === "/v1/profiles")
       body = { items: [{ id: "test", model: "synthetic:local" }] };
-    else if (path === "/v1/imports") body = { items: [] };
+    else if (path === "/v1/imports" || path === "/v1/inboxes")
+      body = { items: [] };
     else if (path === "/v1/memories") body = { items: [] };
     else if (path === "/v1/device")
       body = {
