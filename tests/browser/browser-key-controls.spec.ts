@@ -171,7 +171,7 @@ test("Wrong saved code and mismatched encrypted kit cannot activate or overwrite
     before = await state(page);
   const wrong = await page.evaluate(() => window.browserKeyControlsTest.code());
   await activate(page, wrong, kit);
-  await expect(page.getByRole("alert")).toContainText("could not be verified");
+  await expect(page.getByRole("alert")).toContainText("not confirmed");
   expect(await state(page)).toEqual(before);
   const slot = before.slots[0]!;
   await expect(
