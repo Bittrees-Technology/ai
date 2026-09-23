@@ -640,3 +640,5 @@ The [durable private-task sender](docs/private-task-outbox.md) preserves origina
 The [browser protocol check](docs/private-browser-protocol.md) uses shared portable task/receipt contracts and production-built fixtures in Chromium, Firefox and WebKit on disposable GitHub runners. It exercises actual browser encryption through the companion queue and encrypted receipt decryption. This is not live remote access, browser persistence, personal Safari/WKWebView acceptance or an installed-app update.
 
 The internal [browser encrypted outbox](docs/browser-encrypted-outbox.md) reserves sequences and persists immutable ciphertext in IndexedDB, with current-authority handoffs, owner export, transactional deletion and stale-tab fencing. It stores no prompts or endpoint private keys. Browser registration/key recovery, receipt handling, live transport and dashboard UI remain open; no remote feature is enabled.
+
+[Durable companion receipts and results](docs/private-task-responses.md) documents internal private-task response production, shared channel sequences, schema16 recovery fences and the remaining transport/key/UI work.

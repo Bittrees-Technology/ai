@@ -1,3 +1,4 @@
+import { PrivateTaskResponses } from "../../modules/remote/private-task-responses.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -114,6 +115,23 @@ async function fixture(page: Page) {
     }),
     clock,
   );
+  const responses = new PrivateTaskResponses(
+    store,
+    vault,
+    owner,
+    () => binding,
+    () => ({
+      binding,
+      peerId: browserId,
+      senderKeyEpoch: 1,
+      permissionRevision: 1,
+      admissionRevision: 1,
+      acceptanceEnabled: true,
+      resultsEnabled: true,
+      senderKey: key,
+    }),
+    clock,
+  );
   const browserPublicKey = await crypto.subtle.importKey(
     "raw",
     Buffer.from(browser.publicKey, "base64url"),
@@ -162,6 +180,7 @@ async function fixture(page: Page) {
     );
   };
   return {
+    responses,
     store,
     registry,
     binding,
@@ -1169,6 +1188,69 @@ test("Earlier browser rows remain readable while expired, deleted and other-acco
         response,
       ),
     ).rejects.toThrow("SETUP_REQUIRED");
+  } finally {
+    f.close();
+  }
+});
+
+test("Real companion response outbox delivers encrypted acceptance and local-worker result to the browser", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { receipt } = await submitted(page, f),
+      input = {
+        operationId: receipt.header.operationId,
+        peerId: f.browserId,
+        kind: "accepted",
+        confirmed: true,
+      };
+    const accepted = await f.responses.prepare(input),
+      wire = f.responses.delivery(accepted.id);
+    expect(
+      (
+        await page.evaluate(
+          (value) => window.privateStorageTest.acceptReceipt(value),
+          wire,
+        )
+      ).state,
+    ).toBe("accepted");
+    const worker = new LocalWorker(
+      f.store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "a".repeat(64) }),
+        generate: async () => "PRIVATE_COMPANION_RESULT",
+      },
+      (id) => f.store.profile(owner, id),
+    );
+    expect(await worker.runOnce()).toBe(true);
+    const result = await f.responses.prepare({ ...input, kind: "result" }),
+      resultWire = f.responses.delivery(result.id);
+    const decoded = await page.evaluate(
+      ({ wire, now }) =>
+        window.privateProtocolTest.openResult(wire, wire.header, now),
+      { wire: resultWire, now: f.now },
+    );
+    expect(decoded.receipt).toEqual(receipt);
+    expect(decoded.task.output).toBe("PRIVATE_COMPANION_RESULT");
+    expect(decoded.task.status).toBe("completed");
+    expect(JSON.stringify(resultWire)).not.toContain(
+      "PRIVATE_COMPANION_RESULT",
+    );
+    expect(f.responses.delivery(result.id)).toEqual(resultWire);
+    // A result is not an acceptance receipt and cannot overwrite that browser state.
+    await expect(
+      page.evaluate(
+        (value) => window.privateStorageTest.acceptReceipt(value),
+        resultWire,
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot()))
+        .entries[0]!.receiptEnvelope,
+    ).toEqual(wire);
+    expect(f.external).toEqual([]);
   } finally {
     f.close();
   }
