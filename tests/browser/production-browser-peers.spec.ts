@@ -492,7 +492,7 @@ test("logout while approval is held destroys pairing controls without adopting a
   }
 });
 
-test("a dropped post-commit verification reports uncertainty and refresh reveals the saved version without replay", async ({
+test("a failed post-commit verification reports uncertainty and refresh reveals the saved version without replay", async ({
   page,
   identityServer,
 }) => {
@@ -504,7 +504,7 @@ test("a dropped post-commit verification reports uncertainty and refresh reveals
     await prepare(page, i.invitation);
     await compare(page, i.fingerprint);
     // Approval verifies twice: the second response follows the IndexedDB commit.
-    identityServer.drop("/browser/registration/identity", 1);
+    identityServer.reject("/browser/registration/identity", 1);
     await approve(page);
     await expect(peers(page).getByRole("alert")).toContainText(
       "A failed response can follow a saved change",

@@ -299,10 +299,15 @@ export function mountBrowserPeers(
     for (const url of urls) URL.revokeObjectURL(url);
     urls.clear();
   }
-  function reset(message: string, forget = false, cancelHost = true) {
+  function reset(
+    message: string,
+    forget = false,
+    cancelHost = true,
+    closeReviews = true,
+  ) {
     generation++;
     if (cancelHost) {
-      closeOtherReviews();
+      if (closeReviews) closeOtherReviews();
       host.peerAPI.invalidate();
     }
     version = host.reviewVersion();
@@ -681,6 +686,8 @@ export function mountBrowserPeers(
       reset(
         "Device review closed after leaving this window. Refresh saved devices to continue.",
         true,
+        true,
+        false,
       ),
     visibility = () => {
       if (document.visibilityState === "hidden") blur();
