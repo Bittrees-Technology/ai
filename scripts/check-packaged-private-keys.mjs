@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -62,10 +63,12 @@ const entryFor = (id) => {
       add = item.addSecretIfAbsent.bind(item);
     item.getSecret = async () => {
       phase = kind + " read";
+      console.log("Endpoint key probe: " + phase);
       return read();
     };
     item.addSecretIfAbsent = async (value) => {
       phase = kind + " add";
+      console.log("Endpoint key probe: " + phase);
       return add(value);
     };
   }
@@ -75,6 +78,18 @@ const manager = () =>
   new PrivateEndpointKeys(localOwner, entryFor, () => authority);
 try {
   const first = await manager().create({ keyId, keyEpoch: 1, confirmed: true });
+  phase = "untrusted reader probe";
+  assert.ok(process.argv[3]?.startsWith("/"));
+  const denied = spawnSync(process.argv[3], [account], {
+    timeout: 15000,
+    encoding: "utf8",
+  });
+  assert.equal(
+    denied.status,
+    0,
+    "untrusted native probe must be denied secret bytes",
+  );
+  assert.equal(denied.stdout.trim(), "UNTRUSTED_READ_DENIED");
   const reopened = manager(),
     key = await reopened.resolve();
   assert.equal(key.publicKey, first.publicKey);
@@ -132,7 +147,7 @@ try {
   assert.ok(await credentials[1].getSecret());
   assert.ok(await credentials[2].getSecret());
   console.log(
-    "Packaged endpoint keys: native add-only storage, reopen, nonextractable runtime handles, HPKE and reviewed deletion passed",
+    "Packaged endpoint keys: native add-only storage, denied untrusted reader, reopen, nonextractable runtime handles, HPKE and reviewed deletion passed",
   );
 } finally {
   // Only the three random synthetic test entries, never a personal profile.

@@ -17,9 +17,23 @@ func addPrivateKeyItem(kind: String, account: String, secret: Data) -> Int32 {
     var keychain: SecKeychain?
     guard SecKeychainCopyDomainDefault(.user, &keychain) == errSecSuccess,
           let keychain = keychain else { return 1 }
+    // The creator and its sibling bundled Node runtime are the two intended readers.
+    // Do not grant all-app access or accept a caller-selected trusted executable.
+    let nodePath = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        .deletingLastPathComponent().appendingPathComponent("node").path
+    guard FileManager.default.isExecutableFile(atPath: nodePath) else { return 1 }
+    var creator: SecTrustedApplication?
+    var node: SecTrustedApplication?
+    guard SecTrustedApplicationCreateFromPath(nil, &creator) == errSecSuccess,
+          nodePath.withCString({ SecTrustedApplicationCreateFromPath($0, &node) }) == errSecSuccess,
+          let creator = creator, let node = node else { return 1 }
+    var access: SecAccess?
+    guard SecAccessCreate("Bittrees AI private endpoint key" as CFString, [creator, node] as CFArray, &access) == errSecSuccess,
+          let access = access else { return 1 }
     let attributes: [CFString: Any] = [
         kSecClass: kSecClassGenericPassword, kSecAttrService: service,
-        kSecAttrAccount: account, kSecValueData: secret, kSecUseKeychain: keychain
+        kSecAttrAccount: account, kSecValueData: secret, kSecUseKeychain: keychain,
+        kSecAttrAccess: access
     ]
     let status = SecItemAdd(attributes as CFDictionary, nil)
     if status == errSecSuccess { return 0 }
