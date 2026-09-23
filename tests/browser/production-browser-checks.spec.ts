@@ -227,6 +227,18 @@ test("built device controls complete both directions with retained Mac keys, exa
     const wire = await output(page);
     await expect(
       checks(page).getByRole("heading", {
+        name: "Waiting for Mac reply",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      checks(page).getByText(
+        "No saved checks. Choose a reviewed Mac to start one.",
+        { exact: true },
+      ),
+    ).toBeHidden();
+    await expect(
+      checks(page).getByRole("heading", {
         name: "Encrypted message for your Mac",
         exact: true,
       }),

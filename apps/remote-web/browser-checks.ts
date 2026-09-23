@@ -575,6 +575,12 @@ export function mountBrowserChecks(
           confirmed,
         });
         if (!alive(g, s)) return;
+        // A newly saved message must not sit beside an obsolete empty history.
+        // This is a metadata read, never an automatic mutation retry.
+        const saved = await host.checkAPI.status();
+        if (!alive(g, s)) return;
+        status = saved;
+        render();
         outgoing = {
           ...deadline(Math.min(envelope.header.expiresAt, now() + 120000)),
           envelope,
