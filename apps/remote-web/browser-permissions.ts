@@ -454,6 +454,7 @@ export function mountBrowserPermissions(
       confirm.textContent = "Save browser permission";
       notice.textContent =
         "Review these exact choices. Leaving this window closes the review.";
+      controls();
       heading.focus();
     } catch (e) {
       if (alive(g, s)) {
