@@ -1,10 +1,10 @@
 {
-  "testedAt": "2026-09-23T01:16:31.130Z",
+  "testedAt": "2026-09-23T01:28:26.232Z",
   "olderSource": "f79cff5944a49c45724026e806a0de819e912433",
   "olderBundleSignatureVerified": true,
   "newSchema": 17,
   "oldSchema": 12,
-  "storeSourceSha256": "571d60fef1bc0a5d686bc48df826b6869947fc4a09456baf11948d5940ddc08f",
+  "storeSourceSha256": "57aa8bfcf5f89c0b740d8c7aa920822f4602e8b5c0809d297c2cb417e97058f4",
   "upgradedTaskPreserved": true,
   "oldEngineRefusedNewSchema": true,
   "oldEngineRestoredOriginalBackupToSeparatePath": true,

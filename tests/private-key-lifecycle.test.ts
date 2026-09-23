@@ -17,7 +17,7 @@ import {
   privateEnvelopeSuite,
 } from "../modules/remote/private-envelope.js";
 import type { PrivateBinding } from "../modules/remote/private-peer-contracts.js";
-import { localApi } from "../apps/companion/http.js";
+import { localApi, type LocalApiOptions } from "../apps/companion/http.js";
 const owner = { userId: "alice", tenantId: "personal" };
 class Slot {
   value?: Uint8Array;
@@ -613,5 +613,83 @@ test("Database publication failure preserves the preparing slot and native key f
     assert.deepEqual(f.keys.list(), before);
   } finally {
     f.close();
+  }
+});
+
+test("Data deletion rechecks newly selected keys after asynchronous remote journal cleanup", async () => {
+  for (const existingKey of [false, true]) {
+    const f = fixture(),
+      server = createServer();
+    try {
+      if (existingKey) await activate(f.keys);
+      f.store.create(
+        owner,
+        {
+          conversationId: "synthetic",
+          kind: "query",
+          prompt: "keep on conflict",
+          modelProfileId: "local",
+        },
+        randomUUID(),
+      );
+      const other = f.lifecycle(f.db());
+      let intervene = true;
+      let newId = "";
+      const remote = {
+        running: false,
+        async clearTaskData(remove: () => void) {
+          await Promise.resolve();
+          if (intervene) {
+            if (other.list().needsFreshPairing) {
+              f.set({ ...f.current()!, deviceId: randomUUID() });
+              f.fresh(true);
+              other.reset(review(other));
+            }
+            newId = (await activate(other)).keyId;
+          }
+          remove();
+        },
+      } as unknown as LocalApiOptions["remote"];
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const port = (server.address() as AddressInfo).port,
+        token = randomBytes(32).toString("hex");
+      server.on(
+        "request",
+        localApi({
+          store: f.store,
+          owner,
+          port,
+          token,
+          remote,
+          privateKeyCleanup: async () => {
+            await f.keys.clearAll({ confirmed: true });
+          },
+        }),
+      );
+      const remove = () =>
+        fetch(`http://127.0.0.1:${port}/v1/data`, {
+          method: "DELETE",
+          headers: {
+            Authorization: "Bearer " + token,
+            "X-Confirm-Delete": "all-local-task-data",
+          },
+        });
+      assert.equal((await remove()).status, 409);
+      assert.equal(f.store.list(owner).length, 1);
+      assert.equal(other.list().slots.at(-1)?.id, newId);
+      assert.equal(other.list().slots.at(-1)?.state, "active");
+      assert.ok(f.entries(newId).key.value);
+      intervene = false;
+      assert.equal((await remove()).status, 204);
+      assert.equal(f.store.list(owner).length, 0);
+      assert.equal(f.entries(newId).key.value, undefined);
+      assert.equal(other.list().pendingKeyDeletionCount, 0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      f.close();
+    }
   }
 });

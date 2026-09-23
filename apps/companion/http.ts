@@ -928,8 +928,17 @@ export function localApi({
           throw new StoreError("CONFLICT");
       }
       const remove = () => {
-        memory?.deleteAll(owner);
-        store.deleteAll(owner);
+        store.deleteAll(owner, () => {
+          // Remote journal cleanup may await storage. Fence another connection's
+          // new key selection at the actual deletion commit, under a write lock.
+          const currentKeys = store.exportPrivateEndpointKeys(owner);
+          if (
+            currentKeys.slots.some((v) => v.state !== "deleted") ||
+            currentKeys.pendingKeyDeletionCount
+          )
+            throw new StoreError("CONFLICT");
+          memory?.deleteAll(owner);
+        });
       };
       if (remote) await remote.clearTaskData(remove);
       else remove();

@@ -1620,9 +1620,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
         .all(owner.userId, owner.tenantId) as { id: string }[]
     ).map((r) => this.message(owner, r.id));
   }
-  deleteAll(owner: Owner) {
+  deleteAll(owner: Owner, beforeDelete?: () => void) {
     this.db
       .transaction(() => {
+        // Trusted synchronous caller checks run under the deletion write lock.
+        beforeDelete?.();
         queuePrivateKeyDeletion(this, this.vault, owner);
         this.db
           .prepare(
