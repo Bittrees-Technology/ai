@@ -1,3 +1,4 @@
+import { CompanionPrivatePeers } from "./private-peers.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -28,9 +29,10 @@ type Review = z.infer<typeof request> & {
   binding: PrivateBinding | null;
 };
 /** Trusted local owner only. Review never creates keys; confirmation rechecks the
- * exact revision and verified registration. No content transport or peer grants.
+ * exact revision and verified registration. No content transport or task/source grants.
  */
 export class CompanionPrivateKeys {
+  private peers: CompanionPrivatePeers;
   private review?: Review;
   private running = false;
   constructor(
@@ -43,6 +45,15 @@ export class CompanionPrivateKeys {
     private now = Date.now,
   ) {
     this.owner = { ...owner };
+    this.peers = new CompanionPrivatePeers(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled,
+      now,
+    );
   }
   get busy() {
     return this.running;
@@ -67,7 +78,26 @@ export class CompanionPrivateKeys {
   }
   invalidate() {
     this.review = undefined;
+    this.peers.invalidate();
     this.remote?.invalidatePrivateIdentity();
+  }
+  peerStatus() {
+    return this.peers.status();
+  }
+  peerInvitation(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      return this.peers.invitation(raw);
+    });
+  }
+  preparePeer(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      return this.peers.prepare(raw);
+    });
+  }
+  confirmPeer(raw: unknown) {
+    return this.exclusive(async () => this.peers.confirm(raw));
   }
   private async exclusive<T>(fn: () => Promise<T>) {
     if (this.running) throw new PrivateKeyLifecycleError("BUSY");
@@ -108,6 +138,7 @@ export class CompanionPrivateKeys {
   async prepare(raw: unknown) {
     return this.exclusive(async () => {
       this.review = undefined;
+      this.peers.invalidate();
       const parsed = request.safeParse(raw);
       if (!parsed.success) throw new PrivateKeyLifecycleError("DENIED");
       const input = parsed.data;

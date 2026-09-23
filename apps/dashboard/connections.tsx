@@ -1,3 +1,4 @@
+import { PrivatePeerPanel } from "./private-peers.js";
 import { PrivateKeyPanel } from "./private-keys.js";
 import { RemoteConnectionPanel } from "./remote-connection.js";
 import { MailConnection } from "./mail-connection.js";
@@ -283,6 +284,7 @@ export function Connections(props: {
       </p>
       <RemoteConnectionPanel api={props.api} />
       <PrivateKeyPanel api={props.api} />
+      <PrivatePeerPanel api={props.api} />
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
       <RolesConnection api={props.api} onError={props.onError} />

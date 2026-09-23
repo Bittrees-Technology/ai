@@ -135,6 +135,31 @@ export function localApi({
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.confirm(req.body));
   });
+  app.get("/v1/private-peers", (_req, res) => {
+    res.json(
+      privateKeys?.peerStatus() ?? {
+        available: false,
+        canSetup: false,
+        revision: 0,
+        keyRevision: 0,
+        needsFreshPairing: false,
+        hasSelectedKey: false,
+        peers: [],
+      },
+    );
+  });
+  app.post("/v1/private-peers/invitation", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.peerInvitation(req.body));
+  });
+  app.post("/v1/private-peers/review", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.preparePeer(req.body));
+  });
+  app.post("/v1/private-peers/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmPeer(req.body));
+  });
   app.get("/v1/remote", async (_req, res) =>
     res.json({
       available: !!remote,

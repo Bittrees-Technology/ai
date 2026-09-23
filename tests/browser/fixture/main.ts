@@ -320,3 +320,6 @@ declare global {
 window.privateResultsUI = panelHarness;
 
 if (new URLSearchParams(location.search).has("keys")) void import("./keys.js");
+
+if (new URLSearchParams(location.search).has("peers"))
+  void import("./peers.js");

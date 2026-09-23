@@ -1,6 +1,6 @@
 # Mac device-key controls
 
-The Connections dashboard now has **This Mac’s private key** controls backed by the authenticated loopback API and `CompanionPrivateKeys`. This connects retained-key storage to reviewed user actions and the all-data deletion path. It does not enable browser pairing, private task transport or recovery. Installed PR40, prepared PR104, personal Keychain/data, model settings and Acer-server news processing remain unchanged.
+The Connections dashboard now has **This Mac’s private key** controls backed by the authenticated loopback API and `CompanionPrivateKeys`. This connects retained-key storage to reviewed user actions and the all-data deletion path. The adjacent [device invitation/review panel](mac-private-peer-controls.md) now connects retained keys to one-sided public-peer trust. These controls do not enable browser pairing, private task transport or recovery. Installed PR40, prepared PR104, personal Keychain/data, model settings and Acer-server news processing remain unchanged.
 
 ## Setup and review
 
