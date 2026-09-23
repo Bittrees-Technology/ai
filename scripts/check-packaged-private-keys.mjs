@@ -44,13 +44,33 @@ let authority = {
   keyEpoch: 1,
   creationAllowed: true,
 };
-const entryFor = (id) =>
-  macPrivateKeyEntries(
+let phase = "initializing";
+const watchdog = setTimeout(() => {
+  console.error("Packaged private-key operation timed out: " + phase);
+  process.exit(1);
+}, 45000);
+const entryFor = (id) => {
+  const entries = macPrivateKeyEntries(
     join(resources, "PrivateKeyInstall"),
     profile,
     localOwner,
     id,
   );
+  for (const kind of ["key", "attempt", "deleted"]) {
+    const item = entries[kind],
+      read = item.getSecret.bind(item),
+      add = item.addSecretIfAbsent.bind(item);
+    item.getSecret = async () => {
+      phase = kind + " read";
+      return read();
+    };
+    item.addSecretIfAbsent = async (value) => {
+      phase = kind + " add";
+      return add(value);
+    };
+  }
+  return entries;
+};
 const manager = () =>
   new PrivateEndpointKeys(localOwner, entryFor, () => authority);
 try {
@@ -120,4 +140,5 @@ try {
     if (await entry.getSecret()) await entry.deleteCredential();
   for (const entry of credentials)
     assert.equal((await entry.getSecret()) == null, true);
+  clearTimeout(watchdog);
 }
