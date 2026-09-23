@@ -652,3 +652,5 @@ The internal [Mac private endpoint key provider](docs/private-endpoint-keys.md) 
 Mac Connections includes [reviewed public-device invitations and local revocation](docs/mac-private-peer-controls.md). New setup remains off in the normal launcher; reciprocal pairing, endpoint recovery and private task access remain unfinished.
 
 [Persisted private-task consent](docs/private-task-consent.md) supplies separate internal receive/send/receipt/result permissions with encrypted storage and restore invalidation. It does not enable private task access; permission controls and production transport remain open.
+
+[Mac task-permission controls](docs/mac-private-task-permissions.md) now expose separate reviewed choices and offline revocation through authenticated local routes and verified identity. New setup remains off in the normal launcher, and private task delivery is not active.

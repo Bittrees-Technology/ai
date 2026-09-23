@@ -1,3 +1,4 @@
+import { CompanionPrivateTaskPermissions } from "./private-task-permissions.js";
 import { CompanionPrivatePeers } from "./private-peers.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -29,10 +30,11 @@ type Review = z.infer<typeof request> & {
   binding: PrivateBinding | null;
 };
 /** Trusted local owner only. Review never creates keys; confirmation rechecks the
- * exact revision and verified registration. No content transport or task/source grants.
+ * exact revision and verified registration. No content transport or source grants; private-task choices require separate review.
  */
 export class CompanionPrivateKeys {
   private peers: CompanionPrivatePeers;
+  private permissions: CompanionPrivateTaskPermissions;
   private review?: Review;
   private running = false;
   constructor(
@@ -45,6 +47,15 @@ export class CompanionPrivateKeys {
     private now = Date.now,
   ) {
     this.owner = { ...owner };
+    this.permissions = new CompanionPrivateTaskPermissions(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled,
+      now,
+    );
     this.peers = new CompanionPrivatePeers(
       store,
       vault,
@@ -79,6 +90,7 @@ export class CompanionPrivateKeys {
   invalidate() {
     this.review = undefined;
     this.peers.invalidate();
+    this.permissions.invalidate();
     this.remote?.invalidatePrivateIdentity();
   }
   peerStatus() {
@@ -87,17 +99,32 @@ export class CompanionPrivateKeys {
   peerInvitation(raw: unknown) {
     return this.exclusive(async () => {
       this.review = undefined;
+      this.permissions.invalidate();
       return this.peers.invitation(raw);
     });
   }
   preparePeer(raw: unknown) {
     return this.exclusive(async () => {
       this.review = undefined;
+      this.permissions.invalidate();
       return this.peers.prepare(raw);
     });
   }
   confirmPeer(raw: unknown) {
     return this.exclusive(async () => this.peers.confirm(raw));
+  }
+  permissionStatus() {
+    return this.permissions.status();
+  }
+  preparePermission(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      this.peers.invalidate();
+      return this.permissions.prepare(raw);
+    });
+  }
+  confirmPermission(raw: unknown) {
+    return this.exclusive(async () => this.permissions.confirm(raw));
   }
   private async exclusive<T>(fn: () => Promise<T>) {
     if (this.running) throw new PrivateKeyLifecycleError("BUSY");
@@ -139,6 +166,7 @@ export class CompanionPrivateKeys {
     return this.exclusive(async () => {
       this.review = undefined;
       this.peers.invalidate();
+      this.permissions.invalidate();
       const parsed = request.safeParse(raw);
       if (!parsed.success) throw new PrivateKeyLifecycleError("DENIED");
       const input = parsed.data;

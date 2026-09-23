@@ -1,3 +1,7 @@
+import {
+  PrivatePermissionPanelState,
+  emptyPermissionForm,
+} from "../apps/dashboard/private-permission-state.js";
 import { PrivateKeyLifecycle } from "../modules/remote/private-key-lifecycle.js";
 import { inspectPrivateInvitation } from "../modules/remote/private-peer-contracts.js";
 import { PrivatePeerPanelState } from "../apps/dashboard/private-peer-state.js";
@@ -1061,4 +1065,406 @@ test("Peer publication rechecks the Mac key under the same SQLite write lock", a
   } finally {
     f.close();
   }
+});
+
+async function permissionFixture() {
+  const f = await fixture();
+  f.store.addProfile(f.owner, {
+    id: "local",
+    runtime: "ollama",
+    model: "synthetic",
+    contextTokens: 4096,
+    maxOutputTokens: 512,
+    temperature: 0.2,
+  });
+  await activeKey(f);
+  const incoming = await peerInvitation(f);
+  await confirmPeer(
+    f,
+    (await reviewPeer(f, incoming.invitation)).id,
+    incoming.fingerprint,
+  );
+  const preparePermission = (overrides = {}, c = f.controls) => {
+    const s = c.permissionStatus();
+    return c.preparePermission({
+      action: "grant",
+      expectedRevision: s.revision,
+      expectedKeyRevision: s.keyRevision,
+      expectedPeerRevision: s.peerRevision,
+      peerId: incoming.invitation.peerId,
+      peerKeyEpoch: 1,
+      minutes: 15,
+      receiveTasks: true,
+      sendTasks: false,
+      sendReceipts: false,
+      sendResults: false,
+      modelProfileId: "local",
+      ...overrides,
+    });
+  };
+  const confirmPermission = (reviewId: string, c = f.controls) =>
+    c.confirmPermission({ reviewId, confirmed: true, acknowledged: true });
+  return { ...f, incoming, preparePermission, confirmPermission };
+}
+test("Mac permission controls reverify exact identity, choices, keys and expiry with one-use acknowledgement", async () => {
+  const f = await permissionFixture();
+  try {
+    const calls = f.calls();
+    const status = f.controls.permissionStatus();
+    assert.equal(f.calls(), calls);
+    assert.equal(status.grants.length, 0);
+    assert.equal(status.profiles[0]!.id, "local");
+    const denied = await f.preparePermission();
+    assert.ok(denied.choices);
+    await assert.rejects(
+      f.controls.confirmPermission({
+        reviewId: denied.id,
+        confirmed: true,
+        acknowledged: false,
+      }),
+      /DENIED/,
+    );
+    await assert.rejects(f.confirmPermission(denied.id), /DENIED/);
+    const review = await f.preparePermission({
+      minutes: 60,
+      sendReceipts: true,
+    });
+    assert.equal(review.choices!.expiresAt, f.grant.expiresAt);
+    assert.equal(review.model, "synthetic");
+    review.choices!.sendTasks = true;
+    review.binding!.ownerId = randomUUID();
+    const beforeConfirm = f.calls();
+    const result = await f.confirmPermission(review.id);
+    assert.equal(f.calls(), beforeConfirm + 1);
+    assert.equal(result.grants.length, 1);
+    assert.equal(result.grants[0]!.choices.sendTasks, false);
+    assert.equal(result.grants[0]!.choices.sendReceipts, true);
+    assert.equal(result.grants[0]!.state, "saved");
+    assert.equal(
+      f.store.exportPrivateTaskConsent(f.owner).grants[0]!.local.binding
+        .ownerId,
+      f.grant.ownerId,
+    );
+    await assert.rejects(f.confirmPermission(review.id), /DENIED/);
+    await assert.rejects(
+      f.preparePermission({ ownerId: f.grant.ownerId }),
+      /DENIED/,
+    );
+    await assert.rejects(f.preparePermission({ sendResults: true }), /DENIED/);
+  } finally {
+    f.close();
+  }
+});
+test("Mac permission review denies expired, changed key/peer/model and revoked identity rather than rebinding", async () => {
+  const f = await permissionFixture();
+  try {
+    let r = await f.preparePermission();
+    f.time(1800000300001);
+    await assert.rejects(f.confirmPermission(r.id), /DENIED/);
+    f.time(1800000000000);
+    r = await f.preparePermission();
+    const other = f.build();
+    await f.confirm((await f.prepare("replace", undefined, other)).id, other);
+    await assert.rejects(f.confirmPermission(r.id), /CONFLICT/);
+    r = await f.preparePermission();
+    const profile = f.store.profile(f.owner, "local");
+    f.store.db
+      .prepare("UPDATE model_profiles SET payload=?")
+      .run(
+        f.vault.seal(
+          { ...profile, temperature: 0.5 },
+          "profile:personal:synthetic:local",
+        ),
+      );
+    await assert.rejects(f.confirmPermission(r.id), /CONFLICT/);
+    f.store.db
+      .prepare("UPDATE model_profiles SET payload=?")
+      .run(f.vault.seal(profile, "profile:personal:synthetic:local"));
+    r = await f.preparePermission();
+    const peerReview = await other.preparePeer({
+      action: "revoke",
+      expectedRevision: other.peerStatus().revision,
+      peerId: f.incoming.invitation.peerId,
+    });
+    await other.confirmPeer({
+      reviewId: peerReview.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    await assert.rejects(f.confirmPermission(r.id), /CONFLICT/);
+    assert.equal(f.controls.permissionStatus().grants.length, 0);
+  } finally {
+    f.close();
+  }
+  const denied = await permissionFixture();
+  try {
+    const r = await denied.preparePermission();
+    denied.deny();
+    await assert.rejects(denied.confirmPermission(r.id));
+    assert.equal(denied.controls.permissionStatus().grants.length, 0);
+  } finally {
+    denied.close();
+  }
+});
+test("Mac permission revocation is reviewed offline, and other key/peer actions invalidate pending permission review", async () => {
+  const f = await permissionFixture();
+  try {
+    await f.confirmPermission((await f.preparePermission()).id);
+    const offline = f.build(false, false),
+      calls = f.calls();
+    const review = await offline.preparePermission({
+      action: "revoke",
+      expectedRevision: offline.permissionStatus().revision,
+      peerId: f.incoming.invitation.peerId,
+    });
+    assert.equal(review.choices, null);
+    await f.confirmPermission(review.id, offline);
+    assert.equal(f.calls(), calls);
+    assert.equal(offline.permissionStatus().grants[0]!.state, "revoked");
+    await assert.rejects(f.preparePermission({}, offline), /DENIED/);
+    let r = await f.preparePermission();
+    await f.prepare("replace");
+    await assert.rejects(f.confirmPermission(r.id), /DENIED/);
+    r = await f.preparePermission();
+    await f.controls.peerInvitation({
+      recipientId: randomUUID(),
+      expectedKeyRevision: f.controls.status().state.revision,
+      confirmed: true,
+    });
+    await assert.rejects(f.confirmPermission(r.id), /DENIED/);
+    const keyReview = await f.prepare("replace");
+    await f.preparePermission();
+    await assert.rejects(f.confirm(keyReview.id), /DENIED/);
+  } finally {
+    f.close();
+  }
+});
+test("Authenticated permission routes share deletion exclusion and logout invalidation during native key resolution", async () => {
+  const f = await permissionFixture(),
+    server = createServer();
+  try {
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port,
+      token = randomBytes(32).toString("hex");
+    server.on(
+      "request",
+      localApi({
+        store: f.store,
+        owner: f.owner,
+        token,
+        port,
+        privateKeys: f.controls,
+      }),
+    );
+    const base = `http://127.0.0.1:${port}`,
+      headers = {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+      };
+    const post = (path: string, body: unknown) =>
+      fetch(base + path, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+    const remove = () =>
+      fetch(base + "/v1/data", {
+        method: "DELETE",
+        headers: { ...headers, "X-Confirm-Delete": "all-local-task-data" },
+      });
+    for (const path of [
+      "/v1/private-task-permissions",
+      "/v1/private-task-permissions/review",
+      "/v1/private-task-permissions/confirm",
+    ]) {
+      assert.equal(
+        (
+          await fetch(base + path, {
+            method: path.endsWith("permissions") ? "GET" : "POST",
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await fetch(base + path, {
+            headers: { ...headers, Origin: "https://evil.example" },
+          })
+        ).status,
+        403,
+      );
+    }
+    const status = await (
+      await fetch(base + "/v1/private-task-permissions", { headers })
+    ).json();
+    const r = await (
+      await post("/v1/private-task-permissions/review", {
+        action: "grant",
+        expectedRevision: status.revision,
+        expectedKeyRevision: status.keyRevision,
+        expectedPeerRevision: status.peerRevision,
+        peerId: f.incoming.invitation.peerId,
+        peerKeyEpoch: 1,
+        minutes: 15,
+        receiveTasks: false,
+        sendTasks: true,
+        sendReceipts: false,
+        sendResults: false,
+        modelProfileId: null,
+      })
+    ).json();
+    let release!: () => void, started!: () => void;
+    const entered = new Promise<void>((r) => {
+        started = r;
+      }),
+      held = new Promise<void>((r) => {
+        release = r;
+      });
+    const key = [...f.slots.values()][0]!.key;
+    key.afterGet = async () => {
+      started();
+      await held;
+    };
+    const pending = post("/v1/private-task-permissions/confirm", {
+      reviewId: r.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    await entered;
+    assert.equal((await remove()).status, 409);
+    f.controls.invalidate();
+    release();
+    assert.notEqual((await pending).status, 200);
+    assert.equal(f.controls.permissionStatus().grants.length, 0);
+    key.afterGet = undefined;
+    const grant = await f.preparePermission();
+    assert.equal(
+      (
+        await post("/v1/private-task-permissions/confirm", {
+          reviewId: grant.id,
+          confirmed: true,
+          acknowledged: true,
+        })
+      ).status,
+      200,
+    );
+    const next = await f.preparePermission();
+    assert.equal((await remove()).status, 204);
+    await assert.rejects(f.confirmPermission(next.id), /DENIED/);
+    assert.equal(f.controls.permissionStatus().grants.length, 0);
+    assert.equal(f.controls.permissionStatus().needsFreshPairing, true);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    f.close();
+  }
+});
+
+test("Mac permission confirmation rechecks original review expiry after acquiring the publication lock", async () => {
+  const f = await permissionFixture();
+  try {
+    const review = await f.preparePermission();
+    f.time(review.expiresAt - 1000);
+    const original = f.store.db.transaction.bind(f.store.db);
+    let injected = false;
+    f.store.db.transaction = ((fn: any) => {
+      const tx = original(fn),
+        wrapped = (...args: any[]) => tx(...args);
+      wrapped.immediate = (...args: any[]) => {
+        if (!injected) {
+          injected = true;
+          f.store.db.transaction = original;
+          f.time(review.expiresAt + 1);
+        }
+        return tx.immediate(...args);
+      };
+      return wrapped;
+    }) as typeof f.store.db.transaction;
+    await assert.rejects(f.confirmPermission(review.id), /DENIED/);
+    assert.equal(injected, true);
+    assert.equal(f.controls.permissionStatus().grants.length, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("Permission panel captures current revisions, requires acknowledgement and rejects hidden, expired or uncertain replies", async () => {
+  const empty = emptyPermissionForm();
+  assert.equal(
+    empty.receiveTasks ||
+      empty.sendTasks ||
+      empty.sendReceipts ||
+      empty.sendResults,
+    false,
+  );
+  let now = 1800000000000,
+    held = false,
+    release!: (r: unknown) => void;
+  const peerId = randomUUID(),
+    review = {
+      id: randomUUID(),
+      action: "grant",
+      peerId,
+      expiresAt: now + 300000,
+      choices: null,
+      binding: null,
+      model: null,
+      fingerprint: null,
+    };
+  const calls: { path: string; body: any }[] = [];
+  const c = new PrivatePermissionPanelState(
+    async (path, _method, body) => {
+      calls.push({ path, body });
+      if (path.endsWith("permissions"))
+        return {
+          available: true,
+          canSetup: true,
+          revision: 4,
+          keyRevision: 8,
+          peerRevision: 3,
+          needsFreshPairing: false,
+          hasSelectedKey: true,
+          peers: [{ peerId, keyEpoch: 2, fingerprint: "a".repeat(64) }],
+          profiles: [],
+          grants: [],
+        };
+      if (path.endsWith("review"))
+        return held
+          ? new Promise((r) => {
+              release = r;
+            })
+          : review;
+      throw Error("CONFLICT");
+    },
+    () => {},
+    () => now,
+  );
+  const form = { ...empty, peerId, sendTasks: true };
+  await c.refresh();
+  held = true;
+  const pending = c.prepare(form);
+  c.hide();
+  release(review);
+  await pending;
+  assert.equal(c.state.review, null);
+  held = false;
+  await c.prepare(form);
+  await c.confirm(false);
+  assert.equal(calls.filter((v) => v.path.endsWith("confirm")).length, 0);
+  const body = calls.find((v) => v.body?.action === "grant")!.body;
+  assert.equal(body.expectedRevision, 4);
+  assert.equal(body.expectedKeyRevision, 8);
+  assert.equal(body.expectedPeerRevision, 3);
+  assert.equal(body.peerKeyEpoch, 2);
+  assert.equal(body.expiresAt, undefined);
+  await c.confirm(true);
+  await c.confirm(true);
+  assert.equal(calls.filter((v) => v.path.endsWith("confirm")).length, 1);
+  assert.match(c.state.error, /No automatic retry/);
+  await c.refresh();
+  await c.prepare(form);
+  now += 300001;
+  await c.confirm(true);
+  assert.match(c.state.error, /expired/);
+  assert.equal(calls.filter((v) => v.path.endsWith("confirm")).length, 1);
 });

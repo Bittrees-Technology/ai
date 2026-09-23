@@ -160,6 +160,30 @@ export function localApi({
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.confirmPeer(req.body));
   });
+  app.get("/v1/private-task-permissions", (_req, res) => {
+    res.json(
+      privateKeys?.permissionStatus() ?? {
+        available: false,
+        canSetup: false,
+        revision: 0,
+        keyRevision: 0,
+        peerRevision: 0,
+        needsFreshPairing: false,
+        hasSelectedKey: false,
+        peers: [],
+        profiles: [],
+        grants: [],
+      },
+    );
+  });
+  app.post("/v1/private-task-permissions/review", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.preparePermission(req.body));
+  });
+  app.post("/v1/private-task-permissions/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmPermission(req.body));
+  });
   app.get("/v1/remote", async (_req, res) =>
     res.json({
       available: !!remote,
