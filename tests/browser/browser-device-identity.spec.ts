@@ -1,8 +1,10 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 import { Pool } from "pg";
 import { Wallet, type HDNodeWallet } from "ethers";
 import { randomUUID } from "node:crypto";
-import { createServer, request } from "node:https";
+import { createServer } from "node:https";
+import { createServer as createProxyServer } from "node:http";
+import { connect, type Socket } from "node:net";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,11 +15,29 @@ const origin = "https://ai.bittrees.org",
 let admin: Pool,
   pool: Pool,
   server: ReturnType<typeof createServer>,
+  proxy: ReturnType<typeof createProxyServer>,
   folder: string,
   cert: Buffer,
   holdIdentity = false,
   heldIdentity = false,
   releaseIdentity: (() => void) | undefined;
+const sockets = new Set<Socket>();
+const test = base.extend({
+  context: async ({ browser }, use) => {
+    const context = await browser.newContext({
+      proxy: {
+        server: `http://127.0.0.1:${(proxy.address() as { port: number }).port}`,
+      },
+      // Only the isolated fixture's self-signed certificate is accepted here.
+      ignoreHTTPSErrors: true,
+    });
+    try {
+      await use(context);
+    } finally {
+      await context.close();
+    }
+  },
+});
 test.beforeAll(async () => {
   const connectionString = process.env.BROWSER_TEST_DATABASE_URL;
   if (!connectionString)
@@ -53,7 +73,9 @@ test.beforeAll(async () => {
       "-days",
       "1",
       "-subj",
-      "/CN=localhost",
+      "/CN=ai.bittrees.org",
+      "-addext",
+      "subjectAltName=DNS:ai.bittrees.org,DNS:localhost",
       "-keyout",
       join(folder, "key.pem"),
       "-out",
@@ -62,21 +84,107 @@ test.beforeAll(async () => {
     { stdio: "ignore" },
   );
   cert = await readFile(join(folder, "cert.pem"));
+  const app = createRemoteApp(pool, {
+    origin,
+    chainId: 1,
+    sessionMs: 3600000,
+    deviceMs: 7200000,
+    retentionMs: 86400000,
+    requestsPerMinute: 1000,
+  });
   server = createServer(
     { key: await readFile(join(folder, "key.pem")), cert },
-    createRemoteApp(pool, {
-      origin,
-      chainId: 1,
-      sessionMs: 3600000,
-      deviceMs: 7200000,
-      retentionMs: 86400000,
-      requestsPerMinute: 1000,
-    }),
+    async (req, res) => {
+      const url = new URL(req.url!, origin);
+      if (req.headers.host !== "ai.bittrees.org") {
+        res.writeHead(403).end();
+        return;
+      }
+      if (
+        url.pathname.startsWith("/browser/") ||
+        url.pathname.startsWith("/device/")
+      ) {
+        if (holdIdentity && url.pathname.endsWith("/registration/identity")) {
+          holdIdentity = false;
+          const end = res.end.bind(res);
+          res.end = ((...args: Parameters<typeof end>) => {
+            heldIdentity = true;
+            releaseIdentity = () => {
+              end(...args);
+            };
+            return res;
+          }) as typeof res.end;
+        }
+        res.on("finish", () => {
+          if (res.statusCode >= 400)
+            console.error("Browser identity fixture rejection", {
+              path: url.pathname,
+              status: res.statusCode,
+              origin: req.headers.origin,
+              fetchSite: req.headers["sec-fetch-site"],
+              cookieNames: (req.headers.cookie ?? "")
+                .split(";")
+                .map((part) => part.trim().split("=")[0]),
+            });
+        });
+        app(req, res);
+        return;
+      }
+      // Assets also travel over real HTTPS; only the local built fixture is read.
+      try {
+        const asset = await fetch(
+          "http://127.0.0.1:44137" + url.pathname + url.search,
+        );
+        res.writeHead(asset.status, {
+          "content-type": asset.headers.get("content-type") ?? "text/plain",
+          "cache-control": "no-store",
+        });
+        res.end(Buffer.from(await asset.arrayBuffer()));
+      } catch {
+        res.writeHead(502).end();
+      }
+    },
   );
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  // A closed CONNECT tunnel preserves the browser's actual network/cookie stack.
+  // No DNS lookup or connection to the named public site is ever performed.
+  proxy = createProxyServer((_req, res) => {
+    res.writeHead(403).end();
+  });
+  proxy.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+  });
+  proxy.on("connect", (req, client, head) => {
+    if (req.url !== "ai.bittrees.org:443") {
+      client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    const upstream = connect(
+      (server.address() as { port: number }).port,
+      "127.0.0.1",
+      () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      },
+    );
+    sockets.add(upstream);
+    upstream.on("close", () => {
+      sockets.delete(upstream);
+      client.destroy();
+    });
+    client.on("close", () => upstream.destroy());
+    upstream.on("error", () => client.destroy());
+    client.on("error", () => upstream.destroy());
+  });
+  await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
 });
 test.afterAll(async () => {
   releaseIdentity?.();
+  for (const socket of sockets) socket.destroy();
+  if (proxy) await new Promise<void>((r) => proxy.close(() => r()));
   if (server) {
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
@@ -88,93 +196,12 @@ test.afterAll(async () => {
   }
   if (folder) await rm(folder, { recursive: true, force: true });
 });
-test.beforeEach(async ({ context }) => {
+test.beforeEach(() => {
   holdIdentity = false;
   heldIdentity = false;
   releaseIdentity = undefined;
-  await context.route("**/*", async (route) => {
-    const req = route.request(),
-      url = new URL(req.url());
-    if (url.origin !== origin) return route.abort();
-    if (
-      url.pathname.startsWith("/browser/") ||
-      url.pathname.startsWith("/device/")
-    ) {
-      const headers = await req.allHeaders();
-      const result = await new Promise<{
-        status: number;
-        headers: Record<string, string>;
-        body: Buffer;
-      }>((resolve, reject) => {
-        const call = request(
-          {
-            hostname: "127.0.0.1",
-            port: (server.address() as { port: number }).port,
-            path: url.pathname,
-            method: req.method(),
-            ca: cert,
-            servername: "localhost",
-            headers: { ...headers, host: "ai.bittrees.org" },
-          },
-          (res) => {
-            const chunks: Buffer[] = [];
-            res.on("data", (c) => chunks.push(c));
-            res.on("end", () =>
-              resolve({
-                status: res.statusCode!,
-                headers: Object.fromEntries(
-                  Object.entries(res.headers)
-                    .filter(([, v]) => v !== undefined)
-                    .map(([k, v]) => [
-                      k,
-                      Array.isArray(v) ? v.join("\n") : String(v),
-                    ]),
-                ),
-                body: Buffer.concat(chunks),
-              }),
-            );
-          },
-        );
-        call.setTimeout(10000, () =>
-          call.destroy(Error("Fixture HTTPS timeout")),
-        );
-        call.on("error", reject);
-        call.end(req.postData() ?? "");
-      });
-      if (result.status >= 400) {
-        // Synthetic CI requests only. Log names/status, never credentials or bodies.
-        console.error("Browser identity fixture rejection", {
-          path: url.pathname,
-          status: result.status,
-          origin: headers.origin,
-          fetchSite: headers["sec-fetch-site"],
-          cookieNames: (headers.cookie ?? "")
-            .split(";")
-            .map((part) => part.trim().split("=")[0]),
-        });
-      }
-      if (holdIdentity && url.pathname.endsWith("/registration/identity")) {
-        holdIdentity = false;
-        heldIdentity = true;
-        await new Promise<void>((r) => {
-          releaseIdentity = r;
-        });
-      }
-      return route.fulfill(result);
-    }
-    // Synthetic frontend only; no request is sent to the public origin.
-    const fixture = await fetch(
-      "http://127.0.0.1:44137" + url.pathname + url.search,
-    );
-    return route.fulfill({
-      status: fixture.status,
-      headers: {
-        "content-type": fixture.headers.get("content-type") ?? "text/plain",
-      },
-      body: Buffer.from(await fixture.arrayBuffer()),
-    });
-  });
 });
+
 async function open(page: Page) {
   await page.goto(origin + "/?browser-device-identity");
   await page.waitForFunction(() => !!window.browserDeviceIdentityTest);
