@@ -116,8 +116,8 @@ test("Mac endpoint keys require explicit fresh creation, survive manager reopen 
   );
   first.pair.privateKey = substitute.privateKey;
   assert.equal((await keys.resolve()).pair.privateKey, second.pair.privateKey);
-  assert.equal(first.pair.privateKey.extractable, false);
-  await assert.rejects(crypto.subtle.exportKey("pkcs8", first.pair.privateKey));
+  assert.equal(second.pair.privateKey.extractable, false);
+  await assert.rejects(crypto.subtle.exportKey("pkcs8", second.pair.privateKey));
   f.set({ ...f.current()!, creationAllowed: false });
   assert.deepEqual(await f.manager().create(f.request()), created);
   assert.equal((await f.manager().resolve()).publicKey, created.publicKey);
