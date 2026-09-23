@@ -732,3 +732,17 @@ select.model-profile-select {
   flex: 0 0 auto;
   margin: 0.2rem 0 0;
 }
+
+.news-connection {
+  overflow-wrap: anywhere;
+}
+.news-connection button {
+  margin: 6px 8px 6px 0;
+}
+.news-connection details {
+  margin: 14px 0;
+}
+.news-connection [aria-label="News articles"] article {
+  border-top: 1px solid #d3e1e5;
+  margin-top: 20px;
+}

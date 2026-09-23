@@ -1,3 +1,7 @@
+import {
+  NewsConnector,
+  newsKeychainEntry,
+} from "../../modules/connectors/news.js";
 import { ExecutionControls } from "./execution-limits.js";
 import { retainedContent } from "./retained-content.js";
 import { CompanionPrivateKeys } from "./private-keys.js";
@@ -122,6 +126,10 @@ const crm = new CrmConnector(
     mailKeychainEntry("personal"),
   ),
   mailSources = new MailTasks(mail, owner, "personal"),
+  news = new NewsConnector(
+    JSON.stringify(owner),
+    newsKeychainEntry("personal"),
+  ),
   runtime = new Ollama(),
   worker = new LocalWorker(
     store,
@@ -214,6 +222,7 @@ server.on(
     sources,
     autonote,
     roles,
+    news,
     mail,
     mailSources,
     autonoteSources,
