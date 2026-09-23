@@ -189,11 +189,14 @@ test("profile settings and saved configurations remain usable at desktop and nar
     path: `test-results/model-profiles-task-${info.project.name}-390.png`,
     fullPage: true,
   });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth + 1,
-    ),
-  ).toBe(true);
+  const overflow = await page.evaluate(() => ({
+    viewport: innerWidth,
+    width: document.documentElement.scrollWidth,
+    elements: [...document.querySelectorAll<HTMLElement>("body *")]
+      .filter((e) => e.getBoundingClientRect().right > innerWidth + 1 || e.scrollWidth > e.clientWidth + 1)
+      .map((e) => ({ tag: e.tagName, class: e.className, id: e.id, right: e.getBoundingClientRect().right, width: e.clientWidth, scroll: e.scrollWidth })),
+  }));
+  expect(overflow.width, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.viewport + 1);
   await page.getByRole("button", { name: "Templates", exact: true }).click();
   await page.getByRole("button", { name: "New template", exact: true }).click();
   await expect(
