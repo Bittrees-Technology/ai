@@ -833,8 +833,49 @@ export async function checkRemoteHttp(pool: Pool) {
       ).status,
       403,
     );
-    assert.equal((await call("/browser/logout", {}, owner)).status, 200);
+    const logout = await call("/browser/logout", {}, owner);
+    assert.equal(logout.status, 200);
+    for (const name of ["__Host-bittrees-session", "__Host-bittrees-login"])
+      assert.ok(
+        logout.headers["set-cookie"]!.some(
+          (value) =>
+            value.startsWith(name + "=;") &&
+            value.includes("Expires=Thu, 01 Jan 1970"),
+        ),
+      );
     assert.equal((await call("/browser/session", {}, owner)).status, 403);
+    assert.equal((await call("/browser/logout", {}, owner)).status, 200);
+    assert.equal((await call("/browser/logout", {}, browser)).status, 200);
+    assert.equal(
+      (
+        await call(
+          "/browser/logout",
+          {},
+          { ...browser, Cookie: sessionCookie + "; " + sessionCookie },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/logout",
+          {},
+          { ...browser, Cookie: "__Host-bittrees-session=invalid" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call(
+          "/browser/logout",
+          {},
+          { ...browser, Origin: "https://other.example" },
+        )
+      ).status,
+      403,
+    );
     // Exercise the actual Mac-side protocol client over the same verified TLS transport.
     // Secret storage is an in-memory test double; this is not native Keychain acceptance.
     let savedSecret: Uint8Array | undefined;

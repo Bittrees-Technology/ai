@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRemoteApp } from "../../../modules/remote/http.js";
 
 async function startIdentityServer() {
@@ -98,6 +99,9 @@ async function startIdentityServer() {
       deviceMs: 7200000,
       retentionMs: 86400000,
       requestsPerMinute: 1000,
+      assets: fileURLToPath(
+        new URL("../../../apps/remote-web/", import.meta.url),
+      ),
     });
     server = createServer(
       { key: await readFile(join(folder, "key.pem")), cert },
@@ -148,6 +152,20 @@ async function startIdentityServer() {
                   .map((part) => part.trim().split("=")[0]),
               });
           });
+          app(req, res);
+          return;
+        }
+        // Exercise the actual shipped status page and CSP in auth acceptance.
+        if (
+          [
+            "/remote-panel",
+            "/app.js",
+            "/controller.js",
+            "/style.css",
+            "/settings.json",
+          ].includes(url.pathname)
+        ) {
+          if (url.pathname === "/remote-panel") req.url = "/";
           app(req, res);
           return;
         }
