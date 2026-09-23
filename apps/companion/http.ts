@@ -413,6 +413,10 @@ export function localApi({
       z.strictObject({}).parse(req.body);
       res.json(await imports.cancel(req.params.id));
     });
+    app.post("/v1/imports/:id/cleanup", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await imports.cleanup(req.params.id));
+    });
     app.delete("/v1/imports/:id", async (req, res) => {
       if (req.header("X-Confirm-Delete") !== "local-import-record-and-files")
         throw new StoreError("INVALID_INPUT");

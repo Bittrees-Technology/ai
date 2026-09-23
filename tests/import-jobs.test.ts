@@ -19,7 +19,8 @@ async function settled(jobs: ImportJobs, id: string) {
         "downloading",
         "installing",
         "reconciling",
-      ].includes(job.state)
+      ].includes(job.state) &&
+      job.stagingCleanup?.state !== "pending"
     )
       return job;
     await new Promise((r) => setTimeout(r, 10));

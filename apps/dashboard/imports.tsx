@@ -115,6 +115,13 @@ export function ModelImportControls({
         extra permissions or tools; cloud fallback remains off. Installation
         does not prove model quality or compatibility with every task.
       </p>
+      <p className="hint">
+        Temporary copies are removed after a confirmed installation,
+        cancellation or failed operation. Expired reviews and interrupted work
+        are cleaned up while idle. Import history, original files and installed
+        Ollama models are kept. Uncertain installations keep their files until
+        checked or explicitly deleted.
+      </p>
       <label htmlFor="import-format">Prompt format</label>
       <select
         id="import-format"
@@ -213,7 +220,7 @@ export function ModelImportControls({
         </form>
       </details>
       {items.map((job) => (
-        <article key={job.id}>
+        <article className="model-import-job" key={job.id}>
           <h4>{job.review?.model ?? job.download?.repo ?? "Model import"}</h4>
           <p role="status">
             {stateLabels[job.state]}
@@ -221,6 +228,30 @@ export function ModelImportControls({
               ? ` · ${errorLabels[job.error]}`
               : ""}
           </p>
+          {job.stagingCleanup?.state === "released" && (
+            <p>Temporary import files removed. Import history is retained.</p>
+          )}
+          {job.stagingCleanup?.state === "pending" && (
+            <p role="status">Cleaning up temporary import files…</p>
+          )}
+          {job.stagingCleanup?.state === "retry" && (
+            <div>
+              <p>
+                Temporary files could not be removed. The import outcome is
+                unchanged. Cleanup will retry while idle.
+              </p>
+              <button
+                disabled={running}
+                onClick={() =>
+                  void act(() =>
+                    api(`/v1/imports/${job.id}/cleanup`, "POST", {}),
+                  )
+                }
+              >
+                Retry temporary-file cleanup
+              </button>
+            </div>
+          )}
           {job.download && (
             <details open={job.state === "download_review"}>
               <summary>Download review</summary>

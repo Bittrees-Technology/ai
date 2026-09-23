@@ -207,3 +207,11 @@ jobs:
           path: test-results/model-profiles-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain import cleanup previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-cleanup-ui-preview
+          path: test-results/import-cleanup-*.png
+          if-no-files-found: error
+          retention-days: 7

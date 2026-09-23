@@ -41,6 +41,10 @@ export interface ImportJob {
   download?: DownloadReview;
   review?: ImportReview;
   error?: string;
+  stagingCleanup?: {
+    state: "pending" | "released" | "retry";
+    updatedAt: number;
+  };
   installation?: {
     modelDigest: string;
     architecture: string;
@@ -64,6 +68,8 @@ export class ImportJobs {
     private picker: (signal: AbortSignal) => Promise<string[]>,
     private runtimeFetch: typeof fetch = fetch,
     private downloadFetch: typeof fetch = fetch,
+    private removeStaging: (path: string) => Promise<void> = (path) =>
+      rm(path, { recursive: true, force: true }),
   ) {
     this.db = new Database(join(root, "jobs.db"));
     try {
@@ -176,24 +182,32 @@ export class ImportJobs {
     // Reserve synchronously before any asynchronous picker, download or runtime request.
     const done = Promise.resolve().then(async () => {
       try {
-        this.save(await fn(abort.signal));
-      } catch (error) {
-        this.save({
-          ...this.get(job.id),
-          state: ["installing", "reconciling", "uncertain"].includes(job.state)
-            ? "uncertain"
-            : abort.signal.aborted ||
-                (error instanceof Error && error.name === "AbortError")
-              ? "cancelled"
-              : "failed",
-          error:
-            abort.signal.aborted ||
-            (error instanceof Error && error.name === "AbortError")
-              ? "CANCELLED"
-              : error instanceof ImportError
-                ? error.code
-                : "IMPORT_FAILED",
-        });
+        try {
+          this.save(await fn(abort.signal));
+        } catch (error) {
+          this.save({
+            ...this.get(job.id),
+            state: ["installing", "reconciling", "uncertain"].includes(
+              job.state,
+            )
+              ? "uncertain"
+              : abort.signal.aborted ||
+                  (error instanceof Error && error.name === "AbortError")
+                ? "cancelled"
+                : "failed",
+            error:
+              abort.signal.aborted ||
+              (error instanceof Error && error.name === "AbortError")
+                ? "CANCELLED"
+                : error instanceof ImportError
+                  ? error.code
+                  : "IMPORT_FAILED",
+          });
+        }
+        // Persist the operation outcome before touching temporary files. A cleanup
+        // failure must never turn a confirmed installation into an uncertain one.
+        const outcome = this.get(job.id);
+        if (this.cleanupEligible(outcome)) await this.releaseFiles(outcome);
       } finally {
         this.active.delete(job.id);
       }
@@ -329,8 +343,76 @@ export class ImportJobs {
       return this.get(id);
     }
     if (job.state === "installed" || job.state === "uncertain") return job;
-    if (job.review) await this.importer(id).cancel(job.review.id);
-    return this.save({ ...job, state: "cancelled" });
+    if (this.active.size || this.stopped) throw new ImportError("IMPORT_BUSY");
+    // Cancellation of an idle, uncommitted review needs no runtime request.
+    this.save({ ...job, state: "cancelled" });
+    await this.cleanup(id);
+    return this.get(id);
+  }
+  private cleanupEligible(job: ImportJob) {
+    return ["installed", "cancelled", "interrupted", "failed"].includes(
+      job.state,
+    );
+  }
+  private expiredReview(job: ImportJob) {
+    return (
+      (job.state === "staged" &&
+        !!job.review &&
+        job.review.expiresAt <= Date.now()) ||
+      (job.state === "download_review" &&
+        !!job.download &&
+        job.download.expiresAt <= Date.now())
+    );
+  }
+  private async releaseFiles(job: ImportJob) {
+    if (job.stagingCleanup?.state === "released") return;
+    const pending = this.save({
+      ...job,
+      stagingCleanup: { state: "pending", updatedAt: Date.now() },
+    });
+    try {
+      // Only our UUID-named job directory is removed. Original picker files,
+      // Ollama's model store and the encrypted jobs database are outside it.
+      await this.removeStaging(join(this.root, z.uuid().parse(job.id)));
+    } catch {
+      this.save({
+        ...pending,
+        stagingCleanup: { state: "retry", updatedAt: Date.now() },
+      });
+      return;
+    }
+    this.save({
+      ...pending,
+      stagingCleanup: { state: "released", updatedAt: Date.now() },
+    });
+  }
+  async cleanup(id: string) {
+    let job = this.get(id);
+    if (this.active.size || this.stopped) throw new ImportError("IMPORT_BUSY");
+    if (this.expiredReview(job))
+      job = this.save({ ...job, state: "failed", error: "REVIEW_EXPIRED" });
+    if (!this.cleanupEligible(job)) throw new ImportError("REVIEW_MISMATCH");
+    const abort = new AbortController();
+    const done = Promise.resolve().then(() => this.releaseFiles(job));
+    this.active.set(id, { abort, done });
+    try {
+      await done;
+      return this.get(id);
+    } finally {
+      this.active.delete(id);
+    }
+  }
+  /** Startup/idle maintenance never downloads, installs, reconciles or deletes history. */
+  async maintain() {
+    if (this.stopped || this.active.size) return;
+    for (const job of this.list()) {
+      if (this.stopped || this.active.size) return;
+      if (
+        job.stagingCleanup?.state !== "released" &&
+        (this.cleanupEligible(job) || this.expiredReview(job))
+      )
+        await this.cleanup(job.id);
+    }
   }
   async remove(id: string) {
     this.get(id);
