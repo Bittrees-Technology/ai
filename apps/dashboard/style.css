@@ -536,3 +536,46 @@ summary {
 .private-peer-forms button {
   justify-self: start;
 }
+
+.private-permission-form {
+  border: 0;
+  padding: 0;
+  margin: 24px 0;
+  min-width: 0;
+}
+.private-permission-form legend {
+  font-weight: 700;
+  padding: 0;
+  margin-bottom: 12px;
+}
+.private-permission-form label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 0;
+}
+.private-permission-form .private-peer-text-label {
+  display: block;
+}
+.private-permission-form input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  margin: 2px 0 0;
+  accent-color: #28685c;
+}
+.private-permission-form select {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  margin: 8px 0;
+}
+.private-permission-summary {
+  padding-left: 22px;
+  line-height: 1.6;
+}
