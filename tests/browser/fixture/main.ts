@@ -1,3 +1,4 @@
+import { mountPrivateResults } from "../../../apps/remote-web/private-results.js";
 import {
   privateTaskPayloadSchema,
   privateAcceptedPayloadSchema,
@@ -134,6 +135,9 @@ import {
 } from "../../../modules/remote/browser-outbox.js";
 import type { PrivateBinding } from "../../../modules/remote/private-peer-contracts.js";
 let browserStore: BrowserPrivateOutbox | undefined;
+let panel: ReturnType<typeof mountPrivateResults> | undefined;
+let releaseRead: (() => void) | undefined,
+  holdRead = false;
 let currentBinding: PrivateBinding | null = null,
   deliveryContext: BrowserDeliveryContext | null = null,
   registration: PrivateBinding | null = null,
@@ -150,6 +154,7 @@ const storageHarness = {
     now: number,
     fresh = false,
   ) {
+    panel?.invalidate();
     browserStore?.close();
     currentBinding = structuredClone(binding);
     deliveryContext = structuredClone(context);
@@ -225,6 +230,7 @@ const storageHarness = {
     browserStore!.close();
   },
   permission(value: BrowserDeliveryContext | null) {
+    panel?.invalidate();
     deliveryContext = value;
     permissionReads = 0;
   },
@@ -246,3 +252,69 @@ declare global {
   }
 }
 window.privateStorageTest = storageHarness;
+
+const panelHarness = {
+  mount() {
+    panel?.destroy();
+    let root = document.getElementById("private-results-root");
+    if (!root) {
+      root = document.createElement("main");
+      root.id = "private-results-root";
+      document.body.append(root);
+    }
+    panel = mountPrivateResults(
+      root,
+      {
+        export: () => browserStore!.export(),
+        readResult: async (input) => {
+          const result = await browserStore!.readResult(input);
+          if (holdRead) {
+            holdRead = false;
+            await new Promise<void>((resolve) => {
+              releaseRead = resolve;
+            });
+          }
+          return result;
+        },
+        stop: (input) => browserStore!.stop(input),
+        clear: (input) => browserStore!.clear(input),
+      },
+      () =>
+        currentBinding && currentBinding.expiresAt > storageNow
+          ? JSON.stringify([
+              currentBinding,
+              deliveryContext,
+              resultPermission,
+              !!keys,
+              peer?.fingerprint,
+            ])
+          : null,
+    );
+  },
+  invalidate() {
+    panel?.invalidate();
+  },
+  silentRevoke() {
+    resultPermission = false;
+  },
+  hold() {
+    holdRead = true;
+  },
+  held() {
+    return !!releaseRead;
+  },
+  release() {
+    releaseRead?.();
+    releaseRead = undefined;
+  },
+  destroy() {
+    panel?.destroy();
+    panel = undefined;
+  },
+};
+declare global {
+  interface Window {
+    privateResultsUI: typeof panelHarness;
+  }
+}
+window.privateResultsUI = panelHarness;
