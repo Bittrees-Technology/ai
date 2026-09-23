@@ -177,6 +177,9 @@ test("status rendering cannot enable unacknowledged recovery confirmation and pr
   ).toBeEnabled();
   await expect(confirm).toBeDisabled();
   await reg(page).getByRole("checkbox").focus();
+  // Exercise keyboard modality so the captured review includes :focus-visible.
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
   await expect(reg(page).getByRole("checkbox")).toBeFocused();
   await preview(page, info.project.name, "review");
 });
