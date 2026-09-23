@@ -195,3 +195,31 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+
+/* WebKit's native select appearance propagates long option overflow despite
+ * width limits. Retain semantic select behavior with a contained label and a
+ * CSS arrow; the full Mac identity remains visible in the review. */
+.browser-permission-select {
+  position: relative;
+  min-width: 0;
+  margin-top: 8px;
+}
+.browser-permission-select select {
+  appearance: none;
+  margin-top: 0;
+  padding-right: 34px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-permission-select::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}

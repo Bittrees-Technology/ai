@@ -136,7 +136,8 @@ jobs:
 
   browser-private-protocol:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The three-engine suite takes about 19 minutes before setup and previews.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17-alpine
@@ -169,6 +170,8 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check narrow permission layout before full suite
+        run: npm run test:browser-private -- tests/browser/production-browser-permissions.spec.ts --project=webkit --grep 'permission choices, review and history' --max-failures=1
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - uses: actions/upload-artifact@v4
@@ -357,5 +360,14 @@ jobs:
         with:
           name: browser-check-controls-ui-preview
           path: test-results/browser-check-controls-*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain browser task permission previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-permission-controls-ui-preview
+          path: test-results/browser-permission-controls-*.png
           if-no-files-found: error
           retention-days: 7
