@@ -195,3 +195,11 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+
+/* A native WebKit select can propagate its long option's intrinsic width to
+ * ancestors even when its own box fits. Keep the select label within that box;
+ * the complete Mac identity is shown again in the permission review. */
+.browser-permissions select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
