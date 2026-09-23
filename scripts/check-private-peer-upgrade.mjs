@@ -76,7 +76,7 @@ try {
     join(dir, "tasks.db"),
     new Vault(Buffer.alloc(32, 7)),
   );
-  assert.equal(store.db.pragma("user_version", { simple: true }), 16);
+  assert.equal(store.db.pragma("user_version", { simple: true }), 17);
   assert.equal(
     store.get({ userId: "synthetic", tenantId: "personal" }, seed.id).input
       .prompt,
@@ -92,7 +92,7 @@ try {
     testedAt: new Date().toISOString(),
     olderSource: olderInfo.sourceCommit,
     olderBundleSignatureVerified: true,
-    newSchema: 16,
+    newSchema: 17,
     oldSchema: 12,
     storeSourceSha256: createHash("sha256")
       .update(readFileSync("modules/storage/store.ts"))

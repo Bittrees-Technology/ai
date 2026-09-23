@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 if (process.env.GITHUB_ACTIONS !== "true" || process.platform !== "darwin")
@@ -138,6 +140,78 @@ try {
   assert.equal(await entryFor(keyId).key.getSecret(), undefined);
   assert.ok(await entryFor(keyId).attempt.getSecret());
   assert.ok(await entryFor(keyId).deleted.getSecret());
+  const { PrivateKeyLifecycle, endpointKeyOwner } = await load(
+    "modules/remote/private-key-lifecycle.js",
+  );
+  const { Store } = await load("modules/storage/store.js");
+  const { Vault } = await load("modules/storage/vault.js");
+  const { encryptedBackup, restoreBackup } = await load(
+    "modules/storage/backup.js",
+  );
+  const folder = await mkdtemp(join(tmpdir(), "packaged-key-lifecycle-"));
+  const scope = { userId: "synthetic", tenantId: "personal" },
+    vault = new Vault(randomBytes(32));
+  const binding = {
+    ownerId: randomUUID(),
+    deviceId: randomUUID(),
+    credentialEpoch: 1,
+    expiresAt: Date.now() + 3600000,
+  };
+  const managedEntries = (id) =>
+    macPrivateKeyEntries(
+      join(resources, "PrivateKeyInstall"),
+      profile,
+      endpointKeyOwner(scope),
+      id,
+    );
+  const stores = [];
+  const db = (path) => {
+    const store = new Store(path, vault);
+    stores.push(store);
+    return store;
+  };
+  const store = db(join(folder, "tasks.db"));
+  const lifecycle = (database) =>
+    new PrivateKeyLifecycle(
+      database,
+      vault,
+      scope,
+      () => binding,
+      managedEntries,
+    );
+  const lifecycleManager = lifecycle(store);
+  try {
+    const reserved = lifecycleManager.begin({
+      expectedRevision: 0,
+      confirmed: true,
+    });
+    const active = await lifecycleManager.provision({
+      keyId: reserved.keyId,
+      expectedRevision: reserved.revision,
+      confirmed: true,
+    });
+    const reopened = lifecycle(db(join(folder, "tasks.db")));
+    assert.equal((await reopened.resolve()).proof.publicKey, active.publicKey);
+    await encryptedBackup(store, vault, join(folder, "backup.aib"));
+    await restoreBackup(
+      join(folder, "backup.aib"),
+      vault,
+      join(folder, "restored.db"),
+    );
+    const restored = lifecycle(db(join(folder, "restored.db")));
+    assert.equal(restored.list().needsFreshPairing, true);
+    await assert.rejects(restored.resolve(), /DENIED/);
+    await reopened.clearAll({ confirmed: true });
+    assert.equal(await managedEntries(active.keyId).key.getSecret(), undefined);
+    assert.equal(reopened.list().pendingKeyDeletionCount, 0);
+    console.log(
+      "Packaged key lifecycle: SQLite selection, native key reopen, restore lock and native cleanup passed",
+    );
+  } finally {
+    await lifecycleManager.clearAll({ confirmed: true });
+    for (const database of stores) database.close();
+    await rm(folder, { recursive: true, force: true });
+  }
   console.log(
     "Packaged endpoint keys: native add-only storage, denied untrusted reader, reopen, nonextractable runtime handles, HPKE and reviewed deletion passed",
   );
