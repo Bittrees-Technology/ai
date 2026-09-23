@@ -579,3 +579,26 @@ summary {
   padding-left: 22px;
   line-height: 1.6;
 }
+
+.private-check-panel select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+}
+.private-check-panel .row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.private-check-panel button {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .private-check-panel .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

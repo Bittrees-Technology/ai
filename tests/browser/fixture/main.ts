@@ -326,3 +326,6 @@ if (new URLSearchParams(location.search).has("peers"))
 
 if (new URLSearchParams(location.search).has("permissions"))
   void import("./permissions.js");
+
+if (new URLSearchParams(location.search).has("checks"))
+  void import("./checks.js");

@@ -1,6 +1,6 @@
 # Reviewed peer-key possession checks
 
-Reviewed public invitations identify the key a user chose to trust. The new `PrivatePeerChecks` layer additionally verifies that a peer can decrypt a fresh challenge and produce the corresponding authenticated encrypted response. **Each endpoint performs its own challenge/response.** Answering another endpoint's challenge does not mark a local check complete and does not grant task permission. The Mac controller exposes authenticated local routes for this exchange, while user-facing exchange controls, browser endpoint keys and live transport remain unfinished. Normal native setup remains off.
+Reviewed public invitations identify the key a user chose to trust. The new `PrivatePeerChecks` layer additionally verifies that a peer can decrypt a fresh challenge and produce the corresponding authenticated encrypted response. **Each endpoint performs its own challenge/response.** Answering another endpoint's challenge does not mark a local check complete and does not grant task permission. The Mac controller exposes authenticated local routes for this exchange, and the [Mac device-check panel](mac-private-peer-checks.md) provides explicit manual exchange controls. Browser endpoint keys and live transport remain unfinished. Normal native setup remains off.
 
 ## Application protocol
 
