@@ -1,6 +1,6 @@
 # Mail sending prerequisites
 
-End-user Mail sending remains unavailable. The companion now has [reviewed-send backend groundwork](mail-send-journal.md), while its complete user interface, combined source/companion acceptance and release remain open. Its selected-message grants permit metadata, optional body and optional selected text attachment reads only. Chat sending grants belong to Chat's separate audience and must not be reused by the AI companion. Copy/download remains the available output path for a generated reply.
+End-user Mail sending remains unavailable. The companion now has [reviewed-send backend groundwork](mail-send-journal.md), with [complete-message review controls](mail-send-review.md), while combined source/companion acceptance and release remain open. Its selected-message grants permit metadata, optional body and optional selected text attachment reads only. Chat sending grants belong to Chat's separate audience and must not be reused by the AI companion. Copy/download remains the available output path for a generated reply.
 
 ## Historical version54 prerequisite audit
 

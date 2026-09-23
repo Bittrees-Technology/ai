@@ -1,6 +1,6 @@
 # Mac reviewed Mail backend
 
-The companion now has a separate reviewed-Mail connector, encrypted message journal and authenticated local API. This is backend groundwork: the dashboard review/file-export/history interface, combined companion/source delivery acceptance and native/personal release remain open. It does not give the model a send tool. The installed app and prepared development archive have not been replaced.
+The companion now has a separate reviewed-Mail connector, encrypted message journal and authenticated local API. The [dashboard review/file-export/history interface](mail-send-review.md) now wraps this backend. Combined companion/source delivery acceptance and native/personal release remain open. It does not give the model a send tool. The installed app and prepared development archive have not been replaced.
 
 Mac inference remains independent of Acer-server. This package makes no model, runtime, download, fallback or news-job changes. Mail transport is handled by Mail's existing source queue, not by the Mac inference runtime.
 

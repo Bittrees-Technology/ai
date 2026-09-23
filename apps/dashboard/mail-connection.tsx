@@ -104,7 +104,7 @@ export function MailConnection({
       <h3>Mail</h3>
       <p>
         Choose one message in Mail. Summaries and suggested replies stay on this
-        Mac. Nothing is sent or saved into your mailbox.
+        Mac. Creating a draft does not send or save it into your mailbox.
       </p>
       <button disabled={busy} onClick={() => void act(refresh)}>
         Refresh Mail connection
@@ -260,7 +260,8 @@ export function MailConnection({
                     </option>
                   </select>
                   <label htmlFor="mail-profile">Local model profile</label>
-                  <select className="model-profile-select"
+                  <select
+                    className="model-profile-select"
                     id="mail-profile"
                     value={profile}
                     disabled={busy}
