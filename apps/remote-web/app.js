@@ -1,3 +1,4 @@
+import "./browser-runtime.ts";
 import { BrowserSessionCoordinator } from "./browser-session.ts";
 import { BrowserSetupMount } from "./browser-setup-mount.ts";
 import { RemoteWebController, browserApi } from "./controller.js";
