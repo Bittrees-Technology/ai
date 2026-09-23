@@ -1,3 +1,7 @@
+import {
+  defaultExecutionLimits,
+  type ExecutionControls,
+} from "./execution-limits.js";
 import { separatedMailDraft } from "../../modules/connectors/mail-drafts.js";
 import {
   parseMemoryCandidates,
@@ -24,7 +28,11 @@ export interface Runtime {
   generate: Ollama["generate"];
 }
 export class LocalWorker {
-  private active: { id: string; abort: AbortController } | null = null;
+  private active = new Map<string, AbortController>();
+  private stopped = false;
+  get activeTasks() {
+    return this.active.size;
+  }
   constructor(
     private store: Store,
     private owner: Owner,
@@ -33,25 +41,72 @@ export class LocalWorker {
     private workerId = "local-worker",
     private memory?: MemoryStore,
     private sources?: SourceValidator,
+    private controls?: ExecutionControls,
   ) {}
   stop() {
-    this.active?.abort.abort();
+    this.stopped = true;
+    for (const abort of this.active.values()) abort.abort();
   }
   cancelSource(app?: "crm" | "autonote" | "mail") {
-    if (!this.active) return;
-    const binding = this.store.sourceBinding(this.owner, this.active.id);
-    if (binding && (!app || binding.authority.sourceApp === app))
-      this.active.abort.abort();
+    for (const [id, abort] of this.active) {
+      try {
+        const binding = this.store.sourceBinding(this.owner, id);
+        if (binding && (!app || binding.authority.sourceApp === app))
+          abort.abort();
+      } catch (error) {
+        if (!(error instanceof StoreError && error.code === "NOT_FOUND"))
+          throw error;
+        abort.abort();
+      }
+    }
   }
   cancel(id: string) {
-    if (this.active?.id === id) this.active.abort.abort();
+    this.active.get(id)?.abort();
   }
   async runOnce(): Promise<boolean> {
-    if (this.active) return false;
-    const claim = this.store.claim(this.owner, this.workerId);
+    if (this.stopped) return false;
+    const state = this.controls?.admission(this.active.size);
+    const limits = state?.limits ?? defaultExecutionLimits;
+    const admit = state ? state.reason === "ready" : this.active.size === 0;
+    // Expiry and dependency maintenance still happen while new work is held.
+    const claim = this.store.claim(this.owner, this.workerId, 30_000, admit, [
+      ...this.active.keys(),
+    ]);
     if (!claim) return false;
     const abort = new AbortController();
-    this.active = { id: claim.task.id, abort };
+    this.active.set(claim.task.id, abort);
+    let timedOut = false;
+    const expiresAt = Date.now() + limits.maxTaskSeconds * 1000;
+    const expire = () => {
+      if (timedOut) return;
+      timedOut = true;
+      abort.abort(new Error("runtime_limit"));
+      try {
+        this.store.fail(
+          this.owner,
+          claim.task.id,
+          this.workerId,
+          claim.generation,
+          false,
+          "runtime_limit",
+        );
+      } catch (error) {
+        if (!(
+          error instanceof StoreError &&
+          ["STALE_CLAIM", "NOT_FOUND"].includes(error.code)
+        ))
+          console.error(
+            "The task time limit could not be recorded; its result remains blocked.",
+          );
+      }
+    };
+    const checkDeadline = () => {
+      // Wall time also fences late continuations after sleep or a delayed timer.
+      if (Date.now() >= expiresAt) expire();
+      if (abort.signal.aborted) throw abort.signal.reason;
+    };
+    const deadline = setTimeout(expire, limits.maxTaskSeconds * 1000);
+    deadline.unref();
     const heartbeat = setInterval(() => {
       try {
         this.store.heartbeat(
@@ -74,7 +129,7 @@ export class LocalWorker {
       if (claim.task.input.sourceRefs.length && (!binding || !this.sources))
         throw new Error("Source adapter unavailable");
       const source = binding ? await this.sources!.validate(binding) : null;
-      if (abort.signal.aborted) throw abort.signal.reason;
+      checkDeadline();
       const pinned: PinnedModel = await this.runtime.pin(
         this.resolveProfile(claim.task.input.modelProfileId),
         abort.signal,
@@ -104,6 +159,7 @@ export class LocalWorker {
         claim.generation,
         {
           ...pinned,
+          executionLimits: limits,
           ...(separateMail ? { mailDraftPipeline: "separated-v1" } : {}),
           memories: memoryVersions,
           ...(binding ? { source: binding } : {}),
@@ -170,7 +226,7 @@ export class LocalWorker {
                   : claim.task.input.prompt,
               abort.signal,
             ));
-      if (abort.signal.aborted) throw abort.signal.reason;
+      checkDeadline();
       for (const prior of memories) {
         const current = await this.memory!.get(this.owner, prior.id);
         if (current.revision !== prior.revision || current.state !== "approved")
@@ -180,7 +236,7 @@ export class LocalWorker {
         batched ??
         (source ? sourceResult(source, text, claim.task.input.kind) : { text });
       if (binding) await this.sources!.validate(binding);
-      if (abort.signal.aborted) throw abort.signal.reason;
+      checkDeadline();
       const currentExtraction = extraction
         ? this.store.memoryExtractions.context(this.owner, claim.task.id)!
         : null;
@@ -191,6 +247,7 @@ export class LocalWorker {
             extraction!.sourceHash,
           )
         : null;
+      checkDeadline();
       this.store.complete(
         this.owner,
         claim.task.id,
@@ -221,11 +278,16 @@ export class LocalWorker {
           claim.task.id,
           this.workerId,
           claim.generation,
-          error instanceof ModelError && error.code === "MODEL_UNAVAILABLE",
-          (error instanceof ModelError && error.code === "INVALID_OUTPUT") ||
-            error instanceof MemoryCandidateError
-            ? "invalid_model_output"
-            : undefined,
+          !timedOut &&
+            error instanceof ModelError &&
+            error.code === "MODEL_UNAVAILABLE",
+          timedOut
+            ? "runtime_limit"
+            : (error instanceof ModelError &&
+                  error.code === "INVALID_OUTPUT") ||
+                error instanceof MemoryCandidateError
+              ? "invalid_model_output"
+              : undefined,
         );
       } catch (stale) {
         if (!(
@@ -236,7 +298,8 @@ export class LocalWorker {
       }
     } finally {
       clearInterval(heartbeat);
-      this.active = null;
+      clearTimeout(deadline);
+      this.active.delete(claim.task.id);
     }
     return true;
   }

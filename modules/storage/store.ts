@@ -1176,8 +1176,20 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
       this.event(id, "dependency_failed");
     }
   }
-  claim(owner: Owner, workerId: string, leaseMs = 30_000): Claim | null {
-    if (!workerId || leaseMs < 100 || leaseMs > 300_000)
+  claim(
+    owner: Owner,
+    workerId: string,
+    leaseMs = 30_000,
+    admit = true,
+    activeIds: string[] = [],
+  ): Claim | null {
+    if (
+      !workerId ||
+      leaseMs < 100 ||
+      leaseMs > 300_000 ||
+      activeIds.length > 4 ||
+      activeIds.some((id) => typeof id !== "string")
+    )
       throw new StoreError("INVALID_INPUT");
     return this.db
       .transaction(() => {
@@ -1202,13 +1214,21 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
           this.event(id, "expired");
         }
         this.failImpossibleDependencies(owner, now);
+        if (!admit) return null;
         const r = this.db
           .prepare(
             `SELECT t.* FROM tasks t WHERE user_id=? AND tenant_id=? AND (status='queued' OR(status='running' AND lease_until<=?)) AND next_attempt_at<=?
+AND t.id NOT IN (SELECT value FROM json_each(?))
 AND NOT EXISTS(SELECT 1 FROM tasks earlier WHERE earlier.user_id=t.user_id AND earlier.tenant_id=t.tenant_id AND earlier.conversation_id=t.conversation_id AND earlier.sequence<t.sequence AND earlier.status NOT IN ('completed','failed','cancelled','expired'))
 AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WHERE d.task_id=t.id AND p.status!='completed') ORDER BY created_at,id LIMIT 1`,
           )
-          .get(owner.userId, owner.tenantId, now, now) as Row | undefined;
+          .get(
+            owner.userId,
+            owner.tenantId,
+            now,
+            now,
+            JSON.stringify(activeIds),
+          ) as Row | undefined;
         if (!r) return null;
         this.db
           .prepare(
@@ -1350,10 +1370,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     worker: string,
     generation: number,
     transient: boolean,
-    reason?: "invalid_model_output",
+    reason?: "invalid_model_output" | "runtime_limit",
   ) {
     if (
-      (reason !== undefined && reason !== "invalid_model_output") ||
+      (reason !== undefined &&
+        !["invalid_model_output", "runtime_limit"].includes(reason)) ||
       (reason !== undefined && transient)
     )
       throw new StoreError("INVALID_INPUT");

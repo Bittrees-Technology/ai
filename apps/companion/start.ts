@@ -1,3 +1,4 @@
+import { ExecutionControls } from "./execution-limits.js";
 import { retainedContent } from "./retained-content.js";
 import { CompanionPrivateKeys } from "./private-keys.js";
 import { macPrivateKeyEntries } from "./private-key-entry.js";
@@ -90,6 +91,9 @@ const key = await loadStorageKey(
 );
 const store = new Store(join(content.directory, "tasks.db"), new Vault(key)),
   owner = { userId: "local-owner", tenantId: "personal" };
+const executionControls = new ExecutionControls(
+  join(directory, "execution-limits.json"),
+);
 const importDirectory = join(directory, "model-imports");
 await mkdir(importDirectory, { recursive: true, mode: 0o700 });
 const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
@@ -122,11 +126,12 @@ const crm = new CrmConnector(
   worker = new LocalWorker(
     store,
     owner,
-    runtime,
+    new Ollama("http://127.0.0.1:11434", 1800_000),
     (id) => store.profile(owner, id),
     "personal",
     memory,
     new SourceTasks(sources, autonoteSources, mailSources),
+    executionControls,
   );
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
@@ -194,7 +199,10 @@ server.on(
     privateKeys,
     retainedCopies: retainedContent(directory, content.directory),
     backupDownload: localBackupDownload(store, memory, new Vault(key)),
-    deviceStatus: () => deviceStatus(directory),
+    deviceStatus: () =>
+      deviceStatus(directory, executionControls.admission(worker.activeTasks)),
+    executionControls,
+    activeTasks: () => worker.activeTasks,
     imports,
     remote,
     receiver,
@@ -220,7 +228,6 @@ server.on(
 );
 let stopping = false,
   started = false,
-  running: Promise<boolean> | undefined,
   pairingWrite: Promise<void> | undefined;
 server.on("error", () => {
   console.error(
@@ -240,7 +247,7 @@ async function stop() {
   server.closeIdleConnections();
   await Promise.all([receiver?.shutdown(), templateReceiver?.shutdown()]);
   await imports.shutdown();
-  await running?.catch(() => {});
+  await Promise.all([...runs]);
   await closed;
   imports.close();
   memory.close();
@@ -248,17 +255,19 @@ async function stop() {
   await pairingWrite?.catch(() => {});
   await rm(codePath, { force: true });
 }
+const runs = new Set<Promise<unknown>>();
 const timer = setInterval(() => {
-  if (started && !stopping && !running) {
-    running = worker
+  if (started && !stopping) {
+    const running = worker
       .runOnce()
       .catch(() => {
         console.error("Local work paused after an internal error.");
         return false;
       })
       .finally(() => {
-        running = undefined;
+        runs.delete(running);
       });
+    runs.add(running);
   }
 }, 500);
 const importMaintenance = setInterval(() => {
