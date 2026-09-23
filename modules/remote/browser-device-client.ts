@@ -35,7 +35,7 @@ export class BrowserDeviceClient {
   } | null = null;
   constructor(
     private context: () => BrowserDeviceContext | null,
-    private transport: typeof fetch = fetch,
+    private transport: typeof fetch = (...args) => globalThis.fetch(...args),
     private now = Date.now,
     private monotonic = () => performance.now(),
   ) {}

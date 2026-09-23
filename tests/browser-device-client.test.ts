@@ -427,3 +427,27 @@ test("caller edits to returned registration data cannot forge a fresh observatio
     assert.equal(scope.freshRegistration(otherBinding), false);
   });
 });
+
+// Native browser fetch rejects an arbitrary class-instance receiver.
+test("default transport keeps the browser fetch receiver", async () => {
+  const ownerId = randomUUID();
+  const previous = globalThis.fetch;
+  globalThis.fetch = async function (this: unknown) {
+    assert.equal(this, globalThis);
+    return Response.json({
+      version: 1,
+      ownerId,
+      sessionExpiresAt: Date.now() + 60000,
+      registration: null,
+    });
+  };
+  try {
+    const client = new BrowserDeviceClient(() => ({
+      ownerId,
+      scope: "session",
+    }));
+    assert.equal((await client.inspect()).ownerId, ownerId);
+  } finally {
+    globalThis.fetch = previous;
+  }
+});

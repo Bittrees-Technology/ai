@@ -141,6 +141,18 @@ test.beforeEach(async ({ context }) => {
         call.on("error", reject);
         call.end(req.postData() ?? "");
       });
+      if (result.status >= 400) {
+        // Synthetic CI requests only. Log names/status, never credentials or bodies.
+        console.error("Browser identity fixture rejection", {
+          path: url.pathname,
+          status: result.status,
+          origin: headers.origin,
+          fetchSite: headers["sec-fetch-site"],
+          cookieNames: (headers.cookie ?? "")
+            .split(";")
+            .map((part) => part.trim().split("=")[0]),
+        });
+      }
       if (holdIdentity && url.pathname.endsWith("/registration/identity")) {
         holdIdentity = false;
         heldIdentity = true;
