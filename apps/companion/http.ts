@@ -933,6 +933,7 @@ export function localApi({
       tasks: store.export(owner).map(concealed),
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
+      privateTaskConsent: store.exportPrivateTaskConsent(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
       privateEndpointKeys: store.exportPrivateEndpointKeys(owner),
       privateTaskReceipts: store.exportPrivateTaskReceipts(owner),
