@@ -20,7 +20,7 @@ Public history export contains only the owner-local typed public snapshot. It is
 
 ## Cancellation and uncertain outcomes
 
-Leaving the window, scope changes, another key/registration action, Escape, another peer action, destruction, clock reversal and wall/monotonic review expiry discard transient inputs. A host cancellation counter is a view coordination signal only, never authority. Before confirmation the UI checks the original local key snapshot; the backend separately checks atomic current state.
+Leaving the window, scope changes, another key/registration action, Escape, another peer action, destruction, clock reversal and wall/monotonic review expiry discard transient inputs. A peer action synchronously closes registration and key reviews before capturing the host cancellation counter; deferred changes in another panel cannot invalidate a fresh peer snapshot. That counter is a view coordination signal only, never authority. Before confirmation the UI checks the original local key snapshot; the backend separately checks atomic current state.
 
 The UI requires a fresh history read after success or failure. A response can fail after a local commit; the error explicitly requires checking the saved list version and forbids replaying the consumed review. No rollback is promised. Pending UI operations have the original review deadline (or a two-minute read/prepare deadline) and discard late results.
 

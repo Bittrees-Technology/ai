@@ -319,6 +319,9 @@ test("key-control changes cancel a prepared peer review before confirmation", as
     await expect(peers(page).getByRole("status")).toContainText(
       "controls changed",
     );
+    await expect(keyControls(page).getByRole("status")).toContainText(
+      "Key history loaded",
+    );
     await expect(
       peers(page).getByRole("button", {
         name: "Save reviewed Mac identity",

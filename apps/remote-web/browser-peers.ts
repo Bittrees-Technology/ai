@@ -33,6 +33,7 @@ export function mountBrowserPeers(
   host: Host,
   now = Date.now,
   monotonic = () => performance.now(),
+  closeOtherReviews: () => void = () => {},
 ) {
   let disposed = false,
     generation = 0,
@@ -298,9 +299,12 @@ export function mountBrowserPeers(
     for (const url of urls) URL.revokeObjectURL(url);
     urls.clear();
   }
-  function reset(message: string, forget = false) {
+  function reset(message: string, forget = false, cancelHost = true) {
     generation++;
-    host.peerAPI.invalidate();
+    if (cancelHost) {
+      closeOtherReviews();
+      host.peerAPI.invalidate();
+    }
     version = host.reviewVersion();
     busy = false;
     review = null;
@@ -400,6 +404,7 @@ export function mountBrowserPeers(
           reset(
             "Response expired or access changed. Refresh saved devices to inspect the current list.",
             true,
+            false,
           );
         else {
           busy = false;
@@ -529,6 +534,7 @@ export function mountBrowserPeers(
           reset(
             "Response expired or access changed. Refresh saved devices to inspect the current list.",
             true,
+            false,
           );
         else {
           busy = false;
@@ -615,6 +621,7 @@ export function mountBrowserPeers(
           reset(
             "Response expired or access changed. Refresh saved devices to inspect the current list.",
             true,
+            false,
           );
         else {
           busy = false;
@@ -698,6 +705,7 @@ export function mountBrowserPeers(
       reset(
         "Account, registration or key controls changed. Refresh saved devices to continue.",
         true,
+        false,
       );
     else if (pending && !timed(pending.started, pending.mono, pending.expires))
       reset(
@@ -717,7 +725,7 @@ export function mountBrowserPeers(
   controls();
   return {
     invalidate() {
-      reset("Access changed. Refresh saved devices to continue.", true);
+      reset("Access changed. Refresh saved devices to continue.", true, false);
     },
     destroy() {
       if (disposed) return;

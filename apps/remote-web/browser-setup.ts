@@ -111,7 +111,12 @@ export function mountBrowserSetup(
   );
   const peerRoot = el("div");
   root.append(peerRoot);
-  const peerView = mountBrowserPeers(peerRoot, host, now, monotonic);
+  const peerView = mountBrowserPeers(peerRoot, host, now, monotonic, () => {
+    // One host owns all three views. A peer action closes the other reviews
+    // synchronously, before it captures the host cancellation version.
+    reset("Registration review closed while reviewing device identities.");
+    keyView.invalidate();
+  });
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;
