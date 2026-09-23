@@ -211,6 +211,10 @@ test("Mac check UI supports keyboard review and readable desktop and narrow encr
   await expect(
     page.getByLabel("Encrypted code to transfer", { exact: true }),
   ).toBeVisible();
+  await page.screenshot({
+    path: `test-results/private-checks-mobile-${info.project.name}.png`,
+    fullPage: true,
+  });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -221,8 +225,4 @@ test("Mac check UI supports keyboard review and readable desktop and narrow encr
       .getByRole("button", { name: "Hide encrypted code" })
       .boundingBox())!.height,
   ).toBeGreaterThanOrEqual(44);
-  await page.screenshot({
-    path: `test-results/private-checks-mobile-${info.project.name}.png`,
-    fullPage: true,
-  });
 });
