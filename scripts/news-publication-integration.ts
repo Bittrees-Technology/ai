@@ -1,4 +1,7 @@
 /** Invoked inside the disposable pinned News schema by news-integration-check.ts. */
+import { createServer } from "node:http";
+import { localApi } from "../apps/companion/http.js";
+import { NewsConnectionController } from "../apps/dashboard/news-state.js";
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -96,6 +99,32 @@ export async function checkNewsPublication(
       store.newsPublications.forOwner(owner),
     );
   let client = make();
+  const server = createServer(),
+    localToken = randomBytes(32).toString("hex");
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  server.on("request", (req, res) =>
+    localApi({ store, owner, token: localToken, port, news: client })(req, res),
+  );
+  const api = async (path: string, body?: unknown) => {
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/connections/news/publication/${path}`,
+      {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          Authorization: "Bearer " + localToken,
+          "Content-Type": "application/json",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      },
+    );
+    const value = (await response.json()) as any;
+    if (!response.ok) throw Error(value.error);
+    return value;
+  };
+  const controller = new NewsConnectionController((path, _method, body) =>
+    api(path.replace("/v1/connections/news/publication/", ""), body),
+  );
   try {
     await db.query("INSERT INTO accounts(id) VALUES($1)", [account]);
     for (const i of items)
@@ -145,7 +174,9 @@ export async function checkNewsPublication(
     const before = (
       await db.query("SELECT * FROM newspapers WHERE account_id=$1", [account])
     ).rows[0];
-    const review = await client.reviewPublication();
+    await controller.reviewPublication();
+    assert.equal(controller.publicationError, "");
+    const review = controller.publicReview!;
     assert.equal(
       review.source.content.navigation[0]!.name,
       "Live navigation name",
@@ -156,11 +187,10 @@ export async function checkNewsPublication(
     );
     assert.ok(!JSON.stringify(review).includes("OMIT_PRIVATE_CONTEXT"));
     assert.ok(!JSON.stringify(review).includes("ranking_score"));
-    const committed = await client.confirmPublication({
-      id: review.id,
-      confirmed: true,
-      audience: "public",
-    });
+    controller.publicationConfirmed = true;
+    await controller.publish();
+    assert.equal(controller.publicationError, "");
+    const committed = controller.publicationRecord!;
     assert.equal(committed.receipt!.operationId, review.id);
     assert.equal(writes, 1);
     const after = (
@@ -179,13 +209,13 @@ export async function checkNewsPublication(
         ].includes(k),
     ))
       assert.deepEqual(after[field], before[field], field);
-    const stale = await client.reviewPublication();
+    const stale = await api("review", {});
     await db.query(
       "UPDATE newspaper_feeds SET name='Changed navigation' WHERE id=$1",
       [feed],
     );
     await assert.rejects(
-      client.confirmPublication({
+      api("confirm", {
         id: stale.id,
         confirmed: true,
         audience: "public",
@@ -193,10 +223,10 @@ export async function checkNewsPublication(
       /SOURCE_CONFLICT/,
     );
     assert.equal(writes, 1);
-    const uncertain = await client.reviewPublication();
+    const uncertain = await api("review", {});
     loseResponse = true;
     await assert.rejects(
-      client.confirmPublication({
+      api("confirm", {
         id: uncertain.id,
         confirmed: true,
         audience: "public",
@@ -221,12 +251,9 @@ export async function checkNewsPublication(
     store = new Store(path, vault);
     client = make();
     loseResponse = false;
+    await assert.rejects(api("review", {}), /NEWS_PUBLICATION_UNCONFIRMED/);
     await assert.rejects(
-      client.reviewPublication(),
-      /NEWS_PUBLICATION_UNCONFIRMED/,
-    );
-    await assert.rejects(
-      client.confirmPublication({
+      api("confirm", {
         id: uncertain.id,
         confirmed: true,
         audience: "public",
@@ -238,7 +265,7 @@ export async function checkNewsPublication(
       "UPDATE newspapers SET snapshot=NULL,published=false WHERE account_id=$1",
       [account],
     );
-    const reconciled = await client.reconcilePublication({
+    const reconciled = await api("reconcile", {
       operationId: uncertain.id,
     });
     assert.equal(reconciled.receipt!.historical, true);
@@ -282,10 +309,10 @@ export async function checkNewsPublication(
       "UPDATE newspapers SET draft=$2,draft_revision=draft_revision+1 WHERE account_id=$1",
       [account, JSON.stringify(draft)],
     );
-    const blocked = await client.reviewPublication();
+    const blocked = await api("review", {});
     assert.equal(blocked.source.eligibility.eligible, false);
     await assert.rejects(
-      client.confirmPublication({
+      api("confirm", {
         id: blocked.id,
         confirmed: true,
         audience: "public",
@@ -297,7 +324,7 @@ export async function checkNewsPublication(
       keyReview.connection.credentialId,
     ]);
     await assert.rejects(
-      client.reconcilePublication({ operationId: uncertain.id }),
+      api("reconcile", { operationId: uncertain.id }),
       /SOURCE_DENIED/,
     );
     await client.forget({ confirmed: true });
@@ -309,11 +336,10 @@ export async function checkNewsPublication(
     const next = await client.prepare({ token: readKey.token });
     await client.confirm({ id: next.id, confirmed: true });
     assert.deepEqual(
-      (await client.reconcilePublication({ operationId: uncertain.id }))
-        .receipt,
+      (await api("reconcile", { operationId: uncertain.id })).receipt,
       reconciled.receipt,
     );
-    await assert.rejects(client.reviewPublication(), /PUBLICATION_REQUIRED/);
+    await assert.rejects(api("review", {}), /PUBLICATION_REQUIRED/);
     assert.equal(writes, 2);
     assert.deepEqual([...new Set(calls)].sort(), [
       "get_connection",
@@ -333,10 +359,30 @@ export async function checkNewsPublication(
         Number((await db.query(`SELECT count(*) n FROM ${table}`)).rows[0].n),
         0,
       );
+    await controller.loadPublicationHistory();
+    assert.equal(controller.publicationHistory!.length, 2);
+    await controller.openPublication(uncertain.id);
+    assert.deepEqual(controller.publicationRecord!.receipt, reconciled.receipt);
+    controller.deletePublicationConfirmed = true;
+    await controller.deletePublication();
+    assert.equal(controller.publicationRecord, null);
+    assert.equal(store.newsPublications.list(owner).length, 1);
+    assert.equal(
+      Number(
+        (
+          await db.query(
+            "SELECT count(*) n FROM newspaper_editions WHERE account_id=$1",
+            [account],
+          )
+        ).rows[0].n,
+      ),
+      2,
+    );
     console.log(
-      "Actual News publication + Mac journal: exact full projection, durable pre-dispatch intent, one write per approval, stale navigation/private-feed denial, response loss, restart and encrypted restore, historical read-only reconciliation after visibility withdrawal, revoked/read-only replacement key, unchanged schedules and zero delivery/processing effects pass.",
+      "Actual News MCP + authenticated Mac HTTP/controller publication: exact full projection, durable pre-dispatch intent, one write per approval, stale navigation/private-feed denial, response loss, restart and encrypted restore, historical read-only reconciliation after visibility withdrawal, revoked/read-only replacement key, unchanged schedules and zero delivery/processing effects pass.",
     );
   } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await client.cancel();
     restored?.close();
     store.close();

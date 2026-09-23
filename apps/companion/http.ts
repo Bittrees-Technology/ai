@@ -515,6 +515,34 @@ export function localApi({
     );
   });
   if (news) {
+    if (news.publicationAvailable) {
+      app.post("/v1/connections/news/publication/review", async (req, res) => {
+        z.strictObject({}).parse(req.body);
+        res.json(await news.reviewPublication());
+      });
+      app.post("/v1/connections/news/publication/confirm", async (req, res) =>
+        res.json(await news.confirmPublication(req.body)),
+      );
+      app.post("/v1/connections/news/publication/cancel", (req, res) =>
+        res.json(news.cancelPublication(req.body)),
+      );
+      app.post("/v1/connections/news/publication/reconcile", async (req, res) =>
+        res.json(await news.reconcilePublication(req.body)),
+      );
+      app.get("/v1/connections/news/publication/history", (_req, res) =>
+        res.json(news.publicationHistory()),
+      );
+      app.get(
+        "/v1/connections/news/publication/history/:operationId",
+        (req, res) =>
+          res.json(
+            news.publicationRecord({ operationId: req.params.operationId }),
+          ),
+      );
+      app.post("/v1/connections/news/publication/delete", async (req, res) =>
+        res.json(await news.deletePublication(req.body)),
+      );
+    }
     app.post("/v1/connections/news/review", async (req, res) =>
       res.json(await news.prepare(req.body)),
     );

@@ -129,6 +129,9 @@ const crm = new CrmConnector(
   news = new NewsConnector(
     JSON.stringify(owner),
     newsKeychainEntry("personal"),
+    fetch,
+    Date.now,
+    store.newsPublications.forOwner(owner),
   ),
   runtime = new Ollama(),
   worker = new LocalWorker(

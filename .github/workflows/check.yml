@@ -275,3 +275,12 @@ jobs:
           path: test-results/news-curation-*.png
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain reviewed News publication previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-publication-ui-preview
+          path: test-results/news-publication-*.png
+          if-no-files-found: error
+          retention-days: 7

@@ -1,3 +1,4 @@
+import { NewsPublication } from "./news-publication.js";
 import { NewsCuration } from "./news-curation.js";
 import React, { useEffect, useRef, useState } from "react";
 import { NewsConnectionController } from "./news-state.js";
@@ -31,6 +32,7 @@ export function NewsConnectionPanel({
     const deadlines = [
       c.pending?.reviewExpiresAt,
       c.editReview?.expiresAt,
+      c.publicReview?.expiresAt,
       c.status?.connection?.expiresAt,
     ].filter((v): v is string => !!v);
     const until = deadlines.sort((a, b) => Date.parse(a) - Date.parse(b))[0];
@@ -54,6 +56,9 @@ export function NewsConnectionPanel({
       if (
         c.pending ||
         c.editReview ||
+        c.publicReview ||
+        c.publicationRecord ||
+        c.publicationHistory ||
         c.preview ||
         c.checkedAt ||
         c.status?.connection?.state === "expired"
@@ -62,7 +67,7 @@ export function NewsConnectionPanel({
     };
     expire();
     return () => clearTimeout(timer);
-  }, [c, c.pending, c.editReview, c.status]);
+  }, [c, c.pending, c.editReview, c.publicReview, c.status]);
   const connection = c.status?.connection;
   return (
     <article className="card news-connection" aria-label="News connection">
@@ -82,8 +87,8 @@ export function NewsConnectionPanel({
       </p>
       <p className="hint">
         Starts with read-only access. Each preview edit requires a separate
-        review and curation confirmation. Manage publishing, deliveries and
-        schedules in News.
+        review and curation confirmation. Publication requires its own full
+        public review and confirmation. Manage deliveries and schedules in News.
       </p>
       {c.error && <p role="alert">{c.error}</p>}
       {!c.status ? (
@@ -192,6 +197,7 @@ export function NewsConnectionPanel({
       {connection && (
         <NewsCuration controller={c} changed={() => render((n) => n + 1)} />
       )}
+      <NewsPublication controller={c} changed={() => render((n) => n + 1)} />
       {c.checkedAt && (
         <section aria-label="News articles">
           <h4>Your News articles</h4>

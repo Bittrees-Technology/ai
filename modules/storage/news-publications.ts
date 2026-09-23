@@ -170,6 +170,7 @@ export class NewsPublications {
       list: () => this.list(bound),
       reserve: (raw: unknown) => this.reserve(bound, raw),
       reconcile: (id: string, raw: unknown) => this.reconcile(bound, id, raw),
+      remove: (raw: unknown) => this.remove(bound, raw),
     };
   }
 }

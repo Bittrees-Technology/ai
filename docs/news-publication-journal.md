@@ -1,6 +1,6 @@
 # News publication backend and durable journal
 
-This backend is implemented but **not enabled in the shipped companion interface**. Normal startup supplies no publication journal to `NewsConnector`, and no publication review/confirm/reconcile HTTP route exists. Publication methods return `PUBLICATION_UNAVAILABLE` without an explicitly supplied owner-bound journal. The full public-content review screen and visible operation-history controls are the next work package. No personal key, live publication or installed-app update was used to verify this step.
+The backend is now connected to the [Mac publication review and history interface](news-publication-review.md). Normal startup supplies the owner-bound journal and authenticated local publication/history routes. Builds constructed without a journal still return `PUBLICATION_UNAVAILABLE` and expose no publication routes. Each write requires the complete public-content review and separate public-audience confirmation. No personal key, live publication or installed-app update was used to verify this implementation.
 
 ## Reviewed intent and source contract
 
@@ -22,7 +22,7 @@ The source provides one durable historical receipt per operation. Receipt verifi
 
 ## Retention, export and recovery
 
-Only explicitly confirmed publication intents are persisted; loading/reviewing source material alone does not create a record. The standard authenticated local export includes this retained publication history without bearer credentials. Local owner-scoped deletion removes it and invalidates unconfirmed in-memory reviews. Source forget leaves the history available for explicit receipt recovery. Individual journal removal requires explicit confirmation plus acknowledgement that publication tracking is being forgotten; it does not withdraw the source edition. The future UI must explain these consequences before exposing deletion.
+Only explicitly confirmed publication intents are persisted; loading/reviewing source material alone does not create a record. The standard authenticated local export includes this retained publication history without bearer credentials. Local owner-scoped deletion removes it and invalidates unconfirmed in-memory reviews. Source forget leaves the history available for explicit receipt recovery. Individual journal removal requires explicit confirmation plus acknowledgement that publication tracking is being forgotten; it does not withdraw the source edition. The review/history UI explains these consequences and requires a separate unchecked deletion acknowledgement.
 
 Encrypted backups retain exact pending intents and committed receipts. Restored records never activate consent or dispatch writes. A backup predating a later publication cannot contain that later operation: preserve/export newer tracking before rollback. The actual previous task21 engine and prepared task20 engine reject task22 stores; original backups remain separately usable with their respective older helpers. Old backup rollback contains historical data and older access rules; it does not carry forward later deletions, memory rules or publication tracking.
 
@@ -31,6 +31,6 @@ Encrypted backups retain exact pending intents and committed receipts. Restored 
 - Thirteen new engine/database/HTTP suites cover complete payloads, strict confirmation, isolation, invalid source contracts, scope/content changes, cancellation, lifetime, detached reviews, journal durability, local write/readback faults, post-commit response loss, receipt mismatch, replacement keys, restart (including abrupt child-process exit with committed WAL), backup/restore and deletion/export.
 - The real pinned News MCP and PostgreSQL integration checks exact public snapshots, unchanged private drafts and schedules, stale navigation, private named-feed denial, actual source commit with lost response, encrypted restore, historical reconciliation after visibility withdrawal, revoked/read-scoped replacement keys, and zero delivery or processing jobs.
 - Actual task21→22 compatibility uses the compiled PR137 engine; prepared task20→22 compatibility also reruns local-memory dependency preservation and denial through coordinated encrypted restore. Evidence is retained alongside this document.
-- Existing browser checks run only in disposable GitHub CI. This step changes no dashboard UI. Personal/native review acceptance, visible tracking and publication controls, signed distribution and the broader X1 workflow remain open.
+- Browser review checks run only in disposable GitHub CI; the companion now provides visible tracking and publication controls. Personal/native review acceptance, signed distribution and the broader X1 workflow remain open.
 
 Acer-server's model, runtime and existing news jobs remain unchanged. Mac inference/default models, cloud fallback and the installed companion are unchanged.

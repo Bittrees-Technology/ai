@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 import { Store } from "../modules/storage/store.js";
 import { Vault } from "../modules/storage/vault.js";
 import { encryptedBackup, restoreBackup } from "../modules/storage/backup.js";
+import { NewsConnectionController } from "../apps/dashboard/news-state.js";
 import { NewsConnector } from "../modules/connectors/news.js";
 import {
   newsPublicationReviewSchema,
@@ -643,7 +644,7 @@ test("encrypted backup/restore retains exact pending intent without replay; expl
     await f.close();
   }
 });
-test("local export includes only own approved publication history without credentials; publication HTTP paths remain unavailable", async () => {
+test("local export includes only own approved publication history without credentials; data deletion clears held reviews", async () => {
   const f = fixture();
   const token = "test-token-".repeat(8);
   const server = createServer();
@@ -670,15 +671,15 @@ test("local export includes only own approved publication history without creden
     const data = (await (await call("export")).json()) as any;
     assert.equal(data.newsPublications.length, 1);
     assert.ok(!JSON.stringify(data).includes(key));
-    for (const route of [
-      "publication/review",
-      "publication/confirm",
-      "publication/reconcile",
-    ])
-      assert.equal(
-        (await call("connections/news/" + route, "POST")).status,
-        404,
-      );
+    const history = (await (
+      await call("connections/news/publication/history")
+    ).json()) as any;
+    assert.equal(history.items.length, 1);
+    assert.equal(history.items[0].review, undefined);
+    assert.equal(
+      JSON.stringify(history).includes("EXACT_PUBLIC_EXCERPT"),
+      false,
+    );
     const deleted = await fetch(`http://127.0.0.1:${port}/v1/data`, {
       method: "DELETE",
       headers: {
@@ -762,4 +763,292 @@ test("committed intent survives abrupt child exit before dispatch without creati
     store?.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("publication HTTP requires local authentication, exact public consent and owner journal; uncertainty reconciles only by explicit receipt read", async () => {
+  const f = fixture(),
+    server = createServer(),
+    token = randomBytes(32).toString("hex");
+  try {
+    await f.connect();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as any).port;
+    server.on(
+      "request",
+      localApi({ store: f.store, owner, token, port, news: f.client }),
+    );
+    const call = (path: string, body?: unknown, auth = true) =>
+      fetch(
+        `http://127.0.0.1:${port}/v1/connections/news/publication/${path}`,
+        {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            Authorization: "Bearer " + (auth ? token : "wrong"),
+            "Content-Type": "application/json",
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+      );
+    assert.equal((await call("history", undefined, false)).status, 401);
+    assert.equal(
+      (await call("review", { accountId: randomUUID() })).status,
+      400,
+    );
+    const r = (await (await call("review", {})).json()) as any;
+    assert.equal(
+      (await call("confirm", { ...confirm(r), confirmed: false })).status,
+      400,
+    );
+    assert.equal(f.writes, 0);
+    f.effect(async (name) => {
+      if (name === "publish_reviewed_preview") throw Error("Lost response");
+    });
+    assert.equal((await call("confirm", confirm(r))).status, 400);
+    assert.equal(f.writes, 1);
+    const history = (await (await call("history")).json()) as any;
+    assert.equal(history.items.length, 1);
+    assert.equal(history.items[0].receipt, null);
+    assert.equal((await call("confirm", confirm(r))).status, 400);
+    assert.equal(f.writes, 1);
+    f.effect(async () => {});
+    const checked = (await (
+      await call("reconcile", { operationId: r.id })
+    ).json()) as any;
+    assert.ok(checked.receipt);
+    assert.equal(f.writes, 1);
+    const foreign = f.store.newsPublications.reserve(other, reservation());
+    assert.equal((await call("history/" + foreign.operationId)).status, 404);
+    assert.equal(
+      (await call("delete", { operationId: r.id, confirmed: true })).status,
+      400,
+    );
+    await f.client.forget({ confirmed: true });
+    assert.equal((await call("history/" + r.id)).status, 200);
+    assert.equal(
+      (
+        await call("delete", {
+          operationId: r.id,
+          confirmed: true,
+          forgetPublicationTracking: true,
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await call("history/" + r.id)).status, 404);
+    assert.equal(f.store.newsPublications.list(other).length, 1);
+    assert.equal(f.writes, 1);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await f.close();
+  }
+});
+test("targeted focus cancellation never cancels a newer review; deletion cannot race an admitted publication", async () => {
+  const f = fixture();
+  try {
+    await f.connect();
+    const old = await f.client.reviewPublication(),
+      current = await f.client.reviewPublication();
+    f.client.cancelPublication({ id: old.id });
+    let entered!: () => void, release!: () => void;
+    const arrived = new Promise<void>((r) => (entered = r)),
+      gate = new Promise<void>((r) => (release = r));
+    f.effect(async (name) => {
+      if (name === "publish_reviewed_preview") {
+        entered();
+        await gate;
+      }
+    });
+    const publishing = f.client.confirmPublication(confirm(current));
+    await arrived;
+    await assert.rejects(
+      f.client.deletePublication({
+        operationId: current.id,
+        confirmed: true,
+        forgetPublicationTracking: true,
+      }),
+      /CONNECTION_BUSY/,
+    );
+    assert.throws(
+      () => f.client.invalidatePublicationReview(),
+      /CONNECTION_BUSY/,
+    );
+    f.client.cancelPublication({ id: current.id });
+    release();
+    assert.ok((await publishing).receipt);
+    assert.equal(f.writes, 1);
+    const next = await f.client.reviewPublication();
+    f.client.cancelPublication({ id: next.id });
+    await assert.rejects(
+      f.client.confirmPublication(confirm(next)),
+      /REVIEW_EXPIRED/,
+    );
+  } finally {
+    await f.close();
+  }
+});
+test("builds without a supplied journal still have no publication HTTP capability", async () => {
+  const f = fixture(),
+    server = createServer(),
+    token = randomBytes(32).toString("hex");
+  try {
+    const disabled = new NewsConnector(
+      JSON.stringify(owner),
+      f.secret,
+      f.transport,
+    );
+    assert.equal((await disabled.status()).publication, "unavailable");
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as any).port;
+    server.on(
+      "request",
+      localApi({ store: f.store, owner, token, port, news: disabled }),
+    );
+    for (const method of ["review", "confirm", "reconcile", "delete"]) {
+      const r = await fetch(
+        `http://127.0.0.1:${port}/v1/connections/news/publication/${method}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        },
+      );
+      assert.equal(r.status, 404);
+    }
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await f.close();
+  }
+});
+test("publication controller drops delayed review after focus loss and cancels only its review ID", async () => {
+  const calls: any[] = [];
+  let release!: (r: any) => void;
+  const c = new NewsConnectionController(async (path, method, body) => {
+    calls.push({ path, method, body });
+    if (path.endsWith("/review")) return new Promise((r) => (release = r));
+    return {};
+  });
+  const loading = c.reviewPublication();
+  c.hide();
+  const id = randomUUID();
+  release({
+    id,
+    source: sourceReview(),
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  });
+  await loading;
+  assert.equal(c.publicReview, null);
+  assert.equal(calls.at(-1).path, "/v1/connections/news/publication/cancel");
+  assert.deepEqual(calls.at(-1).body, { id });
+  assert.equal(
+    calls.some((x) => x.path.endsWith("/confirm")),
+    false,
+  );
+});
+test("publication controller needs fresh consent, consumes before dispatch and never retries uncertain publication or restores hidden results", async () => {
+  const calls: any[] = [];
+  const r = {
+    id: randomUUID(),
+    source: sourceReview(),
+    expiresAt: new Date(Date.now() + 120000).toISOString(),
+  };
+  let fail = true,
+    release!: (v: any) => void;
+  const c = new NewsConnectionController(async (path, method, body) => {
+    calls.push({ path, method, body });
+    if (path.endsWith("/review")) return r;
+    if (path.endsWith("/confirm")) {
+      if (fail) throw Error();
+      return new Promise((resolve) => (release = resolve));
+    }
+    if (path.endsWith("/history")) return { items: [] };
+    return {};
+  });
+  await c.reviewPublication();
+  await c.publish();
+  assert.equal(calls.filter((x) => x.path.endsWith("/confirm")).length, 0);
+  c.publicationConfirmed = true;
+  await c.publish();
+  assert.equal(c.publicReview, null);
+  assert.equal(c.publicationConfirmed, false);
+  assert.match(c.publicationError, /Nothing will be resent/);
+  await c.publish();
+  assert.equal(calls.filter((x) => x.path.endsWith("/confirm")).length, 1);
+  await c.loadPublicationHistory();
+  assert.deepEqual(c.publicationHistory, []);
+  await c.reviewPublication();
+  c.publicationConfirmed = true;
+  fail = false;
+  const publishing = c.publish();
+  c.hide();
+  release({ operationId: r.id });
+  await publishing;
+  assert.equal(c.publicationRecord, null);
+  assert.equal(c.publicationNotice, "");
+  assert.equal(calls.filter((x) => x.path.endsWith("/confirm")).length, 2);
+  await c.reviewPublication();
+  c.publicationConfirmed = true;
+  c.publicReview!.expiresAt = new Date(Date.now() - 1).toISOString();
+  await c.publish();
+  assert.equal(calls.filter((x) => x.path.endsWith("/confirm")).length, 2);
+});
+test("publication controller receipt inspection and deletion cannot publish or transfer a deletion acknowledgement to another record", async () => {
+  const input = reservation(),
+    record = {
+      ...input,
+      confirmed: true as const,
+      audience: "public" as const,
+      recordedAt: new Date().toISOString(),
+      receipt: null,
+      lastCheckedAt: null,
+    };
+  const calls: any[] = [];
+  const c = new NewsConnectionController(async (path, method, body) => {
+    calls.push({ path, method, body });
+    if (path.includes("/history/")) return record;
+    if (path.endsWith("/reconcile"))
+      return { ...record, lastCheckedAt: new Date().toISOString() };
+    return {};
+  });
+  await c.openPublication(record.operationId);
+  await c.deletePublication();
+  assert.equal(calls.length, 1);
+  c.deletePublicationConfirmed = true;
+  await c.checkPublicationReceipt();
+  assert.equal(c.deletePublicationConfirmed, false);
+  assert.match(c.publicationNotice, /No receipt was found/);
+  c.deletePublicationConfirmed = true;
+  await c.openPublication(record.operationId);
+  assert.equal(c.deletePublicationConfirmed, false);
+  c.deletePublicationConfirmed = true;
+  await c.deletePublication();
+  assert.equal(c.publicationRecord, null);
+  assert.match(c.publicationNotice, /accepted publication continues/);
+  assert.equal(
+    calls.some((x) => x.path.endsWith("/confirm")),
+    false,
+  );
+  assert.deepEqual(calls.at(-1).body, {
+    operationId: record.operationId,
+    confirmed: true,
+    forgetPublicationTracking: true,
+  });
+});
+
+test("forgetting the News key preserves local publication-history capability while clearing private views", async () => {
+  const c = new NewsConnectionController(async (path) =>
+    path.endsWith("/history") ? { items: [] } : {},
+  );
+  c.status = {
+    available: true,
+    publication: "per_action_review",
+    connection: null,
+  };
+  await c.forget();
+  assert.equal(c.status.publication, "per_action_review");
+  assert.equal(c.status.connection, null);
+  await c.loadPublicationHistory();
+  assert.deepEqual(c.publicationHistory, []);
 });
