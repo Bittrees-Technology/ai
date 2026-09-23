@@ -11,31 +11,10 @@ import {
 } from "./private-peer-contracts.js";
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const pinSchema = z.strictObject({
-  peerId: z.uuid(),
-  keyEpoch: positive,
-  publicKey: z.string().length(87),
-  keyHash: hex,
-  fingerprint: hex,
-  approvedAt: positive,
-  revoked: z.boolean(),
-});
-const stateSchema = z
-  .strictObject({
-    binding: privateBindingSchema,
-    peers: z.array(pinSchema).max(20),
-    retired: z
-      .array(
-        z.strictObject({ peerId: z.uuid(), keyEpoch: positive, keyHash: hex }),
-      )
-      .max(512),
-  })
-  .refine(
-    (s) =>
-      new Set(s.peers.map((p) => p.peerId)).size === s.peers.length &&
-      new Set(s.retired.map((p) => p.keyHash)).size === s.retired.length,
-  );
-type State = z.infer<typeof stateSchema>;
+import {
+  privatePeerStateSchema as stateSchema,
+  type PrivatePeerState as State,
+} from "./private-peer-state.js";
 type Snapshot = {
   revision: number;
   anchor: string;

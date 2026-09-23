@@ -160,6 +160,7 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin 84132a15d0ddf6027bc9bc8d8d9dbf4217fa69f0
           node scripts/prepare-legacy-browser-keys.mjs
+          node scripts/prepare-legacy-browser-lifecycle.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote

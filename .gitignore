@@ -19,3 +19,6 @@ playwright-report/
 
 .legacy-browser-keys/
 tests/browser/fixture/public/legacy-keys.js
+
+.legacy-browser-lifecycle/
+tests/browser/fixture/public/legacy-lifecycle.js
