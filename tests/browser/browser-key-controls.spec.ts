@@ -392,6 +392,7 @@ test("Offline export and stop preserve backup; clear deletes material and requir
     page.getByRole("button", { name: "Review new key", exact: true }),
   ).toBeDisabled();
   await review(page, "Review stop using key", "Confirm stop using key");
+  await expect(page.getByRole("status")).toContainText("Key stopped locally");
   expect((await state(page)).slots[0]?.state).toBe("retired");
   const pending = page.waitForEvent("download");
   await page
@@ -402,6 +403,9 @@ test("Offline export and stop preserve backup; clear deletes material and requir
     page,
     "Review deletion of all keys",
     "Confirm delete all browser keys",
+  );
+  await expect(page.getByRole("status")).toContainText(
+    "Key material deleted locally",
   );
   expect((await state(page)).locked).toBe(true);
   await page.evaluate(
