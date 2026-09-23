@@ -143,7 +143,6 @@ test("built page completes saved-code and saved-file activation under CSP and re
   await expect(keys(page).getByRole("status")).toContainText(
     "Browser key ready",
   );
-  await preview(page, info.project.name, "ready");
   await page.reload();
   await expect(page.locator("#account")).toContainText("Verified wallet:");
   await expect(reg(page)).toHaveCount(0);
@@ -154,6 +153,10 @@ test("built page completes saved-code and saved-file activation under CSP and re
     keys(page).getByText("Ready for pairing", { exact: true }),
   ).toBeVisible();
   expect(violations).toEqual([]);
+  // Capture only after the complete application/CSP acceptance. Playwright's
+  // WebKit screenshot preparation inserts a temporary `body {}` stylesheet to
+  // sync animations; the real style-src policy correctly rejects that tooling.
+  await preview(page, info.project.name, "ready");
 });
 
 test("status rendering cannot enable unacknowledged recovery confirmation and previews keep keyboard focus", async ({
