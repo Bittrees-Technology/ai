@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PrivatePeerChecks } from "./private-peer-checks.js";
 import { z } from "zod";
 import { id } from "../contracts/index.js";
 import type { Store, Owner } from "../storage/store.js";
@@ -158,6 +159,15 @@ export class PrivateTaskConsent {
         g.local.binding.expiresAt > this.now() &&
         this.keys.validate(g.local) &&
         this.peers.validate(g.peer) &&
+        new PrivatePeerChecks(
+          this.store,
+          this.vault,
+          this.owner,
+          this.current,
+          this.keys,
+          this.peers,
+          this.now,
+        ).validFor(g.local, g.peer) &&
         this.profileHash(g.choices.modelProfileId) === g.modelHash
       );
     } catch {

@@ -468,7 +468,7 @@ test("Schema16 upgrade preserves tasks and the new schema records no key authori
     );
     f.store.db.exec("DROP TABLE private_key_lifecycle; PRAGMA user_version=16");
     const migrated = f.db();
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 18);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 19);
     assert.equal(migrated.get(owner, task.id).input.prompt, "preserved");
     assert.deepEqual(f.lifecycle(migrated).list(), {
       revision: 0,

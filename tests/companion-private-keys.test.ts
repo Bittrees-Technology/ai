@@ -1,3 +1,4 @@
+import { peerCheckResponse } from "./helpers/peer-check-response.js";
 import {
   PrivatePermissionPanelState,
   emptyPermissionForm,
@@ -609,7 +610,7 @@ async function peerInvitation(
     expiresAt: 1800000300000,
     ...overrides,
   };
-  return await inspectPrivateInvitation(raw, 1800000000000);
+  return { ...(await inspectPrivateInvitation(raw, 1800000000000)), pair };
 }
 async function activeKey(f: Awaited<ReturnType<typeof fixture>>) {
   await f.confirm((await f.prepare("create")).id);
@@ -1084,6 +1085,38 @@ async function permissionFixture() {
     (await reviewPeer(f, incoming.invitation)).id,
     incoming.fingerprint,
   );
+  const verifyPeer = async () => {
+    const status = f.controls.peerStatus();
+    const check = await f.controls.beginPeerCheck({
+      peerId: incoming.invitation.peerId,
+      expectedKeyRevision: status.keyRevision,
+      expectedPeerRevision: status.revision,
+      confirmed: true,
+    });
+    const challenge = await f.controls.peerCheckEnvelope({
+      id: check.id,
+      confirmed: true,
+    });
+    const local = await crypto.subtle.importKey(
+      "raw",
+      Buffer.from(
+        f.controls.status().state.slots.find((s) => s.state === "active")!
+          .publicKey!,
+        "base64url",
+      ),
+      { name: "ECDH", namedCurve: "P-256" },
+      true,
+      [],
+    );
+    const response = await peerCheckResponse(
+      challenge,
+      incoming.pair,
+      local,
+      () => 1800000000000,
+    );
+    await f.controls.completePeerCheck({ envelope: response, confirmed: true });
+  };
+  await verifyPeer();
   const preparePermission = (overrides = {}, c = f.controls) => {
     const s = c.permissionStatus();
     return c.preparePermission({
@@ -1104,7 +1137,7 @@ async function permissionFixture() {
   };
   const confirmPermission = (reviewId: string, c = f.controls) =>
     c.confirmPermission({ reviewId, confirmed: true, acknowledged: true });
-  return { ...f, incoming, preparePermission, confirmPermission };
+  return { ...f, incoming, preparePermission, confirmPermission, verifyPeer };
 }
 test("Mac permission controls reverify exact identity, choices, keys and expiry with one-use acknowledgement", async () => {
   const f = await permissionFixture();
@@ -1166,6 +1199,8 @@ test("Mac permission review denies expired, changed key/peer/model and revoked i
     const other = f.build();
     await f.confirm((await f.prepare("replace", undefined, other)).id, other);
     await assert.rejects(f.confirmPermission(r.id), /CONFLICT/);
+    await assert.rejects(f.preparePermission(), /DENIED/);
+    await f.verifyPeer();
     r = await f.preparePermission();
     const profile = f.store.profile(f.owner, "local");
     f.store.db
