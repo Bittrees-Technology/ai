@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  privateBindingSchema,
-  inspectPrivateInvitation,
-} from "./private-peer-contracts.js";
+import { inspectPrivateInvitation } from "./private-peer-contracts.js";
 import {
   browserKeyIdentitySchema as identitySchema,
   browserKeyRecoverySchema,
@@ -11,8 +8,9 @@ import {
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 export type BrowserKeyAuthority = z.infer<typeof identitySchema> & {
   creationAllowed: boolean;
+  lifecycleRevision?: number;
 };
-const recordSchema = z.strictObject({
+export const browserEndpointRecordSchema = z.strictObject({
   scope: z.string().regex(/^[a-f0-9]{64}$/),
   keyId: z.uuid(),
   identity: identitySchema,
@@ -22,22 +20,14 @@ const recordSchema = z.strictObject({
   publicHandle: z.unknown(),
   recovery: browserKeyRecoverySchema.nullable(),
 });
-type Record = z.infer<typeof recordSchema>;
-export class BrowserKeyError extends Error {
-  constructor(
-    readonly code:
-      | "DENIED"
-      | "CONFLICT"
-      | "MISSING"
-      | "DELETED"
-      | "CREATION_INCOMPLETE"
-      | "STORAGE_UNAVAILABLE"
-      | "CAPACITY"
-      | "BUSY",
-  ) {
-    super(code);
-  }
-}
+type Record = z.infer<typeof browserEndpointRecordSchema>;
+export { BrowserKeyError } from "./browser-key-state.js";
+import {
+  BrowserKeyError,
+  browserLifecycleSchema,
+  browserKeyScope,
+  openBrowserKeyDatabase,
+} from "./browser-key-state.js";
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 const identity = (a: BrowserKeyAuthority) =>
@@ -47,7 +37,6 @@ const identity = (a: BrowserKeyAuthority) =>
     keyId: a.keyId,
     keyEpoch: a.keyEpoch,
   });
-const dbName = "org.bittrees.ai.browser-endpoint-keys";
 const publicBytes = async (key: CryptoKey) =>
   btoa(
     String.fromCharCode(
@@ -84,63 +73,9 @@ export class BrowserEndpointKeys {
     current: () => BrowserKeyAuthority | null,
     now = Date.now,
   ) {
-    if (
-      !z.string().min(1).max(256).safeParse(localOwner).success ||
-      !globalThis.isSecureContext
-    )
-      throw new BrowserKeyError("DENIED");
-    const scope = Array.from(
-      new Uint8Array(
-        await crypto.subtle.digest(
-          "SHA-256",
-          new TextEncoder().encode(
-            JSON.stringify(["browser-endpoint-owner:v1", localOwner]),
-          ),
-        ),
-      ),
-      (b) => b.toString(16).padStart(2, "0"),
-    ).join("");
-    return new Promise<BrowserEndpointKeys>((resolve, reject) => {
-      let ended = false;
-      const fail = () => {
-        if (!ended) {
-          ended = true;
-          clearTimeout(timer);
-          reject(new BrowserKeyError("STORAGE_UNAVAILABLE"));
-        }
-      };
-      const timer = setTimeout(fail, 10000);
-      let r: IDBOpenDBRequest;
-      try {
-        r = indexedDB.open(dbName, 1);
-      } catch {
-        fail();
-        return;
-      }
-      r.onerror = fail;
-      r.onblocked = fail;
-      r.onupgradeneeded = () => {
-        if (ended) {
-          r.transaction?.abort();
-          return;
-        }
-        const slots = r.result.createObjectStore("slots", {
-          keyPath: ["scope", "keyId"],
-        });
-        slots.createIndex("scope", "scope");
-      };
-      r.onsuccess = () => {
-        if (ended) {
-          r.result.close();
-          return;
-        }
-        ended = true;
-        clearTimeout(timer);
-        resolve(
-          new BrowserEndpointKeys(r.result, localOwner, scope, current, now),
-        );
-      };
-    });
+    const scope = await browserKeyScope(localOwner),
+      db = await openBrowserKeyDatabase();
+    return new BrowserEndpointKeys(db, localOwner, scope, current, now);
   }
   invalidate() {
     this.generation++;
@@ -158,7 +93,16 @@ export class BrowserEndpointKeys {
       const i = identity(a);
       if (i.localOwner !== this.localOwner || i.binding.expiresAt <= this.now())
         throw Error();
-      return { ...i, creationAllowed: a.creationAllowed };
+      if (
+        a.lifecycleRevision !== undefined &&
+        !positive.safeParse(a.lifecycleRevision).success
+      )
+        throw Error();
+      return {
+        ...i,
+        creationAllowed: a.creationAllowed,
+        lifecycleRevision: a.lifecycleRevision,
+      };
     } catch {
       throw new BrowserKeyError("DENIED");
     }
@@ -166,7 +110,11 @@ export class BrowserEndpointKeys {
   private check(a: BrowserKeyAuthority | null, generation: number) {
     if (this.closed) throw new BrowserKeyError("STORAGE_UNAVAILABLE");
     if (generation !== this.generation) throw new BrowserKeyError("CONFLICT");
-    if (a && !same(identity(this.authority()), identity(a)))
+    if (
+      a &&
+      (!same(identity(this.authority()), identity(a)) ||
+        this.authority().lifecycleRevision !== a.lifecycleRevision)
+    )
       throw new BrowserKeyError("CONFLICT");
   }
   private async exclusive<T>(fn: (generation: number) => Promise<T>) {
@@ -186,7 +134,7 @@ export class BrowserEndpointKeys {
     }
   }
   private record(raw: unknown, keyId: string) {
-    const p = recordSchema.safeParse(raw);
+    const p = browserEndpointRecordSchema.safeParse(raw);
     if (
       !p.success ||
       p.data.scope !== this.scope ||
@@ -222,7 +170,9 @@ export class BrowserEndpointKeys {
       const check = () => this.check(a, g);
       try {
         check();
-        tx = this.db.transaction("slots", mode, { durability: "strict" });
+        tx = this.db.transaction(["slots", "lifecycle"], mode, {
+          durability: "strict",
+        });
       } catch (e) {
         reject(
           e instanceof BrowserKeyError
@@ -279,7 +229,7 @@ export class BrowserEndpointKeys {
           reject(e);
         }
       };
-      guard(() =>
+      const run = () =>
         work(
           tx.objectStore("slots"),
           (r, fn) => {
@@ -288,8 +238,40 @@ export class BrowserEndpointKeys {
           (v) => {
             value = v;
           },
-        ),
-      );
+        );
+      guard(() => {
+        if (!a) {
+          run();
+          return;
+        }
+        const request = tx.objectStore("lifecycle").get(this.scope);
+        request.onsuccess = () =>
+          guard(() => {
+            if (request.result) {
+              const parsed = browserLifecycleSchema.safeParse(request.result);
+              if (
+                !parsed.success ||
+                parsed.data.scope !== this.scope ||
+                parsed.data.locked ||
+                parsed.data.revision !== a.lifecycleRevision
+              )
+                throw new BrowserKeyError("DENIED");
+              const selected = parsed.data.slots.find(
+                (x) => x.state === "preparing" || x.state === "active",
+              );
+              if (
+                !selected ||
+                selected.id !== a.keyId ||
+                selected.keyEpoch !== a.keyEpoch ||
+                !same(selected.binding, a.binding) ||
+                (selected.state === "preparing" && !a.creationAllowed)
+              )
+                throw new BrowserKeyError("DENIED");
+            } else if (a.lifecycleRevision !== undefined)
+              throw new BrowserKeyError("SETUP_REQUIRED");
+            run();
+          });
+      });
     });
   }
   private read(a: BrowserKeyAuthority, g: number) {

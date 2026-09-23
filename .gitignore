@@ -16,3 +16,6 @@ test-results/
 playwright-report/
 
 .private-browser-fixture/
+
+.legacy-browser-keys/
+tests/browser/fixture/public/legacy-keys.js

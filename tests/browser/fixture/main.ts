@@ -338,3 +338,6 @@ if (new URLSearchParams(location.search).has("workspace"))
 
 if (new URLSearchParams(location.search).has("browser-endpoint-keys"))
   void import("./browser-endpoint-keys.js");
+
+if (new URLSearchParams(location.search).has("browser-key-lifecycle"))
+  void import("./browser-key-lifecycle.js");
