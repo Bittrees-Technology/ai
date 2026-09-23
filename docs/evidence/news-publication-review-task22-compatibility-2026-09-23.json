@@ -1,0 +1,26 @@
+{
+  "verifiedAt": "2026-09-23T09:45:36.320Z",
+  "runtime": "v24.21.0",
+  "fromTaskSchema": 21,
+  "toTaskSchema": 22,
+  "legacySourceCommit": "855a034dee926315d4e318adbc3f3a49d83e1f7f",
+  "legacyCompiledStoreSha256": "419d2cc6e39180f364eec1c3674e097dc79833627d4122575b337f3c334ebaf6",
+  "sourceHashes": {
+    "modules/storage/store.ts": "caa257d425503d64ef20f48eb6df954c0a2640dd134dc89fc991e675adc372ea",
+    "modules/storage/news-publications.ts": "150dbe332d641119d8c346ace838f5b82b016d6d55cc334ca8a036c86a98dcba",
+    "modules/connectors/news.ts": "e705530a1c81ae2c1d2b7807db09dfcd92f187c2b959c02e3571f325ae3d68f6",
+    "modules/connectors/news-publication-contracts.ts": "a29c28db8c7799ed580b1092cfea572110a30d26e71f662afa648758fd1ce20d"
+  },
+  "checks": [
+    "Actual PR137 task21 task/result/model-profile preservation under task22 upgrade.",
+    "Wrong-key upgrade rolls back without changing the task21 database.",
+    "Pending encrypted exact News intent survives reopen and encrypted backup/restore.",
+    "Actual task21 engine rejects upgraded and restored task22 databases.",
+    "Original backup opens separately with actual old task21 helpers; later pending publication is absent from historical rollback."
+  ],
+  "limits": [
+    "Synthetic module/database checks only; no personal app/key/data or source publication.",
+    "No installed-app update, native UI acceptance, new archive, model changes or Acer operations.",
+    "Restoring or deleting history does not cancel source work, recreate consent or dispatch anything. Historical rollback can lose newer tracking; preserve/export it before rolling back."
+  ]
+}

@@ -132,6 +132,9 @@ export class NewsConnector {
     timer: ReturnType<typeof setTimeout>;
   };
   private publicationGeneration = 0;
+  get publicationAvailable() {
+    return !!this.journal;
+  }
   get publicationBusy() {
     return !!this.journal && this.active?.kind === "write";
   }
@@ -219,6 +222,9 @@ export class NewsConnector {
       manageUrl,
       mode: "read_only" as const,
       curation: "per_action_review" as const,
+      publication: this.journal
+        ? ("per_action_review" as const)
+        : ("unavailable" as const),
       connection: value
         ? {
             ...value.connection,
@@ -703,7 +709,7 @@ export class NewsConnector {
     if (!saved.connection.scopes.includes("publish"))
       throw new ConnectorError("PUBLICATION_REQUIRED");
   }
-  /** Trusted backend only until a complete public-content review UI is shipped. */
+  /** The local UI must display the complete payload and require separate public-audience consent. */
   async reviewPublication() {
     const journal = this.publicationJournal();
     return this.operation("read", async (signal) => {
@@ -875,4 +881,45 @@ export class NewsConnector {
       return journal.reconcile(operationId, parsed.data.receipt);
     });
   }
+  cancelPublication(raw: unknown) {
+    const { id } = z.strictObject({ id: z.uuid() }).parse(raw);
+    // Target one review; a delayed focus-loss cancellation cannot cancel a newer review.
+    if (this.publicationReview?.id === id) this.clearPublicationReview();
+    return { cancelled: true };
+  }
+  publicationHistory() {
+    return {
+      items: this.publicationJournal()
+        .list()
+        .map((r) => ({
+          operationId: r.operationId,
+          identity: r.identity,
+          name: r.review.content.name,
+          url: r.review.url,
+          recordedAt: r.recordedAt,
+          lastCheckedAt: r.lastCheckedAt,
+          receipt: r.receipt,
+        })),
+    };
+  }
+  publicationRecord(raw: unknown) {
+    const { operationId } = z
+      .strictObject({ operationId: z.uuid() })
+      .parse(raw);
+    return this.publicationJournal().read(operationId);
+  }
+  async deletePublication(raw: unknown) {
+    const journal = this.publicationJournal();
+    return this.operation("write", async () => {
+      this.clearPublicationReview();
+      journal.remove(raw);
+      return { removed: true, sourceWithdrawn: false };
+    });
+  }
 }
+export type NewsPublicationHistory = ReturnType<
+  NewsConnector["publicationHistory"]
+>["items"];
+export type NewsPublicReview = Awaited<
+  ReturnType<NewsConnector["reviewPublication"]>
+>;
