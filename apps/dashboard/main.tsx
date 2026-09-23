@@ -1,3 +1,4 @@
+import { DependencyFailureNotice } from "./dependency-failure.js";
 import { RecoveryCopies } from "./recovery-copies.js";
 import { requestBackup } from "./backup-download.js";
 import { createLocalApi } from "./local-api.js";
@@ -525,6 +526,9 @@ function App() {
                             onError={fail}
                           />
                         )}
+                      {task.status === "failed" && (
+                        <DependencyFailureNotice result={task.result} />
+                      )}
                       {task.result?.text && (
                         <>
                           <h3>Draft result</h3>
@@ -605,7 +609,16 @@ function App() {
                         </div>
                       ))}
                       {!runs.length && (
-                        <p className="hint">Waiting to start.</p>
+                        <p className="hint">
+                          {[
+                            "failed",
+                            "cancelled",
+                            "expired",
+                            "completed",
+                          ].includes(task.status)
+                            ? "No model run history to show here."
+                            : "Waiting to start."}
+                        </p>
                       )}
                     </>
                   ) : (
