@@ -163,14 +163,7 @@ export function NewsCuration({
           >
             Save reviewed story
           </button>
-          <button
-            disabled={c.busy}
-            onClick={() => {
-              c.editReview = null;
-              c.curateConfirmed = false;
-              changed();
-            }}
-          >
+          <button disabled={c.busy} onClick={() => void c.cancel()}>
             Cancel story review
           </button>
         </section>
