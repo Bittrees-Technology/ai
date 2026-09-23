@@ -29,7 +29,7 @@ const profile = {
   maxOutputTokens: 1024,
   temperature: 0.2,
 } as const;
-async function fixture(page: Page) {
+async function fixture(page: Page, reloadKeys = false) {
   const external: string[] = [];
   await page.context().route("**/*", (route) => {
     if (new URL(route.request().url()).origin !== "http://127.0.0.1:44137") {
@@ -40,7 +40,27 @@ async function fixture(page: Page) {
   });
   await page.goto("/");
   await page.waitForFunction(() => !!window.privateProtocolTest);
-  const browser = await page.evaluate(() => window.privateProtocolTest.init());
+  const testPair = reloadKeys
+    ? await crypto.subtle.generateKey(
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        ["deriveBits"],
+      )
+    : null;
+  const testKeys = testPair
+    ? {
+        privateKey: Buffer.from(
+          await crypto.subtle.exportKey("pkcs8", testPair.privateKey),
+        ).toString("base64"),
+        publicKey: Buffer.from(
+          await crypto.subtle.exportKey("raw", testPair.publicKey),
+        ).toString("base64"),
+      }
+    : undefined;
+  const browser = await page.evaluate(
+    (value) => window.privateProtocolTest.init(value),
+    testKeys,
+  );
   expect(browser.secureContext).toBe(true);
   expect(browser.privateExtractable).toBe(false);
   expect(browser.privateExportDenied).toBe(true);
@@ -179,7 +199,44 @@ async function fixture(page: Page) {
       clock,
     );
   };
+  const sealResponse = (
+    receipt: PrivateTaskReceipt,
+    payload: unknown,
+    patch: Partial<PrivateHeader> = {},
+    senderKey = key,
+  ) =>
+    sealPrivateEnvelope(
+      {
+        ...receipt.header,
+        senderId: binding.deviceId,
+        recipientId: browserId,
+        senderKeyEpoch: 1,
+        recipientKeyEpoch: 1,
+        messageId: randomUUID(),
+        sequence: 2,
+        issuedAt: now,
+        expiresAt: now + 300000,
+        ...patch,
+      },
+      new TextEncoder().encode(JSON.stringify(payload)),
+      { senderKey, recipientPublicKey: browserPublicKey },
+      clock,
+    );
+  const restoreKeys = async () => {
+    if (!testKeys) throw Error("No synthetic key reload fixture");
+    await page.evaluate(
+      (value) => window.privateProtocolTest.init(value),
+      testKeys,
+    );
+    await page.evaluate(
+      ({ invitation, now }) =>
+        window.privateProtocolTest.inspect(invitation, now),
+      { invitation, now },
+    );
+  };
   return {
+    sealResponse,
+    restoreKeys,
     responses,
     store,
     registry,
@@ -1118,6 +1175,9 @@ test("Earlier browser rows remain readable while expired, deleted and other-acco
             const row = get.result;
             delete row.receiptEnvelope;
             delete row.receiptHash;
+            delete row.resultEnvelope;
+            delete row.resultHash;
+            delete row.resultReceivedAt;
             store.put(row);
           };
           tx.oncomplete = () => {
@@ -1251,6 +1311,471 @@ test("Real companion response outbox delivers encrypted acceptance and local-wor
         .entries[0]!.receiptEnvelope,
     ).toEqual(wire);
     expect(f.external).toEqual([]);
+  } finally {
+    f.close();
+  }
+});
+
+async function finished(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
+  const task = await submitted(page, f);
+  const accepted = await f.responses.prepare({
+    operationId: task.receipt.header.operationId,
+    peerId: f.browserId,
+    kind: "accepted",
+    confirmed: true,
+  });
+  const response = f.responses.delivery(accepted.id);
+  const worker = new LocalWorker(
+    f.store,
+    owner,
+    {
+      pin: async () => ({ profile, digest: "a".repeat(64) }),
+      generate: async () => "PRIVATE_DURABLE_RESULT",
+    },
+    (id) => f.store.profile(owner, id),
+  );
+  expect(await worker.runOnce()).toBe(true);
+  const result = await f.responses.prepare({
+    operationId: task.receipt.header.operationId,
+    peerId: f.browserId,
+    kind: "result",
+    confirmed: true,
+  });
+  return { ...task, response, result, wire: f.responses.delivery(result.id) };
+}
+
+test("Results arriving before receipts survive reload as ciphertext and open only after current keys are supplied", async ({
+  page,
+}) => {
+  const f = await fixture(page, true);
+  try {
+    const { entry, receipt, response, wire } = await finished(page, f),
+      saved = await page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        wire,
+      );
+    expect(saved.state).toBe("accepted");
+    expect(saved.receiptEnvelope).toBeNull();
+    expect(saved.resultEnvelope).toEqual(wire);
+    const decoded = await page.evaluate(
+      ({ id, revision }) =>
+        window.privateStorageTest.readResult({
+          id,
+          expectedRevision: revision,
+          confirmed: true,
+        }),
+      saved,
+    );
+    expect(decoded.task.output).toBe("PRIVATE_DURABLE_RESULT");
+    expect(decoded.receipt).toEqual(receipt);
+    const withReceipt = await page.evaluate(
+      (wire) => window.privateStorageTest.acceptReceipt(wire),
+      response,
+    );
+    expect(withReceipt.resultEnvelope).toEqual(wire);
+    expect(withReceipt.receiptEnvelope).toEqual(response);
+    const serialized = JSON.stringify(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    );
+    for (const secret of ["PRIVATE_DURABLE_RESULT", receipt.taskId, receipt.id])
+      expect(serialized).not.toContain(secret);
+    await page.reload();
+    await page.waitForFunction(() => !!window.privateStorageTest);
+    await storage(page, f, false);
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot()))
+        .entries[0],
+    ).toEqual(withReceipt);
+    await expect(
+      page.evaluate(
+        ({ id, revision }) =>
+          window.privateStorageTest.readResult({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          }),
+        withReceipt,
+      ),
+    ).rejects.toThrow("DENIED");
+    await f.restoreKeys();
+    expect(
+      (
+        await page.evaluate(
+          ({ id, revision }) =>
+            window.privateStorageTest.readResult({
+              id,
+              expectedRevision: revision,
+              confirmed: true,
+            }),
+          withReceipt,
+        )
+      ).task.output,
+    ).toBe("PRIVATE_DURABLE_RESULT");
+    await expect(
+      page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
+    ).rejects.toThrow("DENIED");
+  } finally {
+    f.close();
+  }
+});
+
+test("Receipt-first and concurrent or resealed result delivery deduplicate while conflicting terminal evidence cannot replace history", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { receipt, response, wire, result } = await finished(page, f);
+    await page.evaluate(
+      (wire) => window.privateStorageTest.acceptReceipt(wire),
+      response,
+    );
+    const values = await Promise.all([
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        wire,
+      ),
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        wire,
+      ),
+    ]);
+    expect(values[0]).toEqual(values[1]);
+    const resealed = await f.sealResponse(receipt, result.value.content);
+    expect(
+      await page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        resealed,
+      ),
+    ).toEqual(values[0]);
+    const content = result.value.content;
+    if (content.type !== "task.result") throw Error("Expected result");
+    for (const payload of [
+      { ...content, task: { ...content.task, output: "CONFLICTING_RESULT" } },
+      {
+        ...content,
+        task: { ...content.task, revision: content.task.revision + 1 },
+      },
+      { ...content, receipt: { ...receipt, id: randomUUID() } },
+    ]) {
+      await expect(
+        page.evaluate(
+          (wire) => window.privateStorageTest.acceptResult(wire),
+          await f.sealResponse(receipt, payload),
+        ),
+      ).rejects.toThrow("CONFLICT");
+    }
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot()))
+        .entries[0],
+    ).toEqual(values[0]);
+  } finally {
+    f.close();
+  }
+});
+
+test("Result viewing requires separate permission, current keys, confirmation and reviewed revision", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { wire, response } = await finished(page, f);
+    await page.evaluate(() =>
+      window.privateStorageTest.resultPermission(false),
+    );
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        wire,
+      ),
+    ).rejects.toThrow("DENIED");
+    await page.evaluate(
+      (wire) => window.privateStorageTest.acceptReceipt(wire),
+      response,
+    );
+    await page.evaluate(() => window.privateStorageTest.resultPermission(true));
+    const saved = await page.evaluate(
+      (wire) => window.privateStorageTest.acceptResult(wire),
+      wire,
+    );
+    for (const input of [
+      { id: saved.id, expectedRevision: saved.revision, confirmed: false },
+      { id: saved.id, expectedRevision: saved.revision - 1, confirmed: true },
+    ])
+      await expect(
+        page.evaluate(
+          (value) => window.privateStorageTest.readResult(value),
+          input,
+        ),
+      ).rejects.toThrow(/DENIED|CONFLICT/);
+    await page.evaluate(() =>
+      window.privateStorageTest.resultPermission(false),
+    );
+    await expect(
+      page.evaluate(
+        ({ id, revision }) =>
+          window.privateStorageTest.readResult({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          }),
+        saved,
+      ),
+    ).rejects.toThrow("DENIED");
+    await page.evaluate(() => window.privateStorageTest.resultPermission(true));
+    await page.evaluate(() =>
+      window.privateStorageTest.rotateKeyDuringReceipt(),
+    );
+    await expect(
+      page.evaluate(
+        ({ id, revision }) =>
+          window.privateStorageTest.readResult({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          }),
+        saved,
+      ),
+    ).rejects.toThrow("DENIED");
+    await storage(page, f, false);
+    await page.evaluate(() => window.privateStorageTest.revokeDuringCommit());
+    await expect(
+      page.evaluate(
+        ({ id, revision }) =>
+          window.privateStorageTest.readResult({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          }),
+        saved,
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot()))
+        .entries[0],
+    ).toEqual(saved);
+  } finally {
+    f.close();
+  }
+});
+
+test("Accepted result history can be read after delivery expiry but expired arrivals and deletion during decryption are denied", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { receipt, result } = await finished(page, f),
+      short = await f.sealResponse(receipt, result.value.content, {
+        expiresAt: f.now + 1000,
+      });
+    const saved = await page.evaluate(
+      (wire) => window.privateStorageTest.acceptResult(wire),
+      short,
+    );
+    await page.evaluate(() => window.privateStorageTest.advance(2000));
+    expect(
+      (
+        await page.evaluate(
+          ({ id, revision }) =>
+            window.privateStorageTest.readResult({
+              id,
+              expectedRevision: revision,
+              confirmed: true,
+            }),
+          saved,
+        )
+      ).task.output,
+    ).toBe("PRIVATE_DURABLE_RESULT");
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        short,
+      ),
+    ).rejects.toThrow("DENIED");
+    const meta = (
+      await page.evaluate(() => window.privateStorageTest.snapshot())
+    ).meta!;
+    const failure = await page.evaluate(
+      async ({ id, revision, metaRevision }) => {
+        const derive = crypto.subtle.deriveBits;
+        let cleared = false;
+        crypto.subtle.deriveBits = async function (...args) {
+          if (!cleared) {
+            cleared = true;
+            await window.privateStorageTest.clear({
+              expectedRevision: metaRevision,
+              confirmed: true,
+            });
+          }
+          return derive.apply(this, args);
+        };
+        try {
+          await window.privateStorageTest.readResult({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          });
+          return "unexpected";
+        } catch (e) {
+          return (e as Error).message;
+        } finally {
+          crypto.subtle.deriveBits = derive;
+        }
+      },
+      { id: saved.id, revision: saved.revision, metaRevision: meta.revision },
+    );
+    expect(failure).toBe("SETUP_REQUIRED");
+    expect(
+      (await page.evaluate(() => window.privateStorageTest.snapshot())).entries,
+    ).toEqual([]);
+  } finally {
+    f.close();
+  }
+});
+
+test("Result storage failure and late revocation do not publish partial acceptance or plaintext", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { wire } = await finished(page, f),
+      before = await page.evaluate(() => window.privateStorageTest.snapshot());
+    const failure = await page.evaluate(async (wire) => {
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        if (this.name === "meta")
+          throw new DOMException("Synthetic quota", "QuotaExceededError");
+        return put.apply(this, args);
+      };
+      try {
+        await window.privateStorageTest.acceptResult(wire);
+        return "unexpected";
+      } catch (e) {
+        return (e as Error).message;
+      } finally {
+        IDBObjectStore.prototype.put = put;
+      }
+    }, wire);
+    expect(failure).toBe("CAPACITY");
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(before);
+    await page.evaluate(() => window.privateStorageTest.revokeDuringCommit());
+    await expect(
+      page.evaluate(
+        (wire) => window.privateStorageTest.acceptResult(wire),
+        wire,
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(
+      await page.evaluate(() => window.privateStorageTest.snapshot()),
+    ).toEqual(before);
+    await storage(page, f, false);
+    expect(
+      (
+        await page.evaluate(
+          (wire) => window.privateStorageTest.acceptResult(wire),
+          wire,
+        )
+      ).resultEnvelope,
+    ).toEqual(wire);
+  } finally {
+    f.close();
+  }
+});
+
+test("Authenticated malformed, wrong-task, wrong-key and impossible-time results cannot enter browser history", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const { wire, receipt, result } = await finished(page, f),
+      content = result.value.content;
+    if (content.type !== "task.result") throw Error("Expected result");
+    const invalid = [
+      receipt,
+      wire.header,
+      {
+        ...wire,
+        ciphertext:
+          (wire.ciphertext[0] === "A" ? "B" : "A") + wire.ciphertext.slice(1),
+      },
+      await f.sealResponse(receipt, content, {}, await pair()),
+    ];
+    for (const payload of [
+      { ...content, task: { ...content.task, id: randomUUID() } },
+      { ...content, task: { ...content.task, status: "failed" } },
+      {
+        ...content,
+        task: { ...content.task, updatedAt: receipt.acceptedAt - 1 },
+      },
+      { ...content, task: { ...content.task, updatedAt: f.now + 30001 } },
+      { ...content, task: { ...content.task, model: "injected" } },
+      {
+        ...content,
+        receipt: {
+          ...receipt,
+          header: { ...receipt.header, messageId: randomUUID() },
+        },
+      },
+    ])
+      invalid.push(await f.sealResponse(receipt, payload));
+    for (const value of invalid)
+      await expect(
+        page.evaluate(
+          (wire) => window.privateStorageTest.acceptResult(wire),
+          value,
+        ),
+      ).rejects.toThrow("DENIED");
+    const before = await page.evaluate(() =>
+      window.privateStorageTest.snapshot(),
+    );
+    expect(before.entries[0]!.resultEnvelope).toBeNull();
+    expect(before.entries[0]!.state).toBe("pending");
+    const saved = await page.evaluate(
+      (wire) => window.privateStorageTest.acceptResult(wire),
+      wire,
+    );
+    const changed = {
+      ...saved.resultEnvelope!,
+      ciphertext:
+        (wire.ciphertext[0] === "A" ? "B" : "A") + wire.ciphertext.slice(1),
+    };
+    await page.evaluate(
+      async ({ id, envelope }) => {
+        const r = indexedDB.open("org.bittrees.ai.private-outbox", 1);
+        await new Promise<void>((resolve, reject) => {
+          r.onerror = () => reject(r.error);
+          r.onsuccess = () => {
+            const db = r.result,
+              tx = db.transaction("entries", "readwrite"),
+              s = tx.objectStore("entries"),
+              g = s.get(id);
+            g.onsuccess = () =>
+              s.put({ ...g.result, resultEnvelope: envelope });
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+            tx.onabort = () => {
+              db.close();
+              reject(tx.error);
+            };
+          };
+        });
+      },
+      { id: saved.id, envelope: changed },
+    );
+    await expect(
+      page.evaluate(
+        ({ id, revision }) =>
+          window.privateStorageTest.readResult({
+            id,
+            expectedRevision: revision,
+            confirmed: true,
+          }),
+        saved,
+      ),
+    ).rejects.toThrow("DENIED");
   } finally {
     f.close();
   }

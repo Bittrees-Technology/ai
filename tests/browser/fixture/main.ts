@@ -12,12 +12,32 @@ import { inspectPrivateInvitation } from "../../../modules/remote/private-peer-c
 let keys: CryptoKeyPair | undefined;
 let peer: Awaited<ReturnType<typeof inspectPrivateInvitation>> | undefined;
 const harness = {
-  async init() {
-    keys = await crypto.subtle.generateKey(
-      { name: "ECDH", namedCurve: "P-256" },
-      false,
-      ["deriveBits"],
-    );
+  async init(testKeys?: { privateKey: string; publicKey: string }) {
+    if (testKeys) {
+      const bytes = (value: string) =>
+        Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
+      keys = {
+        privateKey: await crypto.subtle.importKey(
+          "pkcs8",
+          bytes(testKeys.privateKey),
+          { name: "ECDH", namedCurve: "P-256" },
+          false,
+          ["deriveBits"],
+        ),
+        publicKey: await crypto.subtle.importKey(
+          "raw",
+          bytes(testKeys.publicKey),
+          { name: "ECDH", namedCurve: "P-256" },
+          true,
+          [],
+        ),
+      };
+    } else
+      keys = await crypto.subtle.generateKey(
+        { name: "ECDH", namedCurve: "P-256" },
+        false,
+        ["deriveBits"],
+      );
     const raw = new Uint8Array(
       await crypto.subtle.exportKey("raw", keys.publicKey),
     );
@@ -121,7 +141,8 @@ let currentBinding: PrivateBinding | null = null,
 let revokeAt = 0,
   permissionReads = 0,
   receiptKeyReads = 0,
-  rotateReceiptKey = false;
+  rotateReceiptKey = false,
+  resultPermission = true;
 const storageHarness = {
   async open(
     binding: PrivateBinding,
@@ -138,6 +159,7 @@ const storageHarness = {
     revokeAt = 0;
     receiptKeyReads = 0;
     rotateReceiptKey = false;
+    resultPermission = true;
     browserStore = await BrowserPrivateOutbox.open(
       () => currentBinding,
       () => {
@@ -151,6 +173,7 @@ const storageHarness = {
         receiptKeyReads++;
         return keys && peer && deliveryContext
           ? {
+              resultsEnabled: resultPermission,
               context: deliveryContext,
               recipientKey: keys,
               senderPublicKey:
@@ -176,6 +199,15 @@ const storageHarness = {
   },
   acceptReceipt(raw: unknown) {
     return browserStore!.acceptReceipt(raw);
+  },
+  acceptResult(raw: unknown) {
+    return browserStore!.acceptResult(raw);
+  },
+  readResult(raw: unknown) {
+    return browserStore!.readResult(raw);
+  },
+  resultPermission(value: boolean) {
+    resultPermission = value;
   },
   delivery(id: string) {
     return browserStore!.delivery(id);
