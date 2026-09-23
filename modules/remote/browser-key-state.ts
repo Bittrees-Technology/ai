@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 2;
+export const browserKeyDatabaseVersion = 3;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -107,7 +107,10 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         });
         slots.createIndex("scope", "scope");
       }
-      r.result.createObjectStore("lifecycle", { keyPath: "scope" });
+      if (event.oldVersion < 2)
+        r.result.createObjectStore("lifecycle", { keyPath: "scope" });
+      if (event.oldVersion < 3)
+        r.result.createObjectStore("peers", { keyPath: "scope" });
     };
     r.onsuccess = () => {
       if (ended) {

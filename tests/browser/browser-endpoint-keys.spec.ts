@@ -404,7 +404,7 @@ test("Tampered stored handles, public bytes and record identity fail closed", as
   for (const kind of ["private", "public", "identity", "extractable"]) {
     await page.evaluate(async (kind) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 2);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 3);
         r.onsuccess = () => resolve(r.result);
         r.onerror = () => reject(r.error);
       });
@@ -464,7 +464,7 @@ test("Slot capacity includes deleted attempts and database version change closes
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 3);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 4);
         r.onsuccess = () => {
           r.result.close();
           resolve();

@@ -27,7 +27,7 @@ const checked = z.strictObject({
   confirmed: z.literal(true),
 });
 const target = checked.extend({ keyId: z.uuid() });
-const proofSchema = z.strictObject({
+export const browserKeyProofSchema = z.strictObject({
   revision: positive,
   keyId: z.uuid(),
   keyEpoch: positive,
@@ -37,7 +37,7 @@ const proofSchema = z.strictObject({
     .length(87)
     .regex(/^[A-Za-z0-9_-]+$/),
 });
-export type BrowserKeyProof = z.infer<typeof proofSchema>;
+export type BrowserKeyProof = z.infer<typeof browserKeyProofSchema>;
 type SlotRecord = z.infer<typeof browserEndpointRecordSchema>;
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -540,7 +540,7 @@ export class BrowserKeyLifecycle {
   }
   async validate(raw: unknown) {
     try {
-      const proof = this.input(proofSchema, raw),
+      const proof = this.input(browserKeyProofSchema, raw),
         g = this.generation,
         b = this.binding();
       return await this.tx(g, b, "readonly", (s, rows) =>
@@ -550,27 +550,42 @@ export class BrowserKeyLifecycle {
       return false;
     }
   }
+  private async retained(g: number) {
+    const b = this.binding(),
+      before = await this.tx(g, b, "readonly", (state, rows) => {
+        const proof = this.proof(state, rows, b);
+        return {
+          proof,
+          state: state!,
+          slot: this.selectedSlot(state!, b, true),
+        };
+      });
+    this.select(before.state, before.slot);
+    const key = await this.provider.resolve();
+    await this.tx(g, b, "readonly", (state, rows) => {
+      if (
+        !same(this.proof(state, rows, b), before.proof) ||
+        key.publicKey !== before.proof.publicKey
+      )
+        throw new BrowserKeyError("CONFLICT");
+    });
+    return { ...key, proof: before.proof };
+  }
   resolve() {
+    return this.exclusive((g) => this.retained(g));
+  }
+  invitation(raw: unknown) {
     return this.exclusive(async (g) => {
-      const b = this.binding(),
-        before = await this.tx(g, b, "readonly", (state, rows) => {
-          const proof = this.proof(state, rows, b);
-          return {
-            proof,
-            state: state!,
-            slot: this.selectedSlot(state!, b, true),
-          };
-        });
-      this.select(before.state, before.slot);
-      const key = await this.provider.resolve();
-      await this.tx(g, b, "readonly", (state, rows) => {
+      const key = await this.retained(g);
+      const invitation = await this.provider.invitation(raw);
+      await this.tx(g, key.proof.binding, "readonly", (state, rows) => {
         if (
-          !same(this.proof(state, rows, b), before.proof) ||
-          key.publicKey !== before.proof.publicKey
+          !same(this.proof(state, rows, key.proof.binding), key.proof) ||
+          invitation.invitation.publicKey !== key.proof.publicKey
         )
           throw new BrowserKeyError("CONFLICT");
       });
-      return { ...key, proof: before.proof };
+      return invitation;
     });
   }
   revoke(raw: unknown) {

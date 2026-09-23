@@ -350,3 +350,6 @@ if (new URLSearchParams(location.search).has("browser-device-identity"))
 
 if (new URLSearchParams(location.search).has("browser-setup"))
   void import("./browser-setup.js");
+
+if (new URLSearchParams(location.search).has("browser-peers"))
+  void import("./browser-peers.js");

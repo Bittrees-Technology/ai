@@ -3,7 +3,11 @@ import {
   BrowserDeviceClient,
   type BrowserDeviceContext,
 } from "./browser-device-client.js";
-import { BrowserKeyLifecycle } from "./browser-key-lifecycle.js";
+import {
+  BrowserKeyLifecycle,
+  type BrowserKeyProof,
+} from "./browser-key-lifecycle.js";
+import { BrowserPeerEnrollment } from "./browser-peers.js";
 import type { VerifiedBrowserDeviceScope } from "./browser-device-contracts.js";
 import type { PrivateBinding } from "./private-peer-contracts.js";
 const contextSchema = z.strictObject({
@@ -25,6 +29,8 @@ export class BrowserKeyHost {
   private freshMono = 0;
   private active: VerifiedBrowserDeviceScope | null = null;
   private keys!: BrowserKeyLifecycle;
+  private peers!: BrowserPeerEnrollment;
+  private peerKey: BrowserKeyProof | null = null;
   private client: BrowserDeviceClient;
   readonly localOwner: string;
   private constructor(
@@ -56,17 +62,33 @@ export class BrowserKeyHost {
       now,
       monotonic,
     );
-    self.keys = await BrowserKeyLifecycle.open(
-      self.localOwner,
-      () => self.active?.current() ?? null,
-      (b) => self.active?.freshRegistration(b) ?? false,
-      now,
-    );
-    if (!self.currentContext()) {
+    try {
+      self.keys = await BrowserKeyLifecycle.open(
+        self.localOwner,
+        () => self.active?.current() ?? null,
+        (b) => self.active?.freshRegistration(b) ?? false,
+        now,
+      );
+      self.peers = await BrowserPeerEnrollment.open(
+        self.localOwner,
+        () =>
+          self.peerKey &&
+          self.currentContext() &&
+          same(self.active?.current(), self.peerKey.binding)
+            ? self.peerKey
+            : null,
+        now,
+        monotonic,
+      );
+      if (!self.currentContext()) {
+        self.close();
+        throw Error("DENIED");
+      }
+      return self;
+    } catch (e) {
       self.close();
-      throw Error("DENIED");
+      throw e;
     }
-    return self;
   }
   private currentContext() {
     if (this.closed) return null;
@@ -107,7 +129,9 @@ export class BrowserKeyHost {
   cancelKeys() {
     this.generation++;
     this.active = null;
+    this.peerKey = null;
     this.keys?.invalidate();
+    this.peers?.invalidate();
   }
   /** Trusted host calls this immediately on logout, lock or account/scope change. */
   invalidate() {
@@ -122,6 +146,7 @@ export class BrowserKeyHost {
     this.closed = true;
     this.invalidate();
     this.keys?.close();
+    this.peers?.close();
   }
   private check(g: number) {
     if (g !== this.generation || !this.currentContext()) throw Error("DENIED");
@@ -152,6 +177,7 @@ export class BrowserKeyHost {
             : null;
         if (!same(next, this.binding)) {
           this.keys.invalidate();
+          this.peers.invalidate();
           this.freshUntil = 0;
         }
         this.binding = next ? { ...next } : null;
@@ -262,6 +288,30 @@ export class BrowserKeyHost {
     remove: (raw: unknown) => this.operation(() => this.keys.remove(raw)),
     clear: (raw: unknown) => this.operation(() => this.keys.clear(raw)),
     recovery: (raw: unknown) => this.operation(() => this.keys.recovery(raw)),
+    invalidate: () => this.cancelKeys(),
+  };
+  private verifiedPeer<T>(fn: () => Promise<T>) {
+    return this.verified(async () => {
+      const key = await this.keys.resolve();
+      this.peerKey = key.proof;
+      try {
+        return await fn();
+      } finally {
+        this.peerKey = null;
+      }
+    });
+  }
+  /** Public invitations/pins only. No private key handle, possession grant or task
+   * consent is exposed by this API. Each enrollment step verifies online identity. */
+  readonly peerAPI = {
+    status: () => this.operation(() => this.peers.status()),
+    invitation: (raw: unknown) =>
+      this.verified(() => this.keys.invitation(raw)),
+    prepare: (raw: unknown) => this.verifiedPeer(() => this.peers.prepare(raw)),
+    approve: (raw: unknown) => this.verifiedPeer(() => this.peers.approve(raw)),
+    reset: (raw: unknown) => this.verifiedPeer(() => this.peers.reset(raw)),
+    revoke: (raw: unknown) => this.operation(() => this.peers.revoke(raw)),
+    clear: (raw: unknown) => this.operation(() => this.peers.clear(raw)),
     invalidate: () => this.cancelKeys(),
   };
 }

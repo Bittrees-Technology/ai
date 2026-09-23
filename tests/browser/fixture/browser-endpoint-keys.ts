@@ -161,7 +161,7 @@ const harness = {
   },
   async records() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 2);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 3);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
