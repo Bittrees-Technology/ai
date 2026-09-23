@@ -5,6 +5,11 @@ type Run = {
   id: string;
   outcome: string | null;
   model?: {
+    executionLimits?: {
+      parallelTasks: number;
+      maxTaskSeconds: number;
+      minFreeMemoryGiB: number;
+    };
     profile?: {
       model?: string;
       contextTokens?: number;
@@ -72,14 +77,30 @@ export function TaskRuns({
         state.items.map((run) => (
           <div key={run.id}>
             <p>
-              {run.outcome === "invalid_model_output"
-                ? "Answer rejected"
-                : (run.outcome ?? "Running")}{" "}
+              {run.outcome === "runtime_limit"
+                ? "Time limit reached"
+                : run.outcome === "invalid_model_output"
+                  ? "Answer rejected"
+                  : (run.outcome ?? "Running")}{" "}
               · {run.model?.profile?.model ?? "Model not started"}
             </p>
             {run.model?.profile && profileSettingsText(run.model.profile) && (
               <p className="hint">
                 Recorded settings: {profileSettingsText(run.model.profile)}
+              </p>
+            )}
+            {run.model?.executionLimits && (
+              <p className="hint">
+                Saved device limits: {run.model.executionLimits.maxTaskSeconds}s
+                per task; {run.model.executionLimits.parallelTasks} task(s) at
+                once; {run.model.executionLimits.minFreeMemoryGiB} GiB minimum
+                free memory.
+              </p>
+            )}
+            {run.outcome === "runtime_limit" && (
+              <p>
+                The task exceeded its saved time limit. No result was accepted.
+                Review the limit in Device before submitting a new task.
               </p>
             )}
             {run.outcome === "invalid_model_output" && (

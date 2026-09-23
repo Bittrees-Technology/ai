@@ -223,3 +223,11 @@ jobs:
           path: test-results/task-quality-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain local execution limit previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-limits-ui-preview
+          path: test-results/execution-limits-*.png
+          if-no-files-found: error
+          retention-days: 7

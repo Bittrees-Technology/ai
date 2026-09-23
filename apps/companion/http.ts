@@ -1,3 +1,4 @@
+import type { ExecutionControls } from "./execution-limits.js";
 import { PrivatePeerCheckError } from "../../modules/remote/private-peer-checks.js";
 import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
 import { PrivateTaskError } from "../../modules/remote/private-task-receiver.js";
@@ -43,6 +44,8 @@ export interface LocalApiOptions {
   remote?: RemoteClient;
   receiver?: RemoteReceiver;
   templateReceiver?: RemoteTemplateReceiver;
+  executionControls?: ExecutionControls;
+  activeTasks?: () => number;
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
   roles?: RolesConnector;
@@ -85,6 +88,8 @@ export function localApi({
   autonoteSources,
   cancelSourceRun,
   deviceStatus,
+  executionControls,
+  activeTasks,
   imports,
 }: LocalApiOptions) {
   if (token.length < 32) throw new Error("A strong local token is required");
@@ -386,6 +391,15 @@ export function localApi({
       if (req.header("X-Confirm-Delete") !== "local-remote-connection-only")
         throw new StoreError("INVALID_INPUT");
       res.json(await receivingPaused(() => remote.forgetLocal()));
+    });
+  }
+  if (executionControls) {
+    app.get("/v1/device/execution", (_req, res) =>
+      res.json(executionControls.admission(activeTasks?.() ?? 0)),
+    );
+    app.put("/v1/device/execution", (req, res) => {
+      executionControls.update(req.body);
+      res.json(executionControls.admission(activeTasks?.() ?? 0));
     });
   }
   if (deviceStatus)

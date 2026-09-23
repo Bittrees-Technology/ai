@@ -1,0 +1,27 @@
+{
+  "date": "2026-09-23",
+  "fromSchema": 19,
+  "toSchema": 20,
+  "previousPreparedRevision": "b093c288a19ec6c64b4abd3812cd4e5b78c3e6b7",
+  "previousArchiveSha256": "77739148b1e8cac43f078e0bf142ae7331900ef61939409e04e9d2efd31f7953",
+  "runtime": "v24.21.0",
+  "previousCompiledStoreSha256": "005483e66c696cae3cb7864c82ae40943faa0797ceac7719f26b1605a05beaa7",
+  "previousSchema20Revision": "a4fb3d90f58889938ed1294b92b8571efda594da",
+  "previousSchema20CompiledSha256": "62e5cf834776afe253891f19a843b2061e41bf7d8fb4d5fbe7c5dbd39b0edd3d",
+  "storeSourceSha256": "4eab0d43d3933ac56e3bc6afa68aaea6a2c1e133813074b4320c78a924a9ade2",
+  "feedbackSourceSha256": "d359228633ec06cb36d3a84a50ef6d74623b6b0eec80021d67b0819cb7e26cad",
+  "checks": [
+    "Previous PR132 schema20 engine read current timed-out task, execution-limit model snapshot and quality review without rewriting them.",
+    "Current encrypted backup/restore preserved the timeout outcome and execution-limit model snapshot.",
+    "Actual prepared PR128 schema19 engine seeded a completed task, pinned model run and encrypted original backup.",
+    "Current schema20 engine preserved original task and history and stored a user review separately.",
+    "Supported encrypted schema20 backup/restore preserved the review.",
+    "Actual prepared PR128 engine refused both upgraded and restored schema20 stores.",
+    "Actual prepared PR128 engine reopened its original schema19 backup restored to a separate path, preserving task and run history."
+  ],
+  "limits": [
+    "Synthetic disposable stores only; no installed app launch, personal data/Keychain or source grants touched.",
+    "Rollback requires a separate compatible old backup and does not include reviews created after upgrade.",
+    "Independent/native/personal upgrade acceptance remains open."
+  ]
+}

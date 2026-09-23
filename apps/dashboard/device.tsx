@@ -1,10 +1,11 @@
+import { ExecutionSettings } from "./execution-limits.js";
 import React, { useEffect, useState } from "react";
 import type { DeviceStatus } from "../companion/device.js";
 const size = (bytes: number) => (bytes / 1024 ** 3).toFixed(1) + " GiB";
 export function DeviceResources({
   api,
 }: {
-  api: (path: string) => Promise<any>;
+  api: (path: string, method?: string, body?: unknown) => Promise<any>;
 }) {
   const [status, setStatus] = useState<DeviceStatus | null>(null),
     [unavailable, setUnavailable] = useState(false);
@@ -85,9 +86,15 @@ export function DeviceResources({
             </dd>
             <dt>Local generation</dt>
             <dd>
-              One task at a time. Cloud fallback and remote access are off.
+              {status.execution
+                ? "Controlled by the local execution limits below."
+                : `${status.limits.parallelGenerations} task(s) at once.`}{" "}
+              Cloud fallback is off.
             </dd>
           </dl>
+          {status.execution && (
+            <ExecutionSettings api={api} status={status.execution} />
+          )}
           <p>
             Free memory is a changing system snapshot, not a guarantee that a
             model will fit. Import limits are conservative file-size checks;

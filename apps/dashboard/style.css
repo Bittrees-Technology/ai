@@ -703,3 +703,32 @@ select.model-profile-select {
 .task-quality-review textarea {
   min-width: 0;
 }
+
+.execution-settings {
+  max-width: 44rem;
+}
+.execution-settings fieldset {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+.execution-settings label {
+  display: block;
+  margin-block: 0.75rem;
+}
+.execution-settings input[type="number"] {
+  display: block;
+  width: min(100%, 12rem);
+  box-sizing: border-box;
+}
+
+.execution-settings .execution-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.execution-settings input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0.2rem 0 0;
+}

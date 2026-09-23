@@ -1,3 +1,4 @@
+import type { ExecutionControls } from "./execution-limits.js";
 import {
   arch,
   availableParallelism,
@@ -9,7 +10,10 @@ import {
 import { statfs } from "node:fs/promises";
 import { maxFileBytes, maxTotalBytes } from "../../modules/models/imports.js";
 /** Device-local operational data only. No hostname, paths, interfaces, account or content. */
-export async function deviceStatus(directory: string) {
+export async function deviceStatus(
+  directory: string,
+  execution?: ReturnType<ExecutionControls["admission"]>,
+) {
   let diskFreeBytes: number | null = null;
   try {
     const disk = await statfs(directory);
@@ -34,8 +38,9 @@ export async function deviceStatus(directory: string) {
       importFileBytes: maxFileBytes,
       importTotalBytes: maxTotalBytes,
       importMemoryBytes: Math.floor(memoryBytes * 0.6),
-      parallelGenerations: 1,
+      parallelGenerations: execution?.limits.parallelTasks ?? 1,
     },
+    ...(execution ? { execution } : {}),
     remoteAccess: false,
     cloudFallback: false,
   };
