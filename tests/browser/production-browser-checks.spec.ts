@@ -223,7 +223,6 @@ test("built device controls complete both directions with retained Mac keys, exa
   const f = await setup(page);
   try {
     await f.review();
-    await preview(page, info.project.name, "review");
     await confirm(page, "Create Mac check");
     const wire = await output(page);
     await expect(
@@ -232,7 +231,6 @@ test("built device controls complete both directions with retained Mac keys, exa
         exact: true,
       }),
     ).toBeFocused();
-    await preview(page, info.project.name, "message");
     await checks(page)
       .getByRole("button", {
         name: "Select check message to copy",
@@ -295,7 +293,6 @@ test("built device controls complete both directions with retained Mac keys, exa
       "verified",
     );
     await refresh(page);
-    await preview(page, info.project.name, "history");
     const exportFile = page.waitForEvent("download");
     await checks(page)
       .getByRole("button", { name: "Export device check history", exact: true })
@@ -309,6 +306,9 @@ test("built device controls complete both directions with retained Mac keys, exa
       /preparation|ciphertext|privateKey|nonce/,
     );
     expect(violations).toEqual([]);
+    // WebKit screenshot preparation injects a tool stylesheet. Capture only
+    // after actual application/CSP acceptance; keep the production policy strict.
+    await preview(page, info.project.name, "history");
   } finally {
     f.mac.close();
   }
@@ -325,10 +325,10 @@ for (const action of [
   test(`device review cancels for ${action} without creating a check`, async ({
     page,
   }) => {
+    if (action === "deadline" || action === "rollback")
+      await page.clock.install();
     const f = await setup(page);
     try {
-      if (action === "deadline" || action === "rollback")
-        await page.clock.install();
       await f.review();
       await checks(page).getByRole("checkbox").check();
       if (action === "blur")
@@ -519,6 +519,21 @@ test("wrong route and wrong message intent do not create completed browser proof
     expect(
       (await rows(page)).filter((r) => r.state === "verified"),
     ).toHaveLength(0);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("device check review and original encrypted message remain readable on desktop and phone", async ({
+  page,
+}, info) => {
+  const f = await setup(page);
+  try {
+    await f.review();
+    await preview(page, info.project.name, "review");
+    await confirm(page, "Create Mac check");
+    await output(page);
+    await preview(page, info.project.name, "message");
   } finally {
     f.mac.close();
   }
