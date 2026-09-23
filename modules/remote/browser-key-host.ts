@@ -1,3 +1,5 @@
+import { BrowserTaskComposition } from "./browser-task-composition.js";
+import { BrowserTaskHistory } from "./browser-task-history.js";
 import { BrowserTaskConsent } from "./browser-task-consent.js";
 import { z } from "zod";
 import {
@@ -34,6 +36,8 @@ export class BrowserKeyHost {
   private peers!: BrowserPeerEnrollment;
   private checks?: BrowserPeerChecks;
   private consents?: BrowserTaskConsent;
+  private compositions?: BrowserTaskComposition;
+  private taskHistory?: BrowserTaskHistory;
   private peerKey: BrowserKeyProof | null = null;
   private client: BrowserDeviceClient;
   readonly localOwner: string;
@@ -142,6 +146,8 @@ export class BrowserKeyHost {
     this.peers?.invalidate();
     this.checks?.invalidate();
     this.consents?.invalidate();
+    this.compositions?.invalidate();
+    this.taskHistory?.invalidate();
   }
   /** Trusted host calls this immediately on logout, lock or account/scope change. */
   invalidate() {
@@ -159,6 +165,8 @@ export class BrowserKeyHost {
     this.peers?.close();
     this.checks?.close();
     this.consents?.close();
+    this.compositions?.close();
+    this.taskHistory?.close();
   }
   private check(g: number) {
     if (g !== this.generation || !this.currentContext()) throw Error("DENIED");
@@ -192,6 +200,8 @@ export class BrowserKeyHost {
           this.peers.invalidate();
           this.checks?.invalidate();
           this.consents?.invalidate();
+          this.compositions?.invalidate();
+          this.taskHistory?.invalidate();
           this.freshUntil = 0;
         }
         this.binding = next ? { ...next } : null;
@@ -369,6 +379,82 @@ export class BrowserKeyHost {
       throw e;
     }
   }
+  private async compositionStore() {
+    if (this.compositions) return this.compositions;
+    const g = this.generation,
+      consents = await this.consentStore();
+    this.check(g);
+    return (this.compositions = new BrowserTaskComposition(
+      consents,
+      () => this.active?.current() ?? null,
+      () => {
+        const binding = this.active?.current();
+        return binding && this.active?.freshRegistration(binding)
+          ? binding
+          : null;
+      },
+      this.now,
+      this.monotonic,
+    ));
+  }
+  private async historyStore() {
+    if (this.taskHistory) return this.taskHistory;
+    const g = this.generation,
+      created = await BrowserTaskHistory.open(
+        this.original.ownerId,
+        () => this.currentContext()?.ownerId ?? null,
+        this.now,
+        this.monotonic,
+      );
+    try {
+      this.check(g);
+      return (this.taskHistory = created);
+    } catch (e) {
+      created.close();
+      throw e;
+    }
+  }
+  /** Reviewed composition and explicit recovery. No network sender or authority
+   * handle is exposed. Owner-local maintenance is independent of sending grants. */
+  readonly taskAPI = {
+    status: () =>
+      this.operation(async () => (await this.historyStore()).status()),
+    export: (raw: unknown) =>
+      this.operation(async () => (await this.historyStore()).export(raw)),
+    stop: (raw: unknown) =>
+      this.operation(async () => (await this.historyStore()).stop(raw)),
+    clear: (raw: unknown) =>
+      this.operation(async () => (await this.historyStore()).clear(raw)),
+    envelope: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).envelope(raw),
+      ),
+    receive: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).receive(raw),
+      ),
+    readResult: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).readResult(raw),
+      ),
+    initialize: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).initialize(raw),
+      ),
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).prepare(raw),
+      ),
+    confirm: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).confirm(raw),
+      ),
+    resume: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.compositionStore()).resume(raw),
+      ),
+    invalidate: () => this.cancelKeys(),
+  };
   /** Saved permission choices are not a task route. Every online review obtains
    * fresh verified identity; offline metadata/revocation never grant authority. */
   readonly consentAPI = {

@@ -41,6 +41,8 @@ export const browserOutboxEntrySchema = z
     resultEnvelope: privateEnvelopeSchema.nullable().default(null),
     resultHash: hex.nullable().default(null),
     resultReceivedAt: positive.nullable().default(null),
+    // Older wire-only entries have no durable local composition material.
+    composed: z.literal(true).optional(),
     attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .refine(

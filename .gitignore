@@ -28,3 +28,6 @@ tests/browser/fixture/public/legacy-private/
 
 .legacy-browser-consent/
 tests/browser/fixture/public/legacy-consent/
+
+.legacy-browser-composition/
+tests/browser/fixture/public/legacy-composition/

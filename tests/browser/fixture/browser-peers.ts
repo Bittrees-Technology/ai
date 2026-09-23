@@ -1,3 +1,5 @@
+import { BrowserTaskComposition } from "../../../modules/remote/browser-task-composition.js";
+import { BrowserTaskHistory } from "../../../modules/remote/browser-task-history.js";
 import { BrowserTaskConsent } from "../../../modules/remote/browser-task-consent.js";
 import { BrowserPrivateOutbox } from "../../../modules/remote/browser-outbox.js";
 import { BrowserPeerChecks } from "../../../modules/remote/browser-peer-checks.js";
@@ -23,14 +25,35 @@ let keys: BrowserKeyLifecycle,
   host: BrowserKeyHost | null = null;
 let checks: BrowserPeerChecks | undefined;
 let consents: BrowserTaskConsent | undefined;
+let composition: BrowserTaskComposition | undefined;
+let history: BrowserTaskHistory | undefined;
+let historyOwner: string | null = null;
+let consentProvider = BrowserTaskConsent;
 let sender: Awaited<ReturnType<BrowserTaskConsent["authorize"]>> | undefined;
 let previousOutbox: typeof BrowserPrivateOutbox | undefined;
 async function consentStore() {
-  return (consents ??= await BrowserTaskConsent.open(
+  return (consents ??= await consentProvider.open(
     owner,
     () => binding,
     keys,
     peers,
+    () => now,
+    () => mono,
+  ));
+}
+async function compositionStore() {
+  return (composition ??= new BrowserTaskComposition(
+    await consentStore(),
+    () => binding,
+    () => binding,
+    () => now,
+    () => mono,
+  ));
+}
+async function historyStore() {
+  return (history ??= await BrowserTaskHistory.open(
+    historyOwner!,
+    () => historyOwner,
     () => now,
     () => mono,
   ));
@@ -101,11 +124,21 @@ async function mount(id: string) {
 }
 const legacyUrl = "/legacy-lifecycle.js";
 const fixture = {
-  async init(o: string, b: PrivateBinding, time: number, previous = false) {
+  async init(
+    o: string,
+    b: PrivateBinding,
+    time: number,
+    previous: boolean | "task" = false,
+  ) {
     sender?.outbox.close();
     sender = undefined;
     consents?.close();
     consents = undefined;
+    composition?.close();
+    composition = undefined;
+    history?.close();
+    history = undefined;
+    historyOwner = b.ownerId;
     checks?.close();
     checks = undefined;
     keys?.close();
@@ -117,11 +150,16 @@ const fixture = {
     now = time;
     mono = 0;
     current = null;
-    const previousUrl = "/legacy-consent/index.js";
+    const previousUrl =
+      previous === "task"
+        ? "/legacy-composition/index.js"
+        : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
+    consentProvider =
+      previous === "task" ? providers.BrowserTaskConsent : BrowserTaskConsent;
     keys = await providers.BrowserKeyLifecycle.open(
       owner,
       () => binding,
@@ -394,7 +432,7 @@ const fixture = {
   },
   async removeCheckMarker() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -419,7 +457,7 @@ const fixture = {
   },
   async inspectChecks() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -477,6 +515,51 @@ const fixture = {
   },
   taskInitialize: (raw: unknown) => sender!.outbox.initialize(raw),
   taskCreate: (raw: unknown) => sender!.prepareTask(raw),
+  taskReserve: (raw: unknown) => sender!.reserveTask(raw),
+  taskResume: (raw: unknown) => sender!.resumeTask(raw),
+  composeInitialize: (raw: unknown) =>
+    host
+      ? host.taskAPI.initialize(raw)
+      : withKey(async () => (await compositionStore()).initialize(raw)),
+  composePrepare: (raw: unknown) =>
+    host
+      ? host.taskAPI.prepare(raw)
+      : withKey(async () => (await compositionStore()).prepare(raw)),
+  composeConfirm: (raw: unknown) =>
+    host
+      ? host.taskAPI.confirm(raw)
+      : withKey(async () => (await compositionStore()).confirm(raw)),
+  composeResume: (raw: unknown) =>
+    host
+      ? host.taskAPI.resume(raw)
+      : withKey(async () => (await compositionStore()).resume(raw)),
+  composeEnvelope: (raw: unknown) =>
+    host
+      ? host.taskAPI.envelope(raw)
+      : withKey(async () => (await compositionStore()).envelope(raw)),
+  composeReceive: (raw: unknown) =>
+    host
+      ? host.taskAPI.receive(raw)
+      : withKey(async () => (await compositionStore()).receive(raw)),
+  composeReadResult: (raw: unknown) =>
+    host
+      ? host.taskAPI.readResult(raw)
+      : withKey(async () => (await compositionStore()).readResult(raw)),
+  composeInvalidate: () => {
+    composition?.invalidate();
+    host?.taskAPI.invalidate();
+  },
+  historyStatus: () =>
+    host ? host.taskAPI.status() : historyStore().then((h) => h.status()),
+  historyExport: (raw: unknown) =>
+    host ? host.taskAPI.export(raw) : historyStore().then((h) => h.export(raw)),
+  historyStop: (raw: unknown) =>
+    host ? host.taskAPI.stop(raw) : historyStore().then((h) => h.stop(raw)),
+  historyClear: (raw: unknown) =>
+    host ? host.taskAPI.clear(raw) : historyStore().then((h) => h.clear(raw)),
+  historyOwnerChange: (id: string | null) => {
+    historyOwner = id;
+  },
   taskDelivery: (id: string) => sender!.outbox.delivery(id),
   taskReceipt: (raw: unknown) => sender!.outbox.acceptReceipt(raw),
   taskResult: (raw: unknown) => sender!.outbox.acceptResult(raw),
@@ -484,7 +567,7 @@ const fixture = {
   taskExport: () => sender!.outbox.export(),
   async inspectConsent() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -511,7 +594,7 @@ const fixture = {
   },
   async dropConsentRow() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });

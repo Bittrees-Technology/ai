@@ -719,8 +719,10 @@ export class BrowserTaskConsent {
     peerId: string,
     peerKeyEpoch: number,
     freshRegistration: () => PrivateBinding | null = () => null,
+    operationCheck: () => void = () => {},
   ) {
     return this.exclusive(async (g) => {
+      operationCheck();
       this.input(z.uuid(), peerId);
       this.input(positive, peerKeyEpoch);
       const { row, grants } = await this.read(g),
@@ -740,6 +742,7 @@ export class BrowserTaskConsent {
       this.check(g, p.proof.local, grant.choices.expiresAt);
       const check = () => {
         try {
+          operationCheck();
           this.check(g, p.proof.local, grant.choices.expiresAt);
         } catch {
           throw new BrowserOutboxError("DENIED");
@@ -809,32 +812,102 @@ export class BrowserTaskConsent {
         outbox.close();
         throw e;
       }
+      const resumeTask = async (raw: unknown) => {
+        check();
+        const input = this.input(
+            z.strictObject({ id: z.uuid(), expectedRevision: positive }),
+            raw,
+          ),
+          original = await outbox.taskState(input.id);
+        check();
+        if (
+          original.envelope &&
+          (original.state === "pending" || original.state === "accepted")
+        )
+          return original;
+        const prepared = await outbox.preparedTask(input);
+        check();
+        const bytes = new TextEncoder().encode(
+          JSON.stringify(prepared.payload),
+        );
+        try {
+          const envelope = await sealPrivateEnvelope(
+            prepared.entry.header,
+            bytes,
+            { senderKey: p.local.pair, recipientPublicKey: p.peer.publicKey },
+            this.now,
+          );
+          check();
+          try {
+            return await outbox.commit(
+              {
+                id: input.id,
+                expectedRevision: prepared.entry.revision,
+                envelope,
+              },
+              prepared.proof,
+            );
+          } catch (e) {
+            if (!(e instanceof BrowserOutboxError) || e.code !== "CONFLICT")
+              throw e;
+            // A competing resume may have published first. Return only that
+            // original durable ciphertext, never replace it or reserve again.
+            const saved = await outbox.taskState(input.id);
+            check();
+            if (
+              !same(saved.header, prepared.entry.header) ||
+              !saved.envelope ||
+              (saved.state !== "pending" && saved.state !== "accepted")
+            )
+              throw e;
+            return saved;
+          }
+        } finally {
+          bytes.fill(0);
+        }
+      };
+      const reserveTask = async (raw: unknown) => {
+        check();
+        const input = this.input(
+          z.strictObject({
+            id: z.uuid(),
+            payload: privateTaskPayloadSchema,
+            expiresAt: positive,
+          }),
+          raw,
+        );
+        if (input.expiresAt > grant.choices.expiresAt)
+          throw new BrowserTaskConsentError("DENIED");
+        const reserved = await outbox.reserveTask({ ...input, peerId });
+        check();
+        return reserved;
+      };
       return {
         outbox,
         context: structuredClone(context),
+        taskDeadline: Math.min(
+          this.now() + 86400000,
+          grant.choices.expiresAt,
+          p.proof.local.binding.expiresAt,
+        ),
+        reserveTask,
+        resumeTask,
+        // Compatibility for internal callers. Page submission must go through
+        // the separate one-use exact-content review, not call this helper.
         prepareTask: async (payload: unknown) => {
-          check();
-          const task = this.input(privateTaskPayloadSchema, payload);
-          const reserved = await outbox.reserve({ peerId, confirmed: true });
-          check();
-          const bytes = new TextEncoder().encode(JSON.stringify(task));
-          try {
-            const envelope = await sealPrivateEnvelope(
-              reserved.header,
-              bytes,
-              { senderKey: p.local.pair, recipientPublicKey: p.peer.publicKey },
-              this.now,
-            );
-            check();
-            // Never return usable ciphertext before the authoritative guarded write.
-            return await outbox.commit({
-              id: reserved.id,
-              expectedRevision: reserved.revision,
-              envelope,
-            });
-          } finally {
-            bytes.fill(0);
-          }
+          const reserved = await reserveTask({
+            id: crypto.randomUUID(),
+            payload,
+            expiresAt: Math.min(
+              this.now() + 86400000,
+              grant.choices.expiresAt,
+              p.proof.local.binding.expiresAt,
+            ),
+          });
+          return resumeTask({
+            id: reserved.id,
+            expectedRevision: reserved.revision,
+          });
         },
       };
     });

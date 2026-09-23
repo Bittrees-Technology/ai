@@ -167,6 +167,8 @@ jobs:
           node scripts/prepare-legacy-browser-private.mjs
           git fetch --no-tags --depth=1 origin b586ce3cd85f6320b51c78626498a3015a657e77
           node scripts/prepare-legacy-browser-consent.mjs
+          git fetch --no-tags --depth=1 origin 9fbecfcc864843fc59fd43daf447f65178244be7
+          node scripts/prepare-legacy-browser-composition.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
