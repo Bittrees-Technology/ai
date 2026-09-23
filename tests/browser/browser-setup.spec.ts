@@ -313,6 +313,9 @@ test("A committed registration acknowledged after scope loss cannot become fresh
   await expect(
     keys(page).getByRole("button", { name: "Review new key", exact: true }),
   ).toBeDisabled();
+  await expect(keys(page).getByRole("status")).toContainText(
+    "Register this browser again",
+  );
   expect((await status(page)).slots).toHaveLength(0);
   expect(
     (

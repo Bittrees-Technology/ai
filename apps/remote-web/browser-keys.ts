@@ -558,7 +558,9 @@ export function mountBrowserKeys(
           ? "Earlier key storage found. Keep its backups before reviewing a fresh browser registration."
           : status.locked && status.revision > 0
             ? "Key material was cleared. Register a different browser identity before setup."
-            : "Key history loaded. Private task access is separate.");
+            : status.requiresFreshRegistration && !ctx()?.freshRegistration
+              ? "Register this browser again, then refresh keys to start setup. A saved registration alone cannot start a first key setup."
+              : "Key history loaded. Private task access is separate.");
   }
   function showReview(action: Action, keyId?: string) {
     if (!status || !loaded || loaded !== scope() || busy || !focused()) return;
