@@ -11,6 +11,9 @@ export type MemoryMatch = {
   }[];
   why: {
     relevance: number;
+    matchedTerms?: string[];
+    queryTerms?: string[];
+    feedbackScope?: "current-content";
     sourcePenalty: number;
     freshness: number;
     usefulness: number;

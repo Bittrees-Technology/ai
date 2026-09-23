@@ -1,0 +1,27 @@
+{
+  "date": "2026-09-23",
+  "runtime": "v24.21.0",
+  "fromMemorySchema": 1,
+  "toMemorySchema": 2,
+  "taskSchema": 20,
+  "previousPreparedRevision": "b093c288a19ec6c64b4abd3812cd4e5b78c3e6b7",
+  "previousPreparedArchiveSha256": "77739148b1e8cac43f078e0bf142ae7331900ef61939409e04e9d2efd31f7953",
+  "previousSourceRevision": "8f50aa10459ceff95949bb51dc7dd16eb8a522af",
+  "preparedCompiledMemorySha256": "ad90331cb2480705d641b7b1c9090e5ec1b79a58ff270fcc06e5cce74d15e2d8",
+  "previousCompiledMemorySha256": "ad90331cb2480705d641b7b1c9090e5ec1b79a58ff270fcc06e5cce74d15e2d8",
+  "memorySourceSha256": "27e5f0ccb6a3af0e8250fbf7b561c7bffda5b3f05c58b7a0c5af96f45c7de442",
+  "taskStoreSourceSha256": "4eab0d43d3933ac56e3bc6afa68aaea6a2c1e133813074b4320c78a924a9ade2",
+  "checks": [
+    "Actual signed/extracted PR128 memory1 engine seeded approved pinned memory, legacy feedback and an encrypted original backup.",
+    "Current memory2 preserved memory/revision/pin/approval and legacy feedback; unknown feedback did not influence ranking.",
+    "New feedback influenced its exact content, and a text correction retained old ratings without transferring their score.",
+    "Supported encrypted backup/restore preserved the corrected memory and both feedback rows; denied source access still concealed restored content.",
+    "Actual prepared PR128 and compiled previous PR133 memory1 engines refused upgraded and restored memory2 stores.",
+    "Actual prepared memory1 engine reopened an original backup restored separately with original content and rating."
+  ],
+  "limits": [
+    "Synthetic disposable content only; no installed app launch/replacement, personal memory/key access or source grant.",
+    "Memory2 requires current engine; rollback uses an original compatible backup restored separately and does not carry forward new edits/ratings.",
+    "Task20/browser1/import1 unchanged; broader model/retrieval, native/personal/source acceptance remains open."
+  ]
+}

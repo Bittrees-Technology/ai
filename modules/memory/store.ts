@@ -54,15 +54,24 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
           .get() as { version: number; verifier: Buffer } | undefined;
         if (meta) {
           if (
-            meta.version !== 1 ||
+            ![1, 2].includes(meta.version) ||
             this.vault.open(meta.verifier, "memory-key") !==
               "bittrees-ai-memory"
           )
             throw new Error("Unsupported memory store or key");
-        } else
+          if (meta.version === 1) {
+            this.db.exec(
+              "ALTER TABLE feedback ADD COLUMN content_fingerprint TEXT; UPDATE memory_meta SET version=2 WHERE id=1",
+            );
+          }
+        } else {
+          this.db.exec(
+            "ALTER TABLE feedback ADD COLUMN content_fingerprint TEXT",
+          );
           this.db
-            .prepare("INSERT INTO memory_meta VALUES(1,1,?)")
+            .prepare("INSERT INTO memory_meta VALUES(1,2,?)")
             .run(this.vault.seal("bittrees-ai-memory", "memory-key"));
+        }
       })();
     } catch (error) {
       this.db.close();
@@ -210,21 +219,41 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     memoryId: string,
     feedbackId: string,
     outcome: "accepted" | "edited" | "rejected",
+    expectedRevision?: number,
   ) {
     id.parse(feedbackId);
     z.enum(["accepted", "edited", "rejected"]).parse(outcome);
-    await this.get(owner, memoryId);
+    if (expectedRevision !== undefined)
+      z.number().int().positive().parse(expectedRevision);
+    const snapshot = await this.get(owner, memoryId);
     this.db
       .transaction(() => {
-        this.row(owner, memoryId);
+        const current = this.row(owner, memoryId);
+        if (!this.unexpired(this.input(current)))
+          throw new StoreError("NOT_FOUND");
+        if (
+          current.revision !== snapshot.revision ||
+          (expectedRevision !== undefined &&
+            current.revision !== expectedRevision)
+        )
+          throw new StoreError("CONFLICT");
         const existing = this.db
-          .prepare("SELECT outcome FROM feedback WHERE memory_id=? AND id=?")
-          .get(memoryId, feedbackId) as { outcome: string } | undefined;
-        if (existing && existing.outcome !== outcome)
+          .prepare(
+            "SELECT outcome,content_fingerprint FROM feedback WHERE memory_id=? AND id=?",
+          )
+          .get(memoryId, feedbackId) as
+          { outcome: string; content_fingerprint: string | null } | undefined;
+        if (
+          existing &&
+          (existing.outcome !== outcome ||
+            existing.content_fingerprint !== current.fingerprint)
+        )
           throw new StoreError("CONFLICT");
         this.db
-          .prepare("INSERT OR IGNORE INTO feedback VALUES(?,?,?,?)")
-          .run(memoryId, feedbackId, outcome, this.now());
+          .prepare(
+            "INSERT OR IGNORE INTO feedback(memory_id,id,outcome,created_at,content_fingerprint) VALUES(?,?,?,?,?)",
+          )
+          .run(memoryId, feedbackId, outcome, this.now(), current.fingerprint);
       })
       .immediate();
   }
@@ -257,25 +286,28 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
       index.exec("CREATE VIRTUAL TABLE search USING fts5(id UNINDEXED,text)");
       const insert = index.prepare("INSERT INTO search VALUES(?,?)");
       for (const [key, item] of eligible) insert.run(key, item.input.text);
-      const matches = index
-        .prepare(
-          "SELECT id,bm25(search) AS rank FROM search WHERE search MATCH ? ORDER BY rank LIMIT 1000",
-        )
-        .all(terms.map((t) => '"' + t + '"').join(" OR ")) as {
-        id: string;
-        rank: number;
-      }[];
-      const results = matches
-        .map((match) => {
-          const { row, input } = eligible.get(match.id)!;
+      // Use the same tokenizer for retrieval and coverage; substring matching
+      // over-counts "art" in "quarterly" and misses normalized accent matches.
+      const matched = new Map<string, string[]>();
+      const matchTerm = index.prepare(
+        "SELECT id FROM search WHERE search MATCH ? LIMIT 1000",
+      );
+      for (const term of terms) {
+        for (const row of matchTerm.all('"' + term + '"') as { id: string }[]) {
+          const list = matched.get(row.id) ?? [];
+          list.push(term);
+          matched.set(row.id, list);
+        }
+      }
+      const results = [...matched]
+        .map(([memoryId, matchedTerms]) => {
+          const { row, input } = eligible.get(memoryId)!;
           const f = this.db
             .prepare(
-              "SELECT COALESCE(SUM(CASE outcome WHEN 'accepted' THEN 1 WHEN 'edited' THEN 0 ELSE -1 END),0) AS usefulness FROM feedback WHERE memory_id=?",
+              "SELECT COALESCE(SUM(CASE outcome WHEN 'accepted' THEN 1 WHEN 'edited' THEN 0 ELSE -1 END),0) AS usefulness FROM feedback WHERE memory_id=? AND content_fingerprint=?",
             )
-            .get(row.id) as { usefulness: number };
-          const relevance =
-            terms.filter((t) => input.text.toLocaleLowerCase().includes(t))
-              .length / terms.length;
+            .get(row.id, row.fingerprint) as { usefulness: number };
+          const relevance = matchedTerms.length / terms.length;
           const freshness =
               1 /
               (1 + Math.max(0, this.now() - row.updated_at) / 2_592_000_000),
@@ -290,6 +322,9 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
               relevance * 5 + freshness + usefulness + (row.pinned ? 0.5 : 0),
             why: {
               relevance,
+              matchedTerms,
+              queryTerms: terms,
+              feedbackScope: "current-content" as const,
               freshness,
               usefulness,
               pinned: !!row.pinned,

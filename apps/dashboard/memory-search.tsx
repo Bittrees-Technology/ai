@@ -75,6 +75,20 @@ export function MemorySearch({
               {item.why.pinned ? "your pin" : "pin status"} also affect order.
               These are search signals, not confidence in the statement.
             </p>
+            {item.why.matchedTerms && (
+              <p>
+                Matched terms: {item.why.matchedTerms.join(", ")}. Search can
+                treat accented and uppercase letters as equivalent.
+              </p>
+            )}
+            {item.why.feedbackScope === "current-content" && (
+              <p>
+                Only feedback tied to this exact saved content affects
+                usefulness. Older feedback without a content link is retained
+                but does not affect ranking. Editing memory does not transfer
+                feedback to different text.
+              </p>
+            )}
             <p>
               {item.why.sourcePenalty > 0
                 ? "To broaden source coverage, this result received a repeated-source penalty while ranking."
