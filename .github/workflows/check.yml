@@ -162,7 +162,7 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Verify browser and companion private-protocol interoperability
-        run: npm run test:browser-private
+        run: npm run test:browser-private -- --max-failures=3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -314,5 +314,13 @@ jobs:
         with:
           name: browser-key-controls-ui-preview
           path: test-results/browser-key-controls-*.png
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain browser registration and key setup previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-registration-ui-preview
+          path: test-results/browser-registration-*.png
           if-no-files-found: error
           retention-days: 7
