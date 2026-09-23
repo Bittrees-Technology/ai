@@ -345,3 +345,128 @@ test("Lost verification after proof commit reports uncertainty; fresh status rev
     p.mac.close();
   }
 });
+
+async function consentReview(page: Page) {
+  const p = await checkPair(page);
+  await page.evaluate(
+    (envelope) =>
+      window.browserPeersTest.checkComplete({ envelope, confirmed: true }),
+    p.wire,
+  );
+  const review = await page.evaluate(
+    (choices) =>
+      window.browserPeersTest.consentPrepare({ expectedRevision: 0, choices }),
+    {
+      peerId: p.pin.peerId,
+      peerKeyEpoch: p.pin.keyEpoch,
+      sendTasks: true,
+      receiveResults: true,
+      expiresAt: Date.now() + 240000,
+    },
+  );
+  return { ...p, review };
+}
+const approveConsent = (
+  page: Page,
+  r: { reviewId: string; expectedRevision: number },
+) =>
+  page.evaluate(
+    (r) =>
+      window.browserPeersTest.consentApprove({
+        reviewId: r.reviewId,
+        expectedRevision: r.expectedRevision,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    r,
+  );
+test("verified host saves retained consent and supports offline local revocation", async ({
+  page,
+  identityServer,
+}) => {
+  const p = await consentReview(page);
+  try {
+    const grant = await approveConsent(page, p.review);
+    await open(page);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.consentStatus()))
+        .grants,
+    ).toEqual([grant]);
+    identityServer.offline(true);
+    await expect(
+      page.evaluate(
+        (c) =>
+          window.browserPeersTest.consentPrepare({
+            expectedRevision: 1,
+            choices: c,
+          }),
+        p.review.choices,
+      ),
+    ).rejects.toThrow();
+    await page.evaluate((r) => window.browserPeersTest.consentRevoke(r), {
+      peerId: p.pin.peerId,
+      expectedRevision: 1,
+      confirmed: true,
+    });
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.consentStatus()))
+        .grants[0]!.revoked,
+    ).toBe(true);
+  } finally {
+    identityServer.offline(false);
+    p.mac.close();
+  }
+});
+test("server device revocation prevents a previously reviewed permission from committing", async ({
+  page,
+  context,
+}) => {
+  const p = await consentReview(page),
+    other = await context.newPage();
+  try {
+    await open(other);
+    await other.evaluate(() => window.browserPeersTest.resume());
+    await other.evaluate(
+      (b) =>
+        window.browserPeersTest.registerRevoke({
+          deviceId: b.deviceId,
+          credentialEpoch: b.credentialEpoch,
+          confirmed: true,
+        }),
+      p.registration.binding,
+    );
+    await expect(approveConsent(page, p.review)).rejects.toThrow();
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.consentStatus()))
+        .revision,
+    ).toBe(0);
+  } finally {
+    await other.close();
+    p.mac.close();
+  }
+});
+test("lost final server verification leaves inspectable committed consent and refuses approval replay", async ({
+  page,
+  identityServer,
+}) => {
+  const p = await consentReview(page);
+  try {
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(approveConsent(page, p.review)).rejects.toThrow();
+    await open(page);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const state = await page.evaluate(() =>
+      window.browserPeersTest.consentStatus(),
+    );
+    expect(state.revision).toBe(1);
+    expect(state.grants[0]!.choices).toEqual(p.review.choices);
+    await expect(approveConsent(page, p.review)).rejects.toThrow();
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.consentStatus()))
+        .revision,
+    ).toBe(1);
+  } finally {
+    p.mac.close();
+  }
+});
