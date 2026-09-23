@@ -25,3 +25,25 @@ export const privateAcceptedPayloadSchema = z.strictObject({
   type: z.literal("task.accepted"),
   receipt: privateTaskReceiptSchema,
 });
+
+// Only source-free terminal task output is eligible; no raw errors or model metadata.
+export const privateResultPayloadSchema = z
+  .strictObject({
+    version: z.literal(1),
+    type: z.literal("task.result"),
+    receipt: privateTaskReceiptSchema,
+    task: z.strictObject({
+      id: z.uuid(),
+      revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      status: z.enum(["completed", "failed", "cancelled", "expired"]),
+      updatedAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      output: z.string().max(65536).nullable(),
+    }),
+  })
+  .refine(
+    (p) =>
+      p.task.id === p.receipt.taskId &&
+      (p.task.status === "completed"
+        ? p.task.output !== null
+        : p.task.output === null),
+  );

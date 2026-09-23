@@ -1,0 +1,39 @@
+# Durable companion responses for private tasks
+
+`PrivateTaskResponses` is an internal companion backend that produces encrypted acceptance receipts and terminal results for tasks admitted by `PrivateTaskReceiver`. It has no startup loop, HTTP sending route, relay connection, endpoint-key persistence or new user interface. Source apps, the installed Mac app, model defaults and Acer news processing are unchanged.
+
+## Authority and payload
+
+Preparation accepts only the original operation ID, peer ID, response kind (`accepted` or `result`) and explicit confirmation. It looks up the owner-encrypted local admission receipt; callers cannot provide a task, payload, response text, destination key or routing header. The current verified account/device must match that original destination, the reviewed peer/key epoch must match the original sender, and the separate current response consent must identify the original admission permission revision. A receipt or public-key pin alone grants no response permission.
+
+Acceptance delivery and result sharing are separately represented by `acceptanceEnabled` and `resultsEnabled`. Changing the saved permission, binding, peer registry or key epoch conservatively fences existing responses; there is no silent rebinding to renewed credentials or replacement keys. Current endpoint keys come from the trusted in-memory provider. Key references are rechecked after cryptography. Durable key storage, user-held recovery and real consent integration remain open.
+
+Only the original source-free task is eligible. Tasks with source references, source bindings, memories or dependencies are denied. A completed result must match the local worker's unreviewed-draft shape with no memory versions or source payload. The response projects only output text, task ID/revision, terminal status and update time, together with the immutable admission receipt. It does not export model metadata, raw errors, source records or memory projections. Failed, cancelled and expired tasks carry status with null output. Pending/running tasks cannot produce terminal results. Model output remains untrusted text: completion is not factual verification or permission to execute an action.
+
+The portable `task.result` contract is strict. Its task ID must match the receipt. Encoded response content must fit the existing 65,536-byte private-envelope limit; oversized results are rejected without truncating or replacing the local result. Chunked delivery and a visible oversized-result flow are not implemented.
+
+## Durable production and retries
+
+A short immediate SQLite transaction reserves one response per local owner/account/operation/kind. Acceptance and result use distinct message IDs but retain the original operation ID. Directed endpoint/key-epoch sequences share the existing task sender's counter namespace, so tasks, receipts and results cannot independently reuse sequence numbers. The shared allocator preserves the earlier task-outbox channel hashes and must run inside a transaction. Reservation and sequence advance roll back together on failure.
+
+The reserved content snapshot is encrypted at rest using the owner-bound Vault purpose. HPKE runs outside the transaction. A second transaction rechecks permission, peer trust, exact current source-free task/receipt projection, key identity and expiry before publishing one immutable envelope. Concurrent candidates return only the envelope that was committed. Interrupted preparation resumes by its local ID. Published retries return the original bytes and never renew deadlines, substitute newer output or create another operation. A changed task revision/result stops old delivery and needs future explicit reconciliation.
+
+`delivery` revalidates current consent, peer trust, source-free content and expiry immediately before returning the original envelope. It records a handoff attempt, not transmission, browser receipt, viewing or execution. Copies already handed to transport cannot be recalled. A confirmed revision-checked local `stop` prevents future handoffs without claiming destination cancellation. Stopped history remains retained; automatic cleanup and uncertain-effect resubmission are absent.
+
+Bounds are four simultaneous preparation operations per instance, 512 retained response rows per local owner, 262,144 encrypted bytes per row, and the codec's payload/time bounds. Capacity failure preserves existing history. Lease expiry, key rotation and restored state require future scoped review; the module cannot promise instant revocation while offline.
+
+## Storage, export and recovery
+
+Task schema **16** adds `private_task_responses`, with unique owner/account-operation/kind reservations, revisions, encrypted payloads and an independent restore lock. Existing schema15 tasks, admission receipts, outgoing tasks and sequence counters are preserved. Local authenticated export includes `privateTaskResponses`; confirmed local data deletion removes response rows along with task/receipt/channel data. There is no remote export or sending endpoint added here.
+
+Supported backup restore locks response rows independently of peer trust and task-outbox locks. Unlocking or replacing a peer record alone cannot send restored responses. There is no response unlock API or backup-import authority grant. Older engines reject schema16 and require their own compatible pre-upgrade backup for rollback; never point the installed PR40 or prepared PR104 engine at a schema16 database.
+
+The [compatibility receipt](evidence/private-response-schema-compatibility-2026-09-23.json) records actual extracted PR104 engine/signature verification with disposable data: schema12 task preservation through16, older-engine rejection of16, and restoration of the original schema12 backup to a separate path. Reproduce after building using `scripts/check-private-peer-upgrade.mjs` and `BITTREES_OLD_APP_RESOURCES` pointing at the reviewed PR104 app's Resources directory. This is synthetic migration evidence, not personal installation or native recovery acceptance.
+
+## Verification and remaining work
+
+Node tests exercise real sender→receiver admission, actual local worker output, response HPKE decoding and sender receipt reconciliation; database reopen and exact retry; concurrent connections; shared task/response sequences; reservation/publication rollback and resume; separate result consent; revoked or changed authority; changed tasks/keys; non-success status projection; source/memory/oversize denial; stop/expiry; owner encryption/export/deletion; independent restored locks; capacity; and schema15 migration. Local HTTP tests verify authenticated export, confirmed deletion and absence of a sending route.
+
+The disposable Chromium/Firefox/WebKit fixture additionally accepts a real companion-produced receipt into its browser outbox, decrypts a companion-produced local-worker result, checks exact retry and rejects using a result as an acceptance receipt. The result is decoded only in the test harness: durable browser result reconciliation, UI review and full private-conversation delivery remain unfinished. Existing protocol/storage/receipt cases remain in the suite. Keys and authority are synthetic test fixtures; there is no personal browser/native automation or real source access.
+
+Remaining R2 work includes endpoint key lifecycle and user-held recovery, real reciprocal pairing/consent, durable browser result consumption, scoped reconnect/resume, encrypted conversation replies and exact-content action approvals, relay/transport and its pending retention decision, update trust, personal native acceptance and independent cryptographic review. Nothing here activates a hosted service or upgrades Acer's model/runtime.

@@ -1,3 +1,4 @@
+import { reservePrivateSequence } from "./private-send-sequence.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Owner, Store } from "../storage/store.js";
@@ -267,29 +268,23 @@ export class PrivateTaskOutbox {
           const id = randomUUID(),
             issuedAt = this.now(),
             b = p.value.binding;
-          const channel = this.hash("channel", [
-            b.ownerId,
-            b.deviceId,
-            input.peerId,
-            p.value.senderKeyEpoch,
-            input.peerKeyEpoch,
-          ]);
-          this.store.db
-            .prepare(
-              "INSERT OR IGNORE INTO private_send_channels(user_id,tenant_id,channel_hash,next_sequence) VALUES(?,?,?,1)",
-            )
-            .run(this.owner.userId, this.owner.tenantId, channel);
-          const c = this.store.db
-            .prepare(
-              "UPDATE private_send_channels SET next_sequence=next_sequence+1 WHERE user_id=? AND tenant_id=? AND channel_hash=? AND next_sequence<? RETURNING next_sequence-1 AS sequence",
-            )
-            .get(
-              this.owner.userId,
-              this.owner.tenantId,
-              channel,
-              Number.MAX_SAFE_INTEGER,
-            ) as { sequence: number } | undefined;
-          if (!c) throw new PrivateOutboxError("CAPACITY");
+          let sequence: number;
+          try {
+            sequence = reservePrivateSequence(
+              this.store,
+              this.vault,
+              this.owner,
+              {
+                ownerId: b.ownerId,
+                senderId: b.deviceId,
+                recipientId: input.peerId,
+                senderKeyEpoch: p.value.senderKeyEpoch,
+                recipientKeyEpoch: input.peerKeyEpoch,
+              },
+            );
+          } catch {
+            throw new PrivateOutboxError("CAPACITY");
+          }
           const header = privateHeaderSchema.parse({
             version: 1,
             suite: privateEnvelopeSuite,
@@ -300,7 +295,7 @@ export class PrivateTaskOutbox {
             recipientKeyEpoch: input.peerKeyEpoch,
             messageId: randomUUID(),
             operationId: randomUUID(),
-            sequence: c.sequence,
+            sequence,
             issuedAt,
             expiresAt: Math.min(issuedAt + 86400000, b.expiresAt),
           });

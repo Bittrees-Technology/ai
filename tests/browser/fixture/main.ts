@@ -1,6 +1,7 @@
 import {
   privateTaskPayloadSchema,
   privateAcceptedPayloadSchema,
+  privateResultPayloadSchema,
 } from "../../../modules/remote/private-task-contracts.js";
 import {
   openPrivateEnvelope,
@@ -64,6 +65,24 @@ const harness = {
     );
     try {
       return privateAcceptedPayloadSchema.parse(
+        JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
+        ),
+      );
+    } finally {
+      opened.plaintext.fill(0);
+    }
+  },
+  async openResult(envelope: unknown, expected: unknown, now: number) {
+    if (!keys || !peer) throw Error("FIXTURE_NOT_READY");
+    const opened = await openPrivateEnvelope(
+      envelope,
+      expected,
+      { recipientKey: keys, senderPublicKey: peer.publicKey },
+      () => now,
+    );
+    try {
+      return privateResultPayloadSchema.parse(
         JSON.parse(
           new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
         ),
