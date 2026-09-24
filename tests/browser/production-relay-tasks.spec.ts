@@ -1,7 +1,7 @@
 import { expect, type Page, type TestInfo } from "@playwright/test";
 import { test } from "./support/browser-identity-server.js";
 import { ready } from "./support/relay-endpoints.js";
-import { openRemotePanel } from "./support/remote-panel.js";
+import { openRemotePanel, loginRemotePanel } from "./support/remote-panel.js";
 import {
   openRecovery,
   refreshRegistration,
@@ -21,7 +21,10 @@ async function refresh(p: Page) {
   );
 }
 async function open(p: Page, f: Awaited<ReturnType<typeof ready>>) {
-  await openRemotePanel(p, undefined, f.wallet, true);
+  // Shipped session coordination intentionally cleans up a cookie created by the
+  // lower-level setup fixture. Sign in through its normal UI with the same owner.
+  await openRemotePanel(p, undefined, f.wallet);
+  await loginRemotePanel(p);
   await openRecovery(p);
   await refreshRegistration(p);
   await keyControls(p)
