@@ -32,6 +32,7 @@ import {
 import {
   privateEnvelopeSchema,
   openPrivateEnvelope,
+  PrivateEnvelopeError,
 } from "./private-envelope.js";
 import {
   privateBindingSchema,
@@ -193,6 +194,8 @@ export class BrowserConversationConsentError extends Error {
 }
 function normalize(e: unknown) {
   if (e instanceof BrowserConversationConsentError) return e;
+  if (e instanceof PrivateEnvelopeError)
+    return new BrowserConversationConsentError("DENIED");
   if (
     e instanceof Error &&
     ["DENIED", "CONFLICT", "CAPACITY", "BUSY", "STORAGE_UNAVAILABLE"].includes(
@@ -528,6 +531,8 @@ export class BrowserConversationConsent {
           new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
         ),
       );
+    } catch {
+      throw new BrowserConversationConsentError("DENIED");
     } finally {
       opened.plaintext.fill(0);
     }

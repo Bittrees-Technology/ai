@@ -235,7 +235,11 @@ test("changed and unauthenticated browser offers cannot retain selected choices 
     await panel(page)
       .getByRole("button", { name: "Open selected Mac offer", exact: true })
       .click();
-    await expect(panel(page).getByRole("alert")).toContainText("not confirmed");
+    await expect(panel(page).getByRole("alert")).toContainText(
+      "offer or access could not be verified",
+    );
+    await refresh(page);
+    expect((await exported(page)).history.grants).toHaveLength(0);
     await open(page, f);
     await panel(page).getByLabel(messageName, { exact: true }).check();
     await panel(page)

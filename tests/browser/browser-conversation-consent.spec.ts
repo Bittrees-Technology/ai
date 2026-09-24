@@ -459,7 +459,7 @@ test("offer inspection authenticates Mac choices without selecting or persisting
         (raw) => window.browserPeersTest.conversationOpenOffer(raw),
         bad,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow("DENIED");
     await expect(
       page.evaluate(
         (raw) => window.browserPeersTest.conversationOpenOffer(raw),

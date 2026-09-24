@@ -459,7 +459,7 @@ export function mountBrowserConversations(
   }
   function failure(e: unknown) {
     const messages: Record<string, string> = {
-      DENIED: "The device, completed check or access could not be verified.",
+      DENIED: "The device, completed check, offer or access could not be verified.",
       CONFLICT:
         "The saved device, check or permission changed during this review.",
       REPAIR_REQUIRED:
