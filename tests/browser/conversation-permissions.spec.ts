@@ -191,6 +191,7 @@ test("selected Inbox thread reviews exact conversation access, confirms once and
   await f.panel
     .getByRole("button", { name: "Refresh conversation choices" })
     .click();
+  await expect(f.panel.getByRole("checkbox")).toHaveCount(4);
   for (const checkbox of await f.panel.getByRole("checkbox").all())
     await expect(checkbox).not.toBeChecked();
   await expect(

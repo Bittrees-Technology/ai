@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import {
   ConversationPermissionPanelState,
   emptyConversationForm,
@@ -33,6 +33,7 @@ export function ConversationPermissions({
   inboxId: string;
   conversationId: string;
 }) {
+  const fieldId = useId();
   const [, render] = useState(0);
   const c = useMemo(
     () =>
@@ -163,8 +164,9 @@ export function ConversationPermissions({
             <fieldset disabled={c.busy}>
               <legend>New conversation access</legend>
               <label>
-                Paired browser
+                <span id={fieldId + "-peer"}>Paired browser</span>
                 <select
+                  aria-labelledby={fieldId + "-peer"}
                   value={form.peerId}
                   onChange={(e) => change({ peerId: e.target.value })}
                 >
@@ -177,8 +179,9 @@ export function ConversationPermissions({
                 </select>
               </label>
               <label>
-                Access duration
+                <span id={fieldId + "-duration"}>Access duration</span>
                 <select
+                  aria-labelledby={fieldId + "-duration"}
                   value={form.minutes}
                   onChange={(e) =>
                     change({ minutes: Number(e.target.value) as 15 | 60 })
