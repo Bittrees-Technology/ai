@@ -141,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     # The prior 933-case suite took 21 minutes; allow added full-page task flows
     # and previews while keeping per-test timeouts, retries and failure caps fixed.
-    timeout-minutes: 35
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17-alpine
@@ -176,6 +176,8 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check durable command journal before full suite
+        run: npm run test:browser-private -- tests/browser/browser-command-history.spec.ts --max-failures=1
       - name: Check narrow permission layout before full suite
         run: npm run test:browser-private -- tests/browser/production-browser-permissions.spec.ts --project=webkit --grep 'permission choices, review and history' --max-failures=1
       - name: Check reviewed task flow before full suite

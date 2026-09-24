@@ -361,3 +361,5 @@ if (new URLSearchParams(location.search).has("private-relay"))
   void import("./private-relay.js");
 if (new URLSearchParams(location.search).has("mac-private-relay"))
   void import("./mac-private-relay.js");
+if (new URLSearchParams(location.search).has("command-history"))
+  void import("./command-history.js");
