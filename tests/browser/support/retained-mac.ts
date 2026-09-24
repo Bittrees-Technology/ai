@@ -33,12 +33,26 @@ class Slot {
 }
 /** Actual Mac lifecycle/peer modules with disposable encrypted SQLite and
  * simulated native slots. Never reads the user's Keychain or installed app. */
-export async function retainedMac(browser: PrivateBinding, now: number) {
+export async function retainedMac(
+  browser: PrivateBinding,
+  now: number,
+  registered?: PrivateBinding,
+) {
   const dir = mkdtempSync(join(tmpdir(), "bittrees-browser-peer-mac-")),
     vault = new Vault(randomBytes(32));
   const owner = { userId: randomUUID(), tenantId: "synthetic-browser-peer" };
   const store = new Store(join(dir, "tasks.db"), vault, () => now);
-  const binding = { ...browser, deviceId: randomUUID() };
+  const binding = registered
+    ? { ...registered }
+    : { ...browser, deviceId: randomUUID() };
+  if (
+    binding.ownerId !== browser.ownerId ||
+    binding.deviceId === browser.deviceId
+  ) {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+    throw Error("Invalid synthetic Mac registration");
+  }
   const slots = new Map<string, PrivateKeyEntries>();
   const entries = (id: string) => {
     let value = slots.get(id);

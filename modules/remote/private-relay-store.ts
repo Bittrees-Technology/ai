@@ -8,6 +8,7 @@ import { privateEnvelopeSchema } from "./private-envelope.js";
 import {
   privateRelayPolicySchema,
   privateRelaySubmitSchema,
+  privateRelayRecipientSchema,
   privateRelayPageSchema,
   privateRelayAcknowledgeSchema,
   privateRelayDeleteSchema,
@@ -234,6 +235,13 @@ export class RemotePrivateRelayStore {
     c.check();
     return { receipt: this.receipt(row), duplicate: false };
   }
+  private async recipient(c: PrivateRelayTransaction, raw: unknown) {
+    this.checkPermission(c);
+    const input = this.parse(privateRelayRecipientSchema, raw);
+    const target = await c.recipient(input.endpointId);
+    c.check();
+    return target;
+  }
   private async inspect(c: PrivateRelayTransaction, raw: unknown) {
     const input = this.parse(lookup, raw),
       row = await this.row(c.db, c.identity.ownerId, input.messageId);
@@ -355,6 +363,19 @@ export class RemotePrivateRelayStore {
   async submitMac(credential: string, raw: unknown) {
     const prepared = await this.prepare(raw);
     return this.access.withMac(credential, (c) => this.submit(c, prepared));
+  }
+  recipientBrowser(
+    session: string,
+    owner: string,
+    credential: string,
+    raw: unknown,
+  ) {
+    return this.access.withBrowser(session, owner, credential, (c) =>
+      this.recipient(c, raw),
+    );
+  }
+  recipientMac(credential: string, raw: unknown) {
+    return this.access.withMac(credential, (c) => this.recipient(c, raw));
   }
   pollBrowser(
     session: string,
