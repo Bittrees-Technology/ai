@@ -31,6 +31,16 @@ async function fixture(page: Page, curate = true) {
       path = new URL(req.url()).pathname;
     if (!(path.startsWith("/v1/") || path === "/pair" || path === "/logout"))
       return route.continue();
+    if (path === "/v1/private-relay")
+      return route.fulfill({
+        json: {
+          available: false,
+          canSetup: false,
+          canCheckRemote: false,
+          transportActive: false,
+          state: { version: 1, restoreAuthority: false, items: [] },
+        },
+      });
     let json: any = {
       available: false,
       connection: null,
@@ -223,6 +233,7 @@ test("News uncertain save clears review and reconciles only on explicit source r
 }) => {
   const f = await fixture(page),
     panel = await review(page);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   f.uncertain();
   await panel.getByRole("checkbox").check();
   await panel.getByRole("button", { name: "Save reviewed story" }).click();

@@ -109,6 +109,16 @@ async function fixture(
       path = new URL(req.url()).pathname;
     if (!(path.startsWith("/v1/") || path === "/pair" || path === "/logout"))
       return route.continue();
+    if (path === "/v1/private-relay")
+      return route.fulfill({
+        json: {
+          available: false,
+          canSetup: false,
+          canCheckRemote: false,
+          transportActive: false,
+          state: { version: 1, restoreAuthority: false, items: [] },
+        },
+      });
     let json: any = {
       available: false,
       connection: null,
