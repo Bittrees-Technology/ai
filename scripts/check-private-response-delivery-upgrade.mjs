@@ -76,7 +76,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 27);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 28);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.profiles(owner), profiles);
   assert.deepEqual(current.exportPrivateRelayCredentials(owner), {
@@ -111,7 +111,7 @@ try {
     verifiedAt: new Date().toISOString(),
     legacyStoreSha256: legacyHash,
     from: 24,
-    to: 27,
+    to: 28,
     checks: [
       "actual task24 history/result/profile preserved",
       "wrong-key migration rolls back without new table",

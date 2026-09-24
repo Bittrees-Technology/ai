@@ -1,3 +1,4 @@
+import { exportPrivateConversationConsent } from "../remote/private-conversation-consent.js";
 import {
   queuePrivateRelayDeletion,
   exportPrivateRelayCredentials,
@@ -164,7 +165,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 27) {
+    if (version > 28) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -282,7 +283,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS task_input_waits(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,question_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,worker_id TEXT NOT NULL,generation INTEGER NOT NULL,deadline INTEGER NOT NULL,reply_id TEXT UNIQUE REFERENCES messages(id),reply_revision INTEGER,CHECK((reply_id IS NULL)=(reply_revision IS NULL))); CREATE UNIQUE INDEX IF NOT EXISTS task_one_input_wait ON task_input_waits(task_id) WHERE reply_id IS NULL",
         );
-        this.db.pragma("user_version = 27");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_conversation_consents(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB,PRIMARY KEY(user_id,tenant_id))",
+        );
+        this.db.pragma("user_version = 28");
       })();
     } catch (error) {
       this.db.close();
@@ -1767,6 +1771,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateRelayCredentials(owner: Owner) {
     return exportPrivateRelayCredentials(this, this.vault, owner);
   }
+  exportPrivateConversationConsent(owner: Owner) {
+    return exportPrivateConversationConsent(this, this.vault, owner);
+  }
   exportPrivateTaskConsent(owner: Owner) {
     return exportPrivateTaskConsent(this, this.vault, owner);
   }
@@ -2071,6 +2078,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
         this.db
           .prepare(
             "UPDATE private_task_consents SET payload=NULL,locked=1,revision=revision+1 WHERE user_id=? AND tenant_id=?",
+          )
+          .run(owner.userId, owner.tenantId);
+        this.db
+          .prepare(
+            "UPDATE private_conversation_consents SET payload=NULL,locked=1,revision=revision+1 WHERE user_id=? AND tenant_id=?",
           )
           .run(owner.userId, owner.tenantId);
         this.db

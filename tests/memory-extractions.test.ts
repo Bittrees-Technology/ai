@@ -229,7 +229,7 @@ test("schema ten upgrade, encrypted backup and reopen retain pending extraction 
     store.db.exec("DROP TABLE memory_extractions; PRAGMA user_version=10");
     store.close();
     store = new Store(path, f.vault);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 27);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 28);
     const input = f.request();
     const task = store.memoryExtractions.create(owner, f.parent.id, input);
     const blob = (

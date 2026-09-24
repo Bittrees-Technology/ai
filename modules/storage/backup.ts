@@ -161,6 +161,11 @@ async function restoreSnapshot(
         .run();
       tasks.db
         .prepare(
+          "UPDATE private_conversation_consents SET locked=1,revision=revision+1",
+        )
+        .run();
+      tasks.db
+        .prepare(
           "UPDATE private_key_lifecycle SET locked=1,revision=revision+1",
         )
         .run();

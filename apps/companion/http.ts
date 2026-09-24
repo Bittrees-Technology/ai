@@ -1414,6 +1414,7 @@ export function localApi({
       remoteControls: store.exportRemoteControls(owner),
       privateRelayCredentials: store.exportPrivateRelayCredentials(owner),
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
+      privateConversationConsent: store.exportPrivateConversationConsent(owner),
       privatePeerChecks: store.exportPrivatePeerChecks(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
       privateEndpointKeys: store.exportPrivateEndpointKeys(owner),

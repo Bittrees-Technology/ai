@@ -474,7 +474,7 @@ test("Schema13 migration preserves existing tasks and owner-bound receipt cipher
     f.store.db.exec("DROP TABLE private_task_receipts; PRAGMA user_version=13");
     f.store.close();
     migrated = new Store(f.path, f.vault, f.clock);
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 27);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 28);
     assert.equal(
       migrated.get(owner, receipt.taskId).input.prompt,
       input.prompt,
