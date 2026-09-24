@@ -122,6 +122,9 @@ jobs:
       - name: Packaged private endpoint keys with disposable Keychain slots
         timeout-minutes: 2
         run: '"dist/macos/Bittrees AI.app/Contents/Resources/node" scripts/check-packaged-private-keys.mjs "$PWD/dist/macos/Bittrees AI.app/Contents/Resources" "$RUNNER_TEMP/private-key-denial"'
+      - name: Packaged private relay custody with disposable Keychain slots
+        timeout-minutes: 2
+        run: '"dist/macos/Bittrees AI.app/Contents/Resources/node" scripts/check-packaged-private-relay.mjs "$PWD/dist/macos/Bittrees AI.app/Contents/Resources" "$RUNNER_TEMP/private-key-denial"'
       - name: Deleted outputs must not survive packaging
         run: |
           test ! -e 'dist/macos/Bittrees AI.app/Contents/Resources/engine/dist/apps/stale-build-probe.js'
