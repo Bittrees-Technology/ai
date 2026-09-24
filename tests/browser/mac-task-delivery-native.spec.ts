@@ -146,7 +146,14 @@ test("Mac delivery buttons use the authenticated local API and real relay for ta
     expect(
       api.calls.filter((c) => c.path.endsWith("/responses/send")),
     ).toHaveLength(2);
-    expect(api.calls.every((c) => c.status === 200)).toBe(true);
+    await api.call("/v1/private-relay/cancel-review", "POST", {
+      confirmed: true,
+    });
+    expect(
+      api.calls.every(
+        (c) => c.status === (c.path.endsWith("/cancel-review") ? 204 : 200),
+      ),
+    ).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     await macPage.close();

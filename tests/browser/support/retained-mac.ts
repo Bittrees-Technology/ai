@@ -316,6 +316,7 @@ export async function retainedMac(
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }),
               });
               calls.push({ path, method, status: res.status });
+              if (res.status === 204) return;
               const data = await res.json();
               if (!res.ok)
                 throw Error(data.error ?? "Local API rejected request");
