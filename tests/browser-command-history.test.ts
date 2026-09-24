@@ -46,6 +46,22 @@ test("command receipt journal rejects mixed targets and false acknowledged state
     assert.equal(commandObservationSchema.safeParse(invalid).success, false);
 });
 test("retained command metadata cannot contain credentials, task text or new command authority", () => {
+  assert.equal(commandHistorySchema.safeParse(journal).success, true);
+  assert.equal(
+    commandHistorySchema.safeParse({
+      ...journal,
+      entries: [
+        {
+          ...journal.entries[0],
+          command: {
+            ...command,
+            expiresAt: new Date(now + 300001).toISOString(),
+          },
+        },
+      ],
+    }).success,
+    false,
+  );
   for (const extra of [
     { token: "private" },
     { prompt: "private" },
