@@ -1,3 +1,4 @@
+import { PrivateRelayPanel } from "./private-relay.js";
 import { MailSendPanel } from "./mail-send.js";
 import { NewsConnectionPanel } from "./news-connection.js";
 import { PrivateCheckPanel } from "./private-checks.js";
@@ -287,6 +288,7 @@ export function Connections(props: {
         grant app access.
       </p>
       <RemoteConnectionPanel api={props.api} />
+      <PrivateRelayPanel api={props.api} />
       <PrivateKeyPanel api={props.api} />
       <PrivatePeerPanel api={props.api} />
       <PrivateCheckPanel api={props.api} />

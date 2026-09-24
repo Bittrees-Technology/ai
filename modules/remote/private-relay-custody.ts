@@ -142,7 +142,7 @@ function write(store: Store, vault: Vault, owner: Owner, row: Row) {
 export function queuePrivateRelayDeletion(store: Store, owner: Owner) {
   store.db
     .prepare(
-      "UPDATE private_relay_credentials SET locked=1,phase='deleting',payload=NULL,revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END WHERE user_id=? AND tenant_id=?",
+      "UPDATE private_relay_credentials SET locked=1,phase='deleting',payload=NULL,revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END WHERE user_id=? AND tenant_id=? AND phase<>'deleted'",
     )
     .run(owner.userId, owner.tenantId);
 }

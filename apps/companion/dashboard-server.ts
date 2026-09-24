@@ -73,6 +73,7 @@ export function dashboardServer(
         return res.status(401).json({ error: "UNAUTHORIZED" });
       session = "";
       options.privateKeys?.invalidate();
+      options.privateRelay?.invalidate();
       res.set(
         "Set-Cookie",
         `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,

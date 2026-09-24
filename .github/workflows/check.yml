@@ -388,3 +388,12 @@ jobs:
           path: test-results/browser-task-controls-*.png
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain Mac private relay connection previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-private-relay-ui-preview
+          path: test-results/mac-relay-*.png
+          if-no-files-found: error
+          retention-days: 7

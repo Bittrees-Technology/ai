@@ -943,3 +943,35 @@ select.model-profile-select {
 .mail-send-panel button {
   max-width: 100%;
 }
+.private-relay-approval {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+}
+.private-relay-records > section {
+  border-top: 1px solid #aabec5;
+  padding-block: 12px;
+}
+.private-relay-panel dd {
+  margin-left: 0;
+  overflow-wrap: anywhere;
+}
+.private-relay-panel dl {
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) minmax(0, 1fr);
+  gap: 6px 14px;
+}
+.private-relay-review {
+  margin-top: 16px;
+  padding: 16px;
+  border: 2px solid #29658b;
+  background: #fff;
+}
+@media (max-width: 600px) {
+  .private-relay-panel dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .private-relay-panel dd {
+    margin-bottom: 8px;
+  }
+}

@@ -1,3 +1,7 @@
+import {
+  CompanionRelayError,
+  type CompanionPrivateRelay,
+} from "./private-relay.js";
 import type { MailSendConnector } from "../../modules/connectors/mail-send.js";
 import type { NewsConnector } from "../../modules/connectors/news.js";
 import { localTaskDependencies } from "./memory.js";
@@ -40,6 +44,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  privateRelay?: CompanionPrivateRelay;
   privateKeys?: CompanionPrivateKeys;
   privateKeyCleanup?: () => Promise<void>;
   retainedCopies?: ReturnType<typeof retainedContent>;
@@ -70,6 +75,7 @@ export interface LocalApiOptions {
   cancelRun?: (id: string) => void;
 }
 export function localApi({
+  privateRelay,
   privateKeys,
   privateKeyCleanup,
   retainedCopies,
@@ -145,6 +151,30 @@ export function localApi({
     express.json({ limit: 1500000, strict: true }),
   );
   app.use(express.json({ limit: "64kb", strict: true }));
+  app.get("/v1/private-relay", (_req, res) =>
+    res.json(
+      privateRelay?.status() ?? {
+        available: false,
+        canSetup: false,
+        canCheckRemote: false,
+        transportActive: false,
+        state: store.exportPrivateRelayCredentials(owner),
+      },
+    ),
+  );
+  app.post("/v1/private-relay/review", async (req, res) => {
+    if (!privateRelay) throw new StoreError("CONFLICT");
+    res.json(await privateRelay.prepare(req.body));
+  });
+  app.post("/v1/private-relay/confirm", async (req, res) => {
+    if (!privateRelay) throw new StoreError("CONFLICT");
+    res.json(await privateRelay.confirm(req.body));
+  });
+  app.post("/v1/private-relay/cancel-review", (req, res) => {
+    z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
+    privateRelay?.invalidate();
+    res.status(204).end();
+  });
   app.get("/v1/private-tasks", (_req, res) =>
     res.json(
       privateKeys?.taskStatus() ?? {
@@ -1276,10 +1306,17 @@ export function localApi({
         publications?.busy ||
         autoReviews?.busy ||
         remote?.running ||
-        privateKeys?.busy
+        privateKeys?.busy ||
+        privateRelay?.busy
       )
         throw new StoreError("CONFLICT");
       privateKeys?.invalidate();
+      privateRelay?.invalidate();
+      const relayState = store.exportPrivateRelayCredentials(owner);
+      if (relayState.items.length) {
+        if (!privateRelay) throw new StoreError("CONFLICT");
+        await privateRelay.clearAll();
+      }
       const keyState = store.exportPrivateEndpointKeys(owner);
       if (
         keyState.slots.some((v) => v.state !== "deleted") ||
@@ -1302,6 +1339,9 @@ export function localApi({
           news?.invalidatePublicationReview();
           // Remote journal cleanup may await storage. Fence another connection's
           // new key selection at the actual deletion commit, under a write lock.
+          const relayRecords = store.exportPrivateRelayCredentials(owner);
+          if (relayRecords.items.some((r) => r.phase !== "deleted"))
+            throw new StoreError("CONFLICT");
           const currentKeys = store.exportPrivateEndpointKeys(owner);
           if (
             currentKeys.slots.some((v) => v.state !== "deleted") ||
@@ -1325,7 +1365,8 @@ export function localApi({
     const code =
       err?.type === "entity.too.large"
         ? "PAYLOAD_TOO_LARGE"
-        : err instanceof PrivatePeerCheckError ||
+        : err instanceof CompanionRelayError ||
+            err instanceof PrivatePeerCheckError ||
             err instanceof PrivateTaskError ||
             err instanceof PrivateResponseError ||
             err instanceof PrivateConsentError ||
@@ -1345,7 +1386,8 @@ export function localApi({
       code === "PAYLOAD_TOO_LARGE"
         ? 413
         : code === "MODEL_UNAVAILABLE" ||
-            ((err instanceof PrivateKeyError ||
+            ((err instanceof CompanionRelayError ||
+              err instanceof PrivateKeyError ||
               err instanceof PrivateKeyLifecycleError) &&
               code === "STORAGE_UNAVAILABLE")
           ? 503
