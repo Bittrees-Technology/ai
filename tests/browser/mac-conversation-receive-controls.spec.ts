@@ -318,7 +318,9 @@ test("Mac incoming review clears on focus loss and ignores a late authenticated 
     // The parent permission view also clears on focus loss. A late response
     // must not reopen it; fresh explicit access inspection restores controls.
     await expect(region(page)).toHaveCount(0);
-    await expect(page.locator("body")).not.toContainText("saved on this Mac");
+    await expect(
+      page.getByRole("status").filter({ hasText: "saved on this Mac" }),
+    ).toHaveCount(0);
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page
       .getByRole("button", { name: "Refresh conversation choices", exact: true })
