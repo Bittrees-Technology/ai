@@ -145,6 +145,11 @@ async function restoreSnapshot(
       const tasks = new Store(staged, vault);
       restored = tasks;
       tasks.mailSends.lockAfterRestore();
+      tasks.db
+        .prepare(
+          "UPDATE private_relay_credentials SET locked=1,revision=revision+1",
+        )
+        .run();
       tasks.db.prepare("DELETE FROM remote_control_bindings").run();
       tasks.db
         .prepare("UPDATE private_peer_checks SET locked=1,revision=revision+1")

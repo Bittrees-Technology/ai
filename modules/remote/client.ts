@@ -1,4 +1,11 @@
 import {
+  privateRelayGrantSchema,
+  privateRelayAcceptanceSchema,
+  privateRelayRevisionSchema,
+  type PrivateRelayEnrollmentScope,
+} from "./private-relay-enrollment.js";
+import { privateRelayIdentitySchema } from "./private-relay-contracts.js";
+import {
   shareTemplateSchema,
   templateClientStateSchema,
   templateMetadataSchema,
@@ -259,6 +266,144 @@ export class RemoteClient {
       }
     });
   }
+  /** Trusted native custody callback only; never forward acceptance secrets to UI. */
+  withPrivateRelayEnrollment<T>(
+    action: (scope: PrivateRelayEnrollmentScope) => Promise<T>,
+  ): Promise<T> {
+    return this.withVerifiedDevice(async (verified) => {
+      const saved = await this.active(),
+        binding = verified.current();
+      if (!binding) throw new RemoteClientError("DENIED");
+      let closed = false,
+        busy = false,
+        accepted = false;
+      const check = async () => {
+        const current = verified.current(),
+          latest = await this.active();
+        if (
+          closed ||
+          !current ||
+          JSON.stringify(current) !== JSON.stringify(binding) ||
+          JSON.stringify(latest.grant) !== JSON.stringify(saved.grant) ||
+          !verified.current()
+        )
+          throw new RemoteClientError("DENIED");
+      };
+      const call = async (path: string, body: unknown, credential: string) => {
+        if (busy) throw new RemoteClientError("BUSY");
+        busy = true;
+        try {
+          await check();
+          const result = await this.post(path, body, credential);
+          await check();
+          return result;
+        } finally {
+          busy = false;
+        }
+      };
+      const grant = (raw: unknown) => {
+        const result = privateRelayGrantSchema.safeParse(raw);
+        if (
+          !result.success ||
+          result.data.ownerId !== binding.ownerId ||
+          result.data.endpointId !== binding.deviceId ||
+          result.data.endpointKind !== "mac" ||
+          result.data.credentialEpoch !== binding.credentialEpoch ||
+          result.data.expiresAt > binding.expiresAt
+        )
+          throw new RemoteClientError("INVALID_RESPONSE");
+        return result.data;
+      };
+      try {
+        return await action(
+          Object.freeze({
+            current: () => (closed ? null : verified.current()),
+            inspect: async (id: string) => {
+              if (!z.uuid().safeParse(id).success)
+                throw new RemoteClientError("DENIED");
+              const result = grant(
+                await call(
+                  "relay/approval/inspect",
+                  { id },
+                  saved.grant.credential,
+                ),
+              );
+              if (result.id !== id)
+                throw new RemoteClientError("INVALID_RESPONSE");
+              return result;
+            },
+            accept: async (raw: unknown) => {
+              const input = privateRelayRevisionSchema.parse(raw);
+              if (accepted) throw new RemoteClientError("DENIED");
+              accepted = true;
+              const result = privateRelayAcceptanceSchema.safeParse(
+                await call(
+                  "relay/permission/accept",
+                  input,
+                  saved.grant.credential,
+                ),
+              );
+              if (
+                !result.success ||
+                result.data.credential === saved.grant.credential
+              )
+                throw new RemoteClientError("INVALID_RESPONSE");
+              const g = grant(result.data.grant);
+              if (
+                g.id !== input.id ||
+                g.state !== "active" ||
+                g.revision !== input.expectedRevision + 1 ||
+                g.expiresAt <= this.now()
+              )
+                throw new RemoteClientError("INVALID_RESPONSE");
+              return result.data;
+            },
+            identifyRelay: async (credential: string) => {
+              if (
+                !opaque.safeParse(credential).success ||
+                credential === saved.grant.credential
+              )
+                throw new RemoteClientError("DENIED");
+              const result = privateRelayIdentitySchema.safeParse(
+                await call("relay/permission/inspect", {}, credential),
+              );
+              if (
+                !result.success ||
+                result.data.ownerId !== binding.ownerId ||
+                result.data.endpointId !== binding.deviceId ||
+                result.data.endpointKind !== "mac" ||
+                result.data.credentialEpoch !== binding.credentialEpoch ||
+                result.data.expiresAt > binding.expiresAt ||
+                result.data.expiresAt <= this.now()
+              )
+                throw new RemoteClientError("INVALID_RESPONSE");
+              return result.data;
+            },
+            revokeRelay: async (credential: string, raw: unknown) => {
+              if (
+                !opaque.safeParse(credential).success ||
+                credential === saved.grant.credential
+              )
+                throw new RemoteClientError("DENIED");
+              const input = privateRelayRevisionSchema.parse(raw),
+                result = grant(
+                  await call("relay/permission/revoke", input, credential),
+                );
+              if (
+                result.id !== input.id ||
+                result.state !== "revoked" ||
+                result.revision !== input.expectedRevision + 1
+              )
+                throw new RemoteClientError("INVALID_RESPONSE");
+              return result;
+            },
+          }),
+        );
+      } finally {
+        closed = true;
+      }
+    });
+  }
   private async post(
     path: string,
     body: unknown,
@@ -280,6 +425,19 @@ export class RemoteClient {
           ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
           : AbortSignal.timeout(15000),
       });
+      if (
+        path.startsWith("relay/") &&
+        (response.redirected ||
+          (response.url && response.url !== origin + "/device/" + path) ||
+          response.headers
+            .get("content-type")
+            ?.split(";")[0]
+            ?.trim()
+            .toLowerCase() !== "application/json")
+      ) {
+        await response.body?.cancel();
+        throw new RemoteClientError("INVALID_RESPONSE");
+      }
       if (!response.ok && response.status !== 429) {
         await response.body?.cancel();
         throw new RemoteClientError(
@@ -305,7 +463,11 @@ export class RemoteClient {
         reader.releaseLock();
       }
       const result = JSON.parse(
-        Buffer.concat(chunks).toString("utf8"),
+        path.startsWith("relay/")
+          ? new TextDecoder("utf-8", { fatal: true }).decode(
+              Buffer.concat(chunks),
+            )
+          : Buffer.concat(chunks).toString("utf8"),
       ) as unknown;
       if (!response.ok)
         throw new RemoteClientError(
