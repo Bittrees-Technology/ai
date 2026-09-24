@@ -230,12 +230,22 @@ export async function retainedMac(
         controls,
         relay,
         record,
-        check() {
+        inspect(after: any = null) {
+          const r = record();
+          return controls.inspectRelayedTask(relay, {
+            id: r.id,
+            expectedRevision: r.revision,
+            after,
+            confirmed: true,
+          });
+        },
+        check(after: any = null, selection?: any) {
           const r = record();
           return controls.checkRelayedTask(relay, {
             id: r.id,
             expectedRevision: r.revision,
-            after: null,
+            after,
+            ...(selection ? { selection } : {}),
             confirmed: true,
           });
         },
@@ -294,6 +304,7 @@ export async function retainedMac(
             "GET /v1/private-tasks",
             "POST /v1/private-relay/cancel-review",
             "POST /v1/private-relay/check-task",
+            "POST /v1/private-relay/inspect-task",
             "POST /v1/private-relay/responses/prepare",
             "POST /v1/private-relay/responses/send",
             "POST /v1/private-tasks/responses/stop",
