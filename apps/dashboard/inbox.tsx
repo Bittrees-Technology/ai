@@ -1,5 +1,6 @@
 import { InboxMessageController } from "./inbox-message-state.js";
 import { InboxConversationController } from "./inbox-conversation-state.js";
+import { InboxTaskMessage } from "./inbox-task-message.js";
 import React, { useState, useEffect, useRef } from "react";
 type Api = (
   path: string,
@@ -173,7 +174,11 @@ export function Inbox({
                   {m.input.replyToId ? "Reply" : "Message"} ·{" "}
                   {new Date(m.createdAt).toLocaleString()}
                 </div>
-                <p className="prose">{m.input.content}</p>
+                {m.input.requestId ? (
+                  <InboxTaskMessage message={m} api={api} />
+                ) : (
+                  <p className="prose">{m.input.content}</p>
+                )}
                 {m.input.replyExpected && (
                   <p className="hint">
                     Reply expected

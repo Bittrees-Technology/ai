@@ -1021,11 +1021,18 @@ test("source-bound task questions and answers do not leak through inbox history 
     );
     const path = "/v1/messages?inboxId=personal&conversationId=crm";
     assert.match(await (await get(path)).text(), /SOURCE_QUESTION_SENTINEL/);
+    const single = "/v1/messages/" + q.question.id;
+    assert.match(await (await get(single)).text(), /SOURCE_QUESTION_SENTINEL/);
+    const unauthenticated = await fetch(`http://127.0.0.1:${port}${single}`);
+    assert.equal(unauthenticated.status, 401);
     assert.doesNotMatch(
       await (await get("/v1/export")).text(),
       /SOURCE_QUESTION_SENTINEL|SOURCE_ANSWER_SENTINEL/,
     );
     f.deny();
+    const deniedSingle = await get(single);
+    assert.notEqual(deniedSingle.status, 200);
+    assert.doesNotMatch(await deniedSingle.text(), /SOURCE_QUESTION_SENTINEL/);
     const response = await get(path);
     assert.equal(response.status, 200);
     assert.doesNotMatch(

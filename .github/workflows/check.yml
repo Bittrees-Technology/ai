@@ -178,6 +178,8 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check task-linked Inbox privacy before full suite
+        run: npm run test:browser-private -- tests/browser/inbox-task-review.spec.ts --max-failures=1
       - name: Check reviewed browser queue controls over real relay
         run: npm run test:browser-private -- tests/browser/browser-relay-queue-controls.spec.ts --max-failures=1
       - name: Check narrow permission layout before full suite
@@ -463,5 +465,14 @@ jobs:
         with:
           name: mac-queue-ui-preview
           path: test-results/mac-queue-*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain task-linked Inbox previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inbox-task-review-ui-preview
+          path: test-results/inbox-task-review-*.png
           if-no-files-found: error
           retention-days: 7

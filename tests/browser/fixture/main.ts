@@ -366,3 +366,6 @@ if (new URLSearchParams(location.search).has("mac-task-delivery"))
 
 if (new URLSearchParams(location.search).has("mac-task-delivery-native"))
   void import("./mac-task-delivery-native.js");
+
+if (new URLSearchParams(location.search).has("inbox-task-review"))
+  void import("./inbox-task-review.js");
