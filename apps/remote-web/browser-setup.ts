@@ -27,6 +27,7 @@ export function mountBrowserSetup(
   host: BrowserKeyHost,
   now = Date.now,
   monotonic = () => performance.now(),
+  privateDelivery = false,
 ) {
   let disposed = false,
     generation = 0,
@@ -143,13 +144,20 @@ export function mountBrowserSetup(
   );
   const taskRoot = el("div");
   root.append(taskRoot);
-  const taskView = mountBrowserTasks(taskRoot, host, now, monotonic, () => {
-    reset("Registration review closed while reviewing a task.");
-    keyView.invalidate();
-    peerView.invalidate();
-    checkView.invalidate();
-    permissionView.invalidate();
-  });
+  const taskView = mountBrowserTasks(
+    taskRoot,
+    host,
+    now,
+    monotonic,
+    () => {
+      reset("Registration review closed while reviewing a task.");
+      keyView.invalidate();
+      peerView.invalidate();
+      checkView.invalidate();
+      permissionView.invalidate();
+    },
+    privateDelivery,
+  );
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;

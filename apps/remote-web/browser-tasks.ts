@@ -11,6 +11,7 @@ import {
 type Host = Pick<
   BrowserKeyHost,
   | "taskAPI"
+  | "relayTaskAPI"
   | "keyAPI"
   | "peerAPI"
   | "checkAPI"
@@ -32,6 +33,9 @@ type Snapshot = {
 type Action =
   | "initialize"
   | "submit"
+  | "relayPrepare"
+  | "relaySend"
+  | "relayCheck"
   | "resume"
   | "envelope"
   | "receive"
@@ -55,13 +59,14 @@ type Review = Deadline & {
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 /** Exact task reviews over the verified host. Encrypted handoff stays explicit;
- * this view never connects to a relay, selects a model or executes model text. */
+ * configured private delivery remains separately reviewed; no model selection or execution of model text. */
 export function mountBrowserTasks(
   root: HTMLElement,
   host: Host,
   now = Date.now,
   monotonic = () => performance.now(),
   closeOtherReviews = () => {},
+  privateDelivery = false,
 ) {
   let disposed = false,
     generation = 0,
@@ -124,7 +129,12 @@ export function mountBrowserTasks(
       () => void openReview("clear"),
     );
   const actions = el("div", "", "browser-keys-actions");
+  const checkReplies = button(
+    "Review checking for a Mac reply",
+    () => void openReview("relayCheck"),
+  );
   actions.append(refresh, initialize, exportButton, clear);
+  if (privateDelivery) actions.append(checkReplies);
   const columns = el("div", "", "browser-keys-columns"),
     history = el("div"),
     list = el("ul"),
@@ -143,7 +153,11 @@ export function mountBrowserTasks(
     kind = select("Task type"),
     promptLabel = el("label", "What should your Mac work on?"),
     prompt = el("textarea"),
-    start = button("Review task content", () => void openReview("submit"));
+    start = button("Review task content", () => void openReview("submit")),
+    relayStart = button(
+      "Review task for private delivery",
+      () => void openReview("relayPrepare"),
+    );
   for (const [value, text] of [
     ["query", "Answer a question"],
     ["summarize", "Summarize supplied text"],
@@ -172,6 +186,14 @@ export function mountBrowserTasks(
     prompt,
     start,
   );
+  if (privateDelivery)
+    form.append(
+      relayStart,
+      el(
+        "p",
+        "Private delivery needs approved connections on this browser and your Mac. Preparing a task saves it here; sending is a separate action.",
+      ),
+    );
   const incomingBox = el("div"),
     incomingKind = select("Message from your Mac"),
     incomingLabel = el("label", "Encrypted message"),
@@ -322,6 +344,12 @@ export function mountBrowserTasks(
       !prompt.value.trim() ||
       !!state?.history.meta?.locked ||
       !state?.history.meta;
+    relayStart.disabled = start.disabled;
+    checkReplies.disabled =
+      !active ||
+      !online() ||
+      !state?.history.meta ||
+      !!state?.history.meta?.locked;
     incoming.disabled = incomingKind.input.disabled = peer.input.disabled;
     receive.disabled =
       peer.input.disabled || !peer.input.value || !incoming.value.trim();
@@ -420,7 +448,9 @@ export function mountBrowserTasks(
           row.state === "reserved"
             ? "Preparation interrupted"
             : row.state === "pending"
-              ? "Prepared for handoff"
+              ? privateDelivery
+                ? "Prepared task"
+                : "Prepared for handoff"
               : row.state === "accepted"
                 ? "Accepted by your Mac"
                 : "Further retries stopped",
@@ -443,6 +473,8 @@ export function mountBrowserTasks(
         add("Review resuming this task", "resume");
       if (row.state === "pending")
         add("Review encrypted task handoff", "envelope");
+      if (privateDelivery && row.state === "pending")
+        add("Review sending this task", "relaySend");
       if (row.hasResult) add("Review opening this result", "read");
       if (row.state !== "accepted" && row.state !== "stopped")
         add("Review stopping task retries", "stop", false);
@@ -504,6 +536,7 @@ export function mountBrowserTasks(
   }
   async function openReview(action: Action, row?: Row) {
     if (!ready()) return;
+    if (action.startsWith("relay") && !privateDelivery) return;
     const before = structuredClone(state!),
       draft = {
         version: 1,
@@ -515,8 +548,14 @@ export function mountBrowserTasks(
       selectedKind = incomingKind.input.value;
     let route: { peerId: string; peerKeyEpoch: number } | undefined;
     try {
-      if (action === "submit") browserTaskBytes(draft).fill(0);
-      if (action === "submit" || action === "receive") route = selectedRoute();
+      if (action === "submit" || action === "relayPrepare")
+        browserTaskBytes(draft).fill(0);
+      if (
+        action === "submit" ||
+        action === "relayPrepare" ||
+        action === "receive"
+      )
+        route = selectedRoute();
     } catch (e) {
       error.textContent =
         e instanceof Error && e.message === "CAPACITY"
@@ -541,9 +580,13 @@ export function mountBrowserTasks(
         before,
         ...(row ? { row: structuredClone(row) } : {}),
       };
-      if (action === "submit") {
+      if (action === "relaySend" && row)
+        next.expiresAt = Math.min(next.expiresAt, row.header.expiresAt);
+      if (action === "submit" || action === "relayPrepare") {
         const payload = privateTaskPayloadSchema.parse(draft);
-        next.prepared = await host.taskAPI.prepare({ ...route!, payload });
+        next.prepared = await (action === "relayPrepare"
+          ? host.relayTaskAPI.prepare({ ...route!, payload })
+          : host.taskAPI.prepare({ ...route!, payload }));
         next.expiresAt = Math.min(next.expiresAt, next.prepared.expiresAt);
       } else if (action === "receive") {
         if (
@@ -590,6 +633,24 @@ export function mountBrowserTasks(
         "This saves an encrypted preparation for the selected Mac. You will separately review its encrypted handoff. The Mac independently decides whether to accept it and which local model to use.",
         "I reviewed the complete task text, selected Mac and delivery deadline.",
         "Confirm task preparation",
+      ],
+      relayPrepare: [
+        "Review task for private delivery",
+        "Save this exact task for the selected Mac using the current connection deadlines. You will separately review sending it. Your Mac chooses its local model and independently checks task permission.",
+        "I reviewed the complete task text, selected Mac and delivery deadline.",
+        "Save task for private delivery",
+      ],
+      relaySend: [
+        "Send this saved task to your Mac",
+        "Send the original encrypted message for this exact task and Mac through ai.bittrees.org. Server storage does not confirm Mac acceptance or completion. A new review is needed for each retry.",
+        "Send this exact saved task to the Mac identified in this review.",
+        "Send reviewed task",
+      ],
+      relayCheck: [
+        "Check for one Mac reply",
+        "Check for one encrypted acceptance or result for this browser. A reply is authenticated and saved before delivery is acknowledged. Saved result text stays hidden until you separately open it.",
+        "Check and save one authenticated Mac reply on this browser.",
+        "Check for Mac reply",
       ],
       resume: [
         "Resume the saved task preparation",
@@ -641,7 +702,7 @@ export function mountBrowserTasks(
       confirm.textContent,
     ] = text[r.action];
     const binding = host.keyContext()?.binding;
-    identity.textContent = `Account ${host.session()!.ownerId}.${binding ? ` Browser ${binding.deviceId}.` : ""} History version ${r.before.history.meta?.revision ?? 0}.${r.row ? ` Task ${r.row.id}, task version ${r.row.revision}, Mac ${r.row.context.peerId}.` : ""}`;
+    identity.textContent = `Account ${host.session()!.ownerId}.${binding ? ` Browser ${binding.deviceId}.` : ""} History version ${r.before.history.meta?.revision ?? 0}.${r.row ? ` Task ${r.row.id}, task version ${r.row.revision}, Mac ${r.row.context.peerId}. Delivery deadline ${new Date(r.row.header.expiresAt).toLocaleString()}.` : ""}`;
     exact.textContent = "";
     if (r.prepared) {
       const p = r.prepared;
@@ -678,7 +739,9 @@ export function mountBrowserTasks(
               confirmed: true,
             }
           : null;
-      let encrypted: PrivateEnvelope | undefined, plaintext: string | undefined;
+      let encrypted: PrivateEnvelope | undefined,
+        plaintext: string | undefined,
+        deliveryNotice: string | undefined;
       switch (selected.action) {
         case "initialize":
           await host.taskAPI.initialize({
@@ -687,12 +750,33 @@ export function mountBrowserTasks(
           });
           break;
         case "submit":
+        case "relayPrepare":
           await host.taskAPI.confirm({
             reviewId: selected.prepared!.reviewId,
             confirmed: true,
             acknowledged: true,
           });
           break;
+        case "relaySend": {
+          if (!privateDelivery) throw Error("DENIED");
+          const sent = await host.relayTaskAPI.send(route!);
+          deliveryNotice =
+            sent.receipt.state === "deleted"
+              ? "The server previously removed this encrypted message. No replacement was sent. Review your saved history before preparing another task."
+              : `Encrypted task ${sent.receipt.state === "received" ? "already delivered" : "stored for delivery"}${sent.duplicate ? " (the original message was already recorded)" : ""}. This does not confirm Mac acceptance or task completion. Check for a Mac reply separately.`;
+          break;
+        }
+        case "relayCheck": {
+          if (!privateDelivery) throw Error("DENIED");
+          const checked = await host.relayTaskAPI.check({
+            after: null,
+            confirmed: true,
+          });
+          deliveryNotice = checked.received
+            ? `Authenticated Mac ${checked.received.kind === "result" ? "result" : "acceptance"} saved for task ${checked.received.operationId}.${checked.received.kind === "result" ? " Review opening this result in task history to read its text." : " Acceptance does not mean the task is complete."}`
+            : "No new Mac reply is waiting for this browser.";
+          break;
+        }
         case "resume":
           await host.taskAPI.resume(route!);
           break;
@@ -769,13 +853,16 @@ export function mountBrowserTasks(
           : "Saved result opened under current permission.";
       } else
         notice.textContent =
-          selected.action === "export"
-            ? "History exported. The download includes your original task text."
-            : selected.action === "clear"
-              ? "Task content deleted from this browser."
-              : selected.action === "submit" || selected.action === "resume"
-                ? "Task preparation saved. Review its encrypted handoff in history; nothing was sent automatically."
-                : "Task change saved. Refreshed history shows the current state.";
+          deliveryNotice ??
+          (selected.action === "relayPrepare"
+            ? "Task saved for private delivery. Review sending this task in history; nothing was sent automatically."
+            : selected.action === "export"
+              ? "History exported. The download includes your original task text."
+              : selected.action === "clear"
+                ? "Task content deleted from this browser."
+                : selected.action === "submit" || selected.action === "resume"
+                  ? "Task preparation saved. Review its encrypted handoff in history; nothing was sent automatically."
+                  : "Task change saved. Refreshed history shows the current state.");
     } catch (e) {
       if (alive(g, captured)) {
         state = null;

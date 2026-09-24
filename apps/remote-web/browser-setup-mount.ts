@@ -14,6 +14,7 @@ export class BrowserSetupMount {
     private button: HTMLButtonElement,
     private notice: HTMLElement,
     private context: () => BrowserDeviceContext | null,
+    private privateDelivery = false,
   ) {
     this.button.onclick = () => {
       this.opened = true;
@@ -54,7 +55,13 @@ export class BrowserSetupMount {
         return;
       }
       this.root.replaceChildren();
-      this.view = mountBrowserSetup(this.root, host);
+      this.view = mountBrowserSetup(
+        this.root,
+        host,
+        Date.now,
+        () => performance.now(),
+        this.privateDelivery,
+      );
       this.button.hidden = true;
       this.notice.textContent = "";
     } catch {

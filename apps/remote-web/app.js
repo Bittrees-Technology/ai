@@ -28,6 +28,7 @@ if (!settings || settings.origin !== location.origin) {
     el("browser-recovery-open"),
     el("browser-recovery-notice"),
     () => controller?.sessionContext() ?? null,
+    settings.privateRelay === true,
   );
   const relay =
     settings.privateRelay === true
