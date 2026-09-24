@@ -1,3 +1,4 @@
+import { conversationTaskAccess } from "./conversation-access.js";
 import { ConversationOfferError } from "../../modules/remote/private-conversation-offers.js";
 import { PrivateConversationConsentError } from "../../modules/remote/private-conversation-consent.js";
 import {
@@ -1130,10 +1131,13 @@ export function localApi({
     const key = z.uuid().parse(req.header("Idempotency-Key"));
     if (body.questionId !== req.params.id) throw new StoreError("CONFLICT");
     const { task } = taskQuestion(req.params.id);
-    await checkFeedbackAccess(task.id);
-    const answer = store.answerInput(owner, task.id, body, key, () =>
-      requireDependencies(task.id),
-    );
+    const check = await conversationTaskAccess(
+      store,
+      owner,
+      sourceRouter,
+      memory,
+    )(task.id);
+    const answer = store.answerInput(owner, task.id, body, key, check);
     res.json(
       taskAnswerReceiptSchema.parse({
         taskId: task.id,

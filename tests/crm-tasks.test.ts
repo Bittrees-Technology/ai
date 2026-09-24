@@ -1,3 +1,5 @@
+import { SourceTasks } from "../modules/connectors/source-tasks.js";
+import { conversationTaskAccess } from "../apps/companion/conversation-access.js";
 import test from "node:test";
 import { createServer } from "node:http";
 import { localApi } from "../apps/companion/http.js";
@@ -1132,9 +1134,10 @@ test("local question and answer HTTP rechecks source rights, including duplicate
 });
 
 test("source denial and task changes during asynchronous validation cannot save a new task answer", async () => {
-  for (const change of ["deny", "cancel"] as const) {
+  for (const change of ["deny", "cancel", "remove-during-seal"] as const) {
     const f = await fixture(),
-      store = new Store(":memory:", new Vault(randomBytes(32))),
+      vault = new Vault(randomBytes(32)),
+      store = new Store(":memory:", vault),
       server = createServer();
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const port = (server.address() as import("node:net").AddressInfo).port,
@@ -1143,6 +1146,7 @@ test("source denial and task changes during asynchronous validation cannot save 
       "request",
       localApi({ store, owner, token, port, sources: f.adapter }),
     );
+    let removal: Promise<void> | undefined;
     try {
       store.createInbox(owner, {
         id: "personal",
@@ -1171,7 +1175,15 @@ test("source denial and task changes during asynchronous validation cannot save 
         "question",
       );
       if (change === "deny") f.deny();
-      else {
+      else if (change === "remove-during-seal") {
+        const seal = vault.seal.bind(vault);
+        vault.seal = (value, purpose) => {
+          const sealed = seal(value, purpose);
+          if (!removal && purpose.startsWith("message:"))
+            removal = f.connector.forgetLocal();
+          return sealed;
+        };
+      } else {
         const validate = f.adapter.validate.bind(f.adapter);
         f.adapter.validate = async (...args) => {
           const result = await validate(...args);
@@ -1182,6 +1194,14 @@ test("source denial and task changes during asynchronous validation cannot save 
           return result;
         };
       }
+      const before = {
+        task: store.get(owner, task.id),
+        messages: store.messages(owner, "personal", input.conversationId),
+        waits: store.inputWaitHistory(owner, task.id),
+        events: store.db
+          .prepare("SELECT * FROM events WHERE task_id=?")
+          .all(task.id),
+      };
       const response = await fetch(
         `http://127.0.0.1:${port}/v1/messages/${q.question.id}/task-answer`,
         {
@@ -1202,7 +1222,22 @@ test("source denial and task changes during asynchronous validation cannot save 
       assert.notEqual(response.status, 200);
       assert.doesNotMatch(await response.text(), /SENTINEL/);
       assert.equal(store.inputWaitHistory(owner, task.id)[0]!.replyId, null);
+      if (change === "remove-during-seal") {
+        assert.ok(removal);
+        assert.deepEqual(
+          {
+            task: store.get(owner, task.id),
+            messages: store.messages(owner, "personal", input.conversationId),
+            waits: store.inputWaitHistory(owner, task.id),
+            events: store.db
+              .prepare("SELECT * FROM events WHERE task_id=?")
+              .all(task.id),
+          },
+          before,
+        );
+      }
     } finally {
+      await removal;
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
       store.close();
@@ -1259,5 +1294,25 @@ test("opted-in source task asks using permitted context and a revoked source pre
     } finally {
       store.close();
     }
+  }
+});
+
+test("crm conversation access uses a fresh source read and fences local removal", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(store, input, [f.record.id], "access");
+    const access = conversationTaskAccess(
+      store,
+      owner,
+      new SourceTasks(f.adapter),
+    );
+    const check = await access(task.id);
+    store.db.transaction(() => check()).immediate();
+    await f.connector.forgetLocal();
+    assert.throws(check, /SOURCE_DENIED/);
+    await assert.rejects(access(task.id));
+  } finally {
+    store.close();
   }
 });

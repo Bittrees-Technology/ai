@@ -1,3 +1,5 @@
+import { conversationTaskAccess } from "../apps/companion/conversation-access.js";
+import { SourceTasks } from "../modules/connectors/source-tasks.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -13,7 +15,7 @@ import { Vault } from "../modules/storage/vault.js";
 import { encryptedBackup, restoreBackup } from "../modules/storage/backup.js";
 import { join } from "node:path";
 
-async function fixture(questions = false) {
+async function fixture(questions = false, hostAccess = false) {
   const f = await conversationFixture();
   const { grant } = f.approve(
     await f.prepare({
@@ -25,8 +27,19 @@ async function fixture(questions = false) {
     }),
   );
   let allowed = true;
-  const access = async (_id: string) => () => {
-    if (!allowed) throw Error("SOURCE_DENIED");
+  const hostGuard = conversationTaskAccess(
+    f.store,
+    owner,
+    new SourceTasks(),
+    undefined,
+    f.clock,
+  );
+  const access = async (id: string) => {
+    const guard = hostAccess ? await hostGuard(id) : () => {};
+    return () => {
+      if (!allowed) throw Error("SOURCE_DENIED");
+      guard();
+    };
   };
   const content = new PrivateConversationContent(
     f.store,
@@ -309,8 +322,8 @@ test("authenticated changed ciphertext, cross-family sequence reuse and deleted 
     f.close();
   }
 });
-test("only an exact shared live task question can be answered; ordinary task-linked replies preserve source linkage without unblocking", async () => {
-  const f = await fixture(true);
+test("host access permits exact shared question answers and preserves ordinary reply linkage", async () => {
+  const f = await fixture(true, true);
   try {
     const q = waiting(f),
       shared = await f.prepareContent(q.question.id, "question");
@@ -443,8 +456,8 @@ test("backup locks journal authority, export stays owner-scoped and owner deleti
   }
 });
 
-test("changed task revision requires a newly shared question and answering a paused task leaves it paused", async () => {
-  const f = await fixture(true);
+test("host access permits newly shared paused questions without unpausing work", async () => {
+  const f = await fixture(true, true);
   try {
     const q = waiting(f),
       first = await f.prepareContent(q.question.id, "question");

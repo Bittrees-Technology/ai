@@ -20,6 +20,22 @@ export class SourceTasks implements SourceValidator {
     private autonote?: AutoNoteTasks,
     private mail?: MailTasks,
   ) {}
+  /** Fresh source validation plus a synchronous fence for local connector mutations. */
+  async commitGuard(binding: SourceBinding): Promise<() => void> {
+    const adapter =
+      binding.authority.sourceApp === "crm"
+        ? this.crm
+        : binding.authority.sourceApp === "autonote"
+          ? this.autonote
+          : binding.authority.sourceApp === "mail"
+            ? this.mail
+            : undefined;
+    if (!adapter) throw new ConnectorError("SOURCE_DENIED");
+    const check = adapter.captureReadBoundary();
+    await adapter.validate(binding);
+    check();
+    return check;
+  }
   async validate(binding: SourceBinding): Promise<SourceSnapshot> {
     if (binding.authority.sourceApp === "crm" && this.crm)
       return this.crm.validate(binding);

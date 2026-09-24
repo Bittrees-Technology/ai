@@ -1,3 +1,4 @@
+import { conversationTaskAccess } from "../apps/companion/conversation-access.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -998,6 +999,22 @@ test("AutoNote submission HTTP controls gate content, reject approval and retain
     release?.();
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("autonote conversation access uses a fresh source read and fences local removal", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(store, input, f.meeting.id, "access");
+    const access = conversationTaskAccess(store, owner, f.sources);
+    const check = await access(task.id);
+    store.db.transaction(() => check()).immediate();
+    await f.connector.forgetLocal();
+    assert.throws(check, /SOURCE_DENIED/);
+    await assert.rejects(access(task.id));
+  } finally {
     store.close();
   }
 });
