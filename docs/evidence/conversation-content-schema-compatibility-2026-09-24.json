@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-09-24T16:49:17.242Z",
+  "from": 32,
+  "to": 33,
+  "legacyHead": "45c32caa452a0d63e67503c1cf1da165d7686ab3",
+  "compiledHashes": {
+    "modules/storage/store.js": "1fc50d83f55b7077c3d8e7728e7d80a0579f30199a74977d5d9514b8980ffedd",
+    "modules/remote/private-key-lifecycle.js": "b949a643644ada7b67a67ab36f054885e27ac168e3cd0b9214bf0de794f02c21",
+    "modules/remote/private-endpoint-keys.js": "31431ef3613d3f69524321f9a2cc7c471c8f7f1fc283580c653eaa9f36b34539"
+  },
+  "checks": [
+    "actual prior offers, Inbox and key bytes preserved",
+    "wrong-key upgrade leaves prior writer usable",
+    "no invented content journal history",
+    "real encrypted content enters existing Inbox once",
+    "older writer refuses schema33",
+    "encrypted backup preserves journal and Inbox with restore lock",
+    "owner-isolated journal deletion",
+    "untouched original schema32 backup remains usable with prior writer"
+  ],
+  "boundaries": [
+    "synthetic temporary stores and in-memory keys",
+    "no browser/native automation, installed app, personal data, live service or Acer changes"
+  ]
+}
