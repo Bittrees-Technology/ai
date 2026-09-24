@@ -56,3 +56,6 @@ tests/browser/fixture/public/legacy-content/
 
 .legacy-browser-receipts/
 tests/browser/fixture/public/legacy-receipts/
+
+.legacy-browser-relay-content/
+tests/browser/fixture/public/legacy-relay-content/

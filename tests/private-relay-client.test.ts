@@ -469,3 +469,33 @@ test("owner export preserves expired ciphertext without endpoint authority and v
     "deleted",
   );
 });
+
+test("relay submit awaits asynchronous source checks before upload and before exposing a response", async () => {
+  const f = await fixture();
+  for (const failAt of [1, 2, 3, 0]) {
+    let calls = 0,
+      guards = 0;
+    const client = new PrivateRelayClient(
+      () => f.context,
+      async () => {
+        calls++;
+        assert.equal(guards, 2);
+        return Response.json({ receipt: f.receipt, duplicate: false });
+      },
+      () => time,
+      () => 0,
+    );
+    const result = client.submit(
+      { version: 1, envelope: f.envelope },
+      async () => {
+        guards++;
+        await Promise.resolve();
+        if (guards === failAt) throw Error("DENIED");
+      },
+    );
+    if (failAt) await assert.rejects(result, /DENIED/);
+    else await result;
+    assert.equal(calls, failAt === 1 || failAt === 2 ? 0 : 1);
+    assert.equal(guards, failAt || 3);
+  }
+});

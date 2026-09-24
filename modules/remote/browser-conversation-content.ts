@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  privateRelayStorageReceiptSchema,
+  privateRelayEnvelopeHash,
+} from "./private-relay-contracts.js";
 import { BrowserConversationConsent } from "./browser-conversation-consent.js";
 import { browserKeyScope } from "./browser-key-state.js";
 import { browserReplayCoverageMatches } from "./browser-key-lifecycle.js";
@@ -44,6 +48,12 @@ import {
 
 const storeName = "conversation_content";
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const relayInput = z.strictObject({
+  grantId: z.uuid(),
+  id: z.uuid(),
+  expectedRevision: positive,
+  confirmed: z.literal(true),
+});
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 type Handle = Awaited<ReturnType<BrowserConversationConsent["authorize"]>>;
@@ -119,6 +129,9 @@ function summary(e: Entry) {
     kind: e.value.content.type,
     state: e.value.state,
     expiresAt: e.value.header.expiresAt,
+    relayAttempts: e.value.relay?.attempts ?? 0,
+    relayStopped: e.value.relay?.stopped ?? false,
+    relayObservation: e.value.relay?.observation ?? null,
     recipientAccepted:
       e.value.direction === "outgoing" && !!e.value.receiptEnvelope,
     recipientAcceptedAt:
@@ -649,11 +662,211 @@ export class BrowserConversationContent {
       }
     });
   }
+  private deliveryEnvelope(e: Entry) {
+    const envelope =
+      e.value.direction === "incoming"
+        ? e.value.receiptEnvelope
+        : e.value.envelope;
+    if (!envelope || e.value.relay?.stopped || e.value.state === "preparing")
+      fail();
+    if (envelope.header.expiresAt <= this.now()) fail();
+    return envelope;
+  }
+  /** Commit an encrypted attempt before network work. The returned check is a
+   * trusted host callback, scoped to this operation's identity and exact row. */
+  beginRelayDelivery(raw: unknown) {
+    return this.operation(async (g) => {
+      const input = relayInput
+        .extend({ deliveryExpiresAt: positive })
+        .parse(raw);
+      const { e, h, id } = await this.retained(g, input.grantId, input.id);
+      if (e.row.revision !== input.expectedRevision) fail("CONFLICT");
+      const envelope = this.deliveryEnvelope(e),
+        attempts = e.value.relay?.attempts ?? 0;
+      if (envelope.header.expiresAt > input.deliveryExpiresAt) fail();
+      if (
+        attempts >= Number.MAX_SAFE_INTEGER ||
+        e.row.revision >= Number.MAX_SAFE_INTEGER
+      )
+        fail("CAPACITY");
+      const value: Value = {
+        ...e.value,
+        relay: {
+          stopped: false,
+          attempts: attempts + 1,
+          lastAttemptAt: this.now(),
+          observation: e.value.relay?.observation ?? null,
+        },
+      };
+      const row = await sealBrowserConversationRow(
+        { ...e.row, revision: e.row.revision + 1 },
+        value,
+        e.row.key,
+      );
+      await this.tx(g, h, "readwrite", (io) =>
+        this.rows(io, [id], (rows) => {
+          this.checked(e, h);
+          if (!same(rows[0], e.row)) fail("CONFLICT");
+          io.store(storeName).put(row);
+          io.done(undefined);
+        }),
+      );
+      const check = async () => {
+        this.checked({ row, value }, h);
+        this.deliveryEnvelope({ row, value });
+        await this.tx(g, h, "readonly", (io) =>
+          this.rows(io, [id], (rows) => {
+            if (!same(rows[0], row)) fail("CONFLICT");
+            this.deliveryEnvelope({ row, value });
+            io.done(undefined);
+          }),
+        );
+      };
+      return {
+        entry: summary({ row, value }),
+        envelope: structuredClone(envelope),
+        check,
+      };
+    });
+  }
+  recordRelayDelivery(raw: unknown) {
+    return this.operation(async (g) => {
+      const input = relayInput
+        .extend({ receipt: privateRelayStorageReceiptSchema })
+        .parse(raw);
+      const { e, h, id } = await this.retained(g, input.grantId, input.id);
+      if (e.row.revision !== input.expectedRevision) fail("CONFLICT");
+      const envelope = this.deliveryEnvelope(e),
+        journal = e.value.relay;
+      if (!journal?.attempts) fail();
+      const receipt = input.receipt;
+      if (
+        receipt.messageId !== envelope.header.messageId ||
+        receipt.envelopeHash !== (await privateRelayEnvelopeHash(envelope)) ||
+        receipt.storedAt < envelope.header.issuedAt - 30000 ||
+        receipt.storedAt > this.now() + 30000
+      )
+        fail();
+      const old = journal.observation?.receipt,
+        rank = { stored: 0, received: 1, deleted: 2 };
+      if (
+        old &&
+        (receipt.storedAt !== old.storedAt ||
+          receipt.envelopeHash !== old.envelopeHash ||
+          receipt.revision < old.revision ||
+          rank[receipt.state] < rank[old.state] ||
+          (receipt.revision === old.revision && !same(receipt, old)))
+      )
+        fail("CONFLICT");
+      if (e.row.revision >= Number.MAX_SAFE_INTEGER) fail("CAPACITY");
+      const value: Value = {
+        ...e.value,
+        relay: {
+          ...journal,
+          observation: {
+            receipt,
+            observedAt: this.now(),
+            attempt: journal.attempts,
+          },
+        },
+      };
+      const row = await sealBrowserConversationRow(
+        { ...e.row, revision: e.row.revision + 1 },
+        value,
+        e.row.key,
+      );
+      return this.tx<Summary>(g, h, "readwrite", (io) =>
+        this.rows(io, [id], (rows) => {
+          this.checked(e, h);
+          this.deliveryEnvelope(e);
+          if (!same(rows[0], e.row)) fail("CONFLICT");
+          io.store(storeName).put(row);
+          io.done(summary({ row, value }));
+        }),
+      );
+    });
+  }
+  /** Local-only stop works after logout/revocation; it retains the encrypted
+   * original and history and never restores consent or withdraws network data. */
+  async stopRelayDelivery(raw: unknown) {
+    const input = relayInput.parse(raw);
+    if (this.busy) fail("BUSY");
+    this.invalidate();
+    this.busy = true;
+    const generation = this.generation,
+      wall = this.now(),
+      mono = this.mono();
+    const check = () => {
+      const n = this.now(),
+        elapsed = this.mono() - mono;
+      if (
+        this.closed ||
+        generation !== this.generation ||
+        !Number.isSafeInteger(n) ||
+        n < wall ||
+        !Number.isFinite(elapsed) ||
+        elapsed < 0 ||
+        elapsed >= 120000
+      )
+        fail();
+    };
+    try {
+      const rows = await browserStorageTransaction<Row[]>(
+        this.db,
+        [storeName],
+        "readonly",
+        check,
+        (io) => this.allRows(io, (v) => io.done(v)),
+        normalize,
+      );
+      const entries = await Promise.all(rows.map(openBrowserConversationRow));
+      const e = entries.find(
+        (e) =>
+          e.value.grant.id === input.grantId && e.value.content.id === input.id,
+      );
+      if (!e) fail();
+      if (e.row.revision !== input.expectedRevision) fail("CONFLICT");
+      if (!e.value.relay?.stopped && e.row.revision >= Number.MAX_SAFE_INTEGER)
+        fail("CAPACITY");
+      const value: Value = {
+        ...e.value,
+        relay: {
+          attempts: 0,
+          lastAttemptAt: null,
+          observation: null,
+          ...e.value.relay,
+          stopped: true,
+        },
+      };
+      const row = e.value.relay?.stopped
+        ? e.row
+        : await sealBrowserConversationRow(
+            { ...e.row, revision: e.row.revision + 1 },
+            value,
+            e.row.key,
+          );
+      return await browserStorageTransaction<Summary>(
+        this.db,
+        [storeName],
+        "readwrite",
+        check,
+        (io) =>
+          this.rows(io, [e.row.id], (current) => {
+            if (!same(current[0], e.row)) fail("CONFLICT");
+            if (row !== e.row) io.store(storeName).put(row);
+            io.done(summary({ row, value }));
+          }),
+        normalize,
+      );
+    } catch (e) {
+      throw normalize(e);
+    } finally {
+      this.busy = false;
+    }
+  }
   /** Authenticate recipient storage only. The original outgoing content and
    * ciphertext remain intact; no task, parent, queue or outgoing sequence effect. */
-  reconcile(
-    raw: unknown,
-  ): Promise<{
+  reconcile(raw: unknown): Promise<{
     status: "recipient-storage-confirmed";
     duplicate: boolean;
     entry: Summary;

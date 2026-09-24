@@ -19,6 +19,7 @@ export async function init(
     | "offer-replay"
     | "offer-ack"
     | "content"
+    | "relay-content"
     | "receipts" = false,
 ) {
   const f = {
@@ -47,6 +48,7 @@ export async function reopen(
     | "offer-replay"
     | "offer-ack"
     | "content"
+    | "relay-content"
     | "receipts" = false,
 ) {
   await page.goto("/?browser-peers");
@@ -68,6 +70,7 @@ export async function paired(
     | "offer-replay"
     | "offer-ack"
     | "content"
+    | "relay-content"
     | "receipts" = false,
 ) {
   const f = await init(page, previous),
@@ -209,6 +212,7 @@ export async function ready(
     | "offer-replay"
     | "offer-ack"
     | "content"
+    | "relay-content"
     | "receipts" = false,
 ) {
   const f = await paired(page, previous);

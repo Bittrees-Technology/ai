@@ -92,7 +92,7 @@ for (const mode of ["active", "prepared", "empty"] as const) {
       (p) => window.browserLifecycleTest.boundarySnapshot(p),
       proof,
     );
-    expect(snapshot.version).toBe(14);
+    expect(snapshot.version).toBe(15);
     expect(snapshot.covered).toBe(mode === "empty");
     expect(snapshot.markers).toEqual([
       mode === "empty" ? "from-generation-v1" : null,

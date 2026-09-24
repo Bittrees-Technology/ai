@@ -785,6 +785,64 @@ export class BrowserKeyHost {
         });
       }),
   };
+  /** Explicit original-ciphertext delivery. Every attempt is persisted before
+   * submit; neither this API nor reload automatically retries a message. */
+  readonly relayConversationContentAPI = {
+    send: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = z
+          .strictObject({
+            grantId: z.uuid(),
+            id: z.uuid(),
+            expectedRevision: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER),
+            confirmed: z.literal(true),
+          })
+          .parse(raw);
+        const consent = await (await this.conversationStore()).status();
+        const grant = consent.grants.find((g) => g.id === input.grantId);
+        if (!grant) throw Error("DENIED");
+        return this.relay.withClient(async (client, sender, check) => {
+          const recipient = await client.recipient({
+            endpointId: grant.choices.peerId,
+          });
+          check();
+          const store = await this.conversationContentStore();
+          const attempt = await store.beginRelayDelivery({
+            ...input,
+            deliveryExpiresAt: Math.min(sender.expiresAt, recipient.expiresAt),
+          });
+          check();
+          const result = await client.submit(
+            { version: 1, envelope: attempt.envelope },
+            async () => {
+              check();
+              await attempt.check();
+              check();
+            },
+          );
+          check();
+          const entry = await store.recordRelayDelivery({
+            ...input,
+            expectedRevision: attempt.entry.revision,
+            receipt: result.receipt,
+          });
+          check();
+          return {
+            entry,
+            transport: { transportOnly: true as const, ...result },
+          };
+        });
+      }),
+    stop: (raw: unknown) =>
+      this.operation(async () =>
+        (await this.conversationContentStore()).stopRelayDelivery(raw),
+      ),
+    invalidate: () => this.cancelKeys(),
+  };
   /** Current online identity for every content operation. Explicit archive export
    * needs matching owner/device identity but no active key or expired permission.
    * Offline deletion is bounded to this signed-in local owner and locks consent.
