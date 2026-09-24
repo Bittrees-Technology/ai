@@ -995,3 +995,22 @@ select.model-profile-select {
   flex: 0 0 auto;
   margin-top: 5px;
 }
+
+/* Keep the answer acknowledgement beside its text at every viewport width. */
+.task-answer .task-answer-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  min-height: 44px;
+  padding: 10px 0;
+}
+.task-answer-confirmation input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 2px 0 0;
+}
+.task-answer-confirmation span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

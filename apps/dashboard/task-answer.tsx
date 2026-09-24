@@ -62,13 +62,13 @@ export function TaskAnswer({
             <>
               <h4>Your answer</h4>
               <p className="prose">{c.review.content}</p>
-              <label>
+              <label className="task-answer-confirmation">
                 <input
                   type="checkbox"
                   checked={c.confirmed}
                   onChange={(e) => c.acknowledge(e.target.checked)}
-                />{" "}
-                I reviewed this question and answer.
+                />
+                <span>I reviewed this question and answer.</span>
               </label>
               <button
                 disabled={!c.confirmed || c.sending}

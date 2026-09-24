@@ -128,6 +128,18 @@ async function review(page: Page) {
   ).toBeVisible();
 }
 async function shot(page: Page, project: string, name: string) {
+  const confirmation = page.locator(".task-answer-confirmation");
+  if (await confirmation.count()) {
+    const box = await confirmation.locator("input").boundingBox();
+    const text = await confirmation.locator("span").boundingBox();
+    const target = await confirmation.boundingBox();
+    expect(box).not.toBeNull();
+    expect(text).not.toBeNull();
+    expect(target!.height).toBeGreaterThanOrEqual(44);
+    expect(box!.width).toBeLessThanOrEqual(24);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(text!.x);
+    expect(Math.abs(box!.y - text!.y)).toBeLessThan(8);
+  }
   await mkdir("test-results", { recursive: true });
   await page.screenshot({
     path: `test-results/task-answer-${project}-${name}.png`,
