@@ -676,3 +676,43 @@ test("browser result dispatch requires separate result consent even when task se
     f.mac.close();
   }
 });
+
+test("browser reconciles a redelivered result after an acknowledgement rejected before server commit", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    await send(page, f);
+    await f.native.check();
+    await f.mac.work();
+    const sent = await sendResponse(f, "result");
+    identityServer.reject("/browser/relay/messages/acknowledge");
+    await expect(checkBrowser(page)).rejects.toThrow();
+    const saved = await currentBrowserEntry(page);
+    expect(saved.state).toBe("accepted");
+    await page.reload();
+    await page.waitForFunction(() => !!window.browserPeersTest);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const retry = await checkBrowser(page);
+    expect(retry.received?.kind).toBe("result");
+    expect(retry.received?.messageId).toBe(sent.receipt.messageId);
+    expect(retry.transport?.receipt.state).toBe("received");
+    expect((await currentBrowserEntry(page)).revision).toBe(saved.revision);
+    expect((await readBrowserResult(page, f)).task.output).toContain(
+      "Synthetic result",
+    );
+    expect(
+      identityServer.events.filter(
+        (p) => p === "/browser/relay/messages/acknowledge",
+      ),
+    ).toHaveLength(2);
+  } finally {
+    f.mac.close();
+  }
+});
