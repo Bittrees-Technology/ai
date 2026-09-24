@@ -13,8 +13,6 @@ import { corrupt, stored } from "./support/relay-queue.js";
 const queue = (p: Page) =>
   p.getByRole("region", { name: "Queued message recovery", exact: true });
 const reply = "Synthetic result from independently consented Mac task.";
-const supplied =
-  "SYNTHETIC_REVIEWED_PRIVATE_DELIVERY — summarize only this supplied text.";
 async function refresh(p: Page) {
   await panel(p)
     .getByRole("button", { name: "Refresh tasks", exact: true })
@@ -268,7 +266,7 @@ test("browser queue UI rejects a changed reviewed message before authentication 
       })
       .click();
     await identityServer.pool.query(
-      "UPDATE remote_private_messages SET revision=revision+1 WHERE message_id=$1",
+      "UPDATE remote_private_messages SET stored_at=stored_at-1 WHERE message_id=$1",
       [sent.receipt.messageId],
     );
     await confirm(page, "Check reviewed message");
@@ -285,7 +283,7 @@ test("browser queue UI rejects a changed reviewed message before authentication 
       ),
     ).toHaveLength(0);
     await inspect(page);
-    await expect(queue(page)).toContainText("version 2");
+    await expect(queue(page)).toContainText("version 1");
     await queue(page)
       .getByRole("button", {
         name: "Review checking this message",
