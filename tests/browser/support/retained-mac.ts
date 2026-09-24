@@ -44,7 +44,9 @@ export async function retainedMac(
   const dir = mkdtempSync(join(tmpdir(), "bittrees-browser-peer-mac-")),
     vault = new Vault(randomBytes(32));
   const owner = { userId: randomUUID(), tenantId: "synthetic-browser-peer" };
-  const store = new Store(join(dir, "tasks.db"), vault, () => now);
+  let liveClock = false;
+  const clock = () => (liveClock ? Date.now() : now);
+  const store = new Store(join(dir, "tasks.db"), vault, clock);
   const binding = registered
     ? { ...registered }
     : { ...browser, deviceId: randomUUID() };
@@ -72,14 +74,14 @@ export async function retainedMac(
     () => binding,
     entries,
     () => true,
-    () => now,
+    clock,
   );
   const peers = new PrivatePeerEnrollment(
     store,
     vault,
     owner,
     () => binding,
-    () => now,
+    clock,
   );
   const activate = async () => {
     const slot = keys.begin({
@@ -106,7 +108,7 @@ export async function retainedMac(
     () => binding,
     keys,
     peers,
-    () => now,
+    clock,
   );
   const profile = {
     id: "synthetic-browser-tasks",
@@ -139,6 +141,8 @@ export async function retainedMac(
         device.expiresAt !== binding.expiresAt
       )
         throw Error("Native registration must match retained endpoint");
+      // Native HTTP identity and SQLite/worker timestamps use the same live clock.
+      liveClock = true;
       let saved: Uint8Array | undefined = new TextEncoder().encode(
         JSON.stringify({
           localOwner: owner.userId,
@@ -252,7 +256,7 @@ export async function retainedMac(
         owner,
         () => binding,
         providers.receive,
-        () => now,
+        clock,
       );
       const receipt = await receiver.accept(envelope);
       const responses = new PrivateTaskResponses(
@@ -261,7 +265,7 @@ export async function retainedMac(
         owner,
         () => binding,
         providers.respond,
-        () => now,
+        clock,
       );
       const accepted = await responses.prepare({
         operationId: receipt.header.operationId,
@@ -302,7 +306,7 @@ export async function retainedMac(
       () => binding,
       keys,
       peers,
-      () => now,
+      clock,
     ),
     activate,
     invitation: (recipientId = browser.deviceId) =>
