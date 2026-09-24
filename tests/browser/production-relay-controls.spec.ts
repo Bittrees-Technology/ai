@@ -161,7 +161,7 @@ test("shipped relay controls retain a lost operation for checking and cancel nar
   await panel(page)
     .getByRole("button", { name: "Review this Mac connection" })
     .click();
-  identityServer.drop("/browser/relay/mac/approve");
+  identityServer.loseResponse("/browser/relay/mac/approve");
   await confirm(page);
   await expect(panel(page).getByRole("alert")).toContainText(
     "not been retried",
