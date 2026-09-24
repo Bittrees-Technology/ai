@@ -187,6 +187,18 @@ export function localApi({
     if (!privateRelay || !privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.checkRelayedTask(privateRelay, req.body));
   });
+  app.post("/v1/private-relay/inspect-conversation", async (req, res) => {
+    if (!privateRelay || !privateKeys) throw new StoreError("CONFLICT");
+    res.json(
+      await privateKeys.inspectRelayedConversation(privateRelay, req.body),
+    );
+  });
+  app.post("/v1/private-relay/check-conversation", async (req, res) => {
+    if (!privateRelay || !privateKeys) throw new StoreError("CONFLICT");
+    res.json(
+      await privateKeys.receiveRelayedConversation(privateRelay, req.body),
+    );
+  });
   app.post("/v1/private-relay/responses/prepare", async (req, res) => {
     if (!privateRelay || !privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.prepareRelayedResponse(privateRelay, req.body));

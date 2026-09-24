@@ -43,6 +43,7 @@ export async function macRelayFixture(conversations = false) {
     beforePoll: undefined as undefined | (() => Promise<void>),
     loseAck: false,
     ackAfterSave: false,
+    beforeAck: undefined as undefined | (() => void),
     calls: [] as string[],
   };
   const recipientPermissionId = randomUUID();
@@ -164,11 +165,13 @@ export async function macRelayFixture(conversations = false) {
             nextCursor: null,
           };
         } else if (path === "relay/messages/acknowledge") {
-          assert.equal(
-            f.b.store.export(f.b.owner).length,
-            1,
-            "local commit precedes acknowledgement",
-          );
+          if (control.beforeAck) control.beforeAck();
+          else
+            assert.equal(
+              f.b.store.export(f.b.owner).length,
+              1,
+              "local commit precedes acknowledgement",
+            );
           assert.deepEqual(body, {
             messageId: receipt.messageId,
             envelopeHash: receipt.envelopeHash,
@@ -254,6 +257,17 @@ export async function macRelayFixture(conversations = false) {
     build,
     input,
     check,
+    async queueEnvelope(envelope: PrivateEnvelope) {
+      wire.envelope = structuredClone(envelope);
+      receipt = {
+        version: 1,
+        messageId: envelope.header.messageId,
+        envelopeHash: await privateRelayEnvelopeHash(envelope),
+        revision: 1,
+        storedAt: f.clock(),
+        state: "stored",
+      };
+    },
     get relay() {
       return relay;
     },

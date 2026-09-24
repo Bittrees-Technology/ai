@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { CompanionPrivateRelay } from "./private-relay.js";
 import type { PrivateRelayClient } from "../../modules/remote/private-relay-client.js";
+import { privateRelayPageSchema } from "../../modules/remote/private-relay-contracts.js";
+import {
+  privateRelaySelectionSchema,
+  relayQueueReview,
+  relaySelectionMatches,
+} from "../../modules/remote/private-relay-queue.js";
 import type { Store, Owner } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
 import type { RemoteClient } from "../../modules/remote/client.js";
@@ -20,6 +26,23 @@ import {
 } from "../../modules/remote/private-conversation-content.js";
 
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const queueRequest = z.strictObject({
+  connection: z.strictObject({ id: z.uuid(), expectedRevision: revision }),
+  after: privateRelayPageSchema.shape.after,
+  confirmed: z.literal(true),
+});
+const receiveRelayRequest = queueRequest.extend({
+  selection: privateRelaySelectionSchema,
+  target: z.discriminatedUnion("action", [
+    z.strictObject({ action: z.literal("receive"), permissionId: z.uuid() }),
+    z.strictObject({
+      action: z.literal("reconcile"),
+      permissionId: z.uuid(),
+      id: z.uuid(),
+      expectedRevision: revision,
+    }),
+  ]),
+});
 const relayRequest = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("send"),
@@ -74,7 +97,7 @@ function summary(entry: Entry) {
 
 /** Authenticated local handoff. The parent holds key/peer/permission exclusion.
  * Construction/status never accesses native keys or the network. This class
- * does not poll, submit to a relay, or claim recipient delivery. */
+ * performs network work only through explicit, bounded relay operations. */
 export class CompanionConversationContent {
   private generation = 0;
   private relayReview?: RelayReview;
@@ -147,6 +170,89 @@ export class CompanionConversationContent {
       const result = await action(engine);
       if (!current()) throw new ConversationContentError("DENIED");
       return result;
+    });
+  }
+  /** Metadata only. The queue record is untrusted until the selected engine
+   * authenticates it; inspection grants no content, task or acknowledgement authority. */
+  inspectRelay(raw: unknown, relay: CompanionPrivateRelay) {
+    const input = queueRequest.parse(raw);
+    return this.relayScope(relay, input.connection, async (client, current) => {
+      const page = await client.poll({ after: input.after, limit: 1 });
+      if (!current()) throw new ConversationContentError("DENIED");
+      return {
+        transportOnly: true as const,
+        item: relayQueueReview(page.items[0]),
+        nextCursor: page.nextCursor,
+      };
+    });
+  }
+  private relayScope<T>(
+    relay: CompanionPrivateRelay,
+    connection: z.infer<typeof queueRequest>["connection"],
+    action: (
+      client: PrivateRelayClient,
+      current: () => PrivateBinding | null,
+    ) => Promise<T>,
+  ) {
+    if (!this.enabled || !this.remote)
+      return Promise.reject(new ConversationContentError("DENIED"));
+    const generation = this.generation;
+    return relay.withTransport(connection, async (client, binding) => {
+      const current = () => (generation === this.generation ? binding() : null);
+      if (!current()) throw new ConversationContentError("DENIED");
+      const result = await action(client, current);
+      if (!current()) throw new ConversationContentError("DENIED");
+      return result;
+    });
+  }
+  /** One selected envelope, one explicit family, no automatic dispatch/retry.
+   * Local acceptance/reconciliation commits before transport acknowledgement.
+   * Lost acknowledgement is recovered by the existing durable duplicate path. */
+  receiveRelay(raw: unknown, relay: CompanionPrivateRelay) {
+    const input = receiveRelayRequest.parse(raw);
+    return this.relayScope(relay, input.connection, async (client, current) => {
+      const page = await client.poll({ after: input.after, limit: 1 });
+      if (!current()) throw new ConversationContentError("DENIED");
+      const item = page.items[0];
+      if (!item || !relaySelectionMatches(item, input.selection))
+        throw new ConversationContentError("CONFLICT");
+      const engine = this.engine(current),
+        target = input.target;
+      const received =
+        target.action === "receive"
+          ? await engine.accept({
+              permissionId: target.permissionId,
+              envelope: item.envelope,
+              confirmed: true,
+            })
+          : await engine.reconcile({
+              permissionId: target.permissionId,
+              id: target.id,
+              expectedRevision: target.expectedRevision,
+              envelope: item.envelope,
+              confirmed: true,
+            });
+      if (!current()) throw new ConversationContentError("DENIED");
+      const transport = await client.acknowledge({
+        messageId: item.receipt.messageId,
+        envelopeHash: item.receipt.envelopeHash,
+        expectedRevision: item.receipt.revision,
+        confirmed: true,
+      });
+      if (!current()) throw new ConversationContentError("DENIED");
+      return {
+        received: {
+          status:
+            target.action === "receive"
+              ? ("accepted-locally" as const)
+              : ("recipient-storage-confirmed" as const),
+          duplicate: received.duplicate,
+          entry: summary(received.entry),
+          messageId: item.receipt.messageId,
+        },
+        transport: { transportOnly: true as const, ...transport },
+        nextCursor: page.nextCursor,
+      };
     });
   }
   private valid(review: RelayReview) {
