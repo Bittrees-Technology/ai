@@ -18,7 +18,7 @@ const request = z.strictObject({
   expiresAt: positive,
   confirmed: z.literal(true),
 });
-const macApproval = request.extend({
+const endpointApproval = request.extend({
   deviceId: uuid,
   credentialEpoch: positive,
 });
@@ -315,18 +315,19 @@ export class RemotePrivateRelayAccess {
     credential: string,
     raw: unknown,
   ) {
-    const input = this.parse(request, raw);
-    return this.tx(async (db, gate) =>
-      this.create(
-        db,
-        gate,
-        await this.browser(db, gate, session, owner, credential),
-        input,
-      ),
-    );
+    const input = this.parse(endpointApproval, raw);
+    return this.tx(async (db, gate) => {
+      const endpoint = await this.browser(db, gate, session, owner, credential);
+      if (
+        endpoint.endpointId !== input.deviceId ||
+        endpoint.credentialEpoch !== input.credentialEpoch
+      )
+        throw new RemoteStatusError("DENIED");
+      return this.create(db, gate, endpoint, input);
+    });
   }
   async approveMac(session: string, owner: string, raw: unknown) {
-    const input = this.parse(macApproval, raw);
+    const input = this.parse(endpointApproval, raw);
     return this.tx(async (db, gate) => {
       await this.session(db, gate, session, owner);
       return this.create(

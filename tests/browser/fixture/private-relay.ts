@@ -37,6 +37,8 @@ const fixture = {
       confirmed: true,
     });
     const grant = await api("/browser/relay/permission/enable", {
+      deviceId: registered.binding.deviceId,
+      credentialEpoch: registered.binding.credentialEpoch,
       operationId: crypto.randomUUID(),
       expected: null,
       expiresAt: Date.now() + 600000,
@@ -77,6 +79,8 @@ const fixture = {
   export: () => history.export({ after: null, limit: 20 }),
   replace: (id: string, revision: number) =>
     api("/browser/relay/permission/enable", {
+      deviceId: context?.identity.endpointId,
+      credentialEpoch: context?.identity.credentialEpoch,
       operationId: crypto.randomUUID(),
       expected: { id, revision },
       expiresAt: Date.now() + 600000,

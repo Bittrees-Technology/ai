@@ -54,12 +54,17 @@ export async function checkPrivateRelayAccess(pool: Pool) {
     const mac = await devices.redeem(pair.id, verifier, session.ownerId);
     return { session, browser, mac };
   }
+  const browserRequest = (f: Awaited<ReturnType<typeof fixture>>) => ({
+    ...request(),
+    deviceId: f.browser.identity.binding.deviceId,
+    credentialEpoch: f.browser.identity.binding.credentialEpoch,
+  });
   const enable = async (f: Awaited<ReturnType<typeof fixture>>) => {
     const browser = await access.enableBrowser(
         f.session.token,
         f.session.ownerId,
         f.browser.credential,
-        request(),
+        browserRequest(f),
       ),
       pending = await access.approveMac(f.session.token, f.session.ownerId, {
         ...request(),
@@ -107,11 +112,33 @@ export async function checkPrivateRelayAccess(pool: Pool) {
         f.session.token,
         f.session.ownerId,
         f.browser.credential,
-        { ...request(), ...change },
+        { ...browserRequest(f), ...change },
       ),
       /INVALID_INPUT/,
     );
-  const grantRequest = request(),
+  // The reviewed browser identity is checked inside the authenticated transaction.
+  for (const change of [
+    { deviceId: other.browser.identity.binding.deviceId },
+    { credentialEpoch: 2 },
+  ])
+    await assert.rejects(
+      access.enableBrowser(
+        f.session.token,
+        f.session.ownerId,
+        f.browser.credential,
+        { ...browserRequest(f), ...change },
+      ),
+      /DENIED/,
+    );
+  assert.equal(
+    await access.inspectBrowser(
+      f.session.token,
+      f.session.ownerId,
+      f.browser.credential,
+    ),
+    null,
+  );
+  const grantRequest = browserRequest(f),
     browserGrant = await access.enableBrowser(
       f.session.token,
       f.session.ownerId,
@@ -358,7 +385,7 @@ export async function checkPrivateRelayAccess(pool: Pool) {
     f.session.token,
     f.session.ownerId,
     f.browser.credential,
-    { ...request(), expected: { id: browserGrant.id, revision: 1 } },
+    { ...browserRequest(f), expected: { id: browserGrant.id, revision: 1 } },
   );
   assert.notEqual(replaced.id, browserGrant.id);
   assert.equal(
@@ -433,6 +460,39 @@ export async function checkPrivateRelayAccess(pool: Pool) {
     ),
     /DENIED/,
   );
+  const changedBrowser = await fixture();
+  const reviewedRegistration = browserRequest(changedBrowser);
+  const newRegistration = await browsers.register(
+    changedBrowser.session.token,
+    changedBrowser.session.ownerId,
+    changedBrowser.browser.credential,
+    {
+      operationId: randomUUID(),
+      confirmed: true,
+      expected: {
+        deviceId: changedBrowser.browser.identity.binding.deviceId,
+        credentialEpoch:
+          changedBrowser.browser.identity.binding.credentialEpoch,
+      },
+    },
+  );
+  await assert.rejects(
+    access.enableBrowser(
+      changedBrowser.session.token,
+      changedBrowser.session.ownerId,
+      newRegistration.credential,
+      reviewedRegistration,
+    ),
+    /DENIED/,
+  );
+  assert.equal(
+    await access.inspectBrowser(
+      changedBrowser.session.token,
+      changedBrowser.session.ownerId,
+      newRegistration.credential,
+    ),
+    null,
+  );
   const logged = await fixture();
   await enable(logged);
   await sessions.logout(logged.session.token);
@@ -453,7 +513,7 @@ export async function checkPrivateRelayAccess(pool: Pool) {
           concurrent.session.token,
           concurrent.session.ownerId,
           concurrent.browser.credential,
-          request(),
+          browserRequest(concurrent),
         ),
       ),
     );
@@ -470,7 +530,7 @@ export async function checkPrivateRelayAccess(pool: Pool) {
     limited.session.token,
     limited.session.ownerId,
     limited.browser.credential,
-    request(),
+    browserRequest(limited),
   );
   await assert.rejects(
     quota.approveMac(limited.session.token, limited.session.ownerId, {

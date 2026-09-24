@@ -90,6 +90,7 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       ownerId,
       session,
       browserId: registration.body.binding.deviceId,
+      browserEpoch: registration.body.binding.credentialEpoch,
       mac: redeemed.body,
       status: { Authorization: "Bearer " + redeemed.body.credential },
     };
@@ -102,9 +103,32 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       expiresAt: Date.now() + 600000,
       confirmed: true,
     });
+  for (const identity of [
+    { deviceId: other.browserId, credentialEpoch: f.browserEpoch },
+    { deviceId: f.browserId, credentialEpoch: f.browserEpoch + 1 },
+  ]) {
+    assert.equal(
+      (
+        await call(
+          "/browser/relay/permission/enable",
+          { ...request(), ...identity },
+          f.owner,
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await call("/browser/relay/permission/inspect", {}, f.owner)).body,
+      null,
+    );
+  }
+  assert.equal(
+    (await call("/browser/relay/permission/enable", request(), f.owner)).status,
+    400,
+  );
   const enabled = await call(
     "/browser/relay/permission/enable",
-    request(),
+    { ...request(), deviceId: f.browserId, credentialEpoch: f.browserEpoch },
     f.owner,
   );
   assert.equal(enabled.status, 200);
@@ -477,6 +501,8 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     {
       ...request(),
       expected: { id: enabled.body.id, revision: enabled.body.revision },
+      deviceId: f.browserId,
+      credentialEpoch: f.browserEpoch,
     },
     f.owner,
   );
