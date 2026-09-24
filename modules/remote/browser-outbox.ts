@@ -749,12 +749,12 @@ export class BrowserPrivateOutbox {
   private async decodeResponse(
     before: Entry,
     envelope: PrivateEnvelope,
-    result: boolean,
+    mode: boolean | "auto",
     at: () => number,
   ) {
     const h = envelope.header,
       original = before.header,
-      keys = this.receiptKeys(before.context, result);
+      keys = this.receiptKeys(before.context, mode === true);
     if (
       !before.envelope ||
       h.operationId !== original.operationId ||
@@ -782,12 +782,20 @@ export class BrowserPrivateOutbox {
       const raw = JSON.parse(
         new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
       );
-      payload = result
-        ? privateResultPayloadSchema.parse(raw)
-        : privateAcceptedPayloadSchema.parse(raw);
+      payload =
+        mode === "auto"
+          ? z
+              .union([privateAcceptedPayloadSchema, privateResultPayloadSchema])
+              .parse(raw)
+          : mode
+            ? privateResultPayloadSchema.parse(raw)
+            : privateAcceptedPayloadSchema.parse(raw);
     } finally {
       opened.plaintext.fill(0);
     }
+    const result = payload.type === "task.result";
+    // Dispatch only after authenticated decryption; result consent is still required.
+    this.currentKeys(before.context, keys, result);
     const receipt = payload.receipt;
     if (
       !same(receipt.header, original) ||
@@ -804,7 +812,7 @@ export class BrowserPrivateOutbox {
       throw new BrowserOutboxError("DENIED");
     const receiptHash = await digest(["browser-receipt:v1", receipt]),
       resultHash = result ? await digest(["browser-result:v1", payload]) : null;
-    return { keys, payload, receiptHash, resultHash };
+    return { keys, payload, receiptHash, resultHash, result };
   }
   private currentKeys(
     context: BrowserDeliveryContext,
@@ -821,20 +829,25 @@ export class BrowserPrivateOutbox {
   }
   /** Consume authenticated destination acceptance; never plaintext relay status. */
   acceptReceipt(raw: unknown) {
-    return this.acceptResponse(raw, false);
+    return this.acceptResponse(raw, false).then((v) => v.entry);
   }
   /** Retain a terminal result as ciphertext. It may arrive before the separate receipt. */
   acceptResult(raw: unknown) {
-    return this.acceptResponse(raw, true);
+    return this.acceptResponse(raw, true).then((v) => v.entry);
   }
-  private acceptResponse(raw: unknown, result: boolean) {
+  /** The encrypted, authenticated payload selects the response type. */
+  acceptMessage(raw: unknown) {
+    return this.acceptResponse(raw, "auto");
+  }
+  private acceptResponse(raw: unknown, mode: boolean | "auto") {
     return this.safe(async () => {
       const envelope = wire(raw),
         h = envelope.header,
         identity = await this.identity(),
         before = await this.responseEntry(identity, h.operationId),
-        decoded = await this.decodeResponse(before, envelope, result, this.now);
-      return this.tx<Entry>(identity, "readwrite", (io) => {
+        decoded = await this.decodeResponse(before, envelope, mode, this.now),
+        result = decoded.result;
+      const entry = await this.tx<Entry>(identity, "readwrite", (io) => {
         io.gate(() => {
           this.currentKeys(before.context, decoded.keys, result);
           if (h.expiresAt <= this.now()) throw new BrowserOutboxError("DENIED");
@@ -878,6 +891,10 @@ export class BrowserPrivateOutbox {
           });
         });
       });
+      return {
+        kind: result ? ("result" as const) : ("receipt" as const),
+        entry,
+      };
     });
   }
   /** Explicit local history read. Receipt time is used only to reauthenticate retained

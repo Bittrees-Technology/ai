@@ -119,9 +119,23 @@ export async function retainedMac(
     temperature: 0.2,
   };
   store.addProfile(owner, profile);
+  const work = async () => {
+    const worker = new LocalWorker(
+      store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "a".repeat(64) }),
+        generate: async () =>
+          "Synthetic result from independently consented Mac task.",
+      },
+      (id) => store.profile(owner, id),
+    );
+    await worker.runOnce();
+  };
   return {
     binding,
     consent,
+    work,
     async connectRelay(
       device: {
         ownerId: string;
@@ -222,6 +236,34 @@ export async function retainedMac(
             confirmed: true,
           });
         },
+        prepareResponse(operationId: string, kind: "accepted" | "result") {
+          const r = record();
+          return controls.prepareRelayedResponse(relay, {
+            connection: { id: r.id, expectedRevision: r.revision },
+            response: {
+              operationId,
+              peerId: browser.deviceId,
+              kind,
+              confirmed: true,
+            },
+            confirmed: true,
+          });
+        },
+        sendResponse(id: string) {
+          const r = record(),
+            response = controls
+              .taskStatus()
+              .responses.find((v) => v.id === id)!;
+          return controls.sendRelayedResponse(relay, {
+            connection: { id: r.id, expectedRevision: r.revision },
+            response: {
+              id,
+              expectedRevision: response.revision,
+              confirmed: true,
+            },
+            confirmed: true,
+          });
+        },
         tasks: () => store.export(owner),
         task: (id: string) => store.get(owner, id),
       };
@@ -273,17 +315,7 @@ export async function retainedMac(
         kind: "accepted",
         confirmed: true,
       });
-      const worker = new LocalWorker(
-        store,
-        owner,
-        {
-          pin: async () => ({ profile, digest: "a".repeat(64) }),
-          generate: async () =>
-            "Synthetic result from independently consented Mac task.",
-        },
-        (id) => store.profile(owner, id),
-      );
-      await worker.runOnce();
+      await work();
       const result = await responses.prepare({
         operationId: receipt.header.operationId,
         peerId,

@@ -536,6 +536,7 @@ const fixture = {
     new BrowserRelayPermissionsClient(context).approveMac(raw),
   relayPrepare: (raw: unknown) => host!.relayTaskAPI.prepare(raw),
   relaySend: (raw: unknown) => host!.relayTaskAPI.send(raw),
+  relayCheck: (raw: unknown) => host!.relayTaskAPI.check(raw),
   composePrepare: (raw: unknown) =>
     host
       ? host.taskAPI.prepare(raw)
