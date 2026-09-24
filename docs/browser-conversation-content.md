@@ -2,10 +2,12 @@
 
 The internal browser engine prepares messages and exact answers, authenticates Mac
 messages and questions, and retains original encrypted envelopes and acceptance
-receipts. It does not add a user interface, perform network delivery, reconcile
-remote receipts, or enable the installed Mac app. The Acer news runtime is separate.
+receipts. The verified host also reconciles recipient-storage receipts for outgoing
+messages and exact answers. Reviewed browser controls are integrated separately;
+network delivery and installed Mac activation remain separate acceptance work.
+The Acer news runtime is unchanged and independent.
 
-Content lives in version13 of the existing private browser database. At-rest rows
+Content lives in version14 of the existing private browser database. At-rest rows
 use nonextractable AES-GCM keys and bind ciphertext to owner scope, hashed wire ID,
 device and revision. No plaintext message, question or conversation selector is
 stored in row metadata. These local keys are accessible to this origin's code;
@@ -47,8 +49,8 @@ interoperability, exact question answers, storage failure, revoked authority dur
 crypto, retention/export/deletion and actual version12 preservation. Local build
 success alone is not browser acceptance.
 
-Remaining work includes reviewed relay content transfer,
-receipt reconciliation, complete end-to-end historical replay acceptance and release
+Remaining work includes reviewed relay content transfer and receipt controls,
+complete end-to-end historical replay acceptance and release
 acceptance. No personal data, native credential access, local browser automation,
 installed application replacement, live service activation or model changes are part
 of this package.
@@ -56,7 +58,7 @@ of this package.
 ## Trusted browser host
 
 `BrowserKeyHost.conversationContentAPI` supplies per-operation verified device
-identity and current key/peer proof for list/read/prepare/envelope/accept. The engine
+identity and current key/peer proof for list/read/prepare/envelope/accept/reconcile. The engine
 rechecks those proofs and independent consent through its common database writes.
 Selected-grant listing decrypts locally but returns only metadata; it does not open
 messages for display or grant permission to send. Expired delivery deadlines do not
@@ -108,3 +110,34 @@ private draft cancellation, readable export, offline deletion and response loss
 after commit. Desktop and phone screenshots are retained for visual review.
 These source changes do not install or activate the Mac app, access personal data,
 change model selection, or modify the Acer news runtime.
+
+
+## Browser recipient-storage receipts
+
+Explicit `reconcile` requires the current grant, original outgoing ID, observed
+revision, exact encrypted receipt and confirmation. It verifies the original
+message/answer kind and scope, reversed device key epochs, original delivery
+window and bounded acceptance timestamp. The original must already be sealed.
+Current identity, independent conversation consent and generation coverage remain
+required through the write; a receipt confers no new authority.
+
+The receipt capsule and shared incoming replay outcome commit in one transaction.
+Failure, revoked permission, conflicting ciphertext, cross-family sequence/message
+reuse or a missing original cannot produce an acknowledged record. The outgoing
+ciphertext and sequence remain unchanged. Metadata exposes `recipientAccepted`
+and `recipientAcceptedAt`; neither means read, executed or completed. This path
+does not append messages, answer questions, run a worker or send network content.
+
+After an uncertain final identity response, explicitly list the original record
+and use its current revision to retry the same receipt. Repeated receipt ciphertext
+reuses the saved result. A stale revision conflicts. Explicit owner export includes
+the original and receipt; local deletion removes their keys and content while
+keeping shared replay fences. There is no authority-restoring import.
+
+Version14 fences previous writers before new receipt state is stored. The actual
+version13 provider comes from `4eafe8e83171fb298a6d4454ee6ce96dae0bf177`, module
+archive SHA256 `f9578716eedec6213c56fdc450f1de2a12528f30034810aec1dde1c71796fbce`.
+Compatibility coverage prepares and seals with that old provider, verifies all
+rows unchanged by upgrade, admits a real Mac receipt, rejects the old writer,
+then checks duplicate/original ciphertext retention and deletion. Browser evidence
+must come from disposable GitHub runners; local builds alone do not prove it.

@@ -255,6 +255,8 @@ test("Task writes and shared reservations serialize, roll back failed publicatio
     old.config,
   );
   expect(numbers.sort((a, b) => a - b)).toEqual([5, 6, 7, 8, 9, 10, 11, 12]);
+  // This is a message sequence, independent of the database schema version.
+  const lastCommitted = Math.max(...numbers);
   await expect(
     page.evaluate(
       (c) => window.privateMigrationTest.sharedReserve(c, true),
@@ -266,7 +268,7 @@ test("Task writes and shared reservations serialize, roll back failed publicatio
       (c) => window.privateMigrationTest.sharedReserve(c),
       old.config,
     ),
-  ).toBe(13);
+  ).toBe(lastCommitted + 1);
   const deleted = await page.evaluate(() =>
     window.privateMigrationTest.clear(),
   );
@@ -293,7 +295,7 @@ test("Task writes and shared reservations serialize, roll back failed publicatio
       (c) => window.privateMigrationTest.sharedReserve(c),
       old.config,
     ),
-  ).toBe(14);
+  ).toBe(lastCommitted + 2);
 });
 
 for (const which of ["exhausted", "capacity"] as const)

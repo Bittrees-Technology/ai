@@ -119,6 +119,12 @@ function summary(e: Entry) {
     kind: e.value.content.type,
     state: e.value.state,
     expiresAt: e.value.header.expiresAt,
+    recipientAccepted:
+      e.value.direction === "outgoing" && !!e.value.receiptEnvelope,
+    recipientAcceptedAt:
+      e.value.direction === "outgoing"
+        ? (e.value.receipt?.acceptedAt ?? null)
+        : null,
   };
 }
 /** Internal browser engine. All content, sequence and replay effects use the
@@ -641,6 +647,129 @@ export class BrowserConversationContent {
       } finally {
         bytes.fill(0);
       }
+    });
+  }
+  /** Authenticate recipient storage only. The original outgoing content and
+   * ciphertext remain intact; no task, parent, queue or outgoing sequence effect. */
+  reconcile(
+    raw: unknown,
+  ): Promise<{
+    status: "recipient-storage-confirmed";
+    duplicate: boolean;
+    entry: Summary;
+  }> {
+    return this.operation(async (g) => {
+      const input = z
+        .strictObject({
+          grantId: z.uuid(),
+          id: z.uuid(),
+          expectedRevision: positive,
+          envelope: privateEnvelopeSchema,
+          confirmed: z.literal(true),
+        })
+        .parse(raw);
+      const { e, h, id } = await this.retained(g, input.grantId, input.id);
+      if (e.row.revision !== input.expectedRevision) fail("CONFLICT");
+      const v = e.value,
+        header = input.envelope.header;
+      if (
+        v.direction !== "outgoing" ||
+        v.state !== "ready" ||
+        !v.envelope ||
+        header.operationId !== v.content.id ||
+        header.ownerId !== v.header.ownerId ||
+        header.senderId !== v.header.recipientId ||
+        header.recipientId !== v.header.senderId ||
+        header.senderKeyEpoch !== v.header.recipientKeyEpoch ||
+        header.recipientKeyEpoch !== v.header.senderKeyEpoch ||
+        header.issuedAt < v.header.issuedAt - 30000 ||
+        header.expiresAt > v.header.expiresAt
+      )
+        fail();
+      const opened = await openPrivateEnvelope(
+        input.envelope,
+        header,
+        { recipientKey: h.localKey, senderPublicKey: h.peerPublicKey },
+        this.now,
+      );
+      let receipt: z.infer<typeof conversationReceiptSchema>;
+      try {
+        receipt = conversationReceiptSchema.parse(
+          JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
+          ),
+        );
+      } finally {
+        opened.plaintext.fill(0);
+      }
+      if (
+        receipt.acceptedId !== v.content.id ||
+        receipt.operationId !== v.content.id ||
+        receipt.acceptedType !== v.content.type ||
+        !same(receipt.scope, v.content.scope) ||
+        receipt.acceptedAt < v.header.issuedAt - 30000 ||
+        receipt.acceptedAt >= v.header.expiresAt ||
+        receipt.acceptedAt > header.issuedAt + 30000 ||
+        receipt.acceptedAt > this.now() + 30000
+      )
+        fail();
+      const { identity } = await this.route(g, h);
+      const replay = await privateReplayIdentity(input.envelope, receipt.type);
+      const duplicate = !!v.receiptEnvelope;
+      if (
+        duplicate &&
+        (!same(v.receiptEnvelope, input.envelope) || !same(v.receipt, receipt))
+      )
+        fail("CONFLICT");
+      if (!duplicate && e.row.revision >= Number.MAX_SAFE_INTEGER)
+        fail("CAPACITY");
+      const value: Value = duplicate
+        ? v
+        : {
+            ...v,
+            receipt,
+            receiptHeader: header,
+            receiptEnvelope: input.envelope,
+          };
+      const row = duplicate
+        ? e.row
+        : await sealBrowserConversationRow(
+            { ...e.row, revision: e.row.revision + 1 },
+            value,
+            e.row.key,
+          );
+      return this.tx(g, h, "readwrite", (io) =>
+        this.rows(io, [id], (rows) => {
+          const check = () => {
+            this.check(g);
+            this.checked(e, h);
+            if (header.expiresAt <= this.now()) fail();
+          };
+          check();
+          if (!same(rows[0], e.row)) fail("CONFLICT");
+          consumeBrowserIncomingReplay(
+            io,
+            identity.scope,
+            replay,
+            { store: storeName, key: [this.scope, id] },
+            duplicate,
+            (state) => {
+              if (state !== (duplicate ? "duplicate" : "new")) fail("CONFLICT");
+              check();
+              const done = () => {
+                check();
+                io.done({
+                  status: "recipient-storage-confirmed" as const,
+                  duplicate,
+                  entry: summary({ row, value }),
+                });
+              };
+              if (duplicate) done();
+              else io.request(io.store(storeName).put(row), done);
+            },
+          );
+        }),
+      );
     });
   }
   read(raw: unknown): Promise<Summary & { content: ConversationContent }> {

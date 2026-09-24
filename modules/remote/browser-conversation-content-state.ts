@@ -35,9 +35,22 @@ export const browserConversationValueSchema = z
       (v.direction === "outgoing"
         ? v.content.type !== "conversation.question" &&
           v.state !== "accepted" &&
-          !v.receipt &&
-          !v.receiptHeader &&
-          !v.receiptEnvelope &&
+          ((!v.receipt && !v.receiptHeader && !v.receiptEnvelope) ||
+            (v.state === "ready" &&
+              !!v.receipt &&
+              !!v.receiptHeader &&
+              !!v.receiptEnvelope &&
+              v.receipt.acceptedId === v.content.id &&
+              v.receipt.acceptedType === v.content.type &&
+              v.receipt.operationId === v.content.id &&
+              same(v.receipt.scope, v.content.scope) &&
+              v.receiptHeader.operationId === v.content.id &&
+              v.receiptHeader.ownerId === v.header.ownerId &&
+              v.receiptHeader.senderId === v.header.recipientId &&
+              v.receiptHeader.recipientId === v.header.senderId &&
+              v.receiptHeader.senderKeyEpoch === v.header.recipientKeyEpoch &&
+              v.receiptHeader.recipientKeyEpoch === v.header.senderKeyEpoch &&
+              same(v.receiptEnvelope.header, v.receiptHeader))) &&
           (v.state === "ready" ? !!v.envelope : !v.envelope) &&
           v.header.senderId === v.grant.local.binding.deviceId &&
           v.header.recipientId === v.grant.choices.peerId &&

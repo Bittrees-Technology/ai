@@ -417,3 +417,56 @@ test("lost final identity responses retain committed preparation, original ciphe
     f.mac.close();
   }
 });
+
+test("authenticated receipt reconciliation denies offline identity and preserves uncertain committed outcomes for explicit retry", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id);
+    const envelope = await wire(page, prepared),
+      receipt = await selected.offer.receipt(envelope);
+    const entry = (await list(page, selected.grant.id))[0]!;
+    const reconcile = (entry: any) =>
+      page.evaluate((raw) => window.browserPeersTest.contentReconcile(raw), {
+        grantId: entry.grantId,
+        id: entry.id,
+        expectedRevision: entry.revision,
+        envelope: receipt,
+        confirmed: true,
+      });
+    const before = await snapshot(page);
+    identityServer.offline(true);
+    await expect(reconcile(entry)).rejects.toThrow();
+    expect(await snapshot(page)).toEqual(before);
+    identityServer.offline(false);
+    identityServer.events.length = 0;
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(reconcile(entry)).rejects.toThrow();
+    const [stored] = await list(page, selected.grant.id);
+    expect(stored).toMatchObject({
+      id: entry.id,
+      revision: 3,
+      recipientAccepted: true,
+    });
+    const committed = await snapshot(page);
+    expect((await reconcile(stored)).duplicate).toBe(true);
+    expect(await snapshot(page)).toEqual(committed);
+    expect(await wire(page, stored)).toEqual(envelope);
+    expect(
+      identityServer.events.filter((path) => path.includes("/relay/")),
+    ).toEqual([]);
+    await page.evaluate(() => window.browserPeersTest.logout());
+    await expect(reconcile(stored)).rejects.toThrow("DENIED");
+    expect(await snapshot(page)).toEqual(committed);
+  } finally {
+    f.mac.close();
+  }
+});
