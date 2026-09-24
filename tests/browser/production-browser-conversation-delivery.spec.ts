@@ -156,6 +156,27 @@ async function receive(page: Page, info?: TestInfo) {
   await confirm(page, "Receive reviewed message");
 }
 async function preview(page: Page, info: TestInfo, state: string) {
+  const reviews: Record<string, string> = {
+    "prepare-copy-review": "Prepare this delivery copy",
+    "send-review": "Send this message to your Mac",
+    "receipt-review": "Check storage receipt for this copy",
+    "receive-review": "Receive this queued message",
+    "send-storage-receipt": "Send this storage receipt",
+    "offline-stop-review": "Stop delivery of this copy",
+    "answer-review": "Save this answer for your Mac",
+  };
+  // A click starts async authority checks. Wait for the actual review instead
+  // of photographing an intermediate loading frame on a slower browser.
+  await expect(button(page, "Refresh saved conversations")).toBeEnabled();
+  if (reviews[state]) {
+    await expect(
+      panel(page).getByRole("heading", { name: reviews[state], exact: true }),
+    ).toBeVisible();
+    await expect(panel(page).getByLabel(ack, { exact: true })).toBeVisible();
+    await expect(panel(page).getByRole("status")).toContainText(
+      "Review this exact action",
+    );
+  }
   await mkdir("test-results/browser-conversation-delivery-ui", {
     recursive: true,
   });
