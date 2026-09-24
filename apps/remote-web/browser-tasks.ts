@@ -643,7 +643,7 @@ export function mountBrowserTasks(
       relaySend: [
         "Send this saved task to your Mac",
         "Send the original encrypted message for this exact task and Mac through ai.bittrees.org. Server storage does not confirm Mac acceptance or completion. A new review is needed for each retry.",
-        "Send this exact saved task to the Mac shown below.",
+        "Send this exact saved task to the Mac identified in this review.",
         "Send reviewed task",
       ],
       relayCheck: [
