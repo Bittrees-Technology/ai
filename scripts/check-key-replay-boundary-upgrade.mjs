@@ -144,7 +144,7 @@ try {
   assert.deepEqual(build(OldLifecycle, unchanged).list(), history);
   unchanged.close();
   const upgraded = open(Store);
-  assert.equal(upgraded.db.pragma("user_version", { simple: true }), 32);
+  assert.equal(upgraded.db.pragma("user_version", { simple: true }), 33);
   const keys = build(PrivateKeyLifecycle, upgraded);
   assert.deepEqual(keys.list(), history);
   const prior = await keys.resolve();
@@ -263,7 +263,7 @@ try {
   const evidence = {
     verifiedAt: new Date().toISOString(),
     from: 31,
-    to: 32,
+    to: 33,
     legacySourceHead: "d3ee4a9e5f82533509fde131e2e284906ed2d9fe",
     legacyCompiledHashes: expectedHashes,
     checks: [

@@ -147,6 +147,11 @@ async function restoreSnapshot(
       tasks.mailSends.lockAfterRestore();
       tasks.db
         .prepare(
+          "UPDATE private_conversation_content SET locked=1,revision=revision+1",
+        )
+        .run();
+      tasks.db
+        .prepare(
           "UPDATE private_relay_credentials SET locked=1,revision=revision+1",
         )
         .run();

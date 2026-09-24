@@ -1,3 +1,4 @@
+import { exportPrivateConversationContent } from "../remote/private-conversation-content.js";
 import { exportPrivateIncomingReplay } from "../remote/private-incoming-replay.js";
 import { exportPrivateConversationOffers } from "../remote/private-conversation-offers.js";
 import { exportPrivateConversationConsent } from "../remote/private-conversation-consent.js";
@@ -167,7 +168,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 32) {
+    if (version > 33) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -294,9 +295,11 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_incoming_replay(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,operation_hash TEXT NOT NULL,message_hash TEXT NOT NULL,sequence_hash TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,operation_hash),UNIQUE(user_id,tenant_id,message_hash),UNIQUE(user_id,tenant_id,sequence_hash))",
         );
-        // Schema32 fences older lifecycle writers before generation-time replay
-        // provenance can be saved. Legacy slots are never backfilled.
-        this.db.pragma("user_version = 32");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_conversation_content(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id_hash))",
+        );
+        // Schema33 fences older writers before durable conversation effects.
+        this.db.pragma("user_version = 33");
       })();
     } catch (error) {
       this.db.close();
@@ -1781,6 +1784,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateRelayCredentials(owner: Owner) {
     return exportPrivateRelayCredentials(this, this.vault, owner);
   }
+  exportPrivateConversationContent(owner: Owner) {
+    return exportPrivateConversationContent(this, this.vault, owner);
+  }
   exportPrivateConversationOffers(owner: Owner) {
     return exportPrivateConversationOffers(this, this.vault, owner);
   }
@@ -2113,6 +2119,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           "private_task_responses",
           "private_task_outbox",
           "private_conversation_offers",
+          "private_conversation_content",
           "private_incoming_replay",
           "private_send_channels",
           "private_task_receipts",
