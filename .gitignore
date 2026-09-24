@@ -44,3 +44,6 @@ tests/browser/fixture/public/legacy-replay/
 
 .legacy-browser-offer-replay/
 tests/browser/fixture/public/legacy-offer-replay/
+
+.legacy-browser-offer-ack/
+tests/browser/fixture/public/legacy-offer-ack/
