@@ -441,7 +441,45 @@ export async function checkPrivateRelayAccess(pool: Pool) {
   // Explicit registration/credential changes invalidate retained relay grants without borrowing other scopes.
   const rotated = await fixture(),
     r = await enable(rotated);
-  await devices.rotate(rotated.mac.credential);
+  const rotation = await devices.rotate(rotated.mac.credential);
+  const rotatedLookup = {
+    endpointKind: "mac",
+    endpointId: rotated.mac.deviceId,
+    credentialEpoch: rotation.epoch,
+  };
+  const rotationReview = await access.inspectOwnerEndpoint(
+    rotated.session.token,
+    rotated.session.ownerId,
+    rotatedLookup,
+  );
+  assert.equal(rotationReview.endpoint.credentialEpoch, rotation.epoch);
+  assert.equal(rotationReview.permission?.credentialEpoch, rotated.mac.epoch);
+  assert.equal(rotationReview.permission?.id, r.mac.grant.id);
+  await assert.rejects(
+    access.inspectOwnerEndpoint(
+      rotated.session.token,
+      rotated.session.ownerId,
+      { ...rotatedLookup, credentialEpoch: rotated.mac.epoch },
+    ),
+    /DENIED/,
+  );
+  const shortEndpoint = await fixture();
+  await pool.query("UPDATE remote_devices SET expires_at=$2 WHERE id=$1", [
+    shortEndpoint.mac.deviceId,
+    now,
+  ]);
+  await assert.rejects(
+    access.inspectOwnerEndpoint(
+      shortEndpoint.session.token,
+      shortEndpoint.session.ownerId,
+      {
+        endpointKind: "mac",
+        endpointId: shortEndpoint.mac.deviceId,
+        credentialEpoch: shortEndpoint.mac.epoch,
+      },
+    ),
+    /DENIED/,
+  );
   await assert.rejects(
     access.withMac(r.mac.credential, async () => true),
     /DENIED/,
@@ -457,6 +495,18 @@ export async function checkPrivateRelayAccess(pool: Pool) {
       rotated.session.ownerId,
       rotated.browser.credential,
       async () => true,
+    ),
+    /DENIED/,
+  );
+  await assert.rejects(
+    access.inspectOwnerEndpoint(
+      rotated.session.token,
+      rotated.session.ownerId,
+      {
+        endpointKind: "browser",
+        endpointId: rotated.browser.identity.binding.deviceId,
+        credentialEpoch: 1,
+      },
     ),
     /DENIED/,
   );

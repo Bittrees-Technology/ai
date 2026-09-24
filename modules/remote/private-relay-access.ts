@@ -1,4 +1,9 @@
-import { privateRelayGrantSchema as grantSchema } from "./private-relay-enrollment.js";
+import {
+  privateRelayGrantSchema as grantSchema,
+  privateRelayApprovalSchema,
+  privateRelayEndpointLookupSchema,
+  privateRelayEndpointInspectionSchema,
+} from "./private-relay-enrollment.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
@@ -18,10 +23,7 @@ const request = z.strictObject({
   expiresAt: positive,
   confirmed: z.literal(true),
 });
-const endpointApproval = request.extend({
-  deviceId: uuid,
-  credentialEpoch: positive,
-});
+const endpointApproval = privateRelayApprovalSchema;
 const revisionRequest = z.strictObject({
   id: uuid,
   expectedRevision: positive,
@@ -439,6 +441,25 @@ export class RemotePrivateRelayAccess {
       const e = await this.browser(db, gate, session, owner, credential),
         row = await this.current(db, e);
       return row ? this.grant(row) : null;
+    });
+  }
+  async inspectOwnerEndpoint(session: string, owner: string, raw: unknown) {
+    const input = this.parse(privateRelayEndpointLookupSchema, raw);
+    return this.tx(async (db, gate) => {
+      await this.session(db, gate, session, owner);
+      const endpoint = await this.endpoint(
+        db,
+        gate,
+        input.endpointKind,
+        owner,
+        input.endpointId,
+        input.credentialEpoch,
+      );
+      const row = await this.current(db, endpoint);
+      return privateRelayEndpointInspectionSchema.parse({
+        endpoint,
+        permission: row ? this.grant(row) : null,
+      });
     });
   }
   async inspectOwner(session: string, owner: string, raw: unknown) {

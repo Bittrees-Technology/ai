@@ -1,3 +1,12 @@
+import {
+  privateRelayGrantSchema,
+  privateRelayApprovalSchema,
+  privateRelayRevisionSchema,
+  privateRelayEndpointLookupSchema,
+  privateRelayEndpointInspectionSchema,
+  privateRelayPermissionPageSchema,
+} from "./private-relay-enrollment.js";
+import { privateBindingSchema } from "./private-peer-contracts.js";
 import { z } from "zod";
 import { privateEnvelopeSchema } from "./private-envelope.js";
 import {
@@ -532,6 +541,199 @@ export class PrivateRelayOwnerClient {
       if (r.state !== "deleted" || r.revision !== body.expectedRevision + 1)
         throw invalid();
       return result;
+    });
+  }
+}
+
+/** Explicit owner-scoped permission metadata. No cookie reads, native acceptance,
+ * secrets, automatic retries, registration, task consent or message transport. */
+export class BrowserRelayPermissionsClient {
+  private requests: Requests<PrivateRelayOwnerContext>;
+  constructor(
+    current: () => PrivateRelayOwnerContext | null,
+    transport: typeof fetch = (...args) => globalThis.fetch(...args),
+    private now = Date.now,
+    monotonic = () => performance.now(),
+  ) {
+    this.requests = new Requests(
+      current,
+      ownerContext,
+      transport,
+      now,
+      monotonic,
+    );
+  }
+  invalidate() {
+    this.requests.invalidate();
+  }
+  private operation<T>(
+    action: (
+      ownerId: string,
+      post: (path: string, body: unknown) => Promise<unknown>,
+      check: (until?: number) => void,
+    ) => Promise<T>,
+  ) {
+    return this.requests.operation(async (c, check, post) =>
+      action(
+        c.ownerId,
+        (path, body) =>
+          post(
+            "/browser/relay/" + path,
+            body,
+            { "X-Bittrees-Request": "1", "X-Bittrees-Account": c.ownerId },
+            true,
+          ),
+        check,
+      ),
+    );
+  }
+  private grant(raw: unknown, ownerId: string) {
+    const g = parsed(privateRelayGrantSchema, raw);
+    if (
+      g.ownerId !== ownerId ||
+      g.createdAt > this.now() ||
+      (g.revokedAt !== null && g.revokedAt > this.now())
+    )
+      throw invalid();
+    return g;
+  }
+  inspectBrowser(rawBinding: unknown) {
+    const binding = input(privateBindingSchema, rawBinding);
+    return this.operation(async (ownerId, post, check) => {
+      if (binding.ownerId !== ownerId) throw Error("DENIED");
+      check(binding.expiresAt);
+      const raw = await post("permission/inspect", {});
+      check(binding.expiresAt);
+      if (raw === null) return null;
+      const g = this.grant(raw, ownerId);
+      if (
+        g.endpointKind !== "browser" ||
+        g.endpointId !== binding.deviceId ||
+        g.credentialEpoch !== binding.credentialEpoch ||
+        g.state !== "active"
+      )
+        throw invalid();
+      return g;
+    });
+  }
+  inspectEndpoint(raw: unknown) {
+    const request = input(privateRelayEndpointLookupSchema, raw);
+    return this.operation(async (ownerId, post, check) => {
+      const result = parsed(
+        privateRelayEndpointInspectionSchema,
+        await post("permissions/endpoint", request),
+      );
+      const e = result.endpoint;
+      if (
+        e.ownerId !== ownerId ||
+        e.endpointId !== request.endpointId ||
+        e.endpointKind !== request.endpointKind ||
+        e.credentialEpoch !== request.credentialEpoch
+      )
+        throw invalid();
+      check(e.expiresAt);
+      if (result.permission) this.grant(result.permission, ownerId);
+      return result;
+    });
+  }
+  inspect(id: string) {
+    return this.lookup(
+      "inspect",
+      input(z.strictObject({ id: z.uuid() }), { id }),
+    );
+  }
+  inspectOperation(operationId: string) {
+    return this.lookup(
+      "operation",
+      input(z.strictObject({ operationId: z.uuid() }), { operationId }),
+    );
+  }
+  private lookup(
+    path: "inspect" | "operation",
+    request: { id?: string; operationId?: string },
+  ) {
+    return this.operation(async (ownerId, post) => {
+      const g = this.grant(await post("permissions/" + path, request), ownerId);
+      if (
+        (request.id && g.id !== request.id) ||
+        (request.operationId && g.operationId !== request.operationId)
+      )
+        throw invalid();
+      return g;
+    });
+  }
+  list(raw: unknown) {
+    const request = input(privateRelayPermissionPageSchema, raw);
+    return this.operation(async (ownerId, post) => {
+      const result = parsed(
+        z.strictObject({
+          items: z.array(privateRelayGrantSchema).max(50),
+          nextCursor: z.uuid().nullable(),
+        }),
+        await post("permissions/list", request),
+      );
+      if (
+        result.items.length > request.limit ||
+        (result.nextCursor && result.items.length !== request.limit)
+      )
+        throw invalid();
+      let previous = request.after;
+      for (const item of result.items) {
+        this.grant(item, ownerId);
+        if (previous && item.id <= previous) throw invalid();
+        previous = item.id;
+      }
+      if (result.nextCursor && result.nextCursor !== previous) throw invalid();
+      return result;
+    });
+  }
+  enableBrowser(raw: unknown) {
+    return this.approve("browser", raw);
+  }
+  approveMac(raw: unknown) {
+    return this.approve("mac", raw);
+  }
+  private approve(kind: "browser" | "mac", raw: unknown) {
+    const request = input(privateRelayApprovalSchema, raw);
+    return this.operation(async (ownerId, post, check) => {
+      check(request.expiresAt);
+      const g = this.grant(
+        await post(
+          kind === "browser" ? "permission/enable" : "mac/approve",
+          request,
+        ),
+        ownerId,
+      );
+      check(request.expiresAt);
+      if (
+        g.operationId !== request.operationId ||
+        g.endpointKind !== kind ||
+        g.endpointId !== request.deviceId ||
+        g.credentialEpoch !== request.credentialEpoch ||
+        g.expiresAt !== request.expiresAt ||
+        g.revision !== 1 ||
+        g.id === request.expected?.id ||
+        g.state !== (kind === "browser" ? "active" : "pending") ||
+        (g.approvalExpiresAt !== null &&
+          g.approvalExpiresAt > Math.min(g.createdAt + 120000, g.expiresAt))
+      )
+        throw invalid();
+      return g;
+    });
+  }
+  revoke(raw: unknown) {
+    const request = input(privateRelayRevisionSchema, raw);
+    return this.operation(async (ownerId, post) => {
+      const g = this.grant(await post("permissions/revoke", request), ownerId);
+      if (
+        g.id !== request.id ||
+        g.state !== "revoked" ||
+        ![request.expectedRevision, request.expectedRevision + 1].includes(
+          g.revision,
+        )
+      )
+        throw invalid();
+      return g;
     });
   }
 }

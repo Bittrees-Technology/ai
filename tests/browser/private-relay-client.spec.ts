@@ -175,3 +175,117 @@ test("Actual browser relay client aborts a held HTTPS response after local scope
     "accepted",
   );
 });
+
+test("Actual browser owner permission client reviews rotation, pages history and revokes without native secrets", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await setup(page, identityServer.pool);
+  const target = {
+    endpointKind: "mac",
+    endpointId: f.mac.deviceId,
+    credentialEpoch: f.mac.epoch,
+  };
+  const current = await page.evaluate(
+    (p) => window.privateRelayTest.endpoint(p),
+    target,
+  );
+  expect(current.permission?.id).toBe(f.native.grant.id);
+  expect(current.permission?.state).toBe("active");
+  const rotation = await new RemoteDeviceStore(
+    identityServer.pool,
+    7200000,
+  ).rotate(f.mac.credential);
+  expect(
+    await page.evaluate(async (p) => {
+      try {
+        await window.privateRelayTest.endpoint(p);
+        return "accepted";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    }, target),
+  ).toBe("DENIED");
+  const rotated = await page.evaluate(
+    (p) => window.privateRelayTest.endpoint(p),
+    { ...target, credentialEpoch: rotation.epoch },
+  );
+  expect(rotated.endpoint.credentialEpoch).toBe(rotation.epoch);
+  expect(rotated.permission?.credentialEpoch).toBe(f.mac.epoch);
+  expect(
+    (
+      await page.evaluate(
+        (id) => window.privateRelayTest.operation(id),
+        f.native.grant.operationId,
+      )
+    ).id,
+  ).toBe(f.native.grant.id);
+  const first = await page.evaluate(() =>
+    window.privateRelayTest.listPermissions(),
+  );
+  expect(first.items).toHaveLength(1);
+  expect(first.nextCursor).toBeTruthy();
+  const second = await page.evaluate(
+    (after) => window.privateRelayTest.listPermissions(after),
+    first.nextCursor,
+  );
+  expect(second.items).toHaveLength(1);
+  expect(second.nextCursor).toBeNull();
+  expect(new Set([...first.items, ...second.items].map((g) => g.id)).size).toBe(
+    2,
+  );
+  const revoked = await page.evaluate(
+    (g) =>
+      window.privateRelayTest.revokePermission({
+        id: g.id,
+        expectedRevision: g.revision,
+        confirmed: true,
+      }),
+    f.native.grant,
+  );
+  expect(revoked.state).toBe("revoked");
+  expect(
+    (
+      await page.evaluate((p) => window.privateRelayTest.endpoint(p), {
+        ...target,
+        credentialEpoch: rotation.epoch,
+      })
+    ).permission,
+  ).toBeNull();
+  expect(
+    (
+      await page.evaluate(
+        (id) => window.privateRelayTest.permission(id),
+        revoked.id,
+      )
+    ).state,
+  ).toBe("revoked");
+  expect(
+    JSON.stringify({ current, rotated, first, second, revoked }),
+  ).not.toContain(f.native.credential);
+  expect(await page.evaluate(() => document.cookie)).toBe("");
+});
+
+test("Actual browser permission review discards a held reply after scope invalidation", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await setup(page, identityServer.pool);
+  identityServer.hold("/browser/relay/permissions/endpoint");
+  await page.evaluate((p) => window.privateRelayTest.startEndpoint(p), {
+    endpointKind: "mac",
+    endpointId: f.mac.deviceId,
+    credentialEpoch: f.mac.epoch,
+  });
+  await expect.poll(() => identityServer.held()).toBe(true);
+  await page.evaluate(() => window.privateRelayTest.invalidate());
+  await expect
+    .poll(() => page.evaluate(() => window.privateRelayTest.result()))
+    .toMatch(/^(DENIED|UNAVAILABLE)$/);
+  identityServer.release();
+  expect(await page.evaluate(() => window.privateRelayTest.result())).not.toBe(
+    "accepted",
+  );
+});

@@ -1,12 +1,14 @@
 import {
   PrivateRelayClient,
   PrivateRelayOwnerClient,
+  BrowserRelayPermissionsClient,
   type PrivateRelayClientContext,
 } from "../../../modules/remote/private-relay-client.js";
 let owner: string | null = null,
   context: PrivateRelayClientContext | null = null,
   client: PrivateRelayClient,
   history: PrivateRelayOwnerClient,
+  permissions: BrowserRelayPermissionsClient,
   scope = 0,
   result = "idle";
 async function api(path: string, body: unknown) {
@@ -36,7 +38,10 @@ const fixture = {
       expected: null,
       confirmed: true,
     });
-    const grant = await api("/browser/relay/permission/enable", {
+    permissions = new BrowserRelayPermissionsClient(() =>
+      owner ? { ownerId: owner, scope: String(scope) } : null,
+    );
+    const grant = await permissions.enableBrowser({
       deviceId: registered.binding.deviceId,
       credentialEpoch: registered.binding.credentialEpoch,
       operationId: crypto.randomUUID(),
@@ -65,7 +70,7 @@ const fixture = {
     return { ownerId: owner!, binding: registered.binding, grant };
   },
   approve: (deviceId: string, epoch: number) =>
-    api("/browser/relay/mac/approve", {
+    permissions.approveMac({
       operationId: crypto.randomUUID(),
       expected: null,
       expiresAt: Date.now() + 600000,
@@ -73,12 +78,29 @@ const fixture = {
       deviceId,
       credentialEpoch: epoch,
     }),
+  endpoint: (raw: unknown) => permissions.inspectEndpoint(raw),
+  operation: (id: string) => permissions.inspectOperation(id),
+  listPermissions: (after: string | null = null) =>
+    permissions.list({ after, limit: 1 }),
+  revokePermission: (raw: unknown) => permissions.revoke(raw),
+  permission: (id: string) => permissions.inspect(id),
+  startEndpoint(raw: unknown) {
+    result = "pending";
+    void permissions.inspectEndpoint(raw).then(
+      () => {
+        result = "accepted";
+      },
+      (e) => {
+        result = e.message;
+      },
+    );
+  },
   submit: (envelope: unknown) => client.submit({ version: 1, envelope }),
   poll: () => client.poll({ after: null, limit: 20 }),
   acknowledge: (raw: unknown) => client.acknowledge(raw),
   export: () => history.export({ after: null, limit: 20 }),
   replace: (id: string, revision: number) =>
-    api("/browser/relay/permission/enable", {
+    permissions.enableBrowser({
       deviceId: context?.identity.endpointId,
       credentialEpoch: context?.identity.credentialEpoch,
       operationId: crypto.randomUUID(),
@@ -99,6 +121,7 @@ const fixture = {
   },
   invalidate() {
     client.invalidate();
+    permissions.invalidate();
     context = null;
     scope++;
   },
