@@ -41,6 +41,64 @@ export type BrowserKeyProof = z.infer<typeof browserKeyProofSchema>;
 type SlotRecord = z.infer<typeof browserEndpointRecordSchema>;
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
+/** Synchronous prerequisite for a future common-database content transaction.
+ * The caller must first resolve/authenticate with this key, then read lifecycle
+ * and slot in the SAME transaction as consent, replay and content effects.
+ * This neither grants authority nor reconstructs unknown historical identities. */
+export function browserReplayCoverageMatches(
+  rawState: unknown,
+  rawRecord: unknown,
+  rawProof: unknown,
+  authority: {
+    localOwner: string;
+    scope: string;
+    binding: PrivateBinding;
+    now: number;
+  },
+): boolean {
+  const state = browserLifecycleSchema.safeParse(rawState),
+    record = browserEndpointRecordSchema.safeParse(rawRecord),
+    proof = browserKeyProofSchema.safeParse(rawProof),
+    binding = privateBindingSchema.safeParse(authority.binding);
+  if (
+    !state.success ||
+    !record.success ||
+    !proof.success ||
+    !binding.success ||
+    !Number.isSafeInteger(authority.now) ||
+    authority.now <= 0 ||
+    binding.data.expiresAt <= authority.now
+  )
+    return false;
+  const s = state.data,
+    r = record.data,
+    p = proof.data,
+    b = binding.data;
+  const slot = s.slots.find((v) => v.state === "active");
+  return (
+    !s.locked &&
+    s.scope === authority.scope &&
+    s.revision === p.revision &&
+    s.ownerId === b.ownerId &&
+    s.deviceId === b.deviceId &&
+    same(p.binding, b) &&
+    !!slot &&
+    slot.id === p.keyId &&
+    slot.keyEpoch === p.keyEpoch &&
+    slot.publicKey === p.publicKey &&
+    same(slot.binding, b) &&
+    r.state === "ready" &&
+    r.scope === authority.scope &&
+    r.keyId === p.keyId &&
+    r.identity.localOwner === authority.localOwner &&
+    r.identity.keyId === p.keyId &&
+    r.identity.keyEpoch === p.keyEpoch &&
+    same(r.identity.binding, b) &&
+    r.publicKey === p.publicKey &&
+    !!r.recovery &&
+    r.incomingReplayBoundary === "from-generation-v1"
+  );
+}
 /** Durable local selection only. Verified identity/fresh-registration callbacks come
  * from a trusted host, never from metadata, invitations, requests or recovered keys. */
 export class BrowserKeyLifecycle {
@@ -550,6 +608,29 @@ export class BrowserKeyLifecycle {
       return false;
     }
   }
+  /** Inspection only; do not cache this result for later content admission. */
+  async validateReplayCoverage(raw: unknown) {
+    try {
+      const proof = this.input(browserKeyProofSchema, raw),
+        g = this.generation,
+        b = this.binding();
+      return await this.tx(g, b, "readonly", (s, rows) =>
+        browserReplayCoverageMatches(
+          s,
+          rows.find((r) => r.keyId === proof.keyId),
+          proof,
+          {
+            localOwner: this.owner,
+            scope: this.scope,
+            binding: b,
+            now: this.now(),
+          },
+        ),
+      );
+    } catch {
+      return false;
+    }
+  }
   private async retained(g: number) {
     const b = this.binding(),
       before = await this.tx(g, b, "readonly", (state, rows) => {
@@ -565,7 +646,18 @@ export class BrowserKeyLifecycle {
     await this.tx(g, b, "readonly", (state, rows) => {
       if (
         !same(this.proof(state, rows, b), before.proof) ||
-        key.publicKey !== before.proof.publicKey
+        key.publicKey !== before.proof.publicKey ||
+        browserReplayCoverageMatches(
+          state,
+          rows.find((r) => r.keyId === key.keyId),
+          before.proof,
+          {
+            localOwner: this.owner,
+            scope: this.scope,
+            binding: b,
+            now: this.now(),
+          },
+        ) !== key.incomingReplayCovered
       )
         throw new BrowserKeyError("CONFLICT");
     });

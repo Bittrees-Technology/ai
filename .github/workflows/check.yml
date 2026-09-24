@@ -183,9 +183,13 @@ jobs:
           node scripts/prepare-legacy-browser-offer-replay.mjs
           git fetch --no-tags --depth=1 origin b1263ca9f2ccc4072f9e36e1b4a491bcd58ff3c6
           node scripts/prepare-legacy-browser-offer-ack.mjs
+          git fetch --no-tags --depth=1 origin 5474f6767e2b7e1a8eb4c5731d6ee47d5e186f4b
+          node scripts/prepare-legacy-browser-key-boundary.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check browser generation provenance and actual version11 upgrade
+        run: npm run test:browser-private -- tests/browser/browser-key-replay-boundary.spec.ts --max-failures=1
       - name: Check browser offer receipt history and actual version10 upgrade
         run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
       - name: Check reviewed browser offer queue and receipt controls
