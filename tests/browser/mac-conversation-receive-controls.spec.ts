@@ -37,7 +37,7 @@ async function fixture(page: Page, questions = false) {
     await page.goto("/?inbox-task-review");
     await page
       .getByRole("button", {
-        name: /PRIVATE_NEVER_IN_OFFER|Task-linked message|Where are you travelling/,
+        name: /PRIVATE_NEVER_IN_OFFER|SYNTHETIC_RELAY_CONVERSATION|Task-linked message|Where are you travelling/,
       })
       .first()
       .click();
