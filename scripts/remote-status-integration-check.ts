@@ -1,3 +1,4 @@
+import { checkPrivateRelayAccess } from "./private-relay-access-integration.js";
 import { checkBrowserDevices } from "./browser-device-integration.js";
 import { checkRemoteTemplates } from "./remote-template-integration.js";
 import { checkRemoteQuotas } from "./remote-quota-integration.js";
@@ -341,6 +342,15 @@ try {
       "utf8",
     ),
   );
+  await pool.query(
+    await readFile(
+      new URL(
+        "../modules/remote/migrations/009-private-relay-access.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await checkBrowserDevices(pool);
   await checkRemoteHttp(pool);
   await checkRemoteCommands(pool);
@@ -357,6 +367,7 @@ try {
   await checkRemoteMaintenance(pool);
   await checkRemoteQuotas(pool);
   await checkRemoteTemplates(pool);
+  await checkPrivateRelayAccess(pool);
   console.log(
     "PostgreSQL status isolation, ordered/deduplicated writes, atomic rollback, retention, repository reopen, revocation, pagination and one-use device pairing and credential rotation and SIWE session/HTTPS boundary and expiring pause/cancel queue and bounded expiry maintenance and concurrent stored-row quota and separate scoped template queue checks passed. Synthetic schema only.",
   );
