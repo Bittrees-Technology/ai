@@ -195,6 +195,8 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check explicit browser conversation relay receipt and worker round trip
+        run: npm run test:browser-private -- tests/browser/browser-conversation-content-host.spec.ts --grep 'incoming conversation relay' --max-failures=1
       - name: Check browser conversation relay sending and actual version14 preservation
         run: npm run test:browser-private -- tests/browser/browser-conversation-content.spec.ts tests/browser/browser-conversation-content-host.spec.ts --grep 'conversation relay|version14|host relay' --max-failures=1
       - name: Check shared sequence rollback independently of storage version

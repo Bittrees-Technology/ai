@@ -785,9 +785,77 @@ export class BrowserKeyHost {
         });
       }),
   };
-  /** Explicit original-ciphertext delivery. Every attempt is persisted before
-   * submit; neither this API nor reload automatically retries a message. */
+  /** Explicit selected receipt and original-ciphertext delivery. Admission commits
+   * before acknowledgement; sends persist attempts first. No automatic retries. */
   readonly relayConversationContentAPI = {
+    inspect: (raw: unknown) => this.relayTaskAPI.inspect(raw),
+    receive: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = privateRelayQueueQuerySchema
+          .extend({
+            selection: privateRelaySelectionSchema,
+            target: z.discriminatedUnion("action", [
+              z.strictObject({
+                action: z.literal("receive"),
+                grantId: z.uuid(),
+              }),
+              z.strictObject({
+                action: z.literal("reconcile"),
+                grantId: z.uuid(),
+                id: z.uuid(),
+                expectedRevision: z
+                  .number()
+                  .int()
+                  .positive()
+                  .max(Number.MAX_SAFE_INTEGER),
+              }),
+            ]),
+          })
+          .parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          const page = await client.poll({ after: input.after, limit: 1 }),
+            item = page.items[0];
+          check();
+          if (!item || !relaySelectionMatches(item, input.selection))
+            throw Error("CONFLICT");
+          const store = await this.conversationContentStore(),
+            target = input.target;
+          const received =
+            target.action === "receive"
+              ? await store.accept(
+                  {
+                    grantId: target.grantId,
+                    envelope: item.envelope,
+                    confirmed: true,
+                  },
+                  check,
+                )
+              : await store.reconcile(
+                  {
+                    grantId: target.grantId,
+                    id: target.id,
+                    expectedRevision: target.expectedRevision,
+                    envelope: item.envelope,
+                    confirmed: true,
+                  },
+                  check,
+                );
+          // Admission/reconciliation is durable before transport acknowledgement.
+          check();
+          const transport = await client.acknowledge({
+            messageId: item.receipt.messageId,
+            envelopeHash: item.receipt.envelopeHash,
+            expectedRevision: item.receipt.revision,
+            confirmed: true,
+          });
+          check();
+          return {
+            received,
+            transport: { transportOnly: true as const, ...transport },
+            nextCursor: page.nextCursor,
+          };
+        });
+      }),
     send: (raw: unknown) =>
       this.verifiedPeer(async () => {
         const input = z
