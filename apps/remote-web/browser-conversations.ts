@@ -76,7 +76,7 @@ export function mountBrowserConversations(
       input = el("select");
     input.id = `browser-conversation-${crypto.randomUUID()}`;
     label.htmlFor = input.id;
-    const wrapper = el("div", "", "browser-conversation-select");
+    const wrapper = el("div", "", "browser-permission-select");
     wrapper.append(input);
     return { label, input, wrapper };
   };
