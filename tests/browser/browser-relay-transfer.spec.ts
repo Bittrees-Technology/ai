@@ -292,7 +292,7 @@ test("lost browser relay submission reply retries the same durable task and enve
   identityServer.enablePrivateRelay();
   const f = await ready(page, identityServer.pool);
   try {
-    identityServer.drop("/browser/relay/messages/submit");
+    identityServer.loseResponse("/browser/relay/messages/submit");
     await expect(send(page, f)).rejects.toThrow();
     const retried = await send(page, f);
     expect(retried.duplicate).toBe(true);
