@@ -1,6 +1,6 @@
 # Durable Mac conversation content
 
-This internal engine connects authenticated conversation messages to the existing Inbox and exact answers to its existing input-wait engine. Authenticated local companion routes now expose explicit prepare/envelope/receive operations. Browser controls and relay traffic are not implemented by these routes. The browser content store, reviewed transport controls, receipt reconciliation and full end-to-end acceptance remain required.
+This internal engine connects authenticated conversation messages to the existing Inbox and exact answers to its existing input-wait engine. Authenticated local companion routes expose explicit prepare/envelope/receive/reconcile operations. The browser uses its separate retained content engine and controls. Reviewed relay content transfer, browser receipt reconciliation and full end-to-end acceptance remain required.
 
 `PrivateConversationContent` requires the current conversation consent and native key lifecycle. Task-linked content additionally requires a trusted host-supplied asynchronous source/dependency check that returns a synchronous revalidation function. Its default denies all task-linked content. That function must not be supplied by a request or implemented as a permissive placeholder. Task revisions, thread/Inbox membership, exact shared-question association, current grant and generation-time key coverage are separately enforced by the engine.
 
@@ -33,4 +33,34 @@ All routes use the existing authenticated loopback Host/Origin checks. Every mut
 
 `accepted-locally` means Inbox storage. It does not mean execution, reading, relay acknowledgement or delivery to another device. A response lost after local commit can be reconciled through the stable original request and journal; response history is not permission to retry with changed ciphertext.
 
-Six HTTP/controller tests cover metadata-only status, exact preparation/ciphertext after reopen, encrypted replies and receipts, authentication/origin/confirmation, independent flags, missing host source guard, parent-pending response, late identity loss, revocation and shared native operation exclusion. A real `LocalWorker` question is prepared and encrypted through these routes; a synthetic peer's exact encrypted answer resumes that same worker once, while an ordinary reply leaves it waiting and duplicates after completion do not rerun it. This uses real HPKE and HTTP but not browser storage/controls or relay transport. Those remaining paths still require full end-to-end acceptance.
+HTTP/controller tests cover metadata-only status, exact preparation/ciphertext after reopen, encrypted replies and receipts, authentication/origin/confirmation, independent flags, missing host source guard, parent-pending response, late identity loss, revocation and shared native operation exclusion. A real `LocalWorker` question is prepared and encrypted through these routes; a synthetic peer's exact encrypted answer resumes that same worker once, while an ordinary reply leaves it waiting and duplicates after completion do not rerun it. This uses real HPKE and HTTP but not browser storage/controls or relay transport. Those remaining paths still require full end-to-end acceptance.
+
+## Recipient storage receipt reconciliation
+
+The authenticated local `POST /v1/private-conversation-content/reconcile` route
+accepts one reviewed receipt for a selected outgoing message or question and its
+expected journal revision. It requires the same independent conversation gate,
+verified identity, current keys/peer/consent, generation provenance, source access
+and shared operation exclusion as the other conversation routes.
+
+The recipient's authenticated receipt must match the original operation, content
+type, conversation scope and reversed directed key epochs. Acceptance and receipt
+timestamps must fit the original delivery window. One transaction saves the exact
+receipt and shared incoming replay outcome. Altered ciphertext, missing local
+originals, replay conflicts, revoked authority and failed writes produce no receipt
+state. Reconciliation never appends a message, answers a question or runs a task.
+Original outgoing ciphertext remains unchanged and explicit duplicate reconciliation
+returns the retained result. After an uncertain response, inspect the current row
+revision before retrying; do not assume the write failed.
+
+Status exposes `recipientAccepted` and `recipientAcceptedAt` separately from
+`receiptPrepared` for incoming messages. Recipient acceptance means storage only,
+not reading, task completion or relay-server storage. Status responses contain no
+plaintext content, key proof or ciphertext. These routes do not automatically send,
+poll or acknowledge anything at the relay.
+
+Schema34 fences prior writers before the new outgoing receipt state is stored.
+The actual compiled schema33 upgrade, encrypted backup with locked restored
+authority, owner-scoped deletion and untouched-original rollback are checked by
+`scripts/check-conversation-receipt-upgrade.mjs`. Browser receipt reconciliation,
+reviewed relay transfer and full release acceptance remain required integrations.

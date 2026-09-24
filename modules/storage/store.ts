@@ -168,7 +168,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 33) {
+    if (version > 34) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -298,8 +298,8 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_conversation_content(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id_hash))",
         );
-        // Schema33 fences older writers before durable conversation effects.
-        this.db.pragma("user_version = 33");
+        // Schema34 fences older writers before outgoing receipt reconciliation.
+        this.db.pragma("user_version = 34");
       })();
     } catch (error) {
       this.db.close();
