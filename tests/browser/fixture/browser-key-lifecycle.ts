@@ -1,6 +1,7 @@
 const legacyModuleUrl = "/legacy-keys.js";
 import {
   BrowserKeyLifecycle,
+  browserReplayCoverageMatches,
   type BrowserKeyProof,
 } from "../../../modules/remote/browser-key-lifecycle.js";
 import {
@@ -12,6 +13,11 @@ import {
   browserRecoveryKey,
   openBrowserKeyRecovery,
 } from "../../../modules/remote/browser-key-recovery.js";
+import {
+  browserKeyDatabaseName,
+  browserKeyScope,
+  openBrowserKeyDatabase,
+} from "../../../modules/remote/browser-key-state.js";
 import type { PrivateBinding } from "../../../modules/remote/private-peer-contracts.js";
 let lifecycle: BrowserKeyLifecycle,
   owner = "",
@@ -78,6 +84,137 @@ const api = {
       a.pair.privateKey === b.pair.privateKey &&
       a.pair.publicKey === b.pair.publicKey
     );
+  },
+  coverage(proof: BrowserKeyProof) {
+    return lifecycle.validateReplayCoverage(proof);
+  },
+  prepareRecovery(raw: unknown, code: string) {
+    return lifecycle.prepareRecovery(raw, code);
+  },
+  activatePrepared(raw: unknown, code: string, kit: unknown) {
+    return lifecycle.activatePrepared(raw, code, kit);
+  },
+  async boundarySnapshot(proof?: BrowserKeyProof, change?: string) {
+    const scope = await browserKeyScope(owner),
+      db = await openBrowserKeyDatabase();
+    try {
+      return await new Promise<{
+        version: number;
+        covered: boolean;
+        markers: (string | null)[];
+        publicKeys: (string | null)[];
+      }>((resolve, reject) => {
+        const tx = db.transaction(
+          ["lifecycle", "slots"],
+          change ? "readwrite" : "readonly",
+        );
+        let result: {
+          version: number;
+          covered: boolean;
+          markers: (string | null)[];
+          publicKeys: (string | null)[];
+        };
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = tx.onabort = () =>
+          reject(Error("fixture transaction failed"));
+        const state = tx.objectStore("lifecycle").get(scope);
+        state.onsuccess = () => {
+          const slots = tx.objectStore("slots"),
+            records = slots.index("scope").getAll(scope);
+          records.onsuccess = () => {
+            const selected = records.result.find(
+              (v) => v.keyId === proof?.keyId,
+            );
+            if (change && selected) {
+              if (change === "missing") delete selected.incomingReplayBoundary;
+              else selected.incomingReplayBoundary = "unsupported";
+              slots.put(selected);
+            }
+            result = {
+              version: db.version,
+              covered:
+                !!binding &&
+                browserReplayCoverageMatches(state.result, selected, proof, {
+                  localOwner: owner,
+                  scope,
+                  binding,
+                  now,
+                }),
+              markers: records.result.map(
+                (v) => v.incomingReplayBoundary ?? null,
+              ),
+              publicKeys: records.result.map((v) => v.publicKey),
+            };
+          };
+        };
+      });
+    } finally {
+      db.close();
+    }
+  },
+  async legacyBoundarySeed(
+    o: string,
+    b: PrivateBinding,
+    time: number,
+    code: string,
+    mode: "active" | "prepared" | "empty",
+  ) {
+    lifecycle?.close();
+    owner = o;
+    binding = b;
+    fresh = true;
+    now = time;
+    const url = "/legacy-key-boundary/index.js";
+    const legacy = await import(/* @vite-ignore */ url);
+    const old = await legacy.BrowserKeyLifecycle.open(
+      owner,
+      () => binding,
+      () => true,
+      () => now,
+    );
+    try {
+      const slot = await old.begin({ expectedRevision: 0, confirmed: true });
+      const command = {
+        keyId: slot.keyId,
+        expectedRevision: slot.revision,
+        confirmed: true,
+      };
+      let proof = null,
+        prepared = null;
+      if (mode === "prepared")
+        prepared = await old.prepareRecovery(command, code);
+      if (mode === "active")
+        proof = await old.provision({ ...command, recoverySaved: true }, code);
+      const kit =
+        mode === "empty"
+          ? null
+          : await old.recovery({ keyId: slot.keyId, confirmed: true });
+      const status = await old.status();
+      const version = await new Promise<number>((resolve, reject) => {
+        const request = indexedDB.open(browserKeyDatabaseName, 11);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const version = db.version;
+          db.close();
+          resolve(version);
+        };
+      });
+      return { slot, proof, prepared, kit, status, version };
+    } finally {
+      old.close();
+    }
+  },
+  async legacyBoundaryOpen() {
+    const url = "/legacy-key-boundary/index.js";
+    const legacy = await import(/* @vite-ignore */ url);
+    const old = await legacy.BrowserKeyLifecycle.open(
+      owner,
+      () => binding,
+      () => true,
+      () => now,
+    );
+    old.close();
   },
   validate(proof: BrowserKeyProof) {
     return lifecycle.validate(proof);

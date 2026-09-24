@@ -15,6 +15,7 @@ export const browserEndpointRecordSchema = z.strictObject({
   keyId: z.uuid(),
   identity: identitySchema,
   state: z.enum(["reserved", "ready", "deleted"]),
+  incomingReplayBoundary: z.literal("from-generation-v1").optional(),
   publicKey: z.string().nullable(),
   privateHandle: z.unknown(),
   publicHandle: z.unknown(),
@@ -144,6 +145,8 @@ export class BrowserEndpointKeys {
     )
       throw new BrowserKeyError("CONFLICT");
     const r = p.data;
+    if (r.state === "reserved" && r.incomingReplayBoundary)
+      throw new BrowserKeyError("CONFLICT");
     if (
       r.state !== "ready" &&
       (r.publicKey !== null ||
@@ -337,7 +340,11 @@ export class BrowserEndpointKeys {
     if (!match) throw new BrowserKeyError("CONFLICT");
     // A second durable read fences deletion/replacement while crypto was running.
     const latest = await this.read(a, g);
-    if (latest.publicKey !== r.publicKey) throw new BrowserKeyError("CONFLICT");
+    if (
+      latest.publicKey !== r.publicKey ||
+      latest.incomingReplayBoundary !== r.incomingReplayBoundary
+    )
+      throw new BrowserKeyError("CONFLICT");
     this.check(a, g);
     const scope = JSON.stringify(identity(a));
     if (
@@ -354,6 +361,7 @@ export class BrowserEndpointKeys {
       keyId: a.keyId,
       keyEpoch: a.keyEpoch,
       publicKey: r.publicKey!,
+      incomingReplayCovered: r.incomingReplayBoundary === "from-generation-v1",
       pair: { ...this.cache.pair },
     };
   }
@@ -437,6 +445,9 @@ export class BrowserEndpointKeys {
               s.put({
                 ...r,
                 state: "ready",
+                // Only a successful new cryptographic generation mints this.
+                // Existing ready slots and recovery imports are never backfilled.
+                incomingReplayBoundary: "from-generation-v1",
                 publicKey: pub,
                 privateHandle: pair.privateKey,
                 publicHandle: pair.publicKey,
