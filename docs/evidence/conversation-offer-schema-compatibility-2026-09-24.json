@@ -1,0 +1,18 @@
+{
+  "verifiedAt": "2026-09-24T11:59:13.065Z",
+  "from": 28,
+  "to": 29,
+  "legacyStoreSha256": "cd2ddd984a3372776fc07fe12a595ffd80900f33740e06412439973d4c717342",
+  "checks": [
+    "existing waiting task/question and omitted policy preserved",
+    "existing conversation consent preserved; new offer table starts empty",
+    "wrong-key upgrade leaves original usable",
+    "task28 writer refuses task29 offer preparation",
+    "encrypted backup/restore preserves old/new waits and explicit opt-in",
+    "untouched original backup remains task28-compatible"
+  ],
+  "boundaries": [
+    "synthetic temporary stores only",
+    "no inference, personal data, installed app, services or Acer changes"
+  ]
+}

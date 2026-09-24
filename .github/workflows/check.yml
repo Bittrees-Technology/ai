@@ -175,9 +175,25 @@ jobs:
           node scripts/prepare-legacy-browser-composition.mjs
           git fetch --no-tags --depth=1 origin 515b1b369e0f0c4f62a7058484b059c81e3d59e7
           node scripts/prepare-legacy-browser-delivery.mjs
+          git fetch --no-tags --depth=1 origin bb256d75932c214af57111536ab317231bcedd18
+          node scripts/prepare-legacy-browser-conversation.mjs
+          git fetch --no-tags --depth=1 origin 96c7172f7d3fec5132ce4dcd346e08466e94b257
+          node scripts/prepare-legacy-browser-replay.mjs
+          git fetch --no-tags --depth=1 origin ae3fa90eba1ea2b08febe21dae221ea51b63c0c1
+          node scripts/prepare-legacy-browser-offer-replay.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check shared browser replay and actual version8 upgrade
+        run: npm run test:browser-private -- tests/browser/browser-incoming-replay.spec.ts --max-failures=1
+      - name: Check independent retained browser conversation consent
+        run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
+      - name: Check reviewed Mac conversation offer downloads
+        run: npm run test:browser-private -- tests/browser/conversation-offers.spec.ts --max-failures=1
+      - name: Check built browser conversation consent reviews
+        run: npm run test:browser-private -- tests/browser/production-browser-conversations.spec.ts --max-failures=1
+      - name: Check selected conversation permission reviews
+        run: npm run test:browser-private -- tests/browser/conversation-permissions.spec.ts --max-failures=1
       - name: Check reviewed local task answers before full suite
         run: npm run test:browser-private -- tests/browser/task-answer.spec.ts --max-failures=1
       - name: Check task-linked Inbox privacy before full suite
@@ -508,5 +524,32 @@ jobs:
         with:
           name: model-question-ui-preview
           path: test-results/model-question-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload conversation permission previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-permission-ui-preview
+          path: test-results/conversation-permission-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload conversation offer previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-offer-ui-preview
+          path: test-results/conversation-offer-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload browser conversation permission previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-conversation-ui-preview
+          path: test-results/browser-conversation-ui/*.png
           if-no-files-found: error
           retention-days: 7

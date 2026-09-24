@@ -23,6 +23,11 @@ import {
   type PrivateEnvelope,
 } from "./private-envelope.js";
 import { reservePrivateSequence } from "./private-send-sequence.js";
+import { privateReplayIdentity, PrivateReplayError } from "./private-replay.js";
+import {
+  consumePrivateIncomingReplay,
+  PrivateIncomingReplayError,
+} from "./private-incoming-replay.js";
 import {
   peerChallengeSchema,
   peerResponseSchema,
@@ -361,6 +366,11 @@ export class PrivatePeerChecks {
       return await work();
     } catch (e) {
       if (e instanceof PrivatePeerCheckError) throw e;
+      if (
+        e instanceof PrivateReplayError ||
+        e instanceof PrivateIncomingReplayError
+      )
+        throw new PrivatePeerCheckError(e.code);
       throw new PrivatePeerCheckError("DENIED");
     } finally {
       this.inflight--;
@@ -439,12 +449,13 @@ export class PrivatePeerChecks {
           .parse(raw),
         { envelope, content, p } = await this.incoming(input.envelope),
         challenge = peerChallengeSchema.parse(content),
-        hash = peerEnvelopeHash(envelope);
+        hash = peerEnvelopeHash(envelope),
+        replay = await privateReplayIdentity(envelope, challenge.type);
       const e = this.store.db
         .transaction(() => {
           if (envelope.header.expiresAt <= this.now())
             throw new PrivatePeerCheckError("DENIED");
-          return this.reserve(
+          const retained = this.reserve(
             "response",
             p,
             envelope.header.operationId,
@@ -457,6 +468,18 @@ export class PrivatePeerChecks {
             hash,
             envelope.header.expiresAt,
           );
+          consumePrivateIncomingReplay(
+            this.store,
+            this.vault,
+            this.owner,
+            replay,
+            {
+              collection: "private_peer_checks",
+              id: retained.id,
+            },
+          );
+          this.validate(retained);
+          return retained;
         })
         .immediate();
       return this.publish(e.id);
@@ -530,7 +553,8 @@ export class PrivatePeerChecks {
           })
           .parse(raw),
         { envelope, content } = await this.incoming(input.envelope),
-        response = peerResponseSchema.parse(content);
+        response = peerResponseSchema.parse(content),
+        replay = await privateReplayIdentity(envelope, response.type);
       return this.store.db
         .transaction(() => {
           const e = read(
@@ -556,12 +580,25 @@ export class PrivatePeerChecks {
           const hash = peerEnvelopeHash(envelope);
           if (e.value.responseHash && e.value.responseHash !== hash)
             throw new PrivatePeerCheckError("CONFLICT");
+          consumePrivateIncomingReplay(
+            this.store,
+            this.vault,
+            this.owner,
+            replay,
+            {
+              collection: "private_peer_checks",
+              id: e.id,
+            },
+          );
           if (e.value.state !== "verified") {
             e.value.state = "verified";
             e.value.responseHash = hash;
             e.value.verifiedAt = this.now();
             this.save(e);
           }
+          this.validate(e);
+          if (envelope.header.expiresAt <= this.now())
+            throw new PrivatePeerCheckError("DENIED");
           return peerCheckSummary(e);
         })
         .immediate();

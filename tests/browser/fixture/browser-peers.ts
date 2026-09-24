@@ -1,3 +1,6 @@
+import { BrowserConversationConsent } from "../../../modules/remote/browser-conversation-consent.js";
+import { openBrowserPrivateDatabase } from "../../../modules/remote/browser-outbox-migration.js";
+import { browserStorageTransaction } from "../../../modules/remote/browser-storage.js";
 import { BrowserRelayPermissionsClient } from "../../../modules/remote/private-relay-client.js";
 import { BrowserTaskComposition } from "../../../modules/remote/browser-task-composition.js";
 import { BrowserTaskHistory } from "../../../modules/remote/browser-task-history.js";
@@ -26,6 +29,20 @@ let keys: BrowserKeyLifecycle,
   host: BrowserKeyHost | null = null;
 let checks: BrowserPeerChecks | undefined;
 let consents: BrowserTaskConsent | undefined;
+let conversations: BrowserConversationConsent | undefined;
+let conversationAccess:
+  Awaited<ReturnType<BrowserConversationConsent["authorize"]>> | undefined;
+let conversationProvider = BrowserConversationConsent;
+async function conversationStore() {
+  return (conversations ??= await conversationProvider.open(
+    owner,
+    () => binding,
+    keys,
+    peers,
+    () => now,
+    () => mono,
+  ));
+}
 let composition: BrowserTaskComposition | undefined;
 let history: BrowserTaskHistory | undefined;
 let historyOwner: string | null = null;
@@ -131,12 +148,21 @@ const fixture = {
     o: string,
     b: PrivateBinding,
     time: number,
-    previous: boolean | "task" | "delivery" = false,
+    previous:
+      | boolean
+      | "task"
+      | "delivery"
+      | "conversation"
+      | "replay"
+      | "offer-replay" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
     consents?.close();
     consents = undefined;
+    conversations?.close();
+    conversations = undefined;
+    conversationAccess = undefined;
     composition?.close();
     composition = undefined;
     history?.close();
@@ -154,25 +180,45 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "delivery"
-        ? "/legacy-delivery/index.js"
-        : previous === "task"
-          ? "/legacy-composition/index.js"
-          : "/legacy-consent/index.js";
+      previous === "offer-replay"
+        ? "/legacy-offer-replay/index.js"
+        : previous === "replay"
+          ? "/legacy-replay/index.js"
+          : previous === "conversation"
+            ? "/legacy-conversation/index.js"
+            : previous === "delivery"
+              ? "/legacy-delivery/index.js"
+              : previous === "task"
+                ? "/legacy-composition/index.js"
+                : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
+    conversationProvider =
+      previous === "offer-replay"
+        ? providers.BrowserConversationConsent
+        : BrowserConversationConsent;
     consentProvider =
-      previous === "task" || previous === "delivery"
+      previous === "task" ||
+      previous === "delivery" ||
+      previous === "conversation" ||
+      previous === "replay" ||
+      previous === "offer-replay"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
-      previous === "delivery"
+      previous === "delivery" ||
+      previous === "conversation" ||
+      previous === "replay" ||
+      previous === "offer-replay"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
-      previous === "delivery"
+      previous === "delivery" ||
+      previous === "conversation" ||
+      previous === "replay" ||
+      previous === "offer-replay"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -237,6 +283,7 @@ const fixture = {
     binding = b;
     checks?.invalidate();
     consents?.invalidate();
+    conversations?.invalidate();
     keys.invalidate();
     peers.invalidate();
     current = null;
@@ -269,6 +316,7 @@ const fixture = {
   invalidate() {
     checks?.invalidate();
     consents?.invalidate();
+    conversations?.invalidate();
     peers?.invalidate();
     host?.peerAPI.invalidate();
   },
@@ -447,7 +495,7 @@ const fixture = {
   },
   async removeCheckMarker() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -472,7 +520,7 @@ const fixture = {
   },
   async inspectChecks() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -494,6 +542,102 @@ const fixture = {
       return {
         json: JSON.stringify(rows),
         privatePreparationExportDenied: denied,
+      };
+    } finally {
+      db.close();
+    }
+  },
+  conversationStatus: () =>
+    host
+      ? host.conversationAPI.status()
+      : conversationStore().then((c) => c.status()),
+  conversationOpenOffer: (raw: unknown) =>
+    host
+      ? host.conversationAPI.inspectOffer(raw)
+      : withKey(async () => (await conversationStore()).inspectOffer(raw)),
+  conversationPrepare: (raw: unknown) =>
+    host
+      ? host.conversationAPI.prepare(raw)
+      : withKey(async () => (await conversationStore()).prepare(raw)),
+  conversationApprove: (raw: unknown) =>
+    host
+      ? host.conversationAPI.approve(raw)
+      : withKey(async () => (await conversationStore()).approve(raw)),
+  conversationRevoke: (raw: unknown) =>
+    host
+      ? host.conversationAPI.revoke(raw)
+      : conversationStore().then((c) => c.revoke(raw)),
+  conversationClear: (raw: unknown) =>
+    host
+      ? host.conversationAPI.clear(raw)
+      : conversationStore().then((c) => c.clear(raw)),
+  conversationReset: (raw: unknown) =>
+    host
+      ? host.conversationAPI.reset(raw)
+      : withKey(async () => (await conversationStore()).reset(raw)),
+  conversationAuthorize: (
+    id: string,
+    scope: unknown,
+    direction:
+      | "messagesToMac"
+      | "messagesToBrowser"
+      | "questionsToBrowser"
+      | "answersToMac",
+  ) =>
+    withKey(async () => {
+      conversationAccess = await (
+        await conversationStore()
+      ).authorize(id, scope, direction);
+      return conversationAccess.grant;
+    }),
+  conversationUse: () =>
+    withKey(async () => {
+      const a = conversationAccess!,
+        db = await openBrowserPrivateDatabase();
+      try {
+        return await browserStorageTransaction(
+          db,
+          a.stores,
+          "readonly",
+          a.check,
+          (io) => a.validate(io, () => io.done(true)),
+        );
+      } finally {
+        db.close();
+      }
+    }),
+  async conversationInspect(corrupt = false) {
+    const db = await openBrowserPrivateDatabase();
+    try {
+      const rows = await browserStorageTransaction<any[]>(
+        db,
+        ["conversation_consents"],
+        corrupt ? "readwrite" : "readonly",
+        () => {},
+        (io) =>
+          io.request(io.store("conversation_consents").getAll(), (rows) => {
+            if (corrupt)
+              for (const row of rows) {
+                row.ciphertext =
+                  (row.ciphertext[0] === "A" ? "B" : "A") +
+                  row.ciphertext.slice(1);
+                io.store("conversation_consents").put(row);
+              }
+            io.done(rows);
+          }),
+      );
+      let exportDenied = true;
+      for (const row of rows)
+        if (row.key)
+          try {
+            await crypto.subtle.exportKey("raw", row.key);
+            exportDenied = false;
+          } catch {}
+      return {
+        version: db.version,
+        rows: rows.length,
+        json: JSON.stringify(rows),
+        exportDenied,
       };
     } finally {
       db.close();
@@ -609,7 +753,7 @@ const fixture = {
   taskExport: () => sender!.outbox.export(),
   async inspectConsent() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -636,7 +780,7 @@ const fixture = {
   },
   async dropConsentRow() {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });

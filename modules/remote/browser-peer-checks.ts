@@ -1,3 +1,11 @@
+import {
+  consumeBrowserIncomingReplay,
+  browserIncomingReplayStore,
+} from "./browser-incoming-replay.js";
+import {
+  privateReplayIdentity,
+  type PrivateReplayIdentity,
+} from "./private-replay.js";
 import { z } from "zod";
 import {
   BrowserKeyLifecycle,
@@ -370,7 +378,14 @@ export class BrowserPeerChecks {
   ) {
     return browserStorageTransaction<T>(
       this.db,
-      ["slots", "lifecycle", "peers", "peer_checks", "channels"],
+      [
+        "slots",
+        "lifecycle",
+        "peers",
+        "peer_checks",
+        "channels",
+        browserIncomingReplayStore,
+      ],
       mode,
       () => this.check(g, p?.local, deadline),
       (io) => {
@@ -498,6 +513,7 @@ export class BrowserPeerChecks {
     content: unknown,
     requestHash: string | null,
     deadline: number,
+    incoming?: PrivateReplayIdentity,
   ) {
     const identity = await browserPrivateIdentity(p.local.proof.binding),
       channel = await browserPrivateChannel(identity, {
@@ -521,6 +537,20 @@ export class BrowserPeerChecks {
       this.proof(p),
       deadline,
       (io, meta) => {
+        const finish = (entry: Entry, retained: boolean) => {
+          if (!incoming) {
+            io.done(entry);
+            return;
+          }
+          consumeBrowserIncomingReplay(
+            io,
+            identity.scope,
+            incoming,
+            { store: "peer_checks", key: [this.scope, entry.id] },
+            retained,
+            () => io.done(entry),
+          );
+        };
         const senderId =
           role === "challenge"
             ? p.local.proof.binding.deviceId
@@ -540,7 +570,7 @@ export class BrowserPeerChecks {
                 !same(old.peer, p.peer.proof)
               )
                 throw new BrowserPeerCheckError("CONFLICT");
-              io.done(old);
+              finish(old, true);
               return;
             }
             if (meta) this.assertActive(meta, identity.deviceHash);
@@ -603,7 +633,7 @@ export class BrowserPeerChecks {
                           locked: false,
                         }),
                       );
-                    io.done(e);
+                    finish(e, false);
                   },
                 );
               },
@@ -757,6 +787,7 @@ export class BrowserPeerChecks {
         { envelope, content, p } = await this.incoming(g, input.envelope),
         challenge = this.input(peerChallengeSchema, content),
         hash = await hashPeerEnvelope(envelope),
+        replay = await privateReplayIdentity(envelope, challenge.type),
         e = await this.reserve(
           g,
           p,
@@ -770,6 +801,7 @@ export class BrowserPeerChecks {
           },
           hash,
           envelope.header.expiresAt,
+          replay,
         );
       return this.publish(g, e.id);
     });
@@ -833,6 +865,7 @@ export class BrowserPeerChecks {
       )
         throw new BrowserPeerCheckError("DENIED");
       const hash = await hashPeerEnvelope(envelope),
+        replay = await privateReplayIdentity(envelope, response.type),
         identity = await browserPrivateIdentity(p.local.proof.binding);
       return this.tx<Summary>(
         g,
@@ -847,24 +880,34 @@ export class BrowserPeerChecks {
               const e = read(raw, this.scope);
               if (e.responseHash && e.responseHash !== hash)
                 throw new BrowserPeerCheckError("CONFLICT");
-              if (
+              const duplicate =
                 e.state === "verified" &&
                 e.responseHash === hash &&
                 same(e.local, before.local) &&
                 same(e.peer, before.peer) &&
-                same(e.envelope, before.envelope)
-              ) {
-                io.done(summary(e));
-                return;
-              }
-              if (e.revision !== before.revision || !same(e, before))
+                same(e.envelope, before.envelope);
+              if (
+                !duplicate &&
+                (e.revision !== before.revision || !same(e, before))
+              )
                 throw new BrowserPeerCheckError("CONFLICT");
-              e.state = "verified";
-              e.responseHash = hash;
-              e.verifiedAt = this.now();
-              this.save(e, io);
-              this.bump(m!, io);
-              io.done(summary(e));
+              consumeBrowserIncomingReplay(
+                io,
+                identity.scope,
+                replay,
+                { store: "peer_checks", key: [this.scope, e.id] },
+                duplicate,
+                () => {
+                  if (!duplicate) {
+                    e.state = "verified";
+                    e.responseHash = hash;
+                    e.verifiedAt = this.now();
+                    this.save(e, io);
+                    this.bump(m!, io);
+                  }
+                  io.done(summary(e));
+                },
+              );
             },
           );
         },

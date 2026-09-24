@@ -19,6 +19,11 @@ import {
 } from "./private-task-receipts.js";
 
 import { privateTaskPayloadSchema } from "./private-task-contracts.js";
+import { privateReplayIdentity, PrivateReplayError } from "./private-replay.js";
+import {
+  consumePrivateIncomingReplay,
+  PrivateIncomingReplayError,
+} from "./private-incoming-replay.js";
 export { privateTaskPayloadSchema } from "./private-task-contracts.js";
 const permissionSchema = z.strictObject({
   binding: privateBindingSchema,
@@ -120,6 +125,7 @@ export class PrivateTaskReceiver {
       const payload = privateTaskPayloadSchema.parse(
         JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext)),
       );
+      const replay = await privateReplayIdentity(envelope, payload.type);
       const hash = (kind: string, value: unknown) =>
         this.vault.fingerprint(["private-task:v1", this.owner, kind, value]);
       // Operation/message IDs cannot be reused across peer or key rotation for
@@ -137,15 +143,18 @@ export class PrivateTaskReceiver {
         envelopeHash = hash("envelope", envelope);
       return this.store.db
         .transaction(() => {
-          const current = this.permission(h.senderId);
-          if (
-            JSON.stringify(current.value) !== JSON.stringify(p) ||
-            current.key.privateKey !== permission.key.privateKey ||
-            current.key.publicKey !== permission.key.publicKey ||
-            !this.peers.validate(peer.proof) ||
-            h.expiresAt <= this.now()
-          )
-            throw new PrivateTaskError("DENIED");
+          const checkCurrent = () => {
+            const current = this.permission(h.senderId);
+            if (
+              JSON.stringify(current.value) !== JSON.stringify(p) ||
+              current.key.privateKey !== permission.key.privateKey ||
+              current.key.publicKey !== permission.key.publicKey ||
+              !this.peers.validate(peer.proof) ||
+              h.expiresAt <= this.now()
+            )
+              throw new PrivateTaskError("DENIED");
+          };
+          checkCurrent();
           const previous = this.store.db
             .prepare(
               "SELECT operation_hash,message_hash,sequence_hash,envelope_hash,payload FROM private_task_receipts WHERE user_id=? AND tenant_id=? AND (operation_hash=? OR message_hash=? OR sequence_hash=?)",
@@ -168,8 +177,9 @@ export class PrivateTaskReceiver {
               row.envelope_hash !== envelopeHash
             )
               throw new PrivateTaskError("CONFLICT");
+            let receipt: PrivateTaskReceipt;
             try {
-              return privateTaskReceiptSchema.parse(
+              receipt = privateTaskReceiptSchema.parse(
                 this.vault.open(
                   row.payload,
                   privateReceiptPurpose(this.owner, operationHash),
@@ -178,6 +188,18 @@ export class PrivateTaskReceiver {
             } catch {
               throw new PrivateTaskError("STORAGE_UNAVAILABLE");
             }
+            consumePrivateIncomingReplay(
+              this.store,
+              this.vault,
+              this.owner,
+              replay,
+              {
+                collection: "private_task_receipts",
+                id: receipt.id,
+              },
+            );
+            checkCurrent();
+            return receipt;
           }
           const count = this.store.db
             .prepare(
@@ -226,11 +248,27 @@ export class PrivateTaskReceiver {
                 privateReceiptPurpose(this.owner, operationHash),
               ),
             );
+          consumePrivateIncomingReplay(
+            this.store,
+            this.vault,
+            this.owner,
+            replay,
+            {
+              collection: "private_task_receipts",
+              id: receipt.id,
+            },
+          );
+          checkCurrent();
           return receipt;
         })
         .immediate();
     } catch (error) {
       if (error instanceof PrivateTaskError) throw error;
+      if (
+        error instanceof PrivateReplayError ||
+        error instanceof PrivateIncomingReplayError
+      )
+        throw new PrivateTaskError(error.code);
       throw new PrivateTaskError("DENIED");
     } finally {
       plaintext?.fill(0);

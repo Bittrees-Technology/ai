@@ -1,4 +1,9 @@
 import { reservePrivateSequence } from "./private-send-sequence.js";
+import { privateReplayIdentity, PrivateReplayError } from "./private-replay.js";
+import {
+  consumePrivateIncomingReplay,
+  PrivateIncomingReplayError,
+} from "./private-incoming-replay.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Owner, Store } from "../storage/store.js";
@@ -210,6 +215,11 @@ export class PrivateTaskOutbox {
       return await work();
     } catch (e) {
       if (e instanceof PrivateOutboxError) throw e;
+      if (
+        e instanceof PrivateReplayError ||
+        e instanceof PrivateIncomingReplayError
+      )
+        throw new PrivateOutboxError(e.code);
       throw new PrivateOutboxError("DENIED");
     } finally {
       this.inflight--;
@@ -487,25 +497,51 @@ export class PrivateTaskOutbox {
         receipt.acceptedAt < original.issuedAt - 30000
       )
         throw new PrivateOutboxError("DENIED");
+      const replay = await privateReplayIdentity(envelope, "task.accepted");
       return this.store.db
         .transaction(() => {
-          const entry = this.get(row.id),
-            current = this.check(entry);
-          if (
-            current.key.privateKey !== p.key.privateKey ||
-            current.key.publicKey !== p.key.publicKey ||
-            h.expiresAt <= this.now()
-          )
-            throw new PrivateOutboxError("DENIED");
+          const entry = this.get(row.id);
+          const current = () => {
+            const proof = this.check(entry);
+            if (
+              proof.key.privateKey !== p.key.privateKey ||
+              proof.key.publicKey !== p.key.publicKey ||
+              h.expiresAt <= this.now()
+            )
+              throw new PrivateOutboxError("DENIED");
+          };
+          current();
           if (entry.value.receipt) {
             if (JSON.stringify(entry.value.receipt) !== JSON.stringify(receipt))
               throw new PrivateOutboxError("CONFLICT");
+            consumePrivateIncomingReplay(
+              this.store,
+              this.vault,
+              this.owner,
+              replay,
+              {
+                collection: "private_task_outbox",
+                id: entry.id,
+              },
+            );
+            current();
             return entry;
           }
+          consumePrivateIncomingReplay(
+            this.store,
+            this.vault,
+            this.owner,
+            replay,
+            {
+              collection: "private_task_outbox",
+              id: entry.id,
+            },
+          );
           // A late authenticated receipt is evidence even after local retries were stopped.
           entry.value.receipt = receipt;
           entry.value.state = "accepted";
           this.save(entry);
+          current();
           return entry;
         })
         .immediate();

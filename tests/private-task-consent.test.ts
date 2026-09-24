@@ -178,7 +178,8 @@ async function fixture() {
       confirmed: true,
       acknowledged: true,
     });
-  let sequence = 0;
+  // The synthetic sender already used this channel for its device-check reply.
+  let sequence = response.header.sequence;
   const envelope = async () => {
     const local = await keys.resolve();
     const header = {
@@ -646,7 +647,7 @@ test("Schema17 migration preserves tasks without granting consent; authenticated
     );
     f.store.db.exec("DROP TABLE private_task_consents; PRAGMA user_version=17");
     migrated = new Store(f.path, f.vault, f.clock);
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 27);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 30);
     assert.equal(migrated.get(owner, task.id).input.prompt, "preserve");
     assert.deepEqual(migrated.exportPrivateTaskConsent(owner), {
       revision: 0,

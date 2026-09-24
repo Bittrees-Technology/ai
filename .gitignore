@@ -34,3 +34,13 @@ tests/browser/fixture/public/legacy-composition/
 
 .legacy-browser-delivery/
 tests/browser/fixture/public/legacy-delivery/
+
+.legacy-browser-conversation/
+
+tests/browser/fixture/public/legacy-conversation/
+
+.legacy-browser-replay/
+tests/browser/fixture/public/legacy-replay/
+
+.legacy-browser-offer-replay/
+tests/browser/fixture/public/legacy-offer-replay/

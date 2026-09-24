@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 7;
+export const browserKeyDatabaseVersion = 10;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -140,7 +140,23 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         });
         preparations.createIndex("scope", "scope");
       }
+      if (event.oldVersion < 8)
+        r.result.createObjectStore("conversation_consents", {
+          keyPath: "scope",
+        });
+      if (event.oldVersion < 9) {
+        const replay = r.result.createObjectStore("incoming_replay", {
+          keyPath: ["scope", "operation"],
+        });
+        replay.createIndex("scope", "scope");
+        for (const field of ["operation", "message", "sequence"])
+          replay.createIndex(field, ["scope", field], { unique: true });
+      }
     };
+    // Version10 fences older writers before offer replay metadata enters grants.
+    // Version9 fences older writers and adds a shared hash-only incoming ledger.
+    // Existing historical records are not evidence of complete replay coverage.
+    // Version8 fences older writers and adds empty, separate conversation consent.
     // Version7 fences older writers before retained transport observations are added.
     // Existing keys, consent, ciphertext and preparation records remain unchanged.
     r.onsuccess = () => {

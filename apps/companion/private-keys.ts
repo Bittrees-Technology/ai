@@ -1,3 +1,5 @@
+import { CompanionConversationOffers } from "./private-conversation-offers.js";
+import { CompanionConversationPermissions } from "./private-conversation-permissions.js";
 import {
   privateRelaySelectionSchema,
   relayQueueReview,
@@ -53,6 +55,8 @@ export class CompanionPrivateKeys {
   private peers: CompanionPrivatePeers;
   private peerChecks: CompanionPeerChecks;
   private permissions: CompanionPrivateTaskPermissions;
+  private conversations: CompanionConversationPermissions;
+  private conversationOffers: CompanionConversationOffers;
   private tasks: CompanionPrivateTasks;
   private review?: Review;
   private running = false;
@@ -86,6 +90,24 @@ export class CompanionPrivateKeys {
       now,
     );
     this.permissions = new CompanionPrivateTaskPermissions(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled,
+      now,
+    );
+    this.conversations = new CompanionConversationPermissions(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled,
+      now,
+    );
+    this.conversationOffers = new CompanionConversationOffers(
       store,
       vault,
       this.owner,
@@ -129,6 +151,8 @@ export class CompanionPrivateKeys {
     this.review = undefined;
     this.peers.invalidate();
     this.permissions.invalidate();
+    this.conversations.invalidate();
+    this.conversationOffers.invalidate();
     this.remote?.invalidatePrivateIdentity();
   }
   peerStatus() {
@@ -138,6 +162,8 @@ export class CompanionPrivateKeys {
     return this.exclusive(async () => {
       this.review = undefined;
       this.permissions.invalidate();
+      this.conversations.invalidate();
+      this.conversationOffers.invalidate();
       return this.peers.invitation(raw);
     });
   }
@@ -145,6 +171,8 @@ export class CompanionPrivateKeys {
     return this.exclusive(async () => {
       this.review = undefined;
       this.permissions.invalidate();
+      this.conversations.invalidate();
+      this.conversationOffers.invalidate();
       return this.peers.prepare(raw);
     });
   }
@@ -346,11 +374,43 @@ export class CompanionPrivateKeys {
     return this.exclusive(async () => {
       this.review = undefined;
       this.peers.invalidate();
+      this.conversations.invalidate();
+      this.conversationOffers.invalidate();
       return this.permissions.prepare(raw);
     });
   }
   confirmPermission(raw: unknown) {
     return this.exclusive(async () => this.permissions.confirm(raw));
+  }
+  conversationPermissionStatus() {
+    return this.conversations.status();
+  }
+  prepareConversationPermission(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      this.peers.invalidate();
+      this.permissions.invalidate();
+      this.conversationOffers.invalidate();
+      return this.conversations.prepare(raw);
+    });
+  }
+  confirmConversationPermission(raw: unknown) {
+    return this.exclusive(async () => this.conversations.confirm(raw));
+  }
+  conversationOfferStatus() {
+    return this.conversationOffers.status();
+  }
+  prepareConversationOffer(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      this.peers.invalidate();
+      this.permissions.invalidate();
+      this.conversations.invalidate();
+      return this.conversationOffers.prepare(raw);
+    });
+  }
+  confirmConversationOffer(raw: unknown) {
+    return this.exclusive(async () => this.conversationOffers.confirm(raw));
   }
   private async exclusive<T>(fn: () => Promise<T>) {
     if (this.running) throw new PrivateKeyLifecycleError("BUSY");
@@ -393,6 +453,8 @@ export class CompanionPrivateKeys {
       this.review = undefined;
       this.peers.invalidate();
       this.permissions.invalidate();
+      this.conversations.invalidate();
+      this.conversationOffers.invalidate();
       const parsed = request.safeParse(raw);
       if (!parsed.success) throw new PrivateKeyLifecycleError("DENIED");
       const input = parsed.data;

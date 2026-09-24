@@ -1,3 +1,5 @@
+import { ConversationOfferError } from "../../modules/remote/private-conversation-offers.js";
+import { PrivateConversationConsentError } from "../../modules/remote/private-conversation-consent.js";
 import {
   CompanionRelayError,
   type CompanionPrivateRelay,
@@ -301,6 +303,46 @@ export function localApi({
   app.post("/v1/private-peer-checks/stop", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.stopPeerCheck(req.body));
+  });
+  app.get("/v1/private-conversation-offers", (_req, res) => {
+    res.json(
+      privateKeys?.conversationOfferStatus() ?? {
+        available: false,
+        canSetup: false,
+        offers: [],
+      },
+    );
+  });
+  app.post("/v1/private-conversation-offers/review", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareConversationOffer(req.body));
+  });
+  app.post("/v1/private-conversation-offers/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmConversationOffer(req.body));
+  });
+  app.get("/v1/private-conversation-permissions", (_req, res) => {
+    res.json(
+      privateKeys?.conversationPermissionStatus() ?? {
+        available: false,
+        canSetup: false,
+        revision: 0,
+        keyRevision: 0,
+        peerRevision: 0,
+        needsFreshPairing: false,
+        hasSelectedKey: false,
+        peers: [],
+        grants: [],
+      },
+    );
+  });
+  app.post("/v1/private-conversation-permissions/review", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareConversationPermission(req.body));
+  });
+  app.post("/v1/private-conversation-permissions/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmConversationPermission(req.body));
   });
   app.get("/v1/private-task-permissions", (_req, res) => {
     res.json(
@@ -1414,6 +1456,9 @@ export function localApi({
       remoteControls: store.exportRemoteControls(owner),
       privateRelayCredentials: store.exportPrivateRelayCredentials(owner),
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
+      privateConversationConsent: store.exportPrivateConversationConsent(owner),
+      privateConversationOffers: store.exportPrivateConversationOffers(owner),
+      privateIncomingReplay: store.exportPrivateIncomingReplay(owner),
       privatePeerChecks: store.exportPrivatePeerChecks(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
       privateEndpointKeys: store.exportPrivateEndpointKeys(owner),
@@ -1515,6 +1560,8 @@ export function localApi({
             err instanceof PrivateTaskError ||
             err instanceof PrivateResponseError ||
             err instanceof PrivateConsentError ||
+            err instanceof PrivateConversationConsentError ||
+            err instanceof ConversationOfferError ||
             err instanceof PrivateKeyError ||
             err instanceof PrivateKeyLifecycleError ||
             err instanceof RemoteClientError ||
@@ -1533,7 +1580,8 @@ export function localApi({
         : code === "MODEL_UNAVAILABLE" ||
             ((err instanceof CompanionRelayError ||
               err instanceof PrivateKeyError ||
-              err instanceof PrivateKeyLifecycleError) &&
+              err instanceof PrivateKeyLifecycleError ||
+              err instanceof ConversationOfferError) &&
               code === "STORAGE_UNAVAILABLE")
           ? 503
           : code === "NOT_FOUND"

@@ -1,3 +1,4 @@
+import { BrowserConversationConsent } from "./browser-conversation-consent.js";
 import {
   privateRelaySelectionSchema,
   privateRelayQueueQuerySchema,
@@ -46,6 +47,7 @@ export class BrowserKeyHost {
   private peers!: BrowserPeerEnrollment;
   private checks?: BrowserPeerChecks;
   private consents?: BrowserTaskConsent;
+  private conversations?: BrowserConversationConsent;
   private compositions?: BrowserTaskComposition;
   private taskHistory?: BrowserTaskHistory;
   private peerKey: BrowserKeyProof | null = null;
@@ -169,6 +171,7 @@ export class BrowserKeyHost {
     this.peers?.invalidate();
     this.checks?.invalidate();
     this.consents?.invalidate();
+    this.conversations?.invalidate();
     this.compositions?.invalidate();
     this.taskHistory?.invalidate();
   }
@@ -188,6 +191,7 @@ export class BrowserKeyHost {
     this.peers?.close();
     this.checks?.close();
     this.consents?.close();
+    this.conversations?.close();
     this.compositions?.close();
     this.taskHistory?.close();
   }
@@ -223,6 +227,7 @@ export class BrowserKeyHost {
           this.peers.invalidate();
           this.checks?.invalidate();
           this.consents?.invalidate();
+          this.conversations?.invalidate();
           this.compositions?.invalidate();
           this.taskHistory?.invalidate();
           this.freshUntil = 0;
@@ -396,6 +401,26 @@ export class BrowserKeyHost {
     try {
       this.check(g);
       this.consents = created;
+      return created;
+    } catch (e) {
+      created.close();
+      throw e;
+    }
+  }
+  private async conversationStore() {
+    if (this.conversations) return this.conversations;
+    const g = this.generation;
+    const created = await BrowserConversationConsent.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      this.keys,
+      this.peers,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(g);
+      this.conversations = created;
       return created;
     } catch (e) {
       created.close();
@@ -620,6 +645,31 @@ export class BrowserKeyHost {
       this.operation(async () => (await this.consentStore()).clear(raw)),
     reset: (raw: unknown) =>
       this.verified(async () => (await this.consentStore()).reset(raw)),
+    invalidate: () => this.cancelKeys(),
+  };
+  /** Independent conversation consent. Inspection authenticates an offer without
+   * granting access; no keys, content-authority handle or sender leaves this API. */
+  readonly conversationAPI = {
+    status: () =>
+      this.operation(async () => (await this.conversationStore()).status()),
+    inspectOffer: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationStore()).inspectOffer(raw),
+      ),
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationStore()).prepare(raw),
+      ),
+    approve: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationStore()).approve(raw),
+      ),
+    revoke: (raw: unknown) =>
+      this.operation(async () => (await this.conversationStore()).revoke(raw)),
+    clear: (raw: unknown) =>
+      this.operation(async () => (await this.conversationStore()).clear(raw)),
+    reset: (raw: unknown) =>
+      this.verified(async () => (await this.conversationStore()).reset(raw)),
     invalidate: () => this.cancelKeys(),
   };
   /** Explicit manual device checks only. Public callers receive metadata and the

@@ -838,7 +838,7 @@ test("Browser expiry, connection closure and database version changes fail witho
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 8);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 11);
           r.onerror = () => reject(r.error);
           r.onblocked = () => reject(Error("blocked"));
           r.onsuccess = () => {
@@ -945,12 +945,12 @@ test("Authenticated browser acceptance survives reload without plaintext receipt
     expect(accepted.receiptEnvelope).toEqual(response);
     const alternate = await f.response(receipt);
     expect(alternate).not.toEqual(response);
-    expect(
-      await page.evaluate(
+    await expect(
+      page.evaluate(
         (wire) => window.privateStorageTest.acceptReceipt(wire),
         alternate,
       ),
-    ).toEqual(accepted);
+    ).rejects.toThrow("CONFLICT");
     await expect(
       page.evaluate((id) => window.privateStorageTest.delivery(id), entry.id),
     ).rejects.toThrow("DENIED");
@@ -1164,10 +1164,7 @@ test("Earlier browser rows remain readable while expired, deleted and other-acco
     await page.evaluate(async (id) => {
       window.privateStorageTest.close();
       await new Promise<void>((resolve, reject) => {
-        const request = indexedDB.open(
-          "org.bittrees.ai.browser-endpoint-keys",
-          7,
-        );
+        const request = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const db = request.result,
@@ -1426,7 +1423,7 @@ test("Results arriving before receipts survive reload as ciphertext and open onl
   }
 });
 
-test("Receipt-first and concurrent or resealed result delivery deduplicate while conflicting terminal evidence cannot replace history", async ({
+test("Receipt-first and concurrent original results deduplicate while resealed or conflicting evidence cannot replace history", async ({
   page,
 }) => {
   const f = await fixture(page);
@@ -1448,12 +1445,12 @@ test("Receipt-first and concurrent or resealed result delivery deduplicate while
     ]);
     expect(values[0]).toEqual(values[1]);
     const resealed = await f.sealResponse(receipt, result.value.content);
-    expect(
-      await page.evaluate(
+    await expect(
+      page.evaluate(
         (wire) => window.privateStorageTest.acceptResult(wire),
         resealed,
       ),
-    ).toEqual(values[0]);
+    ).rejects.toThrow("CONFLICT");
     const content = result.value.content;
     if (content.type !== "task.result") throw Error("Expected result");
     for (const payload of [
@@ -1749,7 +1746,7 @@ test("Authenticated malformed, wrong-task, wrong-key and impossible-time results
     };
     await page.evaluate(
       async ({ id, envelope }) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
         await new Promise<void>((resolve, reject) => {
           r.onerror = () => reject(r.error);
           r.onsuccess = () => {

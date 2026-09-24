@@ -1,3 +1,8 @@
+import {
+  consumeBrowserIncomingReplay,
+  browserIncomingReplayStore,
+} from "./browser-incoming-replay.js";
+import { privateReplayIdentity } from "./private-replay.js";
 import type { VerifiedBrowserDeviceScope } from "./browser-device-contracts.js";
 import {
   prepareBrowserTask,
@@ -57,7 +62,13 @@ export type BrowserReceiptAuthority = {
 };
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 type Identity = { binding: PrivateBinding; scope: string; deviceHash: string };
-const stores = ["meta", "entries", "channels", "task_preparations"];
+const stores = [
+  "meta",
+  "entries",
+  "channels",
+  "task_preparations",
+  browserIncomingReplayStore,
+];
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 function wire(raw: unknown): PrivateEnvelope {
@@ -846,7 +857,8 @@ export class BrowserPrivateOutbox {
         identity = await this.identity(),
         before = await this.responseEntry(identity, h.operationId),
         decoded = await this.decodeResponse(before, envelope, mode, this.now),
-        result = decoded.result;
+        result = decoded.result,
+        replay = await privateReplayIdentity(envelope, decoded.payload.type);
       const entry = await this.tx<Entry>(identity, "readwrite", (io) => {
         io.gate(() => {
           this.currentKeys(before.context, decoded.keys, result);
@@ -869,25 +881,39 @@ export class BrowserPrivateOutbox {
               entry.resultHash !== decoded.resultHash
             )
               throw new BrowserOutboxError("CONFLICT");
-            if (result ? !!entry.resultEnvelope : !!entry.receiptEnvelope) {
-              io.done(entry);
-              return;
-            }
-            if (entry.revision >= Number.MAX_SAFE_INTEGER)
-              throw new BrowserOutboxError("CAPACITY");
-            entry.state = "accepted";
-            entry.receiptHash = decoded.receiptHash;
-            if (result) {
-              entry.resultEnvelope = envelope;
-              entry.resultHash = decoded.resultHash;
-              entry.resultReceivedAt = this.now();
-            } else entry.receiptEnvelope = envelope;
-            entry.revision++;
-            this.bump(meta);
-            entrySchema.parse(entry);
-            io.store("entries").put(entry);
-            io.store("meta").put(meta);
-            io.done(entry);
+            const retained = result
+              ? entry.resultEnvelope
+              : entry.receiptEnvelope;
+            if (retained && !same(retained, envelope))
+              throw new BrowserOutboxError("CONFLICT");
+            consumeBrowserIncomingReplay(
+              io,
+              identity.scope,
+              replay,
+              { store: "entries", key: [entry.id] },
+              !!retained,
+              () => {
+                if (retained) {
+                  io.done(entry);
+                  return;
+                }
+                if (entry.revision >= Number.MAX_SAFE_INTEGER)
+                  throw new BrowserOutboxError("CAPACITY");
+                entry.state = "accepted";
+                entry.receiptHash = decoded.receiptHash;
+                if (result) {
+                  entry.resultEnvelope = envelope;
+                  entry.resultHash = decoded.resultHash;
+                  entry.resultReceivedAt = this.now();
+                } else entry.receiptEnvelope = envelope;
+                entry.revision++;
+                this.bump(meta);
+                entrySchema.parse(entry);
+                io.store("entries").put(entry);
+                io.store("meta").put(meta);
+                io.done(entry);
+              },
+            );
           });
         });
       });
@@ -1037,7 +1063,8 @@ export class BrowserPrivateOutbox {
             );
           };
           // Counters are shared with possession checks; keep the minimal replay
-          // fence when deleting task ciphertext. A new identity is still required.
+          // fence, including incoming hashes, when deleting task ciphertext.
+          // A new identity is still required.
           remove("entries", () =>
             remove("task_preparations", () => {
               io.store("meta").put(meta);

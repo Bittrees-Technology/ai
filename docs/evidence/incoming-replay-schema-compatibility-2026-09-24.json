@@ -1,0 +1,22 @@
+{
+  "verifiedAt": "2026-09-24T13:19:52.598Z",
+  "from": 29,
+  "to": 30,
+  "legacyStoreSha256": "587c3a4d12f206285a9d71b1d43e1c7d41d5438502cdad1772388879c4e40f73",
+  "checks": [
+    "actual legacy task, receipt, device checks and task consent preserved",
+    "new shared ledger starts empty without retroactive historical coverage claims",
+    "actual legacy ciphertext retry adds one shared replay record and preserves its original receipt without duplicating work",
+    "actual legacy challenge, response and acceptance retries retain original check/outbox outcomes while adding one shared record each",
+    "wrong-key upgrade leaves schema29 usable",
+    "schema29 writer refuses schema30",
+    "encrypted backup retains replay denial and locks restored authority",
+    "original encrypted backup restores with actual schema29 engine"
+  ],
+  "boundaries": [
+    "Synthetic temporary stores and memory-backed keys only",
+    "All current Mac receivers integrated; browser shared ledger remains unfinished",
+    "Historical peer-check and outbox receipt incoming IDs were not retained; reconciliation or a fresh-key epoch boundary is required before conversation activation",
+    "No installed app, personal keys/content, model/runtime, live service or Acer changes"
+  ]
+}

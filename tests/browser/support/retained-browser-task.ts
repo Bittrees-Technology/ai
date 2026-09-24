@@ -10,7 +10,13 @@ export const payload = {
 const confirmed = (id: string) => ({ id, confirmed: true });
 export async function init(
   page: Page,
-  previous: boolean | "task" | "delivery" = false,
+  previous:
+    | boolean
+    | "task"
+    | "delivery"
+    | "conversation"
+    | "replay"
+    | "offer-replay" = false,
 ) {
   const f = {
     owner: "synthetic:" + randomUUID(),
@@ -29,7 +35,13 @@ export async function init(
 export async function reopen(
   page: Page,
   f: { owner: string; binding: any; now: number },
-  previous: boolean | "task" | "delivery" = false,
+  previous:
+    | boolean
+    | "task"
+    | "delivery"
+    | "conversation"
+    | "replay"
+    | "offer-replay" = false,
 ) {
   await page.goto("/?browser-peers");
   await page.waitForFunction(() => !!window.browserPeersTest);
@@ -41,7 +53,13 @@ export async function reopen(
 }
 export async function paired(
   page: Page,
-  previous: boolean | "task" | "delivery" = false,
+  previous:
+    | boolean
+    | "task"
+    | "delivery"
+    | "conversation"
+    | "replay"
+    | "offer-replay" = false,
 ) {
   const f = await init(page, previous),
     mac = await retainedMac(f.binding, f.now);
@@ -173,7 +191,13 @@ export async function paired(
 }
 export async function ready(
   page: Page,
-  previous: boolean | "task" | "delivery" = false,
+  previous:
+    | boolean
+    | "task"
+    | "delivery"
+    | "conversation"
+    | "replay"
+    | "offer-replay" = false,
 ) {
   const f = await paired(page, previous);
   try {
