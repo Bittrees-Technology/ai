@@ -19,6 +19,18 @@ jobs:
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/
       - run: npm run build
+      - name: Check historical Mac keys through authenticated conversation API
+        run: |
+          git fetch --no-tags --depth=1 origin d3ee4a9e5f82533509fde131e2e284906ed2d9fe
+          node scripts/prepare-legacy-mac-key-boundary.mjs
+          node scripts/check-mac-historical-content.mjs
+      - name: Retain historical Mac conversation acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-historical-content-acceptance
+          path: test-results/mac-historical-content.json
+          if-no-files-found: error
+          retention-days: 7
 
   autonote-integration:
     runs-on: ubuntu-latest
