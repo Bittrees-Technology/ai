@@ -470,3 +470,333 @@ test("lost final server verification leaves inspectable committed consent and re
     p.mac.close();
   }
 });
+
+const composedPayload = {
+  version: 1,
+  type: "task.submit",
+  kind: "query",
+  prompt: "SYNTHETIC_HOST_DURABLE_TASK",
+};
+async function taskHostReady(page: Page) {
+  const p = await consentReview(page);
+  try {
+    const check = await p.mac.checks.begin({
+      peerId: p.registration.binding.deviceId,
+      expectedKeyRevision: p.mac.keys.list().revision,
+      expectedPeerRevision: p.mac.peers.list().revision,
+      confirmed: true,
+    });
+    const wire = await p.mac.checks.delivery({ id: check.id, confirmed: true });
+    const response = await page.evaluate(
+      (envelope) =>
+        window.browserPeersTest.checkRespond({ envelope, confirmed: true }),
+      wire,
+    );
+    const reply = await page.evaluate(
+      (id) => window.browserPeersTest.checkEnvelope({ id, confirmed: true }),
+      response.id,
+    );
+    await p.mac.checks.complete({ envelope: reply, confirmed: true });
+    await p.mac.allowTasks(p.registration.binding.deviceId, p.proof.keyEpoch);
+    const r = await page.evaluate(
+      (choices) =>
+        window.browserPeersTest.consentPrepare({
+          expectedRevision: 0,
+          choices,
+        }),
+      p.review.choices,
+    );
+    await approveConsent(page, r);
+    return {
+      ...p,
+      route: { peerId: p.pin.peerId, peerKeyEpoch: p.pin.keyEpoch },
+    };
+  } catch (e) {
+    p.mac.close();
+    throw e;
+  }
+}
+const initializeTasks = (
+  page: Page,
+  p: Awaited<ReturnType<typeof taskHostReady>>,
+) =>
+  page.evaluate((raw) => window.browserPeersTest.composeInitialize(raw), {
+    ...p.route,
+    expectedRevision: 0,
+    confirmed: true,
+  });
+const reviewTask = (page: Page, p: Awaited<ReturnType<typeof taskHostReady>>) =>
+  page.evaluate((raw) => window.browserPeersTest.composePrepare(raw), {
+    ...p.route,
+    payload: composedPayload,
+  });
+const confirmTask = (page: Page, reviewId: string) =>
+  page.evaluate(
+    (reviewId) =>
+      window.browserPeersTest.composeConfirm({
+        reviewId,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    reviewId,
+  );
+
+test("verified task host requires explicit initialization and carries reviewed input through the actual Mac worker and result", async ({
+  page,
+}) => {
+  const p = await taskHostReady(page);
+  try {
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toBeNull();
+    await initializeTasks(page, p);
+    const review = await reviewTask(page, p),
+      saved = await confirmTask(page, review.reviewId);
+    expect(saved.id).toBe(review.operationId);
+    expect(JSON.stringify(saved)).not.toMatch(
+      /privateKey|preparationKey|SYNTHETIC_HOST_DURABLE_TASK/,
+    );
+    const wire = await page.evaluate(
+      (raw) => window.browserPeersTest.composeEnvelope(raw),
+      {
+        ...p.route,
+        id: saved.id,
+        expectedRevision: saved.revision,
+        confirmed: true,
+      },
+    );
+    const result = await p.mac.executeTask(wire);
+    expect(result.task!.input.prompt).toBe(composedPayload.prompt);
+    await page.evaluate((raw) => window.browserPeersTest.composeReceive(raw), {
+      ...p.route,
+      kind: "receipt",
+      envelope: result.acceptance,
+      confirmed: true,
+    });
+    const received = await page.evaluate(
+      (raw) => window.browserPeersTest.composeReceive(raw),
+      { ...p.route, kind: "result", envelope: result.result, confirmed: true },
+    );
+    const output = await page.evaluate(
+      (raw) => window.browserPeersTest.composeReadResult(raw),
+      {
+        ...p.route,
+        id: saved.id,
+        expectedRevision: received.revision,
+        confirmed: true,
+      },
+    );
+    expect(output.task.output).toBe(
+      "Synthetic result from independently consented Mac task.",
+    );
+    await expect(confirmTask(page, review.reviewId)).rejects.toThrow(
+      "CONFLICT",
+    );
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+        .entries,
+    ).toHaveLength(1);
+  } finally {
+    p.mac.close();
+  }
+});
+
+test("lost final task verification reconciles one saved operation after reload without replaying confirmation", async ({
+  page,
+  identityServer,
+}) => {
+  const p = await taskHostReady(page);
+  try {
+    await initializeTasks(page, p);
+    const review = await reviewTask(page, p);
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(confirmTask(page, review.reviewId)).rejects.toThrow();
+    const status = await page.evaluate(() =>
+      window.browserPeersTest.historyStatus(),
+    );
+    expect(status.entries).toHaveLength(1);
+    expect(status.entries[0]!.id).toBe(review.operationId);
+    expect(status.entries[0]!.state).toBe("pending");
+    const before = await page.evaluate(
+      (r) =>
+        window.browserPeersTest.historyExport({
+          expectedRevision: r,
+          confirmed: true,
+        }),
+      status.meta!.revision,
+    );
+    await open(page);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const recovered = await page.evaluate(
+      (raw) => window.browserPeersTest.composeResume(raw),
+      {
+        ...p.route,
+        id: review.operationId,
+        expectedRevision: 1,
+        confirmed: true,
+      },
+    );
+    expect(recovered.envelope).toEqual(before.entries[0]!.envelope);
+    await expect(confirmTask(page, review.reviewId)).rejects.toThrow(
+      "CONFLICT",
+    );
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toEqual(status.meta);
+  } finally {
+    p.mac.close();
+  }
+});
+
+test("server revocation after task review denies confirmation before reservation", async ({
+  page,
+  context,
+}) => {
+  const p = await taskHostReady(page),
+    other = await context.newPage();
+  try {
+    await initializeTasks(page, p);
+    const review = await reviewTask(page, p);
+    await open(other);
+    await other.evaluate(() => window.browserPeersTest.resume());
+    await other.evaluate(
+      (b) =>
+        window.browserPeersTest.registerRevoke({
+          deviceId: b.deviceId,
+          credentialEpoch: b.credentialEpoch,
+          confirmed: true,
+        }),
+      p.registration.binding,
+    );
+    await expect(confirmTask(page, review.reviewId)).rejects.toThrow();
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+        .entries,
+    ).toEqual([]);
+  } finally {
+    await other.close();
+    p.mac.close();
+  }
+});
+
+test("offline host can export its own reviewed input, stop retries and delete history after permission revocation", async ({
+  page,
+  identityServer,
+}) => {
+  const p = await taskHostReady(page);
+  try {
+    await initializeTasks(page, p);
+    const saved = await confirmTask(page, (await reviewTask(page, p)).reviewId);
+    const consent = await page.evaluate(() =>
+      window.browserPeersTest.consentStatus(),
+    );
+    await page.evaluate((raw) => window.browserPeersTest.consentRevoke(raw), {
+      peerId: p.pin.peerId,
+      expectedRevision: consent.revision,
+      confirmed: true,
+    });
+    identityServer.offline(true);
+    const status = await page.evaluate(() =>
+      window.browserPeersTest.historyStatus(),
+    );
+    const exported = await page.evaluate(
+      (r) =>
+        window.browserPeersTest.historyExport({
+          expectedRevision: r,
+          confirmed: true,
+        }),
+      status.meta!.revision,
+    );
+    expect(exported.entries[0]!.input).toEqual(composedPayload);
+    expect(JSON.stringify(exported)).not.toMatch(
+      /preparationKey|privateKey|"key":/,
+    );
+    await expect(
+      page.evaluate((raw) => window.browserPeersTest.composeResume(raw), {
+        ...p.route,
+        id: saved.id,
+        expectedRevision: saved.revision,
+        confirmed: true,
+      }),
+    ).rejects.toThrow();
+    await page.evaluate((raw) => window.browserPeersTest.historyStop(raw), {
+      id: saved.id,
+      expectedRevision: saved.revision,
+      confirmed: true,
+    });
+    const stopped = await page.evaluate(() =>
+      window.browserPeersTest.historyStatus(),
+    );
+    await page.evaluate(
+      (r) =>
+        window.browserPeersTest.historyClear({
+          expectedRevision: r,
+          confirmed: true,
+        }),
+      stopped.meta!.revision,
+    );
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+        .entries,
+    ).toEqual([]);
+    await page.evaluate(() => window.browserPeersTest.scopeChange());
+    await expect(
+      page.evaluate(() => window.browserPeersTest.historyStatus()),
+    ).rejects.toThrow("DENIED");
+  } finally {
+    identityServer.offline(false);
+    p.mac.close();
+  }
+});
+
+test("scope loss during held task verification cannot restore a consumed content review", async ({
+  page,
+  identityServer,
+}) => {
+  const p = await taskHostReady(page);
+  try {
+    await initializeTasks(page, p);
+    const review = await reviewTask(page, p);
+    identityServer.hold();
+    const pending = confirmTask(page, review.reviewId).then(
+      (value) => ({ value }),
+      (e) => ({ error: String(e) }),
+    );
+    await expect.poll(() => identityServer.held()).toBe(true);
+    await page.evaluate(() => window.browserPeersTest.scopeChange());
+    identityServer.release();
+    expect(await pending).toMatchObject({
+      error: expect.stringMatching(/DENIED/),
+    });
+    await open(page);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+        .entries,
+    ).toEqual([]);
+    await expect(confirmTask(page, review.reviewId)).rejects.toThrow(
+      "CONFLICT",
+    );
+  } finally {
+    identityServer.release();
+    p.mac.close();
+  }
+});
+
+test("task review before initialization fails closed and cannot reuse fresh registration after that failure", async ({
+  page,
+}) => {
+  const p = await taskHostReady(page);
+  try {
+    await expect(reviewTask(page, p)).rejects.toThrow("SETUP_REQUIRED");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toBeNull();
+    await expect(initializeTasks(page, p)).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toBeNull();
+  } finally {
+    p.mac.close();
+  }
+});

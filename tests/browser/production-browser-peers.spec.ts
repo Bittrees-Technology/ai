@@ -49,7 +49,7 @@ async function saved(p: Page) {
 async function records(p: Page) {
   return p.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 5);
+      const req = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });

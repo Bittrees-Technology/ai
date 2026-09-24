@@ -1,3 +1,9 @@
+import {
+  prepareBrowserTask,
+  readBrowserTaskPreparation,
+  openBrowserTaskPreparation,
+  type BrowserTaskPreparation,
+} from "./browser-task-preparation.js";
 import type { BrowserStorageIO } from "./browser-storage.js";
 /** Internal retained provider: checked inside the outbox's own transaction. */
 export type BrowserOutboxAuthorization = {
@@ -50,7 +56,7 @@ export type BrowserReceiptAuthority = {
 };
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 type Identity = { binding: PrivateBinding; scope: string; deviceHash: string };
-const stores = ["meta", "entries", "channels"];
+const stores = ["meta", "entries", "channels", "task_preparations"];
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 function wire(raw: unknown): PrivateEnvelope {
@@ -383,28 +389,77 @@ export class BrowserPrivateOutbox {
   reserve(raw: unknown) {
     return this.safe(async () => {
       const input = z
-          .strictObject({ peerId: z.uuid(), confirmed: z.literal(true) })
+        .strictObject({ peerId: z.uuid(), confirmed: z.literal(true) })
+        .parse(raw);
+      return this.reserveEntry(input.peerId);
+    });
+  }
+  /** Trusted composition caller supplies the one-use review's operation ID and
+   * original deadline. Crypto finishes before the atomic sequence/preparation write. */
+  reserveTask(raw: unknown) {
+    return this.safe(async () => {
+      const input = z
+          .strictObject({
+            id: z.uuid(),
+            peerId: z.uuid(),
+            expiresAt: positive,
+            payload: z.unknown(),
+          })
           .parse(raw),
         identity = await this.identity(),
-        context = this.authority(input.peerId);
-      const channel = await browserPrivateChannel(identity, context);
-      return this.tx<Entry>(identity, "readwrite", (io) => {
-        io.gate(() => {
-          if (!same(context, this.authority(input.peerId)))
-            throw new BrowserOutboxError("DENIED");
-        });
-        io.request(io.store("meta").get(identity.scope), (raw) => {
-          const meta = this.meta(raw, identity);
-          io.request(
-            io.store("entries").index("scope").count(identity.scope),
-            (count) => {
-              if (count >= 256) throw new BrowserOutboxError("CAPACITY");
+        context = this.authority(input.peerId),
+        issuedAt = this.now();
+      if (
+        input.expiresAt <= issuedAt ||
+        input.expiresAt >
+          Math.min(issuedAt + 86400000, identity.binding.expiresAt)
+      )
+        throw new BrowserOutboxError("DENIED");
+      const prepared = await prepareBrowserTask(
+        input.id,
+        identity.scope,
+        context,
+        input.payload,
+        issuedAt,
+        input.expiresAt,
+      );
+      return this.reserveEntry(input.peerId, prepared);
+    });
+  }
+  private async reserveEntry(
+    peerId: string,
+    prepared?: BrowserTaskPreparation,
+  ) {
+    const identity = await this.identity(),
+      context = this.authority(peerId),
+      channel = await browserPrivateChannel(identity, context);
+    const current = () => {
+      if (
+        !same(context, this.authority(peerId)) ||
+        (prepared &&
+          (prepared.scope !== identity.scope ||
+            !same(prepared.context, context) ||
+            prepared.issuedAt > this.now() ||
+            prepared.expiresAt <= this.now()))
+      )
+        throw new BrowserOutboxError("DENIED");
+    };
+    current();
+    return this.tx<Entry>(identity, "readwrite", (io) => {
+      io.gate(current);
+      io.request(io.store("meta").get(identity.scope), (raw) => {
+        const meta = this.meta(raw, identity);
+        io.request(
+          io.store("entries").index("scope").count(identity.scope),
+          (count) => {
+            if (count >= 256) throw new BrowserOutboxError("CAPACITY");
+            const reserve = () =>
               reserveBrowserSequence(
                 io,
                 identity.scope,
                 channel,
                 (sequence) => {
-                  const issuedAt = this.now(),
+                  const issuedAt = prepared?.issuedAt ?? this.now(),
                     header = privateHeaderSchema.parse({
                       version: 1,
                       suite: privateEnvelopeSuite,
@@ -414,15 +469,17 @@ export class BrowserPrivateOutbox {
                       senderKeyEpoch: context.senderKeyEpoch,
                       recipientKeyEpoch: context.peerKeyEpoch,
                       messageId: crypto.randomUUID(),
-                      operationId: crypto.randomUUID(),
+                      operationId: prepared?.id ?? crypto.randomUUID(),
                       sequence,
                       issuedAt,
-                      expiresAt: Math.min(
-                        issuedAt + 86400000,
-                        identity.binding.expiresAt,
-                      ),
+                      expiresAt:
+                        prepared?.expiresAt ??
+                        Math.min(
+                          issuedAt + 86400000,
+                          identity.binding.expiresAt,
+                        ),
                     });
-                  if (header.expiresAt <= issuedAt)
+                  if (header.expiresAt <= this.now())
                     throw new BrowserOutboxError("DENIED");
                   const entry = entrySchema.parse({
                     id: header.operationId,
@@ -433,20 +490,97 @@ export class BrowserPrivateOutbox {
                     state: "reserved",
                     envelope: null,
                     attempts: 0,
+                    ...(prepared ? { composed: true } : {}),
                   });
                   this.bump(meta);
                   io.store("entries").add(entry);
+                  if (prepared)
+                    io.store("task_preparations").add(
+                      readBrowserTaskPreparation(prepared, entry),
+                    );
                   io.store("meta").put(meta);
                   io.done(entry);
                 },
               );
-            },
-          );
+            if (prepared)
+              io.request(
+                io
+                  .store("task_preparations")
+                  .index("scope")
+                  .count(identity.scope),
+                (count) => {
+                  if (count >= 256) throw new BrowserOutboxError("CAPACITY");
+                  reserve();
+                },
+              );
+            else reserve();
+          },
+        );
+      });
+    });
+  }
+  private async taskSnapshot(id: string) {
+    z.uuid().parse(id);
+    const identity = await this.identity();
+    return this.tx<{
+      entry: Entry;
+      preparation: BrowserTaskPreparation | null;
+    }>(identity, "readonly", (io) => {
+      io.request(io.store("meta").get(identity.scope), (raw) => {
+        this.meta(raw, identity);
+        io.request(io.store("entries").get(id), (raw) => {
+          const entry = this.entry(raw, identity.scope);
+          io.gate(() => {
+            if (
+              !same(entry.context, this.authority(entry.context.peerId)) ||
+              entry.state === "stopped" ||
+              entry.header.issuedAt > this.now() ||
+              entry.header.expiresAt <= this.now()
+            )
+              throw new BrowserOutboxError("DENIED");
+          });
+          io.request(io.store("task_preparations").get(id), (raw) => {
+            if (entry.composed && raw === undefined)
+              throw new BrowserOutboxError("STORAGE_UNAVAILABLE");
+            if (!entry.composed && raw !== undefined)
+              throw new BrowserOutboxError("STORAGE_UNAVAILABLE");
+            io.done({
+              entry,
+              preparation:
+                raw === undefined
+                  ? null
+                  : readBrowserTaskPreparation(raw, entry),
+            });
+          });
         });
       });
     });
   }
-  commit(raw: unknown) {
+  /** Canonical committed state for explicit reconciliation, never a new reservation. */
+  taskState(id: string) {
+    return this.safe(async () => (await this.taskSnapshot(id)).entry);
+  }
+  /** Internal only. The host never exposes preparation keys or plaintext callbacks. */
+  preparedTask(raw: unknown) {
+    return this.safe(async () => {
+      const input = z
+          .strictObject({ id: z.uuid(), expectedRevision: positive })
+          .parse(raw),
+        before = await this.taskSnapshot(input.id);
+      if (
+        before.entry.revision !== input.expectedRevision ||
+        before.entry.state !== "reserved"
+      )
+        throw new BrowserOutboxError("CONFLICT");
+      if (!before.preparation) throw new BrowserOutboxError("SETUP_REQUIRED");
+      const payload = await openBrowserTaskPreparation(before.preparation),
+        after = await this.taskSnapshot(input.id);
+      if (!same(before, after)) throw new BrowserOutboxError("CONFLICT");
+      const { key: _key, ...proof } = after.preparation!;
+      return { entry: after.entry, payload, proof };
+    });
+  }
+  commit(raw: unknown, preparation?: Omit<BrowserTaskPreparation, "key">) {
     return this.safe(async () => {
       const input = z
           .strictObject({
@@ -462,50 +596,73 @@ export class BrowserPrivateOutbox {
           const meta = this.meta(raw, identity);
           io.request(io.store("entries").get(input.id), (raw) => {
             const entry = this.entry(raw, identity.scope);
-            io.gate(() => {
+            const publish = () => {
+              io.gate(() => {
+                if (
+                  entry.header.expiresAt <= this.now() ||
+                  !same(entry.context, this.authority(entry.context.peerId))
+                )
+                  throw new BrowserOutboxError("DENIED");
+              });
               if (
-                entry.header.expiresAt <= this.now() ||
-                !same(entry.context, this.authority(entry.context.peerId))
+                !same(envelope.header, entry.header) ||
+                entry.header.expiresAt <= this.now()
               )
                 throw new BrowserOutboxError("DENIED");
-            });
-            if (
-              !same(envelope.header, entry.header) ||
-              entry.header.expiresAt <= this.now()
-            )
-              throw new BrowserOutboxError("DENIED");
-            if (entry.state === "pending" && entry.envelope) {
-              if (!same(envelope, entry.envelope))
+              if (entry.state === "pending" && entry.envelope) {
+                if (!same(envelope, entry.envelope))
+                  throw new BrowserOutboxError("CONFLICT");
+                io.done(entry);
+                return;
+              }
+              if (
+                entry.state !== "reserved" ||
+                entry.revision !== input.expectedRevision
+              )
                 throw new BrowserOutboxError("CONFLICT");
+              entry.envelope = envelope;
+              entry.state = "pending";
+              entry.revision++;
+              this.bump(meta);
+              io.store("entries").put(entry);
+              io.store("meta").put(meta);
               io.done(entry);
-              return;
+            };
+            if (entry.composed) {
+              if (!preparation) throw new BrowserOutboxError("DENIED");
+              io.request(io.store("task_preparations").get(entry.id), (raw) => {
+                const { key: _key, ...proof } = readBrowserTaskPreparation(
+                  raw,
+                  entry,
+                );
+                if (!same(proof, preparation))
+                  throw new BrowserOutboxError("CONFLICT");
+                publish();
+              });
+            } else {
+              if (preparation) throw new BrowserOutboxError("DENIED");
+              publish();
             }
-            if (
-              entry.state !== "reserved" ||
-              entry.revision !== input.expectedRevision
-            )
-              throw new BrowserOutboxError("CONFLICT");
-            entry.envelope = envelope;
-            entry.state = "pending";
-            entry.revision++;
-            this.bump(meta);
-            io.store("entries").put(entry);
-            io.store("meta").put(meta);
-            io.done(entry);
           });
         });
       });
     });
   }
-  delivery(id: string) {
+  delivery(id: string, expectedRevision?: number) {
     return this.safe(async () => {
       z.uuid().parse(id);
+      if (expectedRevision !== undefined) positive.parse(expectedRevision);
       const identity = await this.identity();
       return this.tx<PrivateEnvelope>(identity, "readwrite", (io) => {
         io.request(io.store("meta").get(identity.scope), (raw) => {
           const meta = this.meta(raw, identity);
           io.request(io.store("entries").get(id), (raw) => {
             const entry = this.entry(raw, identity.scope);
+            if (
+              expectedRevision !== undefined &&
+              entry.revision !== expectedRevision
+            )
+              throw new BrowserOutboxError("CONFLICT");
             io.gate(() => {
               if (
                 entry.header.expiresAt <= this.now() ||
@@ -835,10 +992,12 @@ export class BrowserPrivateOutbox {
           };
           // Counters are shared with possession checks; keep the minimal replay
           // fence when deleting task ciphertext. A new identity is still required.
-          remove("entries", () => {
-            io.store("meta").put(meta);
-            io.done(meta);
-          });
+          remove("entries", () =>
+            remove("task_preparations", () => {
+              io.store("meta").put(meta);
+              io.done(meta);
+            }),
+          );
         });
       });
     });
