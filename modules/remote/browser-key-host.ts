@@ -916,6 +916,10 @@ export class BrowserKeyHost {
    * Offline deletion is bounded to this signed-in local owner and locks consent.
    * Neither operation imports authority, submits relay data or exposes a key. */
   readonly conversationContentAPI = {
+    deliveryHistory: () =>
+      this.operation(async () =>
+        (await this.conversationContentStore()).deliveryHistory(),
+      ),
     list: (raw: unknown) =>
       this.verifiedPeer(async () =>
         (await this.conversationContentStore()).list(raw),

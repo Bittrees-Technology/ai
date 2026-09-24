@@ -195,6 +195,16 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check reviewed browser conversation delivery and offline history
+        run: npm run test:browser-private -- tests/browser/production-browser-conversation-delivery.spec.ts tests/browser/browser-conversation-content-host.spec.ts --grep 'built conversation|built incoming conversation|owner-local conversation' --max-failures=1
+      - name: Retain focused browser conversation delivery previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-conversation-delivery-focused-preview
+          path: test-results/browser-conversation-delivery-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Check explicit browser conversation relay receipt and worker round trip
         run: npm run test:browser-private -- tests/browser/browser-conversation-content-host.spec.ts --grep 'incoming conversation relay' --max-failures=1
       - name: Check browser conversation relay sending and actual version14 preservation

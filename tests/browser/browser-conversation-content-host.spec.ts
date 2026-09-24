@@ -977,9 +977,7 @@ test("incoming conversation relay rolls back a failed content write and revoked 
     const queue = await inspectContentRelay(page),
       before = await snapshot(page),
       target = receiveTarget(selected.grant.id);
-    await page.evaluate(() =>
-      window.browserPeersTest.contentFailWrite(),
-    );
+    await page.evaluate(() => window.browserPeersTest.contentFailWrite());
     await expect(
       receiveContentRelay(page, queue.item!.selection, target),
     ).rejects.toThrow("CAPACITY");
@@ -1122,6 +1120,57 @@ test("incoming conversation relay carries a real worker question to the browser 
     expect(question.calls()).toBe(3);
   } finally {
     await api.close();
+    f.mac.close();
+  }
+});
+
+test("owner-local conversation delivery metadata survives offline reopen without plaintext, envelopes, identity calls or cross-account authority", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id);
+    await wire(page, prepared);
+    const saved = await read(page, prepared);
+    await page.reload();
+    await page.waitForFunction(() => !!window.browserPeersTest);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    identityServer.offline(true);
+    identityServer.events.length = 0;
+    const history = await page.evaluate(() =>
+      window.browserPeersTest.contentDeliveryHistory(),
+    );
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      id: saved.id,
+      grantId: saved.grantId,
+      deliveryPrepared: true,
+      relayAttempts: 0,
+    });
+    expect(JSON.stringify(history)).not.toContain(
+      "SYNTHETIC_HOST_PRIVATE_REPLY",
+    );
+    expect(JSON.stringify(history)).not.toContain('"envelope"');
+    expect(JSON.stringify(history)).not.toContain('"key"');
+    const stopped = await page.evaluate(
+      (raw) => window.browserPeersTest.contentRelayStop(raw),
+      relayTarget(history[0]),
+    );
+    expect(stopped.relayStopped).toBe(true);
+    expect(identityServer.events).toEqual([]);
+    await page.evaluate(() => window.browserPeersTest.scopeChange());
+    await expect(
+      page.evaluate(() => window.browserPeersTest.contentDeliveryHistory()),
+    ).rejects.toThrow("DENIED");
+  } finally {
+    identityServer.offline(false);
     f.mac.close();
   }
 });

@@ -386,12 +386,17 @@ test("readable export requires review and local deletion works offline without c
     expect(archive.items[0].content.content).toBe("SYNTHETIC_ARCHIVE_MESSAGE");
     expect(JSON.stringify(archive)).not.toContain('"key"');
     identityServer.offline(true);
+    identityServer.events.length = 0;
     await panel(page)
       .getByRole("button", { name: "Refresh saved conversations", exact: true })
       .click();
     await expect(panel(page).getByRole("status")).toContainText(
-      "local deletion is still available",
+      "Saved conversation list loaded",
     );
+    // Delivery history is now owner-local, even offline. It exposes metadata
+    // without reading private text or restoring any online authority.
+    await expect(panel(page)).not.toContainText("SYNTHETIC_ARCHIVE_MESSAGE");
+    expect(identityServer.events).toEqual([]);
     await panel(page)
       .getByRole("button", {
         name: "Review deleting saved conversations",
