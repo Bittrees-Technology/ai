@@ -11,74 +11,83 @@ async function fixture(page: Page) {
   const token = randomBytes(32).toString("base64url");
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as AddressInfo).port;
-  server.on(
-    "request",
-    localApi({
-      store: g.e.store,
-      owner: g.e.owner,
-      token,
-      port,
-      privateKeys: g.e.controls,
-      privateRelay: g.relay,
-    }),
-  );
-  let downloads = 0;
-  const errors: string[] = [];
-  page.on("download", () => downloads++);
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.route("**/v1/**", async (route) => {
-    const request = route.request(),
-      url = new URL(request.url());
-    const response = await fetch(
-      `http://127.0.0.1:${port}${url.pathname}${url.search}`,
-      {
-        method: request.method(),
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        ...(request.postData() ? { body: request.postData()! } : {}),
-      },
+  const close = async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    g.close();
+  };
+  try {
+    server.on(
+      "request",
+      localApi({
+        store: g.e.store,
+        owner: g.e.owner,
+        token,
+        port,
+        privateKeys: g.e.controls,
+        privateRelay: g.relay,
+      }),
     );
-    await route.fulfill({
-      status: response.status,
-      contentType: "application/json",
-      body: await response.text(),
+    let downloads = 0;
+    const errors: string[] = [];
+    page.on("download", () => downloads++);
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.route("**/v1/**", async (route) => {
+      const request = route.request(),
+        url = new URL(request.url());
+      const response = await fetch(
+        `http://127.0.0.1:${port}${url.pathname}${url.search}`,
+        {
+          method: request.method(),
+          headers: {
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+          },
+          ...(request.postData() ? { body: request.postData()! } : {}),
+        },
+      );
+      await route.fulfill({
+        status: response.status,
+        contentType: "application/json",
+        body: await response.text(),
+      });
     });
-  });
-  await page.goto("/?inbox-task-review");
-  await page.getByRole("button", { name: /PRIVATE_NEVER_IN_OFFER/ }).click();
-  await page
-    .getByRole("button", { name: "Refresh conversation choices", exact: true })
-    .click();
-  const panel = page.getByRole("region", {
-    name: "Conversation sharing offers",
-    exact: true,
-  });
-  const refresh = async () => {
-    await panel
-      .getByRole("button", { name: "Refresh saved offers", exact: true })
+    await page.goto("/?inbox-task-review");
+    await page.getByRole("button", { name: /PRIVATE_NEVER_IN_OFFER/ }).click();
+    await page
+      .getByRole("button", {
+        name: "Refresh conversation choices",
+        exact: true,
+      })
       .click();
-    await panel
-      .getByRole("button", { name: "Refresh offer connections", exact: true })
-      .click();
-    await panel
-      .getByLabel("Offer connection", { exact: true })
-      .selectOption(g.input().connection.id);
-  };
-  await refresh();
-  return {
-    ...g,
-    panel,
-    refresh,
-    downloads: () => downloads,
-    errors,
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise<void>((r) => server.close(() => r()));
-      g.close();
-    },
-  };
+    const panel = page.getByRole("region", {
+      name: "Conversation sharing offers",
+      exact: true,
+    });
+    const refresh = async () => {
+      await panel
+        .getByRole("button", { name: "Refresh saved offers", exact: true })
+        .click();
+      await panel
+        .getByRole("button", { name: "Refresh offer connections", exact: true })
+        .click();
+      await panel
+        .getByRole("combobox", { name: "Offer connection", exact: true })
+        .selectOption(g.input().connection.id);
+    };
+    await refresh();
+    return {
+      ...g,
+      panel,
+      refresh,
+      downloads: () => downloads,
+      errors,
+      close,
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }
 async function shot(page: Page, browser: string, name: string) {
   expect(

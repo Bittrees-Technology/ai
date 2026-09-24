@@ -156,6 +156,7 @@ export function ConversationOffers({
               <label className="model-profile-choice">
                 Offer connection
                 <select
+                  aria-label="Offer connection"
                   value={connection}
                   disabled={c.busy}
                   onChange={(e) => {
