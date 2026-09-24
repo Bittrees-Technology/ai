@@ -139,9 +139,10 @@ jobs:
 
   browser-private-protocol:
     runs-on: ubuntu-latest
-    # The 1,188-case suite passed but hit 45 minutes while uploading previews.
-    # Allow final artifact/cleanup steps; keep per-test timeouts and retries fixed.
-    timeout-minutes: 60
+    # The 1,419-case full run took 39.6 minutes after ~18 minutes of focused checks.
+    # Receipt/migration coverage adds work; leave room for retained artifacts.
+    # Per-test timeouts, one worker and zero retries remain unchanged.
+    timeout-minutes: 90
     services:
       postgres:
         image: postgres:17-alpine
