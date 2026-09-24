@@ -1,3 +1,4 @@
+import { QuestionChoice } from "./question-choice.js";
 import { ModelProfileFields } from "./model-profile-fields.js";
 import {
   defaultProfileFields,
@@ -121,6 +122,7 @@ function App() {
   const [selected, setSelected] = useState(""),
     [prompt, setPrompt] = useState(""),
     [profile, setProfile] = useState(""),
+    [allowQuestions, setAllowQuestions] = useState(false),
     [model, setModel] = useState(""),
     [memoryIds, setMemoryIds] = useState<string[]>([]),
     [candidate, setCandidate] = useState(""),
@@ -167,6 +169,7 @@ function App() {
     setCode("");
     setDeleteText("");
     setPrompt("");
+    setAllowQuestions(false);
     setCandidate("");
     setCandidateType("fact");
     setSelected("");
@@ -374,6 +377,7 @@ function App() {
                           prompt,
                           profile,
                           memoryIds,
+                          allowQuestions,
                         });
                         if (submission.current?.fingerprint !== fingerprint)
                           submission.current = {
@@ -385,6 +389,9 @@ function App() {
                               prompt,
                               modelProfileId: profile,
                               memoryIds,
+                              ...(allowQuestions
+                                ? { allowQuestions: true }
+                                : {}),
                             },
                           };
                         const t = await api(
@@ -472,6 +479,11 @@ function App() {
                           </label>
                         ))}
                     </details>
+                    <QuestionChoice
+                      checked={allowQuestions}
+                      onChange={setAllowQuestions}
+                      disabled={busy}
+                    />
                     <button className="primary" disabled={busy || !profile}>
                       Start task
                     </button>

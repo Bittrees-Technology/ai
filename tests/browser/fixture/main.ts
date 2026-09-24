@@ -371,3 +371,5 @@ if (new URLSearchParams(location.search).has("command-history"))
 
 if (new URLSearchParams(location.search).has("inbox-task-review"))
   void import("./inbox-task-review.js");
+if (new URLSearchParams(location.search).has("question-forms"))
+  void import("./question-forms.js");

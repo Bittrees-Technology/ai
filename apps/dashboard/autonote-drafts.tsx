@@ -1,3 +1,4 @@
+import { QuestionChoice } from "./question-choice.js";
 import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (
@@ -24,6 +25,7 @@ export function AutoNoteDrafts({
       "Summarize this meeting and suggest actions. Cite transcript segments. Leave unknown owners and deadlines empty.",
     ),
     [profile, setProfile] = useState(profiles[0]?.id ?? ""),
+    [allowQuestions, setAllowQuestions] = useState(false),
     [busy, setBusy] = useState(false);
   const viewEpoch = useRef(0);
   useEffect(() => {
@@ -96,6 +98,7 @@ export function AutoNoteDrafts({
                 selected: [...selected].sort(),
                 prompt,
                 profile,
+                allowQuestions,
               });
               if (attempt.current?.fingerprint !== fingerprint)
                 attempt.current = {
@@ -110,6 +113,7 @@ export function AutoNoteDrafts({
                   meetingId: selected[0],
                   prompt,
                   modelProfileId: profile,
+                  ...(allowQuestions ? { allowQuestions: true } : {}),
                   conversationId: attempt.current.conversationId,
                 },
                 { "Idempotency-Key": attempt.current.key },
@@ -124,7 +128,8 @@ export function AutoNoteDrafts({
             {records[0]?.version}
           </p>
           <label htmlFor="autonote-draft-profile">Local model profile</label>
-          <select className="model-profile-select"
+          <select
+            className="model-profile-select"
             id="autonote-draft-profile"
             value={profile}
             onChange={(e) => setProfile(e.target.value)}
@@ -149,6 +154,11 @@ export function AutoNoteDrafts({
             Meeting permissions and transcript versions are checked again during
             generation. Inferred owners and deadlines remain unconfirmed.
           </p>
+          <QuestionChoice
+            checked={allowQuestions}
+            onChange={setAllowQuestions}
+            disabled={busy}
+          />
           <button
             disabled={busy || !profile || !selected.length || !prompt.trim()}
           >

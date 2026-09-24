@@ -68,6 +68,7 @@ export const requestSchema = z.strictObject({
   kind: z.enum(["query", "summarize", "draft"]),
   prompt: z.string().min(1).max(32_000),
   modelProfileId: id,
+  allowQuestions: z.boolean().optional(),
   memoryIds: z
     .array(id)
     .max(8)

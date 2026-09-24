@@ -22,7 +22,8 @@ fixture builds, and the compiled25-to26 compatibility rehearsal pass. Disposable
 GitHub browser CI must verify all 1,176 integrated cases plus final Inbox/answer
 previews before merge. No local browser or native application is launched.
 
-The model question decision policy and separately consented encrypted remote
-conversation/reply transport remain open. This is source integration, not an
+The optional model question decision policy is now implemented in a follow-up;
+see [its current behavior and verification boundary](model-question-policy.md).
+Separately consented encrypted remote conversation/reply transport remains open. This is source integration, not an
 installed upgrade, live deployment or personal pilot. Model quality, signing,
 recovery and independent release acceptance remain separate requirements.

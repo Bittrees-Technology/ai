@@ -765,6 +765,7 @@ export function localApi({
             .refine((ids) => new Set(ids).size === ids.length),
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
+          allowQuestions: z.boolean().optional(),
         })
         .parse(req.body);
       store.profile(owner, body.modelProfileId);
@@ -775,6 +776,9 @@ export function localApi({
           kind: "draft",
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
+          ...(body.allowQuestions === undefined
+            ? {}
+            : { allowQuestions: body.allowQuestions }),
           dependencies: [],
           priority: "normal",
           tags: [],
@@ -808,6 +812,7 @@ export function localApi({
           content: z.enum(["metadata", "plain", "attachment-text"]),
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
+          allowQuestions: z.boolean().optional(),
         })
         .parse(req.body);
       store.profile(owner, body.modelProfileId);
@@ -818,6 +823,9 @@ export function localApi({
           kind: body.kind,
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
+          ...(body.allowQuestions === undefined
+            ? {}
+            : { allowQuestions: body.allowQuestions }),
           dependencies: [],
           priority: "normal",
           tags: [],
@@ -840,6 +848,7 @@ export function localApi({
           meetingId: z.uuid(),
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
+          allowQuestions: z.boolean().optional(),
         })
         .parse(req.body);
       store.profile(owner, body.modelProfileId);
@@ -850,6 +859,9 @@ export function localApi({
           kind: "summarize",
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
+          ...(body.allowQuestions === undefined
+            ? {}
+            : { allowQuestions: body.allowQuestions }),
           dependencies: [],
           priority: "normal",
           tags: [],

@@ -1,3 +1,4 @@
+import { QuestionChoice } from "./question-choice.js";
 import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (
@@ -28,6 +29,7 @@ export function MailConnection({
     [attachment, setAttachment] = useState(false),
     [kind, setKind] = useState<"summarize" | "draft">("summarize"),
     [profile, setProfile] = useState(profiles[0]?.id ?? ""),
+    [allowQuestions, setAllowQuestions] = useState(false),
     [prompt, setPrompt] = useState(
       "Summarize the selected message. Cite the source and identify uncertainty.",
     );
@@ -167,6 +169,7 @@ export function MailConnection({
                         attachment,
                         kind,
                         profile,
+                        allowQuestions,
                         prompt,
                       });
                       if (attempt.current?.fingerprint !== fingerprint)
@@ -188,6 +191,7 @@ export function MailConnection({
                               : "metadata",
                           prompt,
                           modelProfileId: profile,
+                          ...(allowQuestions ? { allowQuestions: true } : {}),
                         },
                         { "Idempotency-Key": attempt.current.key },
                       );
@@ -291,6 +295,11 @@ export function MailConnection({
                     summary option is checked. Review every generated claim
                     before use.
                   </p>
+                  <QuestionChoice
+                    checked={allowQuestions}
+                    onChange={setAllowQuestions}
+                    disabled={busy}
+                  />
                   <button
                     disabled={
                       busy ||

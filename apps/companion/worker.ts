@@ -1,3 +1,11 @@
+import {
+  questionPrompt,
+  questionDecisionFormat,
+  readQuestionDecision,
+  questionPolicyVersion,
+  maxModelQuestions,
+  ClarificationLimitError,
+} from "../../modules/models/questions.js";
 import { localTaskDependencies } from "./memory.js";
 import {
   defaultExecutionLimits,
@@ -186,6 +194,9 @@ export class LocalWorker {
         {
           ...pinned,
           executionLimits: limits,
+          ...(claim.task.input.allowQuestions === true
+            ? { questionPolicy: questionPolicyVersion }
+            : {}),
           ...(inputContext.length
             ? {
                 inputReplies: inputContext.map(({ questionId, replyId }) => ({
@@ -210,6 +221,46 @@ export class LocalWorker {
         },
       );
       checkDependencies();
+      if (claim.task.input.allowQuestions === true) {
+        if (extraction) throw new ModelError("INVALID_OUTPUT");
+        const reference = source
+          ? sourcePrompt(source, "", claim.task.input.kind)
+          : JSON.stringify(
+              memories.map(({ text, sources }) => ({ text, sources })),
+            );
+        const decision = readQuestionDecision(
+          await this.runtime.generate(
+            pinned,
+            questionPrompt(prompt, reference, pinned),
+            abort.signal,
+            questionDecisionFormat,
+          ),
+        );
+        checkDeadline();
+        for (const prior of memories) {
+          const current = await this.memory!.get(this.owner, prior.id);
+          if (
+            current.revision !== prior.revision ||
+            current.state !== "approved"
+          )
+            throw new Error("Memory changed during clarification");
+        }
+        if (binding) await this.sources!.validate(binding);
+        checkDeadline();
+        checkDependencies();
+        if (decision.decision === "ask") {
+          if (inputContext.length >= maxModelQuestions)
+            throw new ClarificationLimitError();
+          this.store.waitForOwnerInput(
+            this.owner,
+            claim.task.id,
+            this.workerId,
+            claim.generation,
+            decision.question,
+          );
+          return true;
+        }
+      }
       const batched =
         source &&
         "message" in source &&
@@ -315,11 +366,13 @@ export class LocalWorker {
             error.code === "MODEL_UNAVAILABLE",
           timedOut
             ? "runtime_limit"
-            : (error instanceof ModelError &&
-                  error.code === "INVALID_OUTPUT") ||
-                error instanceof MemoryCandidateError
-              ? "invalid_model_output"
-              : undefined,
+            : error instanceof ClarificationLimitError
+              ? "clarification_limit"
+              : (error instanceof ModelError &&
+                    error.code === "INVALID_OUTPUT") ||
+                  error instanceof MemoryCandidateError
+                ? "invalid_model_output"
+                : undefined,
         );
       } catch (stale) {
         if (!(

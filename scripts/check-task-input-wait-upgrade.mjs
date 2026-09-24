@@ -1,4 +1,4 @@
-/** Actual compiled task25 -> task26; synthetic data only, no service or Keychain. */
+/** Actual compiled task25 -> task27; synthetic data only, no service or Keychain. */
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -66,7 +66,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 26);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 27);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.exportInputWaits(owner), []);
   const claim = current.claim(owner, "worker"),
@@ -118,7 +118,7 @@ try {
     verifiedAt: new Date().toISOString(),
     legacyStoreSha256: legacyHash,
     from: 25,
-    to: 26,
+    to: 27,
     checks: [
       "actual old-writer history preserved; empty wait table grants nothing",
       "wrong-key migration rolls back",
