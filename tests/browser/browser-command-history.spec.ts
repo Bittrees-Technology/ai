@@ -1,14 +1,19 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-const intent = () => ({
-  id: randomUUID(),
-  deviceId: randomUUID(),
-  taskId: randomUUID(),
-  command: "pause",
-  expectedRevision: 2,
-  issuedAt: new Date().toISOString(),
-  expiresAt: new Date(Date.now() + 300000).toISOString(),
-});
+const intent = () => {
+  // Both bounds come from one instant: a second clock read can accidentally
+  // create a 300001ms request that production correctly rejects.
+  const now = Date.now();
+  return {
+    id: randomUUID(),
+    deviceId: randomUUID(),
+    taskId: randomUUID(),
+    command: "pause",
+    expectedRevision: 2,
+    issuedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 300000).toISOString(),
+  };
+};
 async function open(page: Page) {
   await page.goto("/?command-history");
   await page.waitForFunction(() => !!window.commandHistoryTest);
