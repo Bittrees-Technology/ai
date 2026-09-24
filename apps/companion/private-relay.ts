@@ -28,6 +28,7 @@ const codes = new Set([
   "INVALID_RESPONSE",
   "STORAGE_UNAVAILABLE",
   "PAIRING_REQUIRED",
+  "PARENT_PENDING",
   "UNAVAILABLE",
 ]);
 export class CompanionRelayError extends Error {
