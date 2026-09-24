@@ -367,7 +367,7 @@ test("actual version7 browser storage upgrades without granting conversation acc
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationInspect()))
         .version,
-    ).toBe(10);
+    ).toBe(11);
     await expect(reopen(page, f.f, "conversation")).rejects.toThrow(
       "STORAGE_UNAVAILABLE",
     );
@@ -748,7 +748,7 @@ test("actual version9 upgrade preserves prior grant and shared ledger without in
     expect(before.version).toBe(9);
     expect(original.offerReplay).toBeUndefined();
     await reopen(page, f.f);
-    expect(await replaySnapshot(page)).toEqual({ ...before, version: 10 });
+    expect(await replaySnapshot(page)).toEqual({ ...before, version: 11 });
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
         .grants,
@@ -763,6 +763,297 @@ test("actual version9 upgrade preserves prior grant and shared ledger without in
     expect(after.ledger).toHaveLength(before.ledger.length + 1);
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger));
     await expect(reopen(page, f.f, "offer-replay")).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
+  } finally {
+    f.mac.close();
+  }
+});
+
+async function selectedOffer(o: Awaited<ReturnType<typeof offer>>) {
+  const { privateRelayEnvelopeHash } =
+    await import("../../modules/remote/private-relay-contracts.js");
+  return {
+    envelope: o.envelope,
+    selection: {
+      messageId: o.envelope.header.messageId,
+      envelopeHash: await privateRelayEnvelopeHash(o.envelope),
+      revision: 1,
+      storedAt: o.envelope.header.issuedAt,
+    },
+  };
+}
+const beginAck = (
+  page: Page,
+  g: any,
+  selected?: any,
+  expectedRevision = g.revision,
+) =>
+  page.evaluate((raw) => window.browserPeersTest.conversationBeginAck(raw), {
+    grantId: g.id,
+    expectedRevision,
+    confirmed: true,
+    ...(selected ? { selected } : {}),
+  });
+const recordAck = (page: Page, attempt: any, patch: any = {}) =>
+  page.evaluate((raw) => window.browserPeersTest.conversationRecordAck(raw), {
+    grantId: attempt.grant.id,
+    expectedRevision: attempt.revision,
+    confirmed: true,
+    receipt: {
+      version: 1,
+      ...attempt.grant.relayAcknowledgement.selection,
+      revision: 2,
+      state: "received",
+      ...patch,
+    },
+  });
+test("offer acknowledgement persists uncertain attempts across reopen and keeps exact consent and replay", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      grant = await approve(page, await prepare(page, f, o)),
+      ledger = (await replaySnapshot(page)).ledger,
+      selection = await selectedOffer(o),
+      first = await beginAck(page, grant, selection);
+    expect(first.grant.relayAcknowledgement!.attempts).toBe(1);
+    expect(first.grant.relayAcknowledgement!.observation).toBeNull();
+    await reopen(page, f.f);
+    const retry = await beginAck(page, first.grant);
+    expect(retry.acknowledgement).toEqual(first.acknowledgement);
+    expect(retry.grant.relayAcknowledgement!.attempts).toBe(2);
+    const saved = await recordAck(page, retry);
+    expect(saved.grant.id).toBe(grant.id);
+    expect(saved.grant.approvedAt).toBe(grant.approvedAt);
+    expect(saved.grant.choices).toEqual(grant.choices);
+    expect(saved.grant.relayAcknowledgement!.observation!.attempt).toBe(2);
+    const uncertain = await beginAck(page, saved.grant);
+    expect(uncertain.grant.relayAcknowledgement!.observation).toEqual(
+      saved.grant.relayAcknowledgement!.observation,
+    );
+    expect((await replaySnapshot(page)).ledger).toEqual(ledger);
+    await reopen(page, f.f);
+    const retained = await page.evaluate(() =>
+      window.browserPeersTest.conversationStatus(),
+    );
+    expect(retained.grants).toEqual([uncertain.grant]);
+  } finally {
+    f.mac.close();
+  }
+});
+test("offer acknowledgement rejects altered ciphertext, selection, stale state and wrong server receipts", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      grant = await approve(page, await prepare(page, f, o)),
+      selected = await selectedOffer(o),
+      before = await replaySnapshot(page);
+    await expect(beginAck(page, grant)).rejects.toThrow("DENIED");
+    for (const field of ["ciphertext", "messageId", "envelopeHash"] as const) {
+      const changed = structuredClone(selected);
+      if (field === "ciphertext")
+        changed.envelope.ciphertext =
+          (changed.envelope.ciphertext[0] === "A" ? "B" : "A") +
+          changed.envelope.ciphertext.slice(1);
+      else
+        changed.selection[field] =
+          field === "messageId" ? randomUUID() : "a".repeat(64);
+      await expect(beginAck(page, grant, changed)).rejects.toThrow("CONFLICT");
+      expect(await replaySnapshot(page)).toEqual(before);
+    }
+    const attempt = await beginAck(page, grant, selected),
+      saved = await replaySnapshot(page);
+    await expect(beginAck(page, grant, selected)).rejects.toThrow("CONFLICT");
+    for (const patch of [
+      { messageId: randomUUID() },
+      { envelopeHash: "b".repeat(64) },
+      { storedAt: selected.selection.storedAt + 1 },
+      { state: "stored" },
+      { revision: 1 },
+    ]) {
+      await expect(recordAck(page, attempt, patch)).rejects.toThrow("CONFLICT");
+      expect(await replaySnapshot(page)).toEqual(saved);
+    }
+    const observed = await recordAck(page, attempt, {
+        state: "deleted",
+        revision: 3,
+      }),
+      retry = await beginAck(page, observed.grant);
+    await expect(recordAck(page, retry)).rejects.toThrow("CONFLICT");
+    await expect(
+      recordAck(page, retry, { state: "received", revision: 4 }),
+    ).rejects.toThrow("CONFLICT");
+  } finally {
+    f.mac.close();
+  }
+});
+test("offer acknowledgement requires an existing replay outcome and cannot recreate a deleted fence", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      grant = await approve(page, await prepare(page, f, o)),
+      selected = await selectedOffer(o);
+    await page.evaluate(async (operation) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("incoming_replay", "readwrite"),
+            s = tx.objectStore("incoming_replay"),
+            r = s.getAll();
+          r.onsuccess = () => {
+            for (const row of r.result)
+              if (row.operation === operation)
+                s.delete([row.scope, row.operation]);
+          };
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+      } finally {
+        db.close();
+      }
+    }, grant.offerReplay!.operation);
+    const before = await replaySnapshot(page);
+    await expect(beginAck(page, grant, selected)).rejects.toThrow("CONFLICT");
+    expect(await replaySnapshot(page)).toEqual(before);
+  } finally {
+    f.mac.close();
+  }
+});
+test("offer acknowledgement denies revoked, expired and superseded conversation consent", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      grant = await approve(page, await prepare(page, f, o)),
+      attempt = await beginAck(page, grant, await selectedOffer(o));
+    const narrowed = await approve(
+      page,
+      await prepare(page, f, o, {
+        permissions: { ...permissions, messagesToBrowser: false },
+      }),
+    );
+    expect(narrowed.relayAcknowledgement).toEqual(
+      attempt.grant.relayAcknowledgement,
+    );
+    await expect(
+      beginAck(page, attempt.grant, undefined, narrowed.revision),
+    ).rejects.toThrow("DENIED");
+    const latest = await beginAck(page, narrowed);
+    await page.evaluate(
+      (raw) => window.browserPeersTest.conversationRevoke(raw),
+      {
+        grantId: latest.grant.id,
+        expectedRevision: latest.revision,
+        confirmed: true,
+      },
+    );
+    await expect(
+      beginAck(page, latest.grant, undefined, latest.revision + 1),
+    ).rejects.toThrow("DENIED");
+    const fresh = await approve(page, await prepare(page, f, o)),
+      before = await replaySnapshot(page);
+    await page.evaluate(
+      (t) => window.browserPeersTest.time(t, 0),
+      fresh.choices.expiresAt,
+    );
+    await expect(beginAck(page, fresh)).rejects.toThrow("DENIED");
+    expect(await replaySnapshot(page)).toEqual(before);
+  } finally {
+    f.mac.close();
+  }
+});
+test("offer acknowledgement write failure and identity loss roll back attempts and observations", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      grant = await approve(page, await prepare(page, f, o)),
+      selection = await selectedOffer(o);
+    for (const mode of ["write", "identity", "expiry"] as const) {
+      const before = await replaySnapshot(page);
+      await page.evaluate(
+        ({ mode, expires }) => {
+          const put = IDBObjectStore.prototype.put;
+          IDBObjectStore.prototype.put = function (
+            ...args: Parameters<typeof put>
+          ) {
+            if (this.name === "conversation_consents") {
+              IDBObjectStore.prototype.put = put;
+              if (mode === "write")
+                throw new DOMException("synthetic quota", "QuotaExceededError");
+              if (mode === "identity") window.browserPeersTest.set(null);
+              if (mode === "expiry") window.browserPeersTest.time(expires, 0);
+            }
+            return put.apply(this, args);
+          };
+        },
+        { mode, expires: grant.choices.expiresAt },
+      );
+      await expect(beginAck(page, grant, selection)).rejects.toThrow(
+        mode === "write"
+          ? "CAPACITY"
+          : mode === "identity"
+            ? "CONFLICT"
+            : "DENIED",
+      );
+      expect(await replaySnapshot(page)).toEqual(before);
+      await reopen(page, f.f);
+    }
+    const attempt = await beginAck(page, grant, selection),
+      before = await replaySnapshot(page);
+    await page.evaluate(() => {
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (
+        ...args: Parameters<typeof put>
+      ) {
+        if (this.name === "conversation_consents") {
+          IDBObjectStore.prototype.put = put;
+          throw new DOMException("synthetic quota", "QuotaExceededError");
+        }
+        return put.apply(this, args);
+      };
+    });
+    await expect(recordAck(page, attempt)).rejects.toThrow("CAPACITY");
+    expect(await replaySnapshot(page)).toEqual(before);
+    await reopen(page, f.f);
+    await recordAck(page, await beginAck(page, attempt.grant));
+  } finally {
+    f.mac.close();
+  }
+});
+test("actual version10 upgrade preserves consent and replay without inventing relay acknowledgement", async ({
+  page,
+}) => {
+  const f = await ready(page, "offer-ack");
+  try {
+    const o = await offer(f),
+      grant = await approve(page, await prepare(page, f, o)),
+      before = await replaySnapshot(page);
+    expect(before.version).toBe(10);
+    expect(grant.offerReplay).toBeDefined();
+    expect(grant.relayAcknowledgement).toBeUndefined();
+    await reopen(page, f.f);
+    expect(await replaySnapshot(page)).toEqual({ ...before, version: 11 });
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
+        .grants,
+    ).toEqual([grant]);
+    const first = await beginAck(page, grant, await selectedOffer(o));
+    await recordAck(page, first);
+    expect((await replaySnapshot(page)).ledger).toEqual(before.ledger);
+    await expect(reopen(page, f.f, "offer-ack")).rejects.toThrow(
       "STORAGE_UNAVAILABLE",
     );
   } finally {

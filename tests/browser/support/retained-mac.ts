@@ -141,7 +141,7 @@ export async function retainedMac(
     binding,
     consent,
     work,
-    async conversationOffer() {
+    async conversationOffer(deliveryExpiresAt?: number) {
       const conversationId = randomUUID(),
         inboxId = "conversation-offer-pilot";
       store.createInbox(owner, {
@@ -186,7 +186,10 @@ export async function retainedMac(
               questionsToBrowser: true,
               answersToMac: true,
             },
-            expiresAt: clock() + 300000,
+            expiresAt: Math.min(
+              clock() + 300000,
+              deliveryExpiresAt ?? Infinity,
+            ),
           },
         }),
         saved = consent.approve({

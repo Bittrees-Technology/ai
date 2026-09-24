@@ -1,3 +1,4 @@
+import { browserKeyDatabaseVersion } from "../../modules/remote/browser-key-state.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { retainedMac } from "./support/retained-mac.js";
@@ -621,15 +622,19 @@ test("Future database version change closes peer handles and refuses old clients
 }) => {
   await init(page);
   await page.evaluate(
-    () =>
+    (futureVersion) =>
       new Promise<void>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 11);
+        const r = indexedDB.open(
+          "org.bittrees.ai.browser-endpoint-keys",
+          futureVersion,
+        );
         r.onsuccess = () => {
           r.result.close();
           resolve();
         };
         r.onerror = () => reject(r.error);
       }),
+    browserKeyDatabaseVersion + 1,
   );
   await expect(
     page.evaluate(() => window.browserPeersTest.status()),

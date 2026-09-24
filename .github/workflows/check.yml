@@ -181,15 +181,19 @@ jobs:
           node scripts/prepare-legacy-browser-replay.mjs
           git fetch --no-tags --depth=1 origin ae3fa90eba1ea2b08febe21dae221ea51b63c0c1
           node scripts/prepare-legacy-browser-offer-replay.mjs
+          git fetch --no-tags --depth=1 origin b1263ca9f2ccc4072f9e36e1b4a491bcd58ff3c6
+          node scripts/prepare-legacy-browser-offer-ack.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check browser offer receipt history and actual version10 upgrade
+        run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
+      - name: Check reviewed browser offer queue and receipt controls
+        run: npm run test:browser-private -- tests/browser/production-browser-relay-offers.spec.ts --max-failures=1
       - name: Check reviewed Mac encrypted offer uploads
         run: npm run test:browser-private -- tests/browser/conversation-relay-offers.spec.ts --max-failures=1
       - name: Check shared browser replay and actual version8 upgrade
         run: npm run test:browser-private -- tests/browser/browser-incoming-replay.spec.ts --max-failures=1
-      - name: Check independent retained browser conversation consent
-        run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
       - name: Check reviewed Mac conversation offer downloads
         run: npm run test:browser-private -- tests/browser/conversation-offers.spec.ts --max-failures=1
       - name: Check built browser conversation consent reviews
@@ -556,6 +560,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload browser offer receipt previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-relay-offer-ui-preview
+          path: test-results/browser-relay-offer-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload browser conversation permission previews
         if: always()
         uses: actions/upload-artifact@v4
