@@ -1,3 +1,4 @@
+import { mountBrowserConversations } from "./browser-conversations.js";
 import { mountBrowserTasks } from "./browser-tasks.js";
 import type { z } from "zod";
 import type { BrowserKeyHost } from "../../modules/remote/browser-key-host.js";
@@ -120,6 +121,7 @@ export function mountBrowserSetup(
     // synchronously, before it captures the host cancellation version.
     reset("Registration review closed while reviewing device identities.");
     keyView.invalidate();
+    conversationView.invalidate();
   });
   const checkRoot = el("div");
   root.append(checkRoot);
@@ -127,6 +129,7 @@ export function mountBrowserSetup(
     reset("Registration review closed while reviewing device checks.");
     keyView.invalidate();
     peerView.invalidate();
+    conversationView.invalidate();
   });
   const permissionRoot = el("div");
   root.append(permissionRoot);
@@ -140,6 +143,7 @@ export function mountBrowserSetup(
       keyView.invalidate();
       peerView.invalidate();
       checkView.invalidate();
+      conversationView.invalidate();
     },
   );
   const taskRoot = el("div");
@@ -155,8 +159,25 @@ export function mountBrowserSetup(
       peerView.invalidate();
       checkView.invalidate();
       permissionView.invalidate();
+      conversationView.invalidate();
     },
     privateDelivery,
+  );
+  const conversationRoot = el("div");
+  root.append(conversationRoot);
+  const conversationView = mountBrowserConversations(
+    conversationRoot,
+    host,
+    now,
+    monotonic,
+    () => {
+      reset("Registration review closed while reviewing conversation access.");
+      keyView.invalidate();
+      peerView.invalidate();
+      checkView.invalidate();
+      permissionView.invalidate();
+      taskView.invalidate();
+    },
   );
   const stamp = () => {
     const c = host.session();
@@ -232,6 +253,7 @@ export function mountBrowserSetup(
     checkView.invalidate();
     permissionView.invalidate();
     taskView.invalidate();
+    conversationView.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -454,6 +476,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      conversationView.destroy();
+      conversationRoot.remove();
       taskView.destroy();
       taskRoot.remove();
       permissionView.destroy();

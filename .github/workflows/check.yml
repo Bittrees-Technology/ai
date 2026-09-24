@@ -182,6 +182,8 @@ jobs:
       - run: npm run build:remote
       - name: Check reviewed Mac conversation offer downloads
         run: npm run test:browser-private -- tests/browser/conversation-offers.spec.ts --max-failures=1
+      - name: Check built browser conversation consent reviews
+        run: npm run test:browser-private -- tests/browser/production-browser-conversations.spec.ts --max-failures=1
       - name: Check independent retained browser conversation consent
         run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
       - name: Check selected conversation permission reviews
@@ -534,5 +536,14 @@ jobs:
         with:
           name: conversation-offer-ui-preview
           path: test-results/conversation-offer-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload browser conversation permission previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-conversation-ui-preview
+          path: test-results/browser-conversation-ui/*.png
           if-no-files-found: error
           retention-days: 7

@@ -117,8 +117,36 @@ One additional three-engine module scenario verifies authenticated inspection
 without grants or stored rows. Two host scenarios use an actual Mac offer and the
 real browser identity service with synthetic registrations: narrowed approval,
 reload retention, unchanged task consent, offline revocation and cancellation/account
-fences. These nine new browser cases are authored; GitHub execution and browser
-review UI remain pending. All765 engine tests, typecheck and builds pass locally.
+fences. These nine new browser cases are authored; GitHub execution and new browser
+review controls await their own browser acceptance. All765 engine tests, typecheck and builds pass locally.
+
+## Independent browser review controls
+
+The built browser setup page now includes conversation access alongside the
+existing task permissions. Import a bounded encrypted JSON file or paste an offer,
+select its already verified Mac, and explicitly open it. Only authenticated scope,
+directions and deadlines are shown; all browser choices remain unchecked. File
+selection replaces previous inspection, and late file reads cannot restore a
+closed review. Browser choices may narrow the offered directions and last one,
+fifteen or sixty minutes, capped by Mac permission and browser identity expiry.
+Answers require question access. Saving reauthenticates the original offer and
+shows exact conversation/Mac/fingerprint/choices before a one-use acknowledgement.
+
+History, JSON export, exact-grant revocation and deletion remain available offline;
+reset requires a different fresh browser device. Deleted choices cannot be imported
+as authority. Mac grants, task permission/history and exported copies are separate.
+Logout, other device/task reviews, blur, hiding the page, Escape and either clock's
+expiry discard pending choices. Failed or late responses require explicit refresh.
+No automatic offer opening, approval, message sending or retry occurs.
+
+Three built-page scenarios (nine across all browser engines) use actual Mac offers,
+independent possession checks and real browser identity/storage. They cover file
+import with initially unchecked/narrowed choices, reload/export, offline revoke
+and deletion, tampered offers, changed selection, expiry and competing task review.
+Thirty desktop/phone previews cover opened offer, review, history, revoke and delete.
+765 engine tests, typecheck and both builds pass; these new browser/visual checks
+are authored but not yet accepted. Relay offer exchange and conversation content
+transport remain unfinished.
 
 ## Retained Mac offers
 
