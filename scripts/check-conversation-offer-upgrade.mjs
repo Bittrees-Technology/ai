@@ -1,4 +1,4 @@
-/** Actual compiled task28 -> current schema30: retained conversation offers, synthetic only. */
+/** Actual compiled task28 -> current schema31: retained conversation offers, synthetic only. */
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -86,7 +86,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 30);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 31);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(
     current.exportPrivateConversationConsent(owner),
@@ -141,13 +141,13 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 28,
-    to: 30,
+    to: 31,
     legacyStoreSha256: legacyHash,
     checks: [
       "existing waiting task/question and omitted policy preserved",
       "existing conversation consent preserved; new offer table starts empty",
       "wrong-key upgrade leaves original usable",
-      "task28 writer refuses current schema30",
+      "task28 writer refuses current schema31",
       "encrypted backup/restore preserves old/new waits and explicit opt-in",
       "untouched original backup remains task28-compatible",
     ],

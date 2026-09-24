@@ -573,7 +573,7 @@ test("Schema14 migration preserves tasks and receipts while initializing an empt
     );
     f.target.close();
     migrated = new Store(join(f.dir, "target.db"), f.targetVault, f.clock);
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 30);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 31);
     assert.deepEqual(migrated.exportPrivateTaskReceipts(owner), [receipt]);
     assert.equal(
       migrated.get(owner, receipt.taskId).input.prompt,

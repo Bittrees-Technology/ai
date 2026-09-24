@@ -1,3 +1,7 @@
+import {
+  privateRelayEnvelopeHash,
+  privateRelayStorageReceiptSchema,
+} from "./private-relay-contracts.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Owner, Store } from "../storage/store.js";
@@ -25,6 +29,20 @@ const valueSchema = z
     header: privateHeaderSchema,
     state: z.enum(["preparing", "ready", "stopped"]),
     envelope: privateEnvelopeSchema.nullable(),
+    // Absent on genuine pre-schema31 offers; migration invents no upload history.
+    relay: z
+      .strictObject({
+        attempts: positive,
+        lastAttemptAt: positive,
+        observation: z
+          .strictObject({
+            receipt: privateRelayStorageReceiptSchema,
+            observedAt: positive,
+            attempt: positive,
+          })
+          .nullable(),
+      })
+      .optional(),
   })
   .refine(
     (v) =>
@@ -42,7 +60,19 @@ const valueSchema = z
       v.header.expiresAt > v.header.issuedAt &&
       (v.state !== "ready" || !!v.envelope) &&
       (v.state !== "preparing" || !v.envelope) &&
-      (!v.envelope || same(v.envelope.header, v.header)),
+      (!v.envelope || same(v.envelope.header, v.header)) &&
+      (!v.relay ||
+        (!!v.envelope &&
+          v.state !== "preparing" &&
+          v.relay.lastAttemptAt >= v.header.issuedAt &&
+          v.relay.lastAttemptAt < v.header.expiresAt &&
+          (!v.relay.observation ||
+            (v.relay.observation.attempt <= v.relay.attempts &&
+              v.relay.observation.receipt.messageId === v.header.messageId &&
+              v.relay.observation.receipt.storedAt >=
+                v.header.issuedAt - 30000 &&
+              v.relay.observation.receipt.storedAt <=
+                v.relay.observation.observedAt + 30000)))),
   );
 type Entry = {
   id: string;
@@ -366,6 +396,107 @@ export class PrivateConversationOffers {
           if (current.value.state !== "ready" || !current.value.envelope)
             throw new ConversationOfferError("DENIED");
           return structuredClone(current.value.envelope);
+        })
+        .immediate();
+    });
+  }
+  /** Reserve an explicit upload attempt before network work. Retrying never
+   * reseals, extends the offer or consumes another outgoing sequence. */
+  beginRelayDelivery(raw: unknown) {
+    return this.bounded(async () => {
+      const input = this.input(
+          z.strictObject({
+            id: z.uuid(),
+            expectedRevision: positive,
+            deliveryExpiresAt: positive,
+            confirmed: z.literal(true),
+          }),
+          raw,
+        ),
+        before = this.get(input.id),
+        handle = await this.consent.resolve(before.value.grant.id);
+      return this.store.db
+        .transaction(() => {
+          const current = this.get(input.id);
+          if (current.revision !== input.expectedRevision)
+            throw new ConversationOfferError("CONFLICT");
+          this.checked(current, handle);
+          if (
+            current.value.state !== "ready" ||
+            !current.value.envelope ||
+            current.value.header.expiresAt > input.deliveryExpiresAt
+          )
+            throw new ConversationOfferError("DENIED");
+          const attempts = current.value.relay?.attempts ?? 0;
+          if (attempts >= Number.MAX_SAFE_INTEGER)
+            throw new ConversationOfferError("CAPACITY");
+          current.value.relay = {
+            attempts: attempts + 1,
+            lastAttemptAt: this.now(),
+            observation: current.value.relay?.observation ?? null,
+          };
+          this.save(current);
+          this.checked(current, handle);
+          return structuredClone(current);
+        })
+        .immediate();
+    });
+  }
+  /** Historical server storage observation, not browser consent or content
+   * acceptance. Validate the exact envelope and current authority before commit. */
+  recordRelayDelivery(raw: unknown) {
+    return this.bounded(async () => {
+      const input = this.input(
+          z.strictObject({
+            id: z.uuid(),
+            expectedRevision: positive,
+            receipt: privateRelayStorageReceiptSchema,
+          }),
+          raw,
+        ),
+        before = this.get(input.id),
+        handle = await this.consent.resolve(before.value.grant.id);
+      if (
+        !before.value.envelope ||
+        input.receipt.messageId !== before.value.header.messageId ||
+        input.receipt.envelopeHash !==
+          (await privateRelayEnvelopeHash(before.value.envelope)) ||
+        input.receipt.storedAt < before.value.header.issuedAt - 30000 ||
+        input.receipt.storedAt > this.now() + 30000
+      )
+        throw new ConversationOfferError("DENIED");
+      return this.store.db
+        .transaction(() => {
+          const current = this.get(input.id);
+          if (current.revision !== input.expectedRevision)
+            throw new ConversationOfferError("CONFLICT");
+          this.checked(current, handle);
+          if (
+            current.value.state !== "ready" ||
+            !current.value.relay ||
+            !same(current.value.envelope, before.value.envelope)
+          )
+            throw new ConversationOfferError("DENIED");
+          const old = current.value.relay.observation?.receipt,
+            receipt = input.receipt;
+          const rank = { stored: 0, received: 1, deleted: 2 };
+          if (
+            old &&
+            (receipt.storedAt !== old.storedAt ||
+              receipt.envelopeHash !== old.envelopeHash ||
+              receipt.revision < old.revision ||
+              rank[receipt.state] < rank[old.state] ||
+              (receipt.revision === old.revision && !same(receipt, old)))
+          )
+            throw new ConversationOfferError("CONFLICT");
+          current.value.relay.observation = {
+            receipt,
+            observedAt: this.now(),
+            attempt: current.value.relay.attempts,
+          };
+          this.save(current);
+          this.checked(current, handle);
+          return structuredClone(current);
         })
         .immediate();
     });

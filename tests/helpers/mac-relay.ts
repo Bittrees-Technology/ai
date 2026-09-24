@@ -39,6 +39,7 @@ export async function macRelayFixture() {
     denyRecipient: false,
     recipientExpiresAt: f.clock() + 1800000,
     beforeRecipient: undefined as undefined | (() => Promise<void>),
+    afterSubmit: undefined as undefined | (() => Promise<void>),
     beforePoll: undefined as undefined | (() => Promise<void>),
     loseAck: false,
     ackAfterSave: false,
@@ -145,6 +146,7 @@ export async function macRelayFixture() {
             },
           };
           outgoing.set(envelope.header.messageId, saved);
+          await control.afterSubmit?.();
           if (control.loseSubmit) throw Error("lost submission response");
           value = { receipt: saved.receipt, duplicate: !!previous };
         } else if (path === "relay/messages/poll") {
