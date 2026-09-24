@@ -367,3 +367,53 @@ test("selected-grant listing excludes other conversations and refuses stale gran
     f.mac.close();
   }
 });
+
+test("lost final identity responses retain committed preparation, original ciphertext and exactly-once acceptance for explicit reconciliation", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      request = { id: randomUUID(), expiresAt: Date.now() + 60000 };
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(prepare(page, selected.grant.id, request)).rejects.toThrow();
+    const [pending] = await list(page, selected.grant.id);
+    expect(pending).toMatchObject({
+      id: request.id,
+      state: "preparing",
+      revision: 1,
+    });
+    const preparedSnapshot = await snapshot(page);
+    expect(await prepare(page, selected.grant.id, request)).toEqual(pending);
+    expect(await snapshot(page)).toEqual(preparedSnapshot);
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(wire(page, pending)).rejects.toThrow();
+    const [sealed] = await list(page, selected.grant.id);
+    expect(sealed).toMatchObject({
+      id: request.id,
+      state: "ready",
+      revision: 2,
+    });
+    const envelope = await wire(page, sealed);
+    expect(await wire(page, sealed)).toEqual(envelope);
+    expect((await selected.offer.receive(envelope)).duplicate).toBe(false);
+    const reply = await selected.offer.message(
+      "SYNTHETIC_RECONCILED_REPLY",
+      request.id,
+    );
+    identityServer.reject("/browser/registration/identity", 1);
+    await expect(accept(page, selected.grant.id, reply)).rejects.toThrow();
+    expect(await list(page, selected.grant.id)).toHaveLength(2);
+    const admittedSnapshot = await snapshot(page);
+    expect((await accept(page, selected.grant.id, reply)).duplicate).toBe(true);
+    expect(await snapshot(page)).toEqual(admittedSnapshot);
+  } finally {
+    f.mac.close();
+  }
+});

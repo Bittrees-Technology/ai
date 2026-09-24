@@ -72,3 +72,9 @@ account/registration-change paths include conversation content.
 
 The authenticated host adds no relay call or automatic send. Browser UI review,
 relay transport and end-to-end user acceptance remain separate work.
+
+A failed final identity response can occur after the short local transaction has
+committed. It is an unconfirmed outcome, not evidence that nothing was saved. The
+caller must explicitly inspect the metadata and retry the same operation identity;
+prepared content, sealed ciphertext and accepted outcomes are reused. These flows
+do not claim an atomic transaction between identity-server state and IndexedDB.
