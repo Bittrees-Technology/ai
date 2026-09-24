@@ -282,3 +282,23 @@
     padding: 16px;
   }
 }
+
+.conversation-delivery-history {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 20px;
+}
+.conversation-delivery-summary {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  max-width: 68ch;
+}
+.conversation-content-file select,
+.conversation-content-file button,
+.conversation-content-file label {
+  min-width: 0;
+  max-width: 100%;
+}
+.conversation-content-file label {
+  margin-top: 16px;
+}

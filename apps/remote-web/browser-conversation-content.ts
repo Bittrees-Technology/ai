@@ -10,6 +10,7 @@ type Host = Pick<
   | "reviewVersion"
   | "conversationAPI"
   | "conversationContentAPI"
+  | "relayConversationContentAPI"
 >;
 type Status = Awaited<ReturnType<Host["conversationAPI"]["status"]>>;
 type Grant = Status["grants"][number];
@@ -18,8 +19,23 @@ type Entry = Awaited<
 >[number];
 type Opened = Awaited<ReturnType<Host["conversationContentAPI"]["read"]>>;
 type State = { status: Status; grantId: string; entries: Entry[] };
+type Queue = Awaited<
+  ReturnType<Host["relayConversationContentAPI"]["inspect"]>
+>;
+type Cursor = NonNullable<Queue["item"]>["cursor"] | null;
 type Review = {
-  action: "prepare" | "import" | "download" | "export" | "clear";
+  action:
+    | "prepare"
+    | "import"
+    | "download"
+    | "export"
+    | "clear"
+    | "seal"
+    | "send"
+    | "stop"
+    | "receive"
+    | "reconcile";
+  queue?: { value: Queue; after: Cursor };
   before: State;
   started: number;
   mono: number;
@@ -54,7 +70,8 @@ export function mountBrowserConversationContent(
     state: State | null = null,
     opened: Opened | null = null,
     review: Review | null = null,
-    pending: Review | null = null;
+    pending: Review | null = null,
+    queue: { value: Queue; after: Cursor } | null = null;
   let fileEnvelope: PrivateEnvelope | null = null,
     fileName = "",
     intent: "new" | "reply" | "answer" = "new";
@@ -124,6 +141,14 @@ export function mountBrowserConversationContent(
       "Review encrypted message download",
       () => void downloadReview(),
     );
+  const delivery = el("div", "", "conversation-delivery-history"),
+    deliveryDetail = el("p"),
+    seal = button(
+      "Review preparing delivery",
+      () => void deliveryReview("seal"),
+    ),
+    send = button("Review sending to Mac", () => void deliveryReview("send"));
+  delivery.append(el("h3", "Delivery history"), deliveryDetail, seal, send);
   const composer = el("div"),
     draftTitle = el("h3", "New message to your Mac"),
     draftLabel = el("label", "Message text"),
@@ -142,7 +167,7 @@ export function mountBrowserConversationContent(
     draft,
     el(
       "p",
-      "Saving keeps an encrypted copy in this browser. Download it separately when you want to transfer it to your Mac.",
+      "Saving keeps a copy in this browser. Prepare delivery separately, then review sending it to your Mac or downloading an encrypted file.",
     ),
     prepare,
   );
@@ -154,6 +179,7 @@ export function mountBrowserConversationContent(
     answer,
     newMessage,
     download,
+    delivery,
     composer,
   );
   const files = el("div", "", "conversation-content-file"),
@@ -171,6 +197,43 @@ export function mountBrowserConversationContent(
     file,
     fileDescription,
     importButton,
+  );
+  const queueBox = el("div", "", "conversation-content-file"),
+    queueDetail = el(
+      "p",
+      "Inspect incoming delivery to see one queued item.",
+      "browser-keys-reference",
+    ),
+    inspectQueueButton = button(
+      "Inspect incoming delivery",
+      () => void inspectQueue(null),
+    ),
+    nextQueue = button(
+      "Inspect next queued item",
+      () => void inspectQueue(queue?.value.item?.cursor ?? null),
+    ),
+    receiveQueue = button(
+      "Review receiving queued message",
+      () => void queueReview(false),
+    ),
+    receiptLabel = el("label", "Saved copy for storage receipt"),
+    receiptChoice = el("select"),
+    reconcileQueue = button(
+      "Review queued storage receipt",
+      () => void queueReview(true),
+    );
+  receiptChoice.id = "conversation-receipt-copy";
+  receiptLabel.htmlFor = receiptChoice.id;
+  receiptChoice.onchange = controls;
+  queueBox.append(
+    el("h3", "Incoming delivery"),
+    queueDetail,
+    inspectQueueButton,
+    nextQueue,
+    receiveQueue,
+    receiptLabel,
+    receiptChoice,
+    reconcileQueue,
   );
   const reviewBox = el("div", "", "conversation-content-review"),
     heading = el("h3"),
@@ -197,14 +260,14 @@ export function mountBrowserConversationContent(
     confirm,
     cancel,
   );
-  sidebar.append(el("h3", "Saved messages"), list, files);
+  sidebar.append(el("h3", "Saved messages"), list, queueBox, files);
   stage.append(view, reviewBox);
   columns.append(sidebar, stage);
   box.append(
     el("h2", "Your conversations"),
     el(
       "p",
-      "Read saved messages, reply to your Mac, or answer a specific AI question. File transfer is manual for now. A receipt confirms local storage, not that a message was read or a task finished.",
+      "Read saved messages, reply to your Mac, or answer a specific AI question. Prepare and send delivery separately, or exchange encrypted files. A receipt confirms local storage, not that a message was read or a task finished.",
     ),
     actions,
     notice,
@@ -266,7 +329,32 @@ export function mountBrowserConversationContent(
     remove.disabled = !ready || !state?.status.revision;
     selector.disabled = !ready || !!review;
     for (const node of list.querySelectorAll<HTMLButtonElement>("button"))
-      node.disabled = !ready || !usable() || !!review;
+      node.disabled =
+        !ready || !!review || (node.dataset.action !== "stop" && !usable());
+    delivery.hidden = !opened;
+    seal.disabled =
+      !ready ||
+      !usable() ||
+      !opened ||
+      opened.deliveryPrepared ||
+      opened.expiresAt <= now() ||
+      !!review;
+    send.disabled =
+      !ready ||
+      !usable() ||
+      !opened?.deliveryPrepared ||
+      !!opened?.relayStopped ||
+      opened.expiresAt <= now() ||
+      !!review;
+    send.textContent =
+      opened?.direction === "incoming"
+        ? "Review sending storage receipt"
+        : "Review sending to Mac";
+    inspectQueueButton.disabled = !ready || !usable() || !!review;
+    nextQueue.disabled = inspectQueueButton.disabled || !queue?.value.item;
+    receiveQueue.disabled = inspectQueueButton.disabled || !queue?.value.item;
+    receiptChoice.disabled = inspectQueueButton.disabled;
+    reconcileQueue.disabled = receiveQueue.disabled || !receiptChoice.value;
     reply.disabled =
       !ready ||
       !usable() ||
@@ -325,6 +413,10 @@ export function mountBrowserConversationContent(
   }
   function wipe(keepFile = false) {
     opened = null;
+    queue = null;
+    queueDetail.textContent =
+      "Inspect incoming delivery to see one queued item.";
+    deliveryDetail.textContent = "";
     review = null;
     pending = null;
     intent = "new";
@@ -374,7 +466,7 @@ export function mountBrowserConversationContent(
     const code = e instanceof Error ? e.message : "";
     error.textContent =
       code === "PARENT_PENDING"
-        ? "Open the earlier message first, then review this file again."
+        ? "Receive or open the earlier message first. Inspect the next queued item, then retry this original message."
         : code === "CAPACITY"
           ? "Storage is full. Export and review deleting saved conversations before trying again."
           : code === "CONFLICT"
@@ -408,9 +500,36 @@ export function mountBrowserConversationContent(
       }
     }
   }
+  function deliveryText(e: Entry) {
+    const observation = e.relayObservation;
+    return [
+      e.deliveryPrepared
+        ? "Delivery copy prepared."
+        : "Delivery copy not prepared.",
+      `${e.relayAttempts} upload attempt${e.relayAttempts === 1 ? "" : "s"}.`,
+      e.relayStopped
+        ? "Further uploads stopped locally."
+        : "Uploads are not stopped.",
+      observation
+        ? `Last server observation: ${observation.receipt.state} (${new Date(observation.observedAt).toLocaleString()}).`
+        : e.relayAttempts
+          ? "Upload result unconfirmed. Refresh before reviewing an original-copy retry."
+          : "No server storage observed.",
+      e.direction === "outgoing"
+        ? e.recipientAccepted
+          ? "Mac storage receipt authenticated."
+          : "Mac storage receipt not confirmed."
+        : "Saved in this browser; only its storage receipt can be sent back.",
+      e.expiresAt <= now()
+        ? "Delivery window ended. Saved content is retained."
+        : `Delivery window ends ${new Date(e.expiresAt).toLocaleString()}.`,
+    ].join(" ");
+  }
   function render() {
     selector.replaceChildren();
     list.replaceChildren();
+    receiptChoice.replaceChildren(el("option", "Choose an outgoing copy"));
+    receiptChoice.options[0]!.value = "";
     for (const [i, grant] of (state?.status.grants ?? []).entries()) {
       const option = el(
         "option",
@@ -442,7 +561,24 @@ export function mountBrowserConversationContent(
         ),
         open,
       );
+      const history = el(
+          "p",
+          deliveryText(entry),
+          "conversation-delivery-summary",
+        ),
+        stop = button(
+          `Review stopping delivery ${index + 1}`,
+          () => void deliveryReview("stop", entry),
+        );
+      stop.dataset.action = "stop";
+      stop.hidden = entry.relayStopped;
+      row.append(history, stop);
       list.append(row);
+      if (entry.direction === "outgoing" && entry.deliveryPrepared) {
+        const option = el("option", `${describe(entry)} ${index + 1}`);
+        option.value = entry.id;
+        receiptChoice.append(option);
+      }
     }
   }
   async function load(grantId = selector.value) {
@@ -458,20 +594,10 @@ export function mountBrowserConversationContent(
               )?.id ??
               status.grants[0]?.id ??
               "");
-        let entries: Entry[] = [],
+        const entries = (
+            await host.conversationContentAPI.deliveryHistory()
+          ).filter((e) => e.grantId === id),
           unavailable = false;
-        if (
-          id &&
-          status.grants.some(
-            (g) => g.id === id && !g.revoked && g.choices.expiresAt > now(),
-          )
-        ) {
-          try {
-            entries = await host.conversationContentAPI.list({ grantId: id });
-          } catch {
-            unavailable = true;
-          }
-        }
         return { status, grantId: id, entries, unavailable };
       },
       (result) => {
@@ -484,26 +610,35 @@ export function mountBrowserConversationContent(
       true,
     );
   }
-  async function fresh(before: State, needsContent = true) {
+  async function fresh(before: State, needsContent = true, offline = false) {
     const status = await host.conversationAPI.status();
     if (!same(status, before.status)) throw Error("CONFLICT");
     if (needsContent) {
-      const entries = await host.conversationContentAPI.list({
-        grantId: before.grantId,
-      });
-      if (!same(entries, before.entries)) throw Error("CONFLICT");
+      const entries = offline
+        ? (await host.conversationContentAPI.deliveryHistory()).filter(
+            (e) => e.grantId === before.grantId,
+          )
+        : await host.conversationContentAPI.list({ grantId: before.grantId });
+      if (
+        !same(
+          [...entries].sort((a, b) => a.id.localeCompare(b.id)),
+          [...before.entries].sort((a, b) => a.id.localeCompare(b.id)),
+        )
+      )
+        throw Error("CONFLICT");
     }
   }
   function show(value: Opened) {
     opened = value;
     messageTitle.textContent = describe(value);
     messageText.textContent = value.content.content;
+    deliveryDetail.textContent = deliveryText(value);
     messageDetail.textContent =
       value.content.type === "conversation.question"
         ? `Answer by ${new Date(value.content.deadline).toLocaleString()}. An ordinary reply does not resume this task.`
         : value.direction === "incoming"
           ? "Saved in this browser. A receipt confirms storage only."
-          : "Saved in this browser. Downloading an encrypted file does not deliver it to the Mac.";
+          : "Saved in this browser. Preparing or downloading a copy does not deliver it to the Mac.";
     notice.textContent = "Selected message opened.";
     controls();
     messageTitle.focus();
@@ -580,6 +715,10 @@ export function mountBrowserConversationContent(
         : grant
           ? `Conversation ${grant.choices.scope.conversationRef}. Mac ${grant.choices.peerId}. Fingerprint ${grant.peer.fingerprint}.`
           : "";
+    if (r.entry)
+      identity.textContent += ` Saved copy ${r.entry.id}, revision ${r.entry.revision}.`;
+    if (r.queue?.value.item)
+      identity.textContent += ` Queued item ${r.queue.value.item.selection.messageId}. Envelope hash ${r.queue.value.item.selection.envelopeHash}.`;
     notice.textContent =
       "Review this exact action. Leaving this window closes the review.";
     controls();
@@ -630,7 +769,7 @@ export function mountBrowserConversationContent(
           kind === "answer"
             ? "Save this answer for your Mac"
             : "Save this message for your Mac",
-          `${kind === "answer" ? "This answers the selected AI question. The Mac will still verify its exact task and revision before resuming work." : parentId ? "This is an ordinary reply to the selected message. It will not resume a waiting task." : "This starts a new message in the selected conversation."} Save locally, then download an encrypted file separately. Its delivery window ends ${new Date(expiresAt).toLocaleString()}.`,
+          `${kind === "answer" ? "This answers the selected AI question. The Mac will still verify its exact task and revision before resuming work." : parentId ? "This is an ordinary reply to the selected message. It will not resume a waiting task." : "This starts a new message in the selected conversation."} Save locally, then prepare and review delivery separately. Its delivery window ends ${new Date(expiresAt).toLocaleString()}.`,
           parentId && parent
             ? `${kind === "answer" ? "Question" : "Replying to"}:\n${parent.content.content}\n\n${kind === "answer" ? "Your answer" : "Your reply"}:\n${content}`
             : content,
@@ -720,6 +859,153 @@ export function mountBrowserConversationContent(
         ),
     );
   }
+  async function deliveryReview(
+    action: "seal" | "send" | "stop",
+    entry: Entry | null = opened,
+  ) {
+    if (
+      !current() ||
+      busy ||
+      !focused() ||
+      !state ||
+      !entry ||
+      (action !== "stop" && !usable())
+    )
+      return;
+    if (
+      (action === "seal" && seal.disabled) ||
+      (action === "send" && send.disabled)
+    )
+      return;
+    const r = reviewBase(action, structuredClone(state));
+    r.entry = structuredClone(entry);
+    if (action !== "stop")
+      r.expires = Math.min(
+        r.expires,
+        entry.expiresAt,
+        selected()!.choices.expiresAt,
+      );
+    const receipt = entry.direction === "incoming";
+    await work(
+      "Checking this exact saved delivery…",
+      async () => {
+        await fresh(r.before, true, action === "stop");
+        const content =
+          action === "stop"
+            ? null
+            : await host.conversationContentAPI.read({
+                grantId: entry.grantId,
+                id: entry.id,
+              });
+        if (content && content.revision !== entry.revision)
+          throw Error("CONFLICT");
+        return {
+          r,
+          text: action === "stop" || receipt ? "" : content!.content.content,
+        };
+      },
+      ({ r, text }) =>
+        showReview(
+          r,
+          action === "stop"
+            ? "Stop delivery of this copy"
+            : action === "seal"
+              ? "Prepare this delivery copy"
+              : receipt
+                ? "Send this storage receipt"
+                : "Send this message to your Mac",
+          action === "stop"
+            ? "Stop later uploads of this exact copy on this browser. Content and history stay saved. This cannot withdraw a copy already uploaded."
+            : action === "seal"
+              ? "Prepare and retain the encrypted original for this Mac. Nothing is uploaded or downloaded. Review sending separately."
+              : receipt
+                ? "Upload only the original encrypted storage receipt. It confirms storage in this browser, not reading or task completion."
+                : "Upload the original encrypted message for this Mac. A server storage response does not confirm Mac acceptance or task completion. An unconfirmed attempt must be inspected before an explicit retry.",
+          text,
+          action === "stop"
+            ? "Stop reviewed delivery"
+            : action === "seal"
+              ? "Prepare reviewed delivery"
+              : receipt
+                ? "Send reviewed storage receipt"
+                : "Send reviewed message",
+        ),
+    );
+  }
+  async function inspectQueue(after: Cursor) {
+    if (inspectQueueButton.disabled || !state) return;
+    const before = structuredClone(state);
+    await work(
+      "Inspecting one incoming delivery…",
+      async () => {
+        await fresh(before);
+        return host.relayConversationContentAPI.inspect({
+          after,
+          confirmed: true,
+        });
+      },
+      (value) => {
+        queue = { value, after };
+        queueDetail.textContent = value.item
+          ? `Queued item ${value.item.selection.messageId}. Delivery window ends ${new Date(value.item.expiresAt).toLocaleString()}. Content has not been opened or acknowledged.`
+          : "No queued item at this position. Start a new inspection to check from the beginning.";
+        notice.textContent =
+          "Incoming delivery inspected. Review receipt separately.";
+      },
+    );
+  }
+  async function queueReview(receipt: boolean) {
+    if (
+      (receipt ? reconcileQueue.disabled : receiveQueue.disabled) ||
+      !queue?.value.item ||
+      !state
+    )
+      return;
+    const r = reviewBase(
+      receipt ? "reconcile" : "receive",
+      structuredClone(state),
+    );
+    r.queue = structuredClone(queue);
+    r.expires = Math.min(
+      r.expires,
+      queue.value.item.expiresAt,
+      selected()!.choices.expiresAt,
+    );
+    if (receipt)
+      r.entry = state.entries.find(
+        (e) => e.id === receiptChoice.value && e.direction === "outgoing",
+      );
+    if (receipt && !r.entry) return;
+    await work(
+      "Checking the selected incoming item…",
+      async () => {
+        await fresh(r.before);
+        const content = r.entry
+          ? await host.conversationContentAPI.read({
+              grantId: r.entry.grantId,
+              id: r.entry.id,
+            })
+          : null;
+        if (content && content.revision !== r.entry!.revision)
+          throw Error("CONFLICT");
+        return { r, text: content?.content.content ?? "" };
+      },
+      ({ r, text }) =>
+        showReview(
+          r,
+          receipt
+            ? "Check storage receipt for this copy"
+            : "Receive this queued message",
+          receipt
+            ? "Authenticate the selected queued item as a storage receipt for this exact outgoing copy. Save it before acknowledging transport. This does not resend content or confirm reading or task completion."
+            : "Authenticate and save this selected message or question before acknowledging transport. A missing earlier message stays queued. Reading and sending a storage receipt remain separate actions.",
+          text,
+          receipt
+            ? "Check reviewed storage receipt"
+            : "Receive reviewed message",
+        ),
+    );
+  }
   async function maintenance(action: "export" | "clear") {
     if (
       !current() ||
@@ -783,13 +1069,17 @@ export function mountBrowserConversationContent(
       s = loaded;
     controls();
     try {
-      await fresh(r.before, r.action !== "export" && r.action !== "clear");
+      await fresh(
+        r.before,
+        r.action !== "export" && r.action !== "clear",
+        r.action === "stop",
+      );
       if (!alive(g, s) || !timed(r)) return;
       if (r.action === "prepare") {
         await host.conversationContentAPI.prepare(r.request!);
         if (alive(g, s))
           notice.textContent =
-            "Message saved locally. Refresh the list to open it and download an encrypted file. Nothing was sent.";
+            "Message saved locally. Refresh the list to open it and review preparing delivery or an encrypted download. Nothing was sent.";
       } else if (r.action === "import") {
         const result = await host.conversationContentAPI.accept({
           grantId: r.before.grantId,
@@ -818,6 +1108,54 @@ export function mountBrowserConversationContent(
           notice.textContent =
             "Encrypted file downloaded. Nothing was sent automatically. Refresh before another action.";
         }
+      } else if (
+        r.action === "seal" ||
+        r.action === "send" ||
+        r.action === "stop"
+      ) {
+        const e = r.entry!,
+          input = {
+            grantId: e.grantId,
+            id: e.id,
+            expectedRevision: e.revision,
+            confirmed: true as const,
+          };
+        if (r.action === "seal")
+          await host.conversationContentAPI.envelope(input);
+        else if (r.action === "send")
+          await host.relayConversationContentAPI.send(input);
+        else await host.relayConversationContentAPI.stop(input);
+        if (alive(g, s))
+          notice.textContent =
+            r.action === "seal"
+              ? "Delivery copy prepared locally. Refresh before separately reviewing sending."
+              : r.action === "stop"
+                ? "Further delivery stopped locally. Saved content and history remain."
+                : "Server storage response saved. Refresh delivery history; recipient storage is confirmed separately.";
+      } else if (r.action === "receive" || r.action === "reconcile") {
+        const q = r.queue!,
+          e = r.entry;
+        const result = await host.relayConversationContentAPI.receive({
+          after: q.after,
+          selection: q.value.item!.selection,
+          confirmed: true,
+          target:
+            r.action === "receive"
+              ? { action: "receive", grantId: r.before.grantId }
+              : {
+                  action: "reconcile",
+                  grantId: e!.grantId,
+                  id: e!.id,
+                  expectedRevision: e!.revision,
+                },
+        });
+        if (alive(g, s))
+          notice.textContent =
+            r.action === "reconcile"
+              ? "Mac storage receipt authenticated and transport acknowledged. Refresh the saved copy to inspect it."
+              : result.received.duplicate
+                ? "Original message already saved; transport acknowledged. Refresh to inspect it."
+                : "Message authenticated and saved; transport acknowledged. Refresh to open it. Storage receipt delivery is separate.";
       } else if (r.action === "export") {
         const data = await host.conversationContentAPI.export({
           confirmed: true,

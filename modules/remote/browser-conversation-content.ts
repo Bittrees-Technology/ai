@@ -130,6 +130,9 @@ function summary(e: Entry) {
     kind: e.value.content.type,
     state: e.value.state,
     expiresAt: e.value.header.expiresAt,
+    deliveryPrepared: !!(e.value.direction === "incoming"
+      ? e.value.receiptEnvelope
+      : e.value.envelope),
     relayAttempts: e.value.relay?.attempts ?? 0,
     relayStopped: e.value.relay?.stopped ?? false,
     relayObservation: e.value.relay?.observation ?? null,
@@ -791,6 +794,63 @@ export class BrowserConversationContent {
         }),
       );
     });
+  }
+  /** Owner-local metadata only; no plaintext, key, envelope or renewed authority. */
+  async deliveryHistory(): Promise<Summary[]> {
+    if (this.busy) fail("BUSY");
+    this.busy = true;
+    const generation = this.generation,
+      wall = this.now(),
+      mono = this.mono();
+    const check = () => {
+      const n = this.now(),
+        elapsed = this.mono() - mono;
+      if (
+        this.closed ||
+        generation !== this.generation ||
+        !Number.isSafeInteger(n) ||
+        n < wall ||
+        !Number.isFinite(elapsed) ||
+        elapsed < 0 ||
+        elapsed >= 120000
+      )
+        fail();
+    };
+    try {
+      const rows = await browserStorageTransaction<Row[]>(
+        this.db,
+        [storeName],
+        "readonly",
+        check,
+        (io) => this.allRows(io, (values) => io.done(values)),
+        normalize,
+      );
+      const entries = await Promise.all(rows.map(openBrowserConversationRow));
+      check();
+      const items = entries
+        .sort(
+          (a, b) =>
+            a.value.header.issuedAt - b.value.header.issuedAt ||
+            a.value.content.id.localeCompare(b.value.content.id),
+        )
+        .map(summary);
+      return await browserStorageTransaction<Summary[]>(
+        this.db,
+        [storeName],
+        "readonly",
+        check,
+        (io) =>
+          this.allRows(io, (current) => {
+            if (!same(current, rows)) fail("CONFLICT");
+            io.done(items);
+          }),
+        normalize,
+      );
+    } catch (e) {
+      throw normalize(e);
+    } finally {
+      this.busy = false;
+    }
   }
   /** Local-only stop works after logout/revocation; it retains the encrypted
    * original and history and never restores consent or withdraws network data. */
