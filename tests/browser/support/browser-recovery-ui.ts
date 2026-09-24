@@ -23,7 +23,10 @@ export async function refreshRegistration(p: Page) {
 }
 /** Actual shipped controls, downloaded recovery files and activation. No production
  * host handle, synthetic trust grant or private-key extraction is used. */
-export async function setupRecovery(p: Page) {
+export async function setupRecovery(
+  p: Page,
+  afterRegistration?: () => Promise<void>,
+) {
   await openRemotePanel(p);
   await loginRemotePanel(p);
   await openRecovery(p);
@@ -38,6 +41,7 @@ export async function setupRecovery(p: Page) {
   await expect(registration(p).getByRole("status")).toContainText(
     "registered until",
   );
+  await afterRegistration?.();
   const keys = keyControls(p);
   await keys.getByRole("button", { name: "Refresh keys", exact: true }).click();
   await expect(keys.getByRole("status")).toContainText("Key history loaded");

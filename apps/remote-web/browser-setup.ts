@@ -1,3 +1,4 @@
+import { mountBrowserTasks } from "./browser-tasks.js";
 import type { z } from "zod";
 import type { BrowserKeyHost } from "../../modules/remote/browser-key-host.js";
 import type {
@@ -140,6 +141,15 @@ export function mountBrowserSetup(
       checkView.invalidate();
     },
   );
+  const taskRoot = el("div");
+  root.append(taskRoot);
+  const taskView = mountBrowserTasks(taskRoot, host, now, monotonic, () => {
+    reset("Registration review closed while reviewing a task.");
+    keyView.invalidate();
+    peerView.invalidate();
+    checkView.invalidate();
+    permissionView.invalidate();
+  });
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;
@@ -213,6 +223,7 @@ export function mountBrowserSetup(
     peerView.invalidate();
     checkView.invalidate();
     permissionView.invalidate();
+    taskView.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -435,6 +446,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      taskView.destroy();
+      taskRoot.remove();
       permissionView.destroy();
       permissionRoot.remove();
       checkView.destroy();

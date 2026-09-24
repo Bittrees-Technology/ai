@@ -199,7 +199,7 @@ const fixture = {
     );
     return proof;
   },
-  keyStatus: () => keys.status(),
+  keyStatus: () => (host ? host.keyAPI.status() : keys.status()),
   recovery: (keyId: string) => keys.recovery({ keyId, confirmed: true }),
   async checkRecovery(kit: unknown, code: string) {
     const r = await openBrowserKeyRecovery(kit, await browserRecoveryKey(code));
@@ -520,7 +520,15 @@ const fixture = {
   composeInitialize: (raw: unknown) =>
     host
       ? host.taskAPI.initialize(raw)
-      : withKey(async () => (await compositionStore()).initialize(raw)),
+      : BrowserPrivateOutbox.initializeVerified(
+          raw,
+          {
+            current: () => binding,
+            freshRegistration: (b) =>
+              !!binding && JSON.stringify(b) === JSON.stringify(binding),
+          },
+          () => now,
+        ),
   composePrepare: (raw: unknown) =>
     host
       ? host.taskAPI.prepare(raw)

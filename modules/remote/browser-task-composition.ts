@@ -86,35 +86,6 @@ export class BrowserTaskComposition {
       this.busy = false;
     }
   }
-  initialize(raw: unknown) {
-    return this.exclusive(async (g) => {
-      const input = z
-          .strictObject({
-            ...route,
-            expectedRevision: z
-              .number()
-              .int()
-              .nonnegative()
-              .max(Number.MAX_SAFE_INTEGER),
-            confirmed: z.literal(true),
-          })
-          .parse(raw),
-        sender = await this.consents.authorize(
-          input.peerId,
-          input.peerKeyEpoch,
-          this.freshRegistration,
-          () => this.check(g),
-        );
-      try {
-        return await sender.outbox.initialize({
-          expectedRevision: input.expectedRevision,
-          confirmed: true,
-        });
-      } finally {
-        sender.outbox.close();
-      }
-    });
-  }
   prepare(raw: unknown) {
     return this.exclusive(async (g) => {
       this.pending = null;
