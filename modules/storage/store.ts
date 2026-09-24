@@ -164,7 +164,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 25) {
+    if (version > 26) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -279,7 +279,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_response_delivery(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,response_id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,response_id),FOREIGN KEY(user_id,tenant_id,response_id) REFERENCES private_task_responses(user_id,tenant_id,id) ON DELETE CASCADE)",
         );
-        this.db.pragma("user_version = 25");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS task_input_waits(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,question_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,worker_id TEXT NOT NULL,generation INTEGER NOT NULL,deadline INTEGER NOT NULL,reply_id TEXT UNIQUE REFERENCES messages(id),reply_revision INTEGER,CHECK((reply_id IS NULL)=(reply_revision IS NULL))); CREATE UNIQUE INDEX IF NOT EXISTS task_one_input_wait ON task_input_waits(task_id) WHERE reply_id IS NULL",
+        );
+        this.db.pragma("user_version = 26");
       })();
     } catch (error) {
       this.db.close();
@@ -949,7 +952,9 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
             ? "cancelled"
             : command.command === "pause"
               ? "paused"
-              : "queued";
+              : this.inputWaitHistory(owner, id).some((w) => w.replyId === null)
+                ? "awaiting_input"
+                : "queued";
         this.db
           .prepare(
             "UPDATE runs SET finished_at=?,outcome=? WHERE task_id=? AND finished_at IS NULL",
@@ -965,6 +970,256 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
       })
       .immediate();
   }
+  /** Trusted worker transition. The question is an ordinary encrypted inbox
+   * message; only this atomic association can make its reply task input. */
+  waitForInput(
+    owner: Owner,
+    id: string,
+    worker: string,
+    generation: number,
+    raw: unknown,
+    key: string,
+  ) {
+    const input = z
+      .strictObject({
+        inboxId: z.string().min(1).max(128),
+        question: z.string().min(1).max(32000),
+        replyDueAt: z.string().datetime(),
+      })
+      .parse(raw);
+    return this.db
+      .transaction(() => {
+        const task = this.row(owner, id),
+          now = this.now();
+        const messageInput = inboxMessageSchema.parse({
+          conversationId: task.conversation_id,
+          recipientInboxId: input.inboxId,
+          requestId: id,
+          type: "clarification",
+          content: input.question,
+          replyExpected: true,
+          replyDueAt: input.replyDueAt,
+        });
+        const prior = this.db
+          .prepare(
+            "SELECT m.id,m.hash,w.worker_id,w.generation FROM messages m LEFT JOIN task_input_waits w ON w.question_id=m.id WHERE m.user_id=? AND m.tenant_id=? AND m.key=?",
+          )
+          .get(owner.userId, owner.tenantId, key) as
+          | { id: string; hash: string; worker_id: string; generation: number }
+          | undefined;
+        if (prior) {
+          if (
+            prior.hash !== this.vault.fingerprint(messageInput) ||
+            prior.worker_id !== worker ||
+            prior.generation !== generation
+          )
+            throw new StoreError("CONFLICT");
+          return {
+            task: this.get(owner, id),
+            question: this.message(owner, prior.id),
+            duplicate: true,
+          };
+        }
+        this.validClaim(owner, id, worker, generation);
+        const waits = this.inputWaitHistory(owner, id);
+        if (waits.some((w) => w.replyId === null))
+          throw new StoreError("CONFLICT");
+        if (waits.length >= 8) throw new StoreError("CAPACITY");
+        const due = Date.parse(input.replyDueAt);
+        if (
+          due <= now ||
+          due > now + 7 * 86400000 ||
+          (task.deadline !== null && due > task.deadline)
+        )
+          throw new StoreError("EXPIRED");
+        if (
+          this.inputReplyBytes(owner, id) + Buffer.byteLength(input.question) >
+          128000
+        )
+          throw new StoreError("CAPACITY");
+        const question = this.appendMessage(owner, messageInput, key);
+        this.db
+          .prepare(
+            "INSERT INTO task_input_waits(task_id,question_id,worker_id,generation,deadline) VALUES(?,?,?,?,?)",
+          )
+          .run(id, question.id, worker, generation, due);
+        this.db
+          .prepare(
+            "UPDATE tasks SET status='awaiting_input',revision=revision+1,generation=generation+1,lease_until=NULL,worker_id=NULL,updated_at=? WHERE id=?",
+          )
+          .run(now, id);
+        this.db
+          .prepare(
+            "UPDATE runs SET finished_at=?,outcome='awaiting_input' WHERE task_id=? AND generation=?",
+          )
+          .run(now, id, generation);
+        if (this.now() < now || this.now() >= due)
+          throw new StoreError("EXPIRED");
+        this.event(id, "awaiting_input");
+        return { task: this.get(owner, id), question, duplicate: false };
+      })
+      .immediate();
+  }
+  inputWaitHistory(owner: Owner, id: string) {
+    this.row(owner, id);
+    return this.db
+      .prepare(
+        "SELECT w.question_id AS questionId,w.reply_id AS replyId,w.reply_revision AS replyRevision,w.deadline FROM task_input_waits w JOIN messages m ON m.id=w.question_id WHERE w.task_id=? ORDER BY m.sequence",
+      )
+      .all(id) as {
+      questionId: string;
+      replyId: string | null;
+      replyRevision: number | null;
+      deadline: number;
+    }[];
+  }
+  private inputReplyBytes(owner: Owner, id: string) {
+    return this.inputWaitHistory(owner, id).reduce(
+      (sum, w) =>
+        sum +
+        Buffer.byteLength(this.message(owner, w.questionId).input.content) +
+        (w.replyId
+          ? Buffer.byteLength(this.message(owner, w.replyId).input.content)
+          : 0),
+      0,
+    );
+  }
+  /** Direct owner control path: no new task is queued behind the task it unblocks.
+   * Future transports must validate separate current conversation/reply authority
+   * through the synchronous check inside the same transaction. */
+  answerInput(
+    owner: Owner,
+    id: string,
+    raw: unknown,
+    key: string,
+    check: () => void = () => {},
+  ) {
+    const input = z
+      .strictObject({
+        questionId: z.uuid(),
+        expectedRevision: z
+          .number()
+          .int()
+          .positive()
+          .max(Number.MAX_SAFE_INTEGER),
+        content: z.string().min(1).max(32000),
+      })
+      .parse(raw);
+    return this.db
+      .transaction(() => {
+        check();
+        const row = this.row(owner, id),
+          wait = this.inputWaitHistory(owner, id).find(
+            (w) => w.questionId === input.questionId,
+          );
+        if (!wait) throw new StoreError("NOT_FOUND");
+        const question = this.message(owner, wait.questionId);
+        const messageInput = inboxMessageSchema.parse({
+          conversationId: row.conversation_id,
+          recipientInboxId: question.input.recipientInboxId,
+          requestId: id,
+          replyToId: question.id,
+          type: "reply",
+          content: input.content,
+        });
+        if (
+          question.input.requestId !== id ||
+          question.input.conversationId !== row.conversation_id
+        )
+          throw new StoreError("CONFLICT");
+        if (wait.replyId) {
+          const prior = this.db
+            .prepare("SELECT key,hash FROM messages WHERE id=?")
+            .get(wait.replyId) as { key: string; hash: string };
+          if (
+            prior.key !== key ||
+            prior.hash !== this.vault.fingerprint(messageInput) ||
+            wait.replyRevision !== input.expectedRevision
+          )
+            throw new StoreError("CONFLICT");
+          check();
+          return {
+            task: this.get(owner, id),
+            reply: this.message(owner, wait.replyId),
+            duplicate: true,
+          };
+        }
+        if (
+          row.revision !== input.expectedRevision ||
+          !["awaiting_input", "paused"].includes(row.status)
+        )
+          throw new StoreError("CONFLICT");
+        const now = this.now();
+        if (
+          now < question.createdAt ||
+          now >= wait.deadline ||
+          (row.deadline !== null && row.deadline <= now)
+        )
+          throw new StoreError("EXPIRED");
+        if (
+          this.inputReplyBytes(owner, id) + Buffer.byteLength(input.content) >
+          128000
+        )
+          throw new StoreError("CAPACITY");
+        const reply = this.appendMessage(owner, messageInput, key);
+        this.db
+          .prepare(
+            "UPDATE task_input_waits SET reply_id=?,reply_revision=? WHERE task_id=? AND question_id=? AND reply_id IS NULL",
+          )
+          .run(reply.id, row.revision, id, question.id);
+        this.db
+          .prepare(
+            "UPDATE tasks SET status=?,revision=revision+1,generation=generation+1,lease_until=NULL,worker_id=NULL,next_attempt_at=0,updated_at=? WHERE id=?",
+          )
+          .run(row.status === "paused" ? "paused" : "queued", now, id);
+        if (
+          this.now() < now ||
+          this.now() >= wait.deadline ||
+          (row.deadline !== null && this.now() >= row.deadline)
+        )
+          throw new StoreError("EXPIRED");
+        this.event(id, "input_received");
+        check();
+        return { task: this.get(owner, id), reply, duplicate: false };
+      })
+      .immediate();
+  }
+  taskInputContext(
+    owner: Owner,
+    id: string,
+    worker: string,
+    generation: number,
+  ) {
+    const row = this.validClaim(owner, id, worker, generation);
+    const waits = this.inputWaitHistory(owner, id);
+    if (waits.some((w) => !w.replyId)) throw new StoreError("CONFLICT");
+    return waits.map((w) => {
+      const question = this.message(owner, w.questionId),
+        reply = this.message(owner, w.replyId!);
+      if (
+        question.input.requestId !== id ||
+        reply.input.requestId !== id ||
+        question.input.conversationId !== row.conversation_id ||
+        reply.input.conversationId !== row.conversation_id ||
+        reply.input.replyToId !== question.id ||
+        reply.input.recipientInboxId !== question.input.recipientInboxId ||
+        reply.input.type !== "reply"
+      )
+        throw new StoreError("CONFLICT");
+      return {
+        questionId: question.id,
+        replyId: reply.id,
+        question: question.input.content,
+        reply: reply.input.content,
+      };
+    });
+  }
+  exportInputWaits(owner: Owner) {
+    return this.export(owner).flatMap((t) =>
+      this.inputWaitHistory(owner, t.id).map((w) => ({ taskId: t.id, ...w })),
+    );
+  }
+
   /** Internal local-consent boundary. No HTTP route or implicit pairing grant. */
   allowRemoteControls(owner: Owner, raw: unknown) {
     const binding = remoteControlBindingSchema.parse(raw);
@@ -1220,9 +1475,9 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.remoteTemplates.invalidateRuns(owner);
         const expired = this.db
           .prepare(
-            "SELECT id FROM tasks WHERE user_id=? AND tenant_id=? AND deadline<=? AND status NOT IN ('completed','failed','cancelled','expired')",
+            "SELECT id FROM tasks WHERE user_id=? AND tenant_id=? AND (deadline<=? OR EXISTS(SELECT 1 FROM task_input_waits w WHERE w.task_id=tasks.id AND w.reply_id IS NULL AND w.deadline<=?)) AND status NOT IN ('completed','failed','cancelled','expired')",
           )
-          .all(owner.userId, owner.tenantId, now) as { id: string }[];
+          .all(owner.userId, owner.tenantId, now, now) as { id: string }[];
         for (const { id } of expired) {
           this.db
             .prepare(
@@ -1241,6 +1496,7 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         const r = this.db
           .prepare(
             `SELECT t.* FROM tasks t WHERE user_id=? AND tenant_id=? AND (status='queued' OR(status='running' AND lease_until<=?)) AND next_attempt_at<=?
+AND NOT EXISTS(SELECT 1 FROM task_input_waits w WHERE w.task_id=t.id AND w.reply_id IS NULL)
 AND t.id NOT IN (SELECT value FROM json_each(?))
 AND NOT EXISTS(SELECT 1 FROM tasks earlier WHERE earlier.user_id=t.user_id AND earlier.tenant_id=t.tenant_id AND earlier.conversation_id=t.conversation_id AND earlier.sequence<t.sequence AND earlier.status NOT IN ('completed','failed','cancelled','expired'))
 AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WHERE d.task_id=t.id AND p.status!='completed') ORDER BY created_at,id LIMIT 1`,
@@ -1528,7 +1784,13 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   inboxConversations(owner: Owner, inboxId: string) {
     return this.inboxConversationPage(owner, inboxId).items;
   }
-  inboxConversationPage(owner: Owner, inboxId: string, cursor?: string) {
+  inboxConversationPage(
+    owner: Owner,
+    inboxId: string,
+    cursor?: string,
+    preview: (message: ReturnType<Store["message"]>) => string = (message) =>
+      message.input.content.slice(0, 100),
+  ) {
     const purpose = JSON.stringify([
       "inbox-page",
       owner.tenantId,
@@ -1584,7 +1846,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
       items: page.map((row) => ({
         id: row.conversation_id,
         updatedAt: row.created_at,
-        preview: this.message(owner, row.id).input.content.slice(0, 100),
+        preview: preview(this.message(owner, row.id)),
       })),
       nextCursor:
         rows.length > 100
@@ -1781,6 +2043,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           .run(owner.userId, owner.tenantId);
         this.db
           .prepare("DELETE FROM model_profiles WHERE user_id=? AND tenant_id=?")
+          .run(owner.userId, owner.tenantId);
+        this.db
+          .prepare(
+            "DELETE FROM task_input_waits WHERE task_id IN (SELECT id FROM tasks WHERE user_id=? AND tenant_id=?)",
+          )
           .run(owner.userId, owner.tenantId);
         this.db
           .prepare("DELETE FROM inboxes WHERE user_id=? AND tenant_id=?")

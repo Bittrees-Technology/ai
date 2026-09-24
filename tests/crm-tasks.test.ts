@@ -1,4 +1,6 @@
 import test from "node:test";
+import { createServer } from "node:http";
+import { localApi } from "../apps/companion/http.js";
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -354,7 +356,7 @@ test("version-four migration preserves local tasks while adding protected source
     store = new Store(path, vault);
     assert.equal(store.get(owner, task.id).input.prompt, input.prompt);
     assert.equal(store.sourceBinding(owner, task.id), null);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 25);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 26);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -681,7 +683,7 @@ test("schema five migration adds the publication ledger without changing existin
     store = new Store(path, vault);
     assert.deepEqual(store.get(owner, task.id), task);
     assert.deepEqual(store.publications(owner, task.id), []);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 25);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 26);
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });
@@ -889,5 +891,321 @@ test("publication HTTP controls require exact scope, keep content gated and reta
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
     store.close();
+  }
+});
+
+test("answered input waits still revalidate current CRM rights before generation and before result storage", async () => {
+  for (const when of ["before", "during"]) {
+    const f = await fixture(),
+      store = new Store(":memory:", new Vault(randomBytes(32)));
+    try {
+      store.createInbox(owner, {
+        id: "personal",
+        tenantId: owner.tenantId,
+        ownerId: owner.userId,
+        ownerType: "user",
+        memberUserIds: [owner.userId],
+      });
+      const task = await f.adapter.create(
+        store,
+        input,
+        [f.record.id],
+        "wait-source",
+      );
+      const claim = store.claim(owner, "worker")!;
+      const waiting = store.waitForInput(
+        owner,
+        task.id,
+        "worker",
+        claim.generation,
+        {
+          inboxId: "personal",
+          question: "Which detail should the draft emphasize?",
+          replyDueAt: new Date(Date.now() + 60000).toISOString(),
+        },
+        "source-question",
+      );
+      store.answerInput(
+        owner,
+        task.id,
+        {
+          questionId: waiting.question.id,
+          expectedRevision: waiting.task.revision,
+          content: "The reviewed next action",
+        },
+        "source-answer",
+      );
+      if (when === "before") f.deny();
+      let generated = 0;
+      const worker = new LocalWorker(
+        store,
+        owner,
+        {
+          pin: async () => {
+            assert.equal(when, "during");
+            return { profile, digest: "c".repeat(64) };
+          },
+          generate: async (_p, prompt) => {
+            generated++;
+            assert.match(prompt, /The reviewed next action/);
+            f.deny();
+            return "DO_NOT_PERSIST";
+          },
+        },
+        () => profile,
+        "worker",
+        undefined,
+        f.adapter,
+      );
+      await worker.runOnce();
+      assert.equal(generated, when === "before" ? 0 : 1);
+      assert.equal(store.get(owner, task.id).status, "failed");
+      assert.equal(store.get(owner, task.id).result, null);
+    } finally {
+      store.close();
+    }
+  }
+});
+
+test("source-bound task questions and answers do not leak through inbox history or export after source access ends", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "synthetic-token".repeat(5);
+  server.on(
+    "request",
+    localApi({ store, owner, token, port, sources: f.adapter }),
+  );
+  const get = (path: string) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      headers: { Authorization: "Bearer " + token },
+    });
+  try {
+    store.createInbox(owner, {
+      id: "personal",
+      tenantId: owner.tenantId,
+      ownerId: owner.userId,
+      ownerType: "user",
+      memberUserIds: [owner.userId],
+    });
+    const task = await f.adapter.create(
+        store,
+        input,
+        [f.record.id],
+        "question-disclosure",
+      ),
+      claim = store.claim(owner, "worker")!;
+    const q = store.waitForInput(
+      owner,
+      task.id,
+      "worker",
+      claim.generation,
+      {
+        inboxId: "personal",
+        question: "SOURCE_QUESTION_SENTINEL",
+        replyDueAt: new Date(Date.now() + 60000).toISOString(),
+      },
+      "question",
+    );
+    store.answerInput(
+      owner,
+      task.id,
+      {
+        questionId: q.question.id,
+        expectedRevision: q.task.revision,
+        content: "SOURCE_ANSWER_SENTINEL",
+      },
+      "answer",
+    );
+    const path = "/v1/messages?inboxId=personal&conversationId=crm";
+    assert.match(await (await get(path)).text(), /SOURCE_QUESTION_SENTINEL/);
+    const single = "/v1/messages/" + q.question.id;
+    assert.match(await (await get(single)).text(), /SOURCE_QUESTION_SENTINEL/);
+    const unauthenticated = await fetch(`http://127.0.0.1:${port}${single}`);
+    assert.equal(unauthenticated.status, 401);
+    assert.doesNotMatch(
+      await (await get("/v1/export")).text(),
+      /SOURCE_QUESTION_SENTINEL|SOURCE_ANSWER_SENTINEL/,
+    );
+    f.deny();
+    const deniedSingle = await get(single);
+    assert.notEqual(deniedSingle.status, 200);
+    assert.doesNotMatch(await deniedSingle.text(), /SOURCE_QUESTION_SENTINEL/);
+    const response = await get(path);
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(
+      await (await get("/v1/inboxes/personal/conversations")).text(),
+      /SOURCE_QUESTION_SENTINEL|SOURCE_ANSWER_SENTINEL/,
+    );
+    const data = (await response.json()) as any;
+    assert.equal(data.items.length, 2);
+    assert.ok(
+      data.items.every(
+        (m: any) => m.input.content === "Task reference unavailable",
+      ),
+    );
+    assert.doesNotMatch(
+      await (await get("/v1/export")).text(),
+      /SOURCE_QUESTION_SENTINEL|SOURCE_ANSWER_SENTINEL/,
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("local question and answer HTTP rechecks source rights, including duplicate reconciliation", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "synthetic-token".repeat(5);
+  server.on(
+    "request",
+    localApi({ store, owner, token, port, sources: f.adapter }),
+  );
+  try {
+    store.createInbox(owner, {
+      id: "personal",
+      tenantId: owner.tenantId,
+      ownerId: owner.userId,
+      ownerType: "user",
+      memberUserIds: [owner.userId],
+    });
+    const task = await f.adapter.create(
+        store,
+        input,
+        [f.record.id],
+        "answer-source",
+      ),
+      claim = store.claim(owner, "worker")!;
+    const q = store.waitForInput(
+      owner,
+      task.id,
+      "worker",
+      claim.generation,
+      {
+        inboxId: "personal",
+        question: "SOURCE_QUESTION_SENTINEL",
+        replyDueAt: new Date(Date.now() + 60000).toISOString(),
+      },
+      "question",
+    );
+    const body = {
+        questionId: q.question.id,
+        expectedRevision: q.task.revision,
+        content: "SOURCE_ANSWER_SENTINEL",
+        confirmed: true,
+      },
+      key = randomUUID();
+    const call = (save: boolean) =>
+      fetch(
+        `http://127.0.0.1:${port}/v1/messages/${q.question.id}/${save ? "task-answer" : "task-question"}`,
+        {
+          method: save ? "POST" : "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": key,
+          },
+          ...(save ? { body: JSON.stringify(body) } : {}),
+        },
+      );
+    assert.equal((await call(false)).status, 200);
+    assert.equal((await call(true)).status, 200);
+    f.deny();
+    for (const save of [false, true]) {
+      const denied = await call(save);
+      assert.notEqual(denied.status, 200);
+      assert.doesNotMatch(await denied.text(), /SENTINEL/);
+    }
+    assert.ok(store.inputWaitHistory(owner, task.id)[0]!.replyId);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("source denial and task changes during asynchronous validation cannot save a new task answer", async () => {
+  for (const change of ["deny", "cancel"] as const) {
+    const f = await fixture(),
+      store = new Store(":memory:", new Vault(randomBytes(32))),
+      server = createServer();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as import("node:net").AddressInfo).port,
+      token = "synthetic-token".repeat(5);
+    server.on(
+      "request",
+      localApi({ store, owner, token, port, sources: f.adapter }),
+    );
+    try {
+      store.createInbox(owner, {
+        id: "personal",
+        tenantId: owner.tenantId,
+        ownerId: owner.userId,
+        ownerType: "user",
+        memberUserIds: [owner.userId],
+      });
+      const task = await f.adapter.create(
+          store,
+          input,
+          [f.record.id],
+          "answer-race",
+        ),
+        claim = store.claim(owner, "worker")!;
+      const q = store.waitForInput(
+        owner,
+        task.id,
+        "worker",
+        claim.generation,
+        {
+          inboxId: "personal",
+          question: "SOURCE_QUESTION_SENTINEL",
+          replyDueAt: new Date(Date.now() + 60000).toISOString(),
+        },
+        "question",
+      );
+      if (change === "deny") f.deny();
+      else {
+        const validate = f.adapter.validate.bind(f.adapter);
+        f.adapter.validate = async (...args) => {
+          const result = await validate(...args);
+          store.command(owner, task.id, {
+            command: "cancel",
+            expectedRevision: q.task.revision,
+          });
+          return result;
+        };
+      }
+      const response = await fetch(
+        `http://127.0.0.1:${port}/v1/messages/${q.question.id}/task-answer`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": randomUUID(),
+          },
+          body: JSON.stringify({
+            questionId: q.question.id,
+            expectedRevision: q.task.revision,
+            content: "SOURCE_ANSWER_SENTINEL",
+            confirmed: true,
+          }),
+        },
+      );
+      assert.notEqual(response.status, 200);
+      assert.doesNotMatch(await response.text(), /SENTINEL/);
+      assert.equal(store.inputWaitHistory(owner, task.id)[0]!.replyId, null);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+      store.close();
+    }
   }
 });

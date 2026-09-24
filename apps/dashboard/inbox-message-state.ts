@@ -3,6 +3,7 @@ export type InboxMessage = {
   sequence: number;
   createdAt: number;
   receipts: { kind: string }[];
+  taskAccess?: "unavailable";
   input: {
     content: string;
     conversationId: string;
@@ -48,6 +49,9 @@ export class InboxMessageController {
       const prior = merged.get(item.id);
       merged.set(item.id, {
         ...item,
+        input: item.input.requestId
+          ? { ...item.input, content: "Task-linked message" }
+          : item.input,
         receipts: [
           ...new Map(
             [...(prior?.receipts ?? []), ...item.receipts].map((r) => [
