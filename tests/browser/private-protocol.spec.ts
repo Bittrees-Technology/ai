@@ -1,3 +1,4 @@
+import { browserKeyDatabaseVersion } from "../../modules/remote/browser-key-state.js";
 import { PrivateTaskResponses } from "../../modules/remote/private-task-responses.js";
 import { test, expect, type Page } from "@playwright/test";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -836,9 +837,12 @@ test("Browser expiry, connection closure and database version changes fail witho
     ).rejects.toThrow("DENIED");
     await storage(page, f, false);
     await page.evaluate(
-      () =>
+      (futureVersion) =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 11);
+          const r = indexedDB.open(
+            "org.bittrees.ai.browser-endpoint-keys",
+            futureVersion,
+          );
           r.onerror = () => reject(r.error);
           r.onblocked = () => reject(Error("blocked"));
           r.onsuccess = () => {
@@ -846,6 +850,7 @@ test("Browser expiry, connection closure and database version changes fail witho
             resolve();
           };
         }),
+      browserKeyDatabaseVersion + 1,
     );
     await expect(
       page.evaluate(() => window.privateStorageTest.snapshot()),

@@ -154,7 +154,8 @@ const fixture = {
       | "delivery"
       | "conversation"
       | "replay"
-      | "offer-replay" = false,
+      | "offer-replay"
+      | "offer-ack" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
@@ -180,23 +181,25 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "offer-replay"
-        ? "/legacy-offer-replay/index.js"
-        : previous === "replay"
-          ? "/legacy-replay/index.js"
-          : previous === "conversation"
-            ? "/legacy-conversation/index.js"
-            : previous === "delivery"
-              ? "/legacy-delivery/index.js"
-              : previous === "task"
-                ? "/legacy-composition/index.js"
-                : "/legacy-consent/index.js";
+      previous === "offer-ack"
+        ? "/legacy-offer-ack/index.js"
+        : previous === "offer-replay"
+          ? "/legacy-offer-replay/index.js"
+          : previous === "replay"
+            ? "/legacy-replay/index.js"
+            : previous === "conversation"
+              ? "/legacy-conversation/index.js"
+              : previous === "delivery"
+                ? "/legacy-delivery/index.js"
+                : previous === "task"
+                  ? "/legacy-composition/index.js"
+                  : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
     conversationProvider =
-      previous === "offer-replay"
+      previous === "offer-replay" || previous === "offer-ack"
         ? providers.BrowserConversationConsent
         : BrowserConversationConsent;
     consentProvider =
@@ -204,21 +207,24 @@ const fixture = {
       previous === "delivery" ||
       previous === "conversation" ||
       previous === "replay" ||
-      previous === "offer-replay"
+      previous === "offer-replay" ||
+      previous === "offer-ack"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
       previous === "delivery" ||
       previous === "conversation" ||
       previous === "replay" ||
-      previous === "offer-replay"
+      previous === "offer-replay" ||
+      previous === "offer-ack"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
       previous === "delivery" ||
       previous === "conversation" ||
       previous === "replay" ||
-      previous === "offer-replay"
+      previous === "offer-replay" ||
+      previous === "offer-ack"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -563,6 +569,19 @@ const fixture = {
     host
       ? host.conversationAPI.approve(raw)
       : withKey(async () => (await conversationStore()).approve(raw)),
+  conversationBeginAck: (raw: unknown) =>
+    withKey(async () =>
+      (await conversationStore()).beginOfferAcknowledgement(raw),
+    ),
+  conversationRecordAck: (raw: unknown) =>
+    withKey(async () =>
+      (await conversationStore()).recordOfferAcknowledgement(raw),
+    ),
+  relayConversationInspect: (raw: unknown) =>
+    host!.relayConversationAPI.inspect(raw),
+  relayConversationOpen: (raw: unknown) => host!.relayConversationAPI.open(raw),
+  relayConversationAcknowledge: (raw: unknown) =>
+    host!.relayConversationAPI.acknowledge(raw),
   conversationRevoke: (raw: unknown) =>
     host
       ? host.conversationAPI.revoke(raw)

@@ -6,6 +6,7 @@ import type { BrowserKeyHost } from "../../modules/remote/browser-key-host.js";
 type Host = Pick<
   BrowserKeyHost,
   | "conversationAPI"
+  | "relayConversationAPI"
   | "keyAPI"
   | "peerAPI"
   | "checkAPI"
@@ -20,9 +21,16 @@ type Checks = Awaited<ReturnType<Host["checkAPI"]["status"]>>;
 type Prepared = Awaited<ReturnType<Host["conversationAPI"]["prepare"]>>;
 type Inspected = Awaited<ReturnType<Host["conversationAPI"]["inspectOffer"]>>;
 type Snapshot = { keys: Keys; peers: Peers; checks: Checks; status: Status };
+type Queue = Awaited<ReturnType<Host["relayConversationAPI"]["inspect"]>>;
+type Cursor = Queue["nextCursor"];
+type QueueSelection = {
+  after: Cursor;
+  selection: NonNullable<Queue["item"]>["selection"];
+};
 type Deadline = { started: number; mono: number; expires: number };
 type Review = Deadline & {
-  action: "approve" | "revoke" | "clear" | "reset";
+  action: "approve" | "revoke" | "clear" | "reset" | "acknowledge";
+  selected?: QueueSelection;
   before: Snapshot;
   prepared?: Prepared;
   grantId?: string;
@@ -46,6 +54,7 @@ export function mountBrowserConversations(
     inspected: Inspected | null = null,
     inspectionDeadline: Deadline | null = null,
     selectedEnvelope: PrivateEnvelope | null = null;
+  let queue: (Queue & { after: Cursor }) | null = null;
   const urls = new Set<string>(),
     timers = new Set<ReturnType<typeof setTimeout>>();
   const el = <K extends keyof HTMLElementTagNameMap>(
@@ -149,6 +158,29 @@ export function mountBrowserConversations(
   fileLabel.htmlFor = fileInput.id;
   const opening = button("Open selected Mac offer", () => void openOffer());
   const offered = el("p", "", "browser-keys-reference");
+  const queueBox = el("div"),
+    queueInfo = el(
+      "p",
+      "Inspect the queue to find an encrypted offer sent by your Mac.",
+      "browser-keys-reference",
+    ),
+    queueInspect = button("Inspect offer queue", () => void inspectQueue(null)),
+    queueNext = button("Inspect next queued item", () => {
+      if (queue?.item) void inspectQueue(queue.item.cursor);
+    }),
+    queueOpen = button("Open queued Mac offer", () => void openOffer(true));
+  queueBox.append(
+    el("h3", "Offers sent by your Mac"),
+    el(
+      "p",
+      "Inspecting does not open or remove anything. Choose the verified Mac below before opening an offer. Task replies use the task controls.",
+    ),
+    queueInfo,
+    queueInspect,
+    queueNext,
+    queueOpen,
+  );
+
   for (const [value, text] of [
     ["1", "1 minute"],
     ["15", "15 minutes"],
@@ -167,6 +199,7 @@ export function mountBrowserConversations(
     ),
     peer.label,
     peer.wrapper,
+    queueBox,
     fileLabel,
     fileInput,
     offerLabel,
@@ -276,6 +309,10 @@ export function mountBrowserConversations(
   function controls() {
     const ready = snapshot() && focused() && !busy && !!state;
     refresh.disabled = !scope() || !focused() || busy;
+    queueInspect.disabled = !ready || !paired() || !!review;
+    queueNext.disabled = queueInspect.disabled || !queue?.item;
+    queueOpen.disabled =
+      queueInspect.disabled || !queue?.item || !peer.input.value;
     exportButton.disabled = !ready;
     clearButton.disabled = !ready || !state?.status.revision;
     resetButton.disabled = !ready || !state?.status.revision || !online();
@@ -392,6 +429,9 @@ export function mountBrowserConversations(
     pending = null;
     ack.input.checked = false;
     clearInspection();
+    queue = null;
+    queueInfo.textContent =
+      "Inspect the queue to find an encrypted offer sent by your Mac.";
     offerInput.value = "";
     fileInput.value = "";
     duration.input.value = "15";
@@ -447,6 +487,33 @@ export function mountBrowserConversations(
           `${describeDirections(grant.choices.permissions)} Ends ${new Date(grant.choices.expiresAt).toLocaleString()}.`,
         ),
       );
+      const receipt = grant.relayAcknowledgement;
+      li.append(
+        el(
+          "p",
+          receipt
+            ? `Receipt attempts: ${receipt.attempts}. ${
+                receipt.observation
+                  ? `Server receipt last confirmed: ${receipt.observation.receipt.state === "deleted" ? "removed" : "received"}.${receipt.observation.attempt < receipt.attempts ? " Latest attempt remains unconfirmed." : ""}`
+                  : "Server receipt is unconfirmed. Refresh, then review a retry."
+              }`
+            : "No relay receipt recorded. Saving browser choices does not acknowledge the offer.",
+        ),
+      );
+      if (
+        !grant.revoked &&
+        grant.choices.expiresAt > now() &&
+        grant.offerReplay &&
+        (receipt || queue?.item)
+      )
+        li.append(
+          button(
+            receipt
+              ? "Review retrying offer receipt"
+              : "Review acknowledging queued offer",
+            () => reviewReceipt(grant.id),
+          ),
+        );
       if (!grant.revoked)
         li.append(
           button("Review revoking permission", () =>
@@ -459,7 +526,8 @@ export function mountBrowserConversations(
   }
   function failure(e: unknown) {
     const messages: Record<string, string> = {
-      DENIED: "The device, completed check, offer or access could not be verified.",
+      DENIED:
+        "The device, completed check, offer or access could not be verified.",
       CONFLICT:
         "The saved device, check or permission changed during this review.",
       REPAIR_REQUIRED:
@@ -520,17 +588,109 @@ export function mountBrowserConversations(
   function describeDirections(permissions: Inspected["offer"]["permissions"]) {
     return `Messages to Mac: ${permissions.messagesToMac ? "allowed" : "off"}. Messages to browser: ${permissions.messagesToBrowser ? "allowed" : "off"}. Questions to browser: ${permissions.questionsToBrowser ? "allowed" : "off"}. Answers to Mac: ${permissions.answersToMac ? "allowed" : "off"}.`;
   }
-  async function openOffer() {
-    if (opening.disabled || !state || !snapshot() || !focused() || busy) return;
+  async function inspectQueue(after: Cursor) {
+    if (queueInspect.disabled || !state || !snapshot()) return;
+    const before = structuredClone(state);
+    reset("Inspecting one queued item…");
+    const g = generation,
+      s = loaded;
+    busy = true;
+    pending = deadline();
+    controls();
+    try {
+      const fresh = await read(g, s);
+      if (!fresh) return;
+      if (!same(before, fresh)) throw Error("CONFLICT");
+      const result = await host.relayConversationAPI.inspect({
+        after,
+        confirmed: true,
+      });
+      if (!alive(g, s)) return;
+      queue = { ...result, after };
+      queueInfo.textContent = result.item
+        ? `Queued item ${result.item.selection.messageId}. Stored ${new Date(result.item.selection.storedAt).toLocaleString()}. Available until ${new Date(result.item.expiresAt).toLocaleString()}. Content has not been opened or acknowledged.`
+        : "No queued item here. Inspect from the start to check again.";
+      notice.textContent =
+        "Queue inspected. No permission changed and nothing was acknowledged.";
+      render();
+    } catch (e) {
+      if (alive(g, s)) {
+        reset("Queue inspection was not confirmed.", true);
+        failure(e);
+      }
+    } finally {
+      finish(g, s);
+    }
+  }
+  function reviewReceipt(grantId: string) {
+    if (!state || !snapshot() || !focused() || busy || !paired()) return;
+    const grant = state.status.grants.find((g) => g.id === grantId);
+    if (
+      !grant ||
+      grant.revoked ||
+      grant.choices.expiresAt <= now() ||
+      !grant.offerReplay
+    )
+      return;
+    const selected =
+      !grant.relayAcknowledgement && queue?.item
+        ? {
+            after: queue.after,
+            selection: structuredClone(queue.item.selection),
+          }
+        : undefined;
+    if (!selected && !grant.relayAcknowledgement) return;
+    const before = structuredClone(state),
+      selection = selected?.selection ?? grant.relayAcknowledgement!.selection;
+    reset("Review the exact offer receipt.");
+    review = {
+      ...deadline(
+        Math.min(
+          grant.choices.expiresAt,
+          grant.relayAcknowledgement?.deliveryExpiresAt ?? now() + 120000,
+        ),
+      ),
+      action: "acknowledge",
+      before,
+      grantId,
+      ...(selected ? { selected } : {}),
+    };
+    heading.textContent = "Acknowledge this offer’s receipt";
+    details.textContent =
+      "Tell the server this browser saved its choices for this exact offer. This may remove the encrypted offer from the queue. It does not renew access, send conversation messages or approve work.";
+    identity.textContent = `Mac ${grant.choices.peerId}. Conversation ${grant.choices.scope.conversationRef}. Permission ${grant.id}. Queued offer ${selection.messageId}. Saved version ${before.status.revision}.`;
+    confirm.textContent = "Acknowledge offer receipt";
+    ack.input.checked = false;
+    controls();
+    heading.focus();
+  }
+  async function openOffer(fromQueue = false) {
+    if (
+      (fromQueue ? queueOpen.disabled : opening.disabled) ||
+      !state ||
+      !snapshot() ||
+      !focused() ||
+      busy
+    )
+      return;
     const before = structuredClone(state),
       k = local()!,
       selected = state.peers.state?.peers.find(
         (p) => p.peerId === peer.input.value && !p.revoked,
       );
     if (!selected) return;
+    const selectedQueue =
+      fromQueue && queue?.item
+        ? {
+            after: queue.after,
+            selection: structuredClone(queue.item.selection),
+          }
+        : null;
     let envelope: PrivateEnvelope;
     try {
-      envelope = privateEnvelopeSchema.parse(JSON.parse(offerInput.value));
+      if (!fromQueue)
+        envelope = privateEnvelopeSchema.parse(JSON.parse(offerInput.value));
+      else if (!selectedQueue) return;
     } catch {
       error.textContent =
         "The offer is not valid encrypted JSON. No access was saved.";
@@ -546,12 +706,27 @@ export function mountBrowserConversations(
       const fresh = await read(g, s);
       if (!fresh) return;
       if (!same(before, fresh)) throw Error("CONFLICT");
-      const value = await host.conversationAPI.inspectOffer({
+      const request = {
         expectedRevision: before.status.revision,
         peerId: selected.peerId,
         peerKeyEpoch: selected.keyEpoch,
-        envelope,
-      });
+      };
+      let value: Inspected;
+      if (selectedQueue) {
+        const received = await host.relayConversationAPI.open({
+          ...request,
+          ...selectedQueue,
+          confirmed: true,
+        });
+        if (!same(received.selection, selectedQueue.selection))
+          throw Error("CONFLICT");
+        envelope = privateEnvelopeSchema.parse(received.envelope);
+        value = received.opened;
+      } else
+        value = await host.conversationAPI.inspectOffer({
+          ...request,
+          envelope: envelope!,
+        });
       if (!alive(g, s)) return;
       const proof = {
         revision: before.peers.revision,
@@ -564,11 +739,11 @@ export function mountBrowserConversations(
         !same(value.local, k) ||
         !same(value.peer, proof) ||
         value.expectedRevision !== before.status.revision ||
-        value.openingExpiresAt !== envelope.header.expiresAt
+        value.openingExpiresAt !== envelope!.header.expiresAt
       )
         throw Error("CONFLICT");
       inspected = value;
-      selectedEnvelope = envelope;
+      selectedEnvelope = envelope!;
       inspectionDeadline = deadline(
         Math.min(
           pending!.expires,
@@ -750,7 +925,24 @@ export function mountBrowserConversations(
           confirmed: true,
           acknowledged: true,
         });
-      else if (r.action === "revoke")
+      else if (r.action === "acknowledge") {
+        const result = await host.relayConversationAPI.acknowledge({
+          grantId: r.grantId!,
+          expectedRevision: r.before.status.revision,
+          confirmed: true,
+          ...(r.selected ? { selected: r.selected } : {}),
+        });
+        const original = r.before.status.grants.find(
+          (v) => v.id === r.grantId,
+        )!;
+        if (
+          result.grant.id !== original.id ||
+          !same(result.grant.choices, original.choices) ||
+          result.grant.approvedAt !== original.approvedAt ||
+          !result.grant.relayAcknowledgement?.observation
+        )
+          throw Error("CONFLICT");
+      } else if (r.action === "revoke")
         await host.conversationAPI.revoke({
           grantId: r.grantId!,
           expectedRevision: r.before.status.revision,
@@ -763,7 +955,7 @@ export function mountBrowserConversations(
         });
       if (!alive(g, s)) return;
       reset(
-        `${r.action === "approve" ? "Browser conversation access saved. No messages were sent." : r.action === "revoke" ? "Permission revoked on this browser only." : r.action === "clear" ? "Browser permissions deleted. A different registration and active key are required before reset." : "Browser permissions reset. No choices are enabled."} Refresh conversation permissions to inspect the result.`,
+        `${r.action === "acknowledge" ? "Offer receipt confirmed by the server. Conversation choices are unchanged." : r.action === "approve" ? "Browser conversation access saved. No messages were sent." : r.action === "revoke" ? "Permission revoked on this browser only." : r.action === "clear" ? "Browser permissions deleted. A different registration and active key are required before reset." : "Browser permissions reset. No choices are enabled."} Refresh conversation permissions to inspect the result.`,
         true,
       );
     } catch (e) {
