@@ -975,3 +975,23 @@ select.model-profile-select {
     margin-bottom: 8px;
   }
 }
+
+.private-task-delivery .private-delivery-identifier,
+.private-task-delivery dd {
+  overflow-wrap: anywhere;
+}
+.private-task-delivery select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.private-task-delivery .private-delivery-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.private-task-delivery .private-delivery-ack input {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 5px;
+}
