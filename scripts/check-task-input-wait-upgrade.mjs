@@ -66,7 +66,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 29);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 30);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.exportInputWaits(owner), []);
   const claim = current.claim(owner, "worker"),
@@ -118,7 +118,7 @@ try {
     verifiedAt: new Date().toISOString(),
     legacyStoreSha256: legacyHash,
     from: 25,
-    to: 29,
+    to: 30,
     checks: [
       "actual old-writer history preserved; empty wait table grants nothing",
       "wrong-key migration rolls back",

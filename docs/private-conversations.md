@@ -3,12 +3,13 @@
 The Mac companion owns the selected local thread. Acer's model, runtime and news
 briefings remain independent. This work does not install or activate any service.
 
-The current implementation provides strict encrypted message framing and a Mac
-consent boundary. It does not yet deliver conversations. The Mac review controls and authenticated local API are implemented; their
-browser acceptance is pending. Independent browser consent now has an internal
-implementation with authenticated offer validation, pending browser tests. Reviewed local offer export routes are implemented. Mac offer controls are now implemented. Browser offer review/exchange,
-durable transport, shared incoming replay coordination
-and end-to-end reconnect acceptance remain unfinished.
+The current implementation provides encrypted framing, separate Mac/browser
+consent, reviewed Mac offer export and a browser file/paste offer review. Focused
+built-browser consent checks passed in Chromium, Firefox and WebKit at commit
+0514a768; full current-head browser and visual acceptance remain pending. Relay
+offer exchange, durable conversation transport and reconnect acceptance are not
+implemented. Shared incoming replay storage now participates in Mac task admission;
+other receiver integrations and historical coverage remain unfinished.
 
 ## Separate Mac consent
 
@@ -37,7 +38,7 @@ Renewal of an existing tuple remains possible at capacity. Revoked entries remai
 inspectable until content deletion; individual removal controls remain unfinished.
 
 Saved grants use a separate encrypted `private_conversation_consents` row at task
-schema28, retained by schema29. Fresh/updated stores start with no grants. Local export includes saved
+schema28, retained by schema30. Fresh/updated stores start with no grants. Local export includes saved
 conversation choices; deleting local content clears them and increments the
 revision tombstone. Restoring a backup locks them. Reviewing one restored grant
 revokes the others rather than silently restoring their access. Corrupt storage
@@ -87,15 +88,14 @@ Confirmation rechecks current identity, both stored key/peer proofs and complete
 possession checks in the same IndexedDB transaction as consent. Operation-scoped
 access supplies a guard that a future content/replay transaction must run against
 the current consent row. Resolving keys alone is not delivery authorization.
-This module is not yet wired to browser review UI or message transport.
+The module is wired to browser review UI; message transport remains unfinished.
 
 Eight new browser cases (24 across three engines) cover authenticated/narrowed
 offers, independent possession, immutable review, ciphertext retention/reload,
 renewal, invalidation, clock bounds, offline revocation/clear, corruption and
 current identity/peer revocation. A pinned build of the actual preceding version7
 providers verifies preserved task consent/ciphertext, empty conversation consent
-and old-writer refusal. These checks are authored and build successfully; their
-GitHub browser execution remains pending.
+and old-writer refusal. The original 24-case focused browser preflight passed; current full-suite acceptance remains pending.
 
 ## Browser host and authenticated offer inspection
 
@@ -117,8 +117,7 @@ One additional three-engine module scenario verifies authenticated inspection
 without grants or stored rows. Two host scenarios use an actual Mac offer and the
 real browser identity service with synthetic registrations: narrowed approval,
 reload retention, unchanged task consent, offline revocation and cancellation/account
-fences. These nine new browser cases are authored; GitHub execution and new browser
-review controls await their own browser acceptance. All765 engine tests, typecheck and builds pass locally.
+fences. These host/inspection cases passed focused preflight at commit589258e; current full-suite acceptance remains pending.
 
 ## Independent browser review controls
 
@@ -270,3 +269,43 @@ not yet accepted evidence.
 The overall private-content requirement remains open. Passing these module tests
 does not establish conversation delivery, browser consent, source authorization,
 independent cryptographic review, model quality or live deployment acceptance.
+
+
+## Shared incoming replay: task admission integrated
+
+`private-replay.ts` derives portable identities only after authenticated decryption
+and strict payload parsing. The authenticated type distinguishes operation roles;
+`task.accepted` and `task.result` can share an operation without sharing a message
+or a directed epoch-channel sequence. Changed ciphertext under an existing identity
+conflicts even when its decrypted text is identical. This helper is not authority.
+
+Task schema30 adds `private_incoming_replay`. Its owner-scoped unique operation,
+message and sequence indexes retain an encrypted identity and outcome reference.
+The store is bounded to4,096 records per owner, refuses new records at capacity
+without eviction, exports with local content and is removed by owner deletion.
+Backup retains replay records while existing restore rules lock endpoint authority.
+The helper requires the caller's existing SQLite transaction; it never opens a
+second transaction around Inbox or task effects.
+
+Mac task admission now consumes that shared identity with its fresh permission/key
+checks, task and existing receipt in one transaction. An exact retained task retry
+preserves its original receipt and task. Collision, corrupt evidence or capacity
+failure rolls back any new work. A synthetic actual-API test proves the task
+receiver sees a cross-family ledger collision; this does not imply peer-check
+receivers already write the shared ledger.
+
+All776 engine tests pass, including eleven new identity/storage/integration tests.
+The actual compiled schema29 engine verifies preservation of tasks, receipts,
+completed device checks and permission history; authenticated legacy retries add
+one shared record without new work. Wrong-key isolation, schema29 writer refusal,
+encrypted backup/restore and original schema29 rollback are verified in
+`evidence/incoming-replay-schema-compatibility-2026-09-24.json`.
+
+Before conversation activation, complete Mac peer-check and receipt integrations,
+the matching browser IndexedDB transaction, and legacy coverage. Older peer-check
+records retain incoming envelope hashes but lack incoming IDs and sequence headers;
+an empty new ledger cannot prove those identities were unused. Preserve that
+history and establish explicit reconciliation or a fresh-key epoch boundary before
+a broader cross-family replay guarantee. Offer inspection still neither consumes
+replay evidence nor acknowledges a relay message. Missing parents and denied task
+answers must remain unacknowledged and consume no final replay record.

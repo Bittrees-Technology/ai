@@ -1,3 +1,4 @@
+import { exportPrivateIncomingReplay } from "../remote/private-incoming-replay.js";
 import { exportPrivateConversationOffers } from "../remote/private-conversation-offers.js";
 import { exportPrivateConversationConsent } from "../remote/private-conversation-consent.js";
 import {
@@ -166,7 +167,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 29) {
+    if (version > 30) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -290,7 +291,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_conversation_offers(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,client_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id),UNIQUE(user_id,tenant_id,client_hash))",
         );
-        this.db.pragma("user_version = 29");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_incoming_replay(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,operation_hash TEXT NOT NULL,message_hash TEXT NOT NULL,sequence_hash TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,operation_hash),UNIQUE(user_id,tenant_id,message_hash),UNIQUE(user_id,tenant_id,sequence_hash))",
+        );
+        this.db.pragma("user_version = 30");
       })();
     } catch (error) {
       this.db.close();
@@ -1778,6 +1782,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateConversationOffers(owner: Owner) {
     return exportPrivateConversationOffers(this, this.vault, owner);
   }
+  exportPrivateIncomingReplay(owner: Owner) {
+    return exportPrivateIncomingReplay(this, this.vault, owner);
+  }
   exportPrivateConversationConsent(owner: Owner) {
     return exportPrivateConversationConsent(this, this.vault, owner);
   }
@@ -2104,6 +2111,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           "private_task_responses",
           "private_task_outbox",
           "private_conversation_offers",
+          "private_incoming_replay",
           "private_send_channels",
           "private_task_receipts",
           "remote_template_receipts",
