@@ -176,6 +176,8 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check shipped command history controls before full suite
+        run: npm run test:browser-private -- tests/browser/production-command-history.spec.ts --max-failures=1
       - name: Check durable command journal before full suite
         run: npm run test:browser-private -- tests/browser/browser-command-history.spec.ts --max-failures=1
       - name: Check narrow permission layout before full suite
@@ -403,6 +405,14 @@ jobs:
         with:
           name: mac-private-relay-ui-preview
           path: test-results/mac-relay-*.png
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain command history controls previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-command-history-ui-preview
+          path: test-results/browser-command-history-*.png
           if-no-files-found: error
           retention-days: 7
       - name: Retain browser relay control previews
