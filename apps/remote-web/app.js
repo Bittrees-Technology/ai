@@ -3,6 +3,9 @@ import { mountBrowserRelay } from "./browser-relay.ts";
 import { BrowserSessionCoordinator } from "./browser-session.ts";
 import { BrowserSetupMount } from "./browser-setup-mount.ts";
 import { RemoteWebController, browserApi } from "./controller.js";
+import { BrowserCommandHistory } from "../../modules/remote/browser-command-history.js";
+import { BrowserCommandJournal } from "./command-history-operations.js";
+import { mountCommandHistory } from "./command-history.js";
 const el = (id) => document.getElementById(id);
 let accountId = null;
 const api = browserApi(fetch, () => accountId);
@@ -18,7 +21,11 @@ if (!settings || settings.origin !== location.origin) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
 } else {
   el("network").textContent = `Wallet network: ${settings.chainId}.`;
-  let controller;
+  let controller, commandUI;
+  const commandJournal = new BrowserCommandJournal(
+    new BrowserCommandHistory(),
+    api,
+  );
   const sessions = new BrowserSessionCoordinator(() =>
     controller?.peerSessionChanged(),
   );
@@ -44,11 +51,20 @@ if (!settings || settings.origin !== location.origin) {
     settings,
     render,
     sessions,
+    commandJournal,
+  );
+  commandUI = mountCommandHistory(
+    el("saved-command-history"),
+    commandJournal,
+    () => controller?.sessionContext() ?? null,
+    () => controller.state.busy,
+    () => controller.set({ commandReview: null }),
   );
   function render(s) {
     accountId = s.account?.ownerId ?? null;
     setup.sync();
     relay?.sync();
+    commandUI?.sync();
     el("error").textContent = s.error;
     el("notice").textContent = s.notice;
     el("account").textContent = s.account
@@ -128,7 +144,10 @@ if (!settings || settings.origin !== location.origin) {
           button.textContent =
             action === "pause" ? "Review pause" : "Review cancel";
           button.disabled = s.busy;
-          button.onclick = () => controller.reviewCommand(task.id, action);
+          button.onclick = () => {
+            commandUI?.hide();
+            controller.reviewCommand(task.id, action);
+          };
           li.append(button);
         }
       }
@@ -243,6 +262,7 @@ if (!settings || settings.origin !== location.origin) {
     () => {
       clearInterval(expiry);
       setup.destroy();
+      commandUI.destroy();
       relay?.destroy();
       sessions.close();
       controller.invalidateSession();

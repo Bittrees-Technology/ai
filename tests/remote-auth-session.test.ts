@@ -161,7 +161,7 @@ test("refresh clears the prior trusted scope synchronously and does not restore 
   assert.equal(f.c.state.account, null);
   await refresh;
   assert.equal(f.c.sessionContext(), null);
-  assert.match(f.c.state.error, /could not be completed/);
+  assert.match(f.c.state.error, /could not be confirmed/);
 });
 
 test("refresh during pending verification cancels its adoption and cleans the resulting cookie", async () => {

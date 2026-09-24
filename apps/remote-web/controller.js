@@ -49,12 +49,20 @@ export class RemoteWebController {
   signingOut = null;
   logoutRequired = false;
   sessionTurn = null;
-  constructor(api, wallet, settings, changed, sessions = null) {
+  constructor(
+    api,
+    wallet,
+    settings,
+    changed,
+    sessions = null,
+    commands = null,
+  ) {
     this.api = api;
     this.wallet = wallet;
     this.settings = settings;
     this.changed = changed;
     this.sessions = sessions;
+    this.commands = commands;
   }
   set(patch) {
     this.state = { ...this.state, ...patch };
@@ -179,15 +187,19 @@ export class RemoteWebController {
             error:
               e?.message === "SESSION_STORAGE_REQUIRED"
                 ? "This browser must allow local storage and session coordination before you can sign in. Check its privacy settings, then refresh."
-                : e?.message === "CAPACITY"
-                  ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
-                  : e?.message === "DENIED"
-                    ? "Your session or device access is unavailable. Sign in again or refresh the device list."
-                    : e?.message === "WALLET_REQUIRED"
-                      ? "Open this page in a browser with an Ethereum wallet."
-                      : e?.message === "CHAIN_MISMATCH"
-                        ? "Switch your wallet to the network shown on this page, then sign in again."
-                        : "The action could not be completed. Refresh and review before trying again.",
+                : e?.message === "LOCAL_HISTORY_FULL"
+                  ? "Local command history is full. Export and delete saved commands before preparing another request."
+                  : e?.message === "STORAGE_UNAVAILABLE"
+                    ? "Local command history is unavailable. Restore browser storage access, then refresh saved commands and check the original receipt before retrying."
+                    : e?.message === "CAPACITY"
+                      ? "The remote service has reached a storage limit. Try again after expired records have been cleaned up or contact the service operator."
+                      : e?.message === "DENIED"
+                        ? "Your session or device access is unavailable. Sign in again or refresh the device list."
+                        : e?.message === "WALLET_REQUIRED"
+                          ? "Open this page in a browser with an Ethereum wallet."
+                          : e?.message === "CHAIN_MISMATCH"
+                            ? "Switch your wallet to the network shown on this page, then sign in again."
+                            : "The action could not be confirmed. Refresh and review before trying again.",
           });
       } finally {
         this.activeAction = null;
@@ -492,6 +504,33 @@ export class RemoteWebController {
       epoch = this.epoch;
     if (!confirmed || !command || !this.state.account) return;
     return this.act(async () => {
+      if (this.commands) {
+        const scope = this.sessionContext();
+        if (!scope) throw Error("DENIED");
+        const check = () => {
+          if (
+            epoch !== this.epoch ||
+            JSON.stringify(scope) !== JSON.stringify(this.sessionContext())
+          )
+            throw Error("DENIED");
+        };
+        const saved = await this.commands.submit(scope.ownerId, command, check);
+        check();
+        const observed = saved.entries.find((e) => e.command.id === command.id)
+          ?.observation?.value;
+        if (!observed) throw Error("CONFLICT");
+        this.set({
+          commandReview: null,
+          commandResult: {
+            id: command.id,
+            state: observed.state,
+            receipt: observed.receipt,
+          },
+          notice:
+            "Command outcome saved on this browser. It records the last server receipt; task progress remains separately shared.",
+        });
+        return;
+      }
       await this.api("/browser/commands", { command, confirmed: true });
       if (epoch === this.epoch)
         this.set({
@@ -507,6 +546,35 @@ export class RemoteWebController {
       epoch = this.epoch;
     if (!id || !this.state.account) return;
     return this.act(async () => {
+      if (this.commands) {
+        const scope = this.sessionContext();
+        if (!scope) throw Error("DENIED");
+        const check = () => {
+          if (
+            epoch !== this.epoch ||
+            JSON.stringify(scope) !== JSON.stringify(this.sessionContext())
+          )
+            throw Error("DENIED");
+        };
+        const before = await this.commands.history.read(scope.ownerId, check);
+        const saved = await this.commands.inspect(
+          scope.ownerId,
+          before.revision,
+          id,
+          check,
+        );
+        check();
+        const observed = saved.entries.find((e) => e.command.id === id)
+          .observation.value;
+        this.set({
+          commandResult: {
+            id,
+            state: observed.state,
+            receipt: observed.receipt,
+          },
+        });
+        return;
+      }
       const result = await this.api("/browser/commands/receipt", { id });
       if (epoch === this.epoch)
         this.set({
