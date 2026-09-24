@@ -1,3 +1,7 @@
+import {
+  PrivateRelayClient,
+  PrivateRelayOwnerClient,
+} from "../modules/remote/private-relay-client.js";
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { Wallet } from "ethers";
@@ -217,6 +221,67 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
   const message = { version: 1, envelope },
     submitPath = "/browser/relay/messages/submit",
     page = { after: null, limit: 20 };
+  const actualTransport: typeof fetch = async (url, init) => {
+    assert.equal(new URL(String(url)).origin, browser.Origin);
+    assert.equal(init?.redirect, "error");
+    assert.equal(init?.cache, "no-store");
+    const headers = Object.fromEntries(new Headers(init?.headers).entries());
+    assert.equal(headers.cookie, undefined);
+    if (init?.credentials === "same-origin") Object.assign(headers, f.owner);
+    else {
+      assert.equal(init?.credentials, "omit");
+      assert.ok(headers.authorization);
+    }
+    const r = await call(
+      new URL(String(url)).pathname,
+      JSON.parse(String(init?.body)),
+      headers,
+    );
+    return Response.json(r.body, { status: r.status });
+  };
+  const browserContext = {
+    kind: "browser" as const,
+    scope: "https-session",
+    identity: {
+      version: 1 as const,
+      scope: "private:relay" as const,
+      ownerId: f.ownerId,
+      endpointId: f.browserId,
+      endpointKind: "browser" as const,
+      credentialEpoch: 1,
+      permissionId: enabled.body.id,
+      expiresAt: enabled.body.expiresAt,
+    },
+  };
+  const macContext = {
+    kind: "mac" as const,
+    scope: "https-native",
+    credential: native.body.credential,
+    identity: {
+      version: 1 as const,
+      scope: "private:relay" as const,
+      ownerId: f.ownerId,
+      endpointId: f.mac.deviceId,
+      endpointKind: "mac" as const,
+      credentialEpoch: f.mac.epoch,
+      permissionId: native.body.grant.id,
+      expiresAt: native.body.grant.expiresAt,
+    },
+  };
+  const browserClient = new PrivateRelayClient(
+      () => browserContext,
+      actualTransport,
+    ),
+    macClient = new PrivateRelayClient(() => macContext, actualTransport),
+    historyClient = new PrivateRelayOwnerClient(
+      () => ({ ownerId: f.ownerId, scope: "https-owner" }),
+      actualTransport,
+    );
+  const wrongCredentialClient = new PrivateRelayClient(
+    () => ({ ...macContext, credential: f.mac.credential }),
+    actualTransport,
+  );
+  await assert.rejects(wrongCredentialClient.poll(page), /DENIED/);
   const sent = await call(submitPath, message, f.owner);
   assert.equal(sent.status, 200);
   assert.equal(sent.body.duplicate, false);
@@ -243,6 +308,10 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     ).status,
     403,
   );
+  assert.equal((await browserClient.submit(message)).duplicate, true);
+  const clientPoll = await macClient.poll(page);
+  assert.deepEqual(clientPoll.items[0]!.envelope, envelope);
+  assert.equal((await historyClient.export(page)).items.length, 1);
   assert.equal(sent.headers["cache-control"], "no-store");
   assert.equal(sent.headers["access-control-allow-origin"], undefined);
   assert.equal((await call(submitPath, message, f.owner)).body.duplicate, true);
@@ -340,6 +409,7 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     true,
   );
   assert.equal((await call(polls, page, relay)).body.items.length, 0);
+  assert.equal((await macClient.acknowledge(ack)).duplicate, true);
   const reverse = {
     ...header,
     senderId: header.recipientId,
@@ -362,6 +432,10 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
   assert.equal(
     (await call("/browser/relay/messages/poll", page, f.owner)).body.items[0]
       .receipt.messageId,
+    reverse.messageId,
+  );
+  assert.equal(
+    (await browserClient.poll(page)).items[0]!.receipt.messageId,
     reverse.messageId,
   );
   const history = await call("/browser/relay/history/export", page, f.owner);
@@ -417,6 +491,7 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     ),
   };
   assert.equal((await call(submitPath, staleMessage, f.owner)).status, 403);
+  await assert.rejects(browserClient.submit(staleMessage), /DENIED/);
   assert.equal(
     (await call("/browser/relay/history/export", page, f.owner)).body.items
       .length,

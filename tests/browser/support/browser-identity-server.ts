@@ -67,6 +67,8 @@ async function startIdentityServer() {
       "006-maintenance",
       "007-templates",
       "008-browser-devices",
+      "009-private-relay-access",
+      "010-private-relay-messages",
     ])
       await pool.query(
         await readFile(
@@ -100,6 +102,7 @@ async function startIdentityServer() {
       { stdio: "ignore" },
     );
     cert = await readFile(join(folder, "cert.pem"));
+    let privateRelayEnabled = false;
     const newApp = () =>
       createRemoteApp(pool, {
         origin,
@@ -108,6 +111,20 @@ async function startIdentityServer() {
         deviceMs: 7200000,
         retentionMs: 86400000,
         requestsPerMinute: 1000,
+        ...(privateRelayEnabled
+          ? {
+              privateRelayPolicy: {
+                version: 1,
+                origin,
+                chainId: 1,
+                receivedContent: "until-deleted",
+                unreceivedContent: { mode: "until-deleted" },
+                operationalMetadataMs: 604800000,
+                maxMessagesPerOwner: 100,
+                maxBytesPerOwner: 1048576,
+              },
+            }
+          : {}),
         assets: fileURLToPath(
           new URL("../../../dist/remote-web/", import.meta.url),
         ),
@@ -247,6 +264,7 @@ async function startIdentityServer() {
         // Each test gets an independent in-memory per-IP request budget. The
         // real limiter still applies within that test, including all its tabs.
         // Retained server authority remains in the same disposable PostgreSQL.
+        privateRelayEnabled = false;
         app = newApp();
         holdPath = "";
         dropPath = "";
@@ -256,6 +274,10 @@ async function startIdentityServer() {
         releaseIdentity = undefined;
         offline = false;
         events.length = 0;
+      },
+      enablePrivateRelay() {
+        privateRelayEnabled = true;
+        app = newApp();
       },
       hold(path = "/browser/registration/identity") {
         holdPath = path;
