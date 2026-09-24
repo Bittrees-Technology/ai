@@ -363,3 +363,6 @@ if (new URLSearchParams(location.search).has("mac-private-relay"))
   void import("./mac-private-relay.js");
 if (new URLSearchParams(location.search).has("mac-task-delivery"))
   void import("./mac-task-delivery.js");
+
+if (new URLSearchParams(location.search).has("mac-task-delivery-native"))
+  void import("./mac-task-delivery-native.js");
