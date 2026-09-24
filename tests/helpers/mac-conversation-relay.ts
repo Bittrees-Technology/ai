@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { macRelayFixture } from "./mac-relay.js";
 
-export async function macConversationRelayFixture(content = false) {
+export async function macConversationRelayFixture(
+  content = false,
+  questions = false,
+) {
   const g = await macRelayFixture(content),
     e = g.f.b;
   try {
     const inbox = {
-      id: "offer-inbox",
+      id: questions ? "personal" : "offer-inbox",
       tenantId: e.owner.tenantId,
       ownerId: e.owner.userId,
       ownerType: "user",
@@ -38,8 +41,8 @@ export async function macConversationRelayFixture(content = false) {
       permissions: {
         messagesToMac: true,
         messagesToBrowser: true,
-        questionsToBrowser: false,
-        answersToMac: false,
+        questionsToBrowser: questions,
+        answersToMac: questions,
       },
     });
     const consent = await e.controls.confirmConversationPermission({

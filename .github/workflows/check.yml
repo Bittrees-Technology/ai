@@ -193,6 +193,16 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check Mac conversation preparation and reviewed uploads
+        run: npm run test:browser-private -- tests/browser/mac-conversation-delivery.spec.ts --max-failures=1
+      - name: Retain focused Mac conversation delivery previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-conversation-delivery-focused-preview
+          path: test-results/mac-conversation-delivery-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Check built browser conversation controls and actual worker answer
         run: npm run test:browser-private -- tests/browser/production-browser-conversation-content.spec.ts --max-failures=1
       - name: Retain focused conversation content previews

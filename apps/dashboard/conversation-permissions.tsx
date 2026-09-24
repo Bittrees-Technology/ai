@@ -1,3 +1,5 @@
+import { ConversationContent } from "./conversation-content.js";
+import type { InboxMessage } from "./inbox-message-state.js";
 import {
   conversationDirections,
   ConversationChoicesView,
@@ -13,10 +15,12 @@ export function ConversationPermissions({
   api,
   inboxId,
   conversationId,
+  messages,
 }: {
   api: (path: string, method?: string, body?: unknown) => Promise<any>;
   inboxId: string;
   conversationId: string;
+  messages: InboxMessage[];
 }) {
   const fieldId = useId();
   const [, render] = useState(0);
@@ -95,8 +99,9 @@ export function ConversationPermissions({
         Task, app and publishing permissions stay separate.
       </p>
       <p className="hint">
-        Conversation delivery is still being prepared in this development build.
-        Saving choices does not send messages.
+        Saving choices does not send messages. Prepare and review each upload in
+        the delivery controls below. Incoming queue controls are still being
+        prepared.
       </p>
       <button
         disabled={c.busy}
@@ -220,6 +225,15 @@ export function ConversationPermissions({
           inboxId={inboxId}
           conversationId={conversationId}
           permissions={status}
+        />
+      )}
+      {status && !review && (
+        <ConversationContent
+          api={api}
+          inboxId={inboxId}
+          conversationId={conversationId}
+          permissions={status}
+          messages={messages}
         />
       )}
       {review && (

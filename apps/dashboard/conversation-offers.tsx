@@ -98,8 +98,8 @@ export function ConversationOffers({
         sharing choices, with no messages or local conversation names.
       </p>
       <p className="hint">
-        The paired browser must review its own access. Conversation message
-        delivery is still being prepared.
+        The paired browser must review its own access. Use the separate message
+        delivery controls below to prepare and upload conversation content.
       </p>
       <button
         disabled={c.busy}

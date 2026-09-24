@@ -1075,3 +1075,56 @@ select.model-profile-select {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.conversation-content {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #aabec5;
+  min-width: 0;
+}
+.conversation-content h5 {
+  font-size: 1rem;
+  margin: 18px 0 8px;
+}
+.conversation-content h6 {
+  font-size: 1rem;
+  margin: 0 0 8px;
+}
+.conversation-content label {
+  display: block;
+  margin: 12px 0;
+}
+.conversation-content select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.conversation-content p,
+.conversation-content blockquote {
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.conversation-delivery-row {
+  padding: 18px 0;
+  border-top: 1px solid #c6d9dd;
+}
+.conversation-delivery-review {
+  background: #fff;
+  border-left: 4px solid #28685c;
+  padding: 16px;
+  margin-top: 16px;
+}
+.conversation-delivery-review blockquote {
+  margin: 12px 0;
+  white-space: pre-wrap;
+}
+.conversation-content .conversation-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.conversation-content .conversation-choice input {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 5px;
+}
