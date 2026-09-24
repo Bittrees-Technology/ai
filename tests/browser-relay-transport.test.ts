@@ -138,3 +138,28 @@ test("browser relay bridge enforces bounded current scope through callback compl
     );
   }
 });
+
+test("browser receipt commit guard rejects expiry, invalidation and reuse after transport closes", async () => {
+  for (const mode of ["expiry", "invalidation", "closed"] as const) {
+    const f = fixture();
+    f.grant.expiresAt = wall + 1000;
+    let now = wall,
+      captured!: () => void;
+    const bridge = new BrowserRelayTransport(
+      () => f.scope,
+      async () => Response.json(f.grant),
+      () => now,
+      () => 0,
+    );
+    const operation = bridge.withClient(async (_client, _identity, check) => {
+      captured = check;
+      check();
+      if (mode === "expiry") now = f.grant.expiresAt;
+      if (mode === "invalidation") bridge.invalidate();
+      if (mode !== "closed") assert.throws(check, /DENIED/);
+    });
+    if (mode === "closed") await operation;
+    else await assert.rejects(operation, /DENIED/);
+    assert.throws(captured, /DENIED/);
+  }
+});
