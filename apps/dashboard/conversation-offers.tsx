@@ -15,6 +15,7 @@ export function ConversationOffers({
 }) {
   const [, render] = useState(0),
     [ack, setAck] = useState(false),
+    [connection, setConnection] = useState(""),
     urls = useRef(new Set<string>());
   const c = useMemo(
     () =>
@@ -30,6 +31,7 @@ export function ConversationOffers({
   };
   const clear = () => {
     c.hide();
+    setConnection("");
     setAck(false);
     revoke();
   };
@@ -96,8 +98,8 @@ export function ConversationOffers({
         sharing choices, with no messages or local conversation names.
       </p>
       <p className="hint">
-        Browser offer import and conversation delivery are still being prepared.
-        Downloading an offer does not start sharing.
+        The paired browser must review its own access. Conversation message
+        delivery is still being prepared.
       </p>
       <button
         disabled={c.busy}
@@ -134,6 +136,49 @@ export function ConversationOffers({
               </button>
             </div>
           ))}
+          <h5>Send through ai.bittrees.org</h5>
+          <p>
+            Choose a saved connection to upload an encrypted invitation. No
+            messages are included.
+          </p>
+          <button
+            disabled={c.busy}
+            onClick={() => {
+              setConnection("");
+              setAck(false);
+              void c.refreshConnections();
+            }}
+          >
+            Refresh offer connections
+          </button>
+          {c.relayStatus &&
+            (c.connections().length ? (
+              <label className="model-profile-choice">
+                Offer connection
+                <select
+                  aria-label="Offer connection"
+                  value={connection}
+                  disabled={c.busy}
+                  onChange={(e) => {
+                    c.discard();
+                    setAck(false);
+                    setConnection(e.target.value);
+                  }}
+                >
+                  <option value="">Choose a connection</option>
+                  {c.connections().map((v) => (
+                    <option key={v.id} value={v.id}>
+                      Connection {v.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p>
+                No active connection is saved. Review a connection in Private
+                relay settings.
+              </p>
+            ))}
           <h5>Saved offers for this conversation</h5>
           {!offers.length && <p>No offers saved.</p>}
           {offers.map((e) => (
@@ -149,13 +194,42 @@ export function ConversationOffers({
                   : e.state === "preparing"
                     ? "Preparation interrupted; review to continue"
                     : e.state === "stopped"
-                      ? "Further downloads stopped"
+                      ? "Further downloads and uploads stopped"
                       : e.state === "locked"
                         ? "Restored offer locked"
                         : "Offer expired"}
               </p>
               <p>Opening deadline: {new Date(e.expiresAt).toLocaleString()}</p>
+              {!!e.relayAttempts && (
+                <p>
+                  {e.relayObservation?.attempt === e.relayAttempts
+                    ? `Server storage confirmed for upload attempt ${e.relayAttempts}.`
+                    : `Upload attempt ${e.relayAttempts} is unconfirmed. Refresh and review an explicit retry of this saved offer.`}
+                  {e.relayObservation &&
+                    e.relayObservation.attempt !== e.relayAttempts &&
+                    ` Last server confirmation: attempt ${e.relayObservation.attempt}.`}{" "}
+                  {e.relayObservation &&
+                    `Last server report: ${e.relayObservation.receipt.state}. `}
+                  This does not confirm browser consent.
+                </p>
+              )}
               <div className="actions">
+                {e.state === "ready" && (
+                  <button
+                    disabled={
+                      c.busy ||
+                      !c.status?.canSetup ||
+                      !c.connections().some((v) => v.id === connection) ||
+                      e.expiresAt <= Date.now()
+                    }
+                    onClick={() => {
+                      setAck(false);
+                      void c.send(e.id, connection);
+                    }}
+                  >
+                    Review encrypted offer upload
+                  </button>
+                )}
                 {["ready", "preparing"].includes(e.state) && (
                   <button
                     disabled={
@@ -189,10 +263,12 @@ export function ConversationOffers({
         <div className="conversation-permission-review">
           <h5>
             {r.action === "stop"
-              ? "Stop future offer downloads"
-              : r.action === "create"
-                ? "Review new sharing offer"
-                : "Review saved sharing offer"}
+              ? "Stop future offer downloads and uploads"
+              : r.action === "send"
+                ? "Review encrypted offer upload"
+                : r.action === "create"
+                  ? "Review new sharing offer"
+                  : "Review saved sharing offer"}
           </h5>
           <p className="prose">
             Conversation {r.choices.conversationId}
@@ -212,8 +288,10 @@ export function ConversationOffers({
           </p>
           <p>
             {r.action === "stop"
-              ? "Stopping prevents future downloads from this Mac. Copies already downloaded remain. Revoke conversation access above to stop future sharing."
-              : "This downloads a file encrypted for the selected browser. The browser must review its own access. No messages are included or sent."}
+              ? "Stopping prevents future downloads and uploads from this Mac. Copies already downloaded remain. Revoke conversation access above to stop future sharing."
+              : r.action === "send"
+                ? "This uploads the saved encrypted offer to ai.bittrees.org for the selected browser. Server storage does not grant browser access. An uncertain upload can be retried only after a fresh review."
+                : "This downloads a file encrypted for the selected browser. The browser must review its own access. No messages are included or sent."}
           </p>
           <label className="conversation-choice">
             <input
@@ -230,7 +308,9 @@ export function ConversationOffers({
             >
               {r.action === "stop"
                 ? "Stop offer downloads"
-                : "Download encrypted offer"}
+                : r.action === "send"
+                  ? "Upload encrypted offer"
+                  : "Download encrypted offer"}
             </button>
             <button
               disabled={c.busy}

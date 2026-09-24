@@ -400,17 +400,19 @@ export class CompanionPrivateKeys {
   conversationOfferStatus() {
     return this.conversationOffers.status();
   }
-  prepareConversationOffer(raw: unknown) {
+  prepareConversationOffer(raw: unknown, relay?: CompanionPrivateRelay) {
     return this.exclusive(async () => {
       this.review = undefined;
       this.peers.invalidate();
       this.permissions.invalidate();
       this.conversations.invalidate();
-      return this.conversationOffers.prepare(raw);
+      return this.conversationOffers.prepare(raw, relay);
     });
   }
-  confirmConversationOffer(raw: unknown) {
-    return this.exclusive(async () => this.conversationOffers.confirm(raw));
+  confirmConversationOffer(raw: unknown, relay?: CompanionPrivateRelay) {
+    return this.exclusive(async () =>
+      this.conversationOffers.confirm(raw, relay),
+    );
   }
   private async exclusive<T>(fn: () => Promise<T>) {
     if (this.running) throw new PrivateKeyLifecycleError("BUSY");

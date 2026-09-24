@@ -87,7 +87,7 @@ try {
   prior.close();
   prior = undefined;
   current = new Current(path, f.b.vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 30);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 31);
   assert.deepEqual(current.export(f.b.owner), before);
   assert.deepEqual(current.exportPrivateTaskReceipts(f.b.owner), receipts);
   assert.deepEqual(current.exportPrivatePeerChecks(f.b.owner), checks);
@@ -226,7 +226,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 29,
-    to: 30,
+    to: 31,
     legacyStoreSha256: hash,
     checks: [
       "actual legacy task, receipt, device checks and task consent preserved",
@@ -234,7 +234,7 @@ try {
       "actual legacy ciphertext retry adds one shared replay record and preserves its original receipt without duplicating work",
       "actual legacy challenge, response and acceptance retries retain original check/outbox outcomes while adding one shared record each",
       "wrong-key upgrade leaves schema29 usable",
-      "schema29 writer refuses schema30",
+      "schema29 writer refuses current schema31",
       "encrypted backup retains replay denial and locks restored authority",
       "original encrypted backup restores with actual schema29 engine",
     ],
