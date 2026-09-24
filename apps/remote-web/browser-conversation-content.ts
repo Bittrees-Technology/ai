@@ -631,7 +631,9 @@ export function mountBrowserConversationContent(
             ? "Save this answer for your Mac"
             : "Save this message for your Mac",
           `${kind === "answer" ? "This answers the selected AI question. The Mac will still verify its exact task and revision before resuming work." : parentId ? "This is an ordinary reply to the selected message. It will not resume a waiting task." : "This starts a new message in the selected conversation."} Save locally, then download an encrypted file separately. Its delivery window ends ${new Date(expiresAt).toLocaleString()}.`,
-          content,
+          parentId && parent
+            ? `${kind === "answer" ? "Question" : "Replying to"}:\n${parent.content.content}\n\n${kind === "answer" ? "Your answer" : "Your reply"}:\n${content}`
+            : content,
           kind === "answer" ? "Save reviewed answer" : "Save reviewed message",
         ),
     );

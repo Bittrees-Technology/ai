@@ -282,6 +282,11 @@ test("built question controls distinguish ordinary replies from the exact answer
       .getByRole("button", { name: "Review saving answer", exact: true })
       .click();
     await expect(panel(page)).toContainText("exact task and revision");
+    await expect(
+      panel(page).locator(".conversation-content-review"),
+    ).toContainText(
+      "Question:\nWhere are you travelling?\n\nYour answer:\nLisbon",
+    );
     await preview(page, info.project.name, "answer-review");
     await confirm(page, "Save reviewed answer");
     await refresh(page);
