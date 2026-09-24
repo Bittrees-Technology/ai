@@ -1,3 +1,4 @@
+import { QuestionChoice } from "./question-choice.js";
 import { profileLabel } from "./model-profile-settings.js";
 import { MailEvidenceReview } from "./mail-evidence.js";
 import { AutoNoteReviewControls } from "./autonote-reviews.js";
@@ -27,6 +28,7 @@ export function CrmDrafts({
       "Create a concise brief of these selected records. Cite record IDs and flag missing information.",
     ),
     [profile, setProfile] = useState(profiles[0]?.id ?? ""),
+    [allowQuestions, setAllowQuestions] = useState(false),
     [busy, setBusy] = useState(false);
   const viewEpoch = useRef(0);
   useEffect(() => {
@@ -93,6 +95,7 @@ export function CrmDrafts({
                 selected: [...selected].sort(),
                 prompt,
                 profile,
+                allowQuestions,
               });
               if (attempt.current?.fingerprint !== fingerprint)
                 attempt.current = {
@@ -107,6 +110,7 @@ export function CrmDrafts({
                   recordIds: [...selected].sort(),
                   prompt,
                   modelProfileId: profile,
+                  ...(allowQuestions ? { allowQuestions: true } : {}),
                   conversationId: attempt.current.conversationId,
                 },
                 { "Idempotency-Key": attempt.current.key },
@@ -136,7 +140,8 @@ export function CrmDrafts({
             ))}
           </fieldset>
           <label htmlFor="crm-draft-profile">Local model profile</label>
-          <select className="model-profile-select"
+          <select
+            className="model-profile-select"
             id="crm-draft-profile"
             value={profile}
             onChange={(e) => setProfile(e.target.value)}
@@ -161,6 +166,11 @@ export function CrmDrafts({
             {selected.length} records selected. CRM permissions and record
             versions are checked again during generation.
           </p>
+          <QuestionChoice
+            checked={allowQuestions}
+            onChange={setAllowQuestions}
+            disabled={busy}
+          />
           <button
             disabled={busy || !profile || !selected.length || !prompt.trim()}
           >

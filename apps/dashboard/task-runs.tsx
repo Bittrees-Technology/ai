@@ -85,9 +85,11 @@ export function TaskRuns({
             <p>
               {run.outcome === "runtime_limit"
                 ? "Time limit reached"
-                : run.outcome === "invalid_model_output"
-                  ? "Answer rejected"
-                  : (run.outcome ?? "Running")}{" "}
+                : run.outcome === "clarification_limit"
+                  ? "More detail needed"
+                  : run.outcome === "invalid_model_output"
+                    ? "Answer rejected"
+                    : (run.outcome ?? "Running")}{" "}
               · {run.model?.profile?.model ?? "Model not started"}
             </p>
             {run.model?.profile && profileSettingsText(run.model.profile) && (
@@ -107,6 +109,13 @@ export function TaskRuns({
               <p>
                 The task exceeded its saved time limit. No result was accepted.
                 Review the limit in Device before submitting a new task.
+              </p>
+            )}
+            {run.outcome === "clarification_limit" && (
+              <p className="hint">
+                The model still needed information after two questions. No
+                result was saved. Review your answers and start a clearer
+                request.
               </p>
             )}
             {run.outcome === "invalid_model_output" && (

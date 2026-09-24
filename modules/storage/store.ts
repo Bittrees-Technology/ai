@@ -164,7 +164,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 26) {
+    if (version > 27) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -282,7 +282,7 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS task_input_waits(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,question_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,worker_id TEXT NOT NULL,generation INTEGER NOT NULL,deadline INTEGER NOT NULL,reply_id TEXT UNIQUE REFERENCES messages(id),reply_revision INTEGER,CHECK((reply_id IS NULL)=(reply_revision IS NULL))); CREATE UNIQUE INDEX IF NOT EXISTS task_one_input_wait ON task_input_waits(task_id) WHERE reply_id IS NULL",
         );
-        this.db.pragma("user_version = 26");
+        this.db.pragma("user_version = 27");
       })();
     } catch (error) {
       this.db.close();
@@ -970,6 +970,59 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
       })
       .immediate();
   }
+  /** A model question can use only the opted-in owner's personal Inbox. Creating
+   * that Inbox and publishing the question share a transaction; an existing
+   * incompatible definition is never overwritten. */
+  waitForOwnerInput(
+    owner: Owner,
+    id: string,
+    worker: string,
+    generation: number,
+    question: string,
+  ) {
+    return this.db
+      .transaction(() => {
+        const row = this.validClaim(owner, id, worker, generation);
+        if (this.task(row).input.allowQuestions !== true)
+          throw new StoreError("INVALID_INPUT");
+        const inbox = this.inboxes(owner).find(
+          (item) => item.id === "personal",
+        );
+        if (
+          inbox &&
+          (inbox.ownerType !== "user" ||
+            inbox.ownerId !== owner.userId ||
+            inbox.tenantId !== owner.tenantId ||
+            inbox.teamId !== undefined ||
+            inbox.memberUserIds.length !== 1 ||
+            inbox.memberUserIds[0] !== owner.userId)
+        )
+          throw new StoreError("INVALID_INPUT");
+        if (!inbox)
+          this.createInbox(owner, {
+            id: "personal",
+            tenantId: owner.tenantId,
+            ownerId: owner.userId,
+            ownerType: "user",
+            memberUserIds: [owner.userId],
+          });
+        return this.waitForInput(
+          owner,
+          id,
+          worker,
+          generation,
+          {
+            inboxId: "personal",
+            question,
+            replyDueAt: new Date(
+              Math.min(this.now() + 86400000, row.deadline ?? Infinity),
+            ).toISOString(),
+          },
+          `model-question:${id}:${generation}`,
+        );
+      })
+      .immediate();
+  }
   /** Trusted worker transition. The question is an ordinary encrypted inbox
    * message; only this atomic association can make its reply task input. */
   waitForInput(
@@ -1649,11 +1702,15 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     worker: string,
     generation: number,
     transient: boolean,
-    reason?: "invalid_model_output" | "runtime_limit",
+    reason?: "invalid_model_output" | "runtime_limit" | "clarification_limit",
   ) {
     if (
       (reason !== undefined &&
-        !["invalid_model_output", "runtime_limit"].includes(reason)) ||
+        ![
+          "invalid_model_output",
+          "runtime_limit",
+          "clarification_limit",
+        ].includes(reason)) ||
       (reason !== undefined && transient)
     )
       throw new StoreError("INVALID_INPUT");

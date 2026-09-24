@@ -30,7 +30,8 @@ later eligible work to proceed. Each task retains at most eight questions and
 128,000 UTF-8 bytes of combined question/answer content; nothing is silently evicted.
 Questions are due within seven days and no later than the existing task deadline.
 
-Task schema26 adds only an association table and an index. Text remains encrypted
+Task schema26 introduced an association table and an index; task27 fences the
+optional model question policy. Text remains encrypted
 in the existing messages table. Old records receive no automatic question or
 permission. The old writer rejects the upgraded database. Source-bound question/answer text is concealed in exports and conversation previews; reading inbox history revalidates the associated task and source before returning content. Existing content backup
 preserves associations; export includes the association metadata alongside the
@@ -47,8 +48,8 @@ answers have separate bounded review and uncertainty handling. See
 [local answer controls](local-task-answer-controls.md) and
 [Inbox privacy](inbox-task-message-review.md).
 
-Model question decision policy remains unimplemented: trusted worker callers can
-persist a question, but a model does not yet choose when to ask. Separately scoped
+The [optional model question policy](model-question-policy.md) now calls this
+lifecycle for explicitly opted-in local tasks. Separately scoped
 encrypted conversation transport, remote replies and full end-to-end acceptance
 remain open. The integration changes no installed application, model/runtime,
 live service, personal data or Acer news processing.

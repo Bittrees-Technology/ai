@@ -356,7 +356,7 @@ test("version-four migration preserves local tasks while adding protected source
     store = new Store(path, vault);
     assert.equal(store.get(owner, task.id).input.prompt, input.prompt);
     assert.equal(store.sourceBinding(owner, task.id), null);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 26);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 27);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -683,7 +683,7 @@ test("schema five migration adds the publication ledger without changing existin
     store = new Store(path, vault);
     assert.deepEqual(store.get(owner, task.id), task);
     assert.deepEqual(store.publications(owner, task.id), []);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 26);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 27);
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });
@@ -1205,6 +1205,58 @@ test("source denial and task changes during asynchronous validation cannot save 
     } finally {
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
+      store.close();
+    }
+  }
+});
+
+test("opted-in source task asks using permitted context and a revoked source prevents the question commit", async () => {
+  for (const revoke of [false, true]) {
+    const f = await fixture(),
+      store = new Store(":memory:", new Vault(randomBytes(32)));
+    try {
+      const task = await f.adapter.create(
+        store,
+        { ...input, allowQuestions: true },
+        [f.record.id],
+        "clarify",
+      );
+      let calls = 0;
+      const worker = new LocalWorker(
+        store,
+        owner,
+        {
+          pin: async () => ({ profile, digest: "c".repeat(64) }),
+          generate: async (_model, prompt, _signal, format) => {
+            calls++;
+            assert.ok(format);
+            assert.match(prompt, /SYNTHETIC_SOURCE_SENTINEL/);
+            assert.ok(!prompt.includes(f.grant.token));
+            if (revoke) f.record.version++;
+            return JSON.stringify({
+              decision: "ask",
+              question: "Which audience is this brief for?",
+            });
+          },
+        },
+        () => profile,
+        "question-worker",
+        undefined,
+        f.adapter,
+      );
+      await worker.runOnce();
+      assert.equal(calls, 1);
+      assert.equal(
+        store.get(owner, task.id).status,
+        revoke ? "failed" : "awaiting_input",
+      );
+      assert.equal(
+        store.inputWaitHistory(owner, task.id).length,
+        revoke ? 0 : 1,
+      );
+      assert.equal(store.inboxes(owner).length, revoke ? 0 : 1);
+      assert.equal(store.get(owner, task.id).result, null);
+    } finally {
       store.close();
     }
   }
