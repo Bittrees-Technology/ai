@@ -22,6 +22,14 @@ const responseSchema = z.strictObject({
   peerId: z.uuid(),
   expiresAt: positive,
   attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  delivery: z
+    .strictObject({
+      state: z.enum(["stored", "received", "deleted"]),
+      observedAt: positive,
+      attempt: positive,
+    })
+    .nullable()
+    .optional(),
 });
 const tasksSchema = z.strictObject({
   available: z.boolean(),

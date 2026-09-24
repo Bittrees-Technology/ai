@@ -89,6 +89,15 @@ test("Mac delivery buttons use the authenticated local API and real relay for ta
     await expect(panel(macPage).getByRole("status")).toContainText(
       "Browser authentication or reading is not confirmed",
     );
+    await panel(macPage)
+      .getByRole("button", { name: "Refresh private task history" })
+      .click();
+    await expect(
+      panel(macPage).getByText(/Last relay confirmation: stored for delivery/),
+    ).toBeVisible();
+    expect(f.native.controls.taskStatus().responses[0]!.delivery?.state).toBe(
+      "stored",
+    );
     const receipt = await page.evaluate(() =>
       window.browserPeersTest.relayCheck({ after: null, confirmed: true }),
     );

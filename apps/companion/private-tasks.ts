@@ -41,6 +41,13 @@ function summary(e: ResponseEntry) {
     peerId: e.value.header.recipientId,
     expiresAt: e.value.header.expiresAt,
     attempts: e.value.attempts,
+    delivery: e.delivery
+      ? {
+          state: e.delivery.receipt.state,
+          observedAt: e.delivery.observedAt,
+          attempt: e.delivery.attempt,
+        }
+      : null,
   };
 }
 /** Parent serializes these operations with key/peer/consent changes and deletion.
@@ -216,6 +223,19 @@ export class CompanionPrivateTasks {
         input.expectedRevision,
         deliveryLimit,
       ),
+    );
+  }
+  recordResponseDelivery(
+    id: string,
+    expectedRevision: number,
+    envelope: unknown,
+    receipt: unknown,
+  ) {
+    return this.responses().recordDelivery(
+      id,
+      expectedRevision,
+      envelope,
+      receipt,
     );
   }
   async resumeResponse(raw: unknown) {
