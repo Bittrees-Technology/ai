@@ -79,6 +79,7 @@ export function mountPrivateRelayRoutes(
     res.json(await access.revokeMac(auth.token(req), req.body)),
   );
   const browserMessages = {
+    recipient: "recipientBrowser",
     submit: "submitBrowser",
     poll: "pollBrowser",
     inspect: "inspectBrowser",
@@ -90,6 +91,7 @@ export function mountPrivateRelayRoutes(
       res.json(await endpointStore(req)[method](...browser(req), req.body)),
     );
   const macMessages = {
+    recipient: "recipientMac",
     submit: "submitMac",
     poll: "pollMac",
     inspect: "inspectMac",

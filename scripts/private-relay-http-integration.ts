@@ -104,8 +104,11 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       assert.equal(init?.cache, "no-store");
       const headers = Object.fromEntries(new Headers(init?.headers).entries());
       assert.equal(headers.cookie, undefined);
-      if (init?.credentials === "same-origin") Object.assign(headers, owner);
-      else {
+      if (init?.credentials === "same-origin") {
+        headers.origin = browser.Origin;
+        headers["sec-fetch-site"] = "same-origin";
+        headers.cookie = owner.Cookie!;
+      } else {
         assert.equal(init?.credentials, "omit");
         assert.ok(headers.authorization);
       }
@@ -222,6 +225,16 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       )
     ).body.id,
     pending.body.id,
+  );
+  assert.equal(
+    (
+      await call(
+        "/browser/relay/messages/recipient",
+        { endpointId: f.mac.deviceId },
+        f.owner,
+      )
+    ).status,
+    403,
   );
   const reviewed = await call(
     "/device/relay/approval/inspect",
@@ -357,6 +370,54 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       () => ({ ownerId: f.ownerId, scope: "https-owner" }),
       actualTransport,
     );
+  const recipient = await browserClient.recipient({
+    endpointId: f.mac.deviceId,
+  });
+  assert.equal(recipient.permissionId, native.body.grant.id);
+  assert.equal(recipient.credentialEpoch, f.mac.epoch);
+  assert.equal(recipient.expiresAt, native.body.grant.expiresAt);
+  assert.equal(
+    (await macClient.recipient({ endpointId: f.browserId })).permissionId,
+    enabled.body.id,
+  );
+  await assert.rejects(
+    browserClient.recipient({ endpointId: other.mac.deviceId }),
+    /DENIED/,
+  );
+  await assert.rejects(
+    macClient.recipient({ endpointId: other.browserId }),
+    /DENIED/,
+  );
+  assert.equal(
+    (
+      await disabled(
+        "/browser/relay/messages/recipient",
+        { endpointId: f.mac.deviceId },
+        f.owner,
+      )
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await call(
+        "/browser/relay/messages/recipient",
+        { endpointId: f.mac.deviceId },
+        { ...f.owner, "X-Bittrees-Relay-Permission": randomUUID() },
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await call(
+        "/device/relay/messages/recipient",
+        { endpointId: f.browserId },
+        f.status,
+      )
+    ).status,
+    403,
+  );
   const wrongCredentialClient = new PrivateRelayClient(
     () => ({ ...macContext, credential: f.mac.credential }),
     actualTransport,
@@ -610,6 +671,22 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     JSON.stringify(list.body).includes(native.body.credential),
     false,
   );
+  const currentBrowserClient = new PrivateRelayClient(
+    () => ({
+      ...browserContext,
+      identity: {
+        ...browserContext.identity,
+        permissionId: replacement.id,
+        expiresAt: replacement.expiresAt,
+      },
+    }),
+    actualTransport,
+  );
+  assert.equal(
+    (await currentBrowserClient.recipient({ endpointId: f.mac.deviceId }))
+      .permissionId,
+    native.body.grant.id,
+  );
   assert.equal(
     (
       await call(
@@ -625,6 +702,10 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     200,
   );
   assert.equal((await call(polls, page, relay)).status, 403);
+  await assert.rejects(
+    currentBrowserClient.recipient({ endpointId: f.mac.deviceId }),
+    /DENIED/,
+  );
   assert.equal((await call("/device/identity", {}, f.status)).status, 200);
   assert.equal(
     (
@@ -799,7 +880,7 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     "Private relay native custody: actual TLS identity, one-use acceptance, separate synthetic OS slots, journal reopen, polling, revoke and cleanup passed.",
   );
   console.log(
-    "Browser relay permissions: exact endpoint lookup, owner client approval/replacement, operation recovery, paged history and revoke passed.",
+    "Private relay recipient readiness: exact opposite endpoint and permission checks passed. Browser relay permissions: exact endpoint lookup, owner client approval/replacement, operation recovery, paged history and revoke passed.",
   );
   console.log(
     "Private relay HTTPS: default-disabled routes, real SIWE/cookies and native opt-in, credential/CSRF separation, maximum encrypted payload, exact receipts, owner history/deletion and revocation passed.",

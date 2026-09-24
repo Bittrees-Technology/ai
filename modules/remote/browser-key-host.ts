@@ -1,8 +1,10 @@
+import { BrowserRelayTransport } from "./browser-relay-transport.js";
 import { BrowserPrivateOutbox } from "./browser-outbox.js";
 import { BrowserTaskComposition } from "./browser-task-composition.js";
 import { BrowserTaskHistory } from "./browser-task-history.js";
 import { BrowserTaskConsent } from "./browser-task-consent.js";
 import { z } from "zod";
+import { privateTaskPayloadSchema } from "./private-task-contracts.js";
 import {
   BrowserDeviceClient,
   type BrowserDeviceContext,
@@ -41,6 +43,7 @@ export class BrowserKeyHost {
   private taskHistory?: BrowserTaskHistory;
   private peerKey: BrowserKeyProof | null = null;
   private client: BrowserDeviceClient;
+  private relay: BrowserRelayTransport;
   readonly localOwner: string;
   private constructor(
     private original: BrowserDeviceContext,
@@ -50,6 +53,17 @@ export class BrowserKeyHost {
     private monotonic: () => number,
   ) {
     this.localOwner = "browser:" + original.ownerId;
+    this.relay = new BrowserRelayTransport(
+      () => {
+        const context = this.currentContext(),
+          binding = this.active?.current();
+        return context && binding ? { ...context, binding } : null;
+      },
+      transport,
+      now,
+      monotonic,
+    );
+
     this.client = new BrowserDeviceClient(
       () => this.currentContext(),
       transport,
@@ -141,6 +155,7 @@ export class BrowserKeyHost {
    * registration. Otherwise opening a key review would erase its own authority. */
   cancelKeys() {
     this.generation++;
+    this.relay.invalidate();
     this.active = null;
     this.peerKey = null;
     this.keys?.invalidate();
@@ -415,6 +430,70 @@ export class BrowserKeyHost {
       throw e;
     }
   }
+  /** Explicit relay operations over retained task ciphertext. Neither a storage
+   * receipt nor recipient readiness confers task execution or decryption consent. */
+  readonly relayTaskAPI = {
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = z
+          .strictObject({
+            peerId: z.uuid(),
+            peerKeyEpoch: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER),
+            payload: privateTaskPayloadSchema,
+          })
+          .parse(raw);
+        return this.relay.withClient(async (client, sender) => {
+          const recipient = await client.recipient({
+            endpointId: input.peerId,
+          });
+          return (await this.compositionStore()).prepare(
+            input,
+            Math.min(sender.expiresAt, recipient.expiresAt),
+          );
+        });
+      }),
+    send: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        this.relay.withClient(async (client, sender) => {
+          const input = z
+            .strictObject({
+              peerId: z.uuid(),
+              peerKeyEpoch: z
+                .number()
+                .int()
+                .positive()
+                .max(Number.MAX_SAFE_INTEGER),
+              id: z.uuid(),
+              expectedRevision: z
+                .number()
+                .int()
+                .positive()
+                .max(Number.MAX_SAFE_INTEGER),
+              confirmed: z.literal(true),
+            })
+            .parse(raw);
+          const recipient = await client.recipient({
+            endpointId: input.peerId,
+          });
+          const envelope = await (
+            await this.compositionStore()
+          ).envelope(input);
+          if (
+            envelope.header.expiresAt >
+            Math.min(sender.expiresAt, recipient.expiresAt)
+          )
+            throw Error("DENIED");
+          return {
+            transportOnly: true as const,
+            ...(await client.submit({ version: 1, envelope })),
+          };
+        }),
+      ),
+  };
   /** Reviewed composition and explicit recovery. No network sender or authority
    * handle is exposed. Owner-local maintenance is independent of sending grants. */
   readonly taskAPI = {

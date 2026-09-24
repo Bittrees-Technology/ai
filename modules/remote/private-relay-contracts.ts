@@ -60,6 +60,7 @@ export const privateRelayIdentitySchema = z.strictObject({
   expiresAt: positive,
 });
 export type PrivateRelayIdentity = z.infer<typeof privateRelayIdentitySchema>;
+export const privateRelayRecipientSchema = z.strictObject({ endpointId: uuid });
 export const privateRelaySubmitSchema = z.strictObject({
   version: z.literal(1),
   envelope: privateEnvelopeSchema,
