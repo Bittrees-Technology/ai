@@ -356,3 +356,6 @@ if (new URLSearchParams(location.search).has("browser-peers"))
 
 if (new URLSearchParams(location.search).has("private-migration"))
   void import("./private-migration.js");
+
+if (new URLSearchParams(location.search).has("private-relay"))
+  void import("./private-relay.js");
