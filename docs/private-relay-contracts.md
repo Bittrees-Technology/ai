@@ -14,6 +14,8 @@ A relay cannot establish that arbitrary submitted bytes are encrypted, authentic
 
 ## Storage and retention
 
+A domain-separated SHA-256 digest covers the strict canonical envelope including every routing/header field, encapsulated key and ciphertext. Property order cannot change the identity; changed content does. The hash is not a signature or authentication.
+
 Storage receipts identify a message and exact envelope hash, revision, storage time and `stored`, `received` or `deleted` state. These are transport states only. Destination acknowledgement requires the exact message/hash/revision and explicit confirmation. Future clients must acknowledge only after durable local processing and reconcile lost responses with the same saved operation; the server cannot infer successful decryption from a download. Explicit deletion has its own expected revision.
 
 Pagination is bounded to 20 records with an explicit stable time/ID cursor. The future store must preserve exact ciphertext on duplicate upload, reject conflicting reuse, isolate owner/endpoints, impose byte/count quotas atomically, prevent deleted-message resurrection and retain bounded replay metadata. Polling, grants, HTTP authentication, durable SQL storage, cleanup, frontend/native connection and integration tests remain to implement.

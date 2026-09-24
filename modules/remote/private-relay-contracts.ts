@@ -150,3 +150,18 @@ export function parsePrivateRelaySubmission(
     throw new PrivateRelayInputError();
   }
 }
+
+/** Stable exact-envelope identity for upload reconciliation and destination
+ * acknowledgement. Hashing grants no authority and is not authentication. */
+export async function privateRelayEnvelopeHash(raw: unknown): Promise<string> {
+  try {
+    const envelope = privateEnvelopeSchema.parse(raw);
+    const bytes = new TextEncoder().encode(
+      "org.bittrees.ai/private-relay-envelope/v1\0" + JSON.stringify(envelope),
+    );
+    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    return Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    throw new PrivateRelayInputError();
+  }
+}

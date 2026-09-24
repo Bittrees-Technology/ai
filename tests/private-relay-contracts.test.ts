@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   sealPrivateEnvelope,
   openPrivateEnvelope,
@@ -9,6 +9,7 @@ import {
 } from "../modules/remote/private-envelope.js";
 import {
   parsePrivateRelaySubmission,
+  privateRelayEnvelopeHash,
   PrivateRelayInputError,
   privateRelayBodyLimit,
   privateRelayPolicySchema,
@@ -352,4 +353,51 @@ test("relay storage receipts are distinct from task execution and acknowledgemen
       privateRelayPageSchema.safeParse({ after: null, limit }).success,
       false,
     );
+});
+
+test("relay envelope hashing is stable across object ordering and binds every encrypted envelope field", async () => {
+  const f = await fixture(),
+    original = f.input.envelope;
+  const expected = createHash("sha256")
+    .update(
+      "org.bittrees.ai/private-relay-envelope/v1\0" + JSON.stringify(original),
+    )
+    .digest("hex");
+  assert.equal(await privateRelayEnvelopeHash(original), expected);
+  assert.equal(
+    await privateRelayEnvelopeHash({
+      ciphertext: original.ciphertext,
+      enc: original.enc,
+      header: Object.fromEntries(Object.entries(original.header).reverse()),
+    }),
+    expected,
+  );
+  for (const [field, value] of Object.entries(original.header)) {
+    const replacement =
+      typeof value === "number"
+        ? value + 1
+        : field === "suite"
+          ? "unsupported"
+          : randomUUID();
+    const changed = {
+      ...original,
+      header: { ...original.header, [field]: replacement },
+    };
+    if (field === "suite" || field === "version")
+      await assert.rejects(privateRelayEnvelopeHash(changed), invalid);
+    else
+      assert.notEqual(await privateRelayEnvelopeHash(changed), expected, field);
+  }
+  for (const field of ["enc", "ciphertext"] as const) {
+    const changed = {
+      ...original,
+      [field]:
+        (original[field][0] === "A" ? "B" : "A") + original[field].slice(1),
+    };
+    assert.notEqual(await privateRelayEnvelopeHash(changed), expected, field);
+  }
+  await assert.rejects(
+    privateRelayEnvelopeHash({ ...original, prompt: "SECRET" }),
+    invalid,
+  );
 });
