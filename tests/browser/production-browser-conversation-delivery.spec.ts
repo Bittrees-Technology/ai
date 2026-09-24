@@ -90,8 +90,13 @@ async function saveMessage(page: Page, text = "SYNTHETIC_REVIEWED_DELIVERY") {
   await refresh(page);
   await openMessage(page);
 }
-async function prepareCopy(page: Page, name = "Open message to mac 1") {
+async function prepareCopy(
+  page: Page,
+  name = "Open message to mac 1",
+  info?: TestInfo,
+) {
   await button(page, "Review preparing delivery").click();
+  if (info) await preview(page, info, "prepare-copy-review");
   await confirm(page, "Prepare reviewed delivery");
   await expect(panel(page).getByRole("status")).toContainText(
     "Delivery copy prepared locally",
@@ -145,8 +150,9 @@ async function inspect(page: Page, next = false) {
     "Incoming delivery inspected",
   );
 }
-async function receive(page: Page) {
+async function receive(page: Page, info?: TestInfo) {
   await button(page, "Review receiving queued message").click();
+  if (info) await preview(page, info, "receive-review");
   await confirm(page, "Receive reviewed message");
 }
 async function preview(page: Page, info: TestInfo, state: string) {
@@ -195,7 +201,7 @@ test("built conversation delivery reviews the original message, recovers a lost 
     const selected = await setup(page, f);
     await saveMessage(page);
     await expect(button(page, "Review sending to Mac")).toBeDisabled();
-    await prepareCopy(page);
+    await prepareCopy(page, undefined, info);
     await button(page, "Review sending to Mac").click();
     await expect(panel(page)).toContainText("SYNTHETIC_REVIEWED_DELIVERY");
     await expect(panel(page)).toContainText(f.mac.binding.deviceId);
@@ -263,7 +269,7 @@ test("built incoming conversation controls navigate past a missing parent and se
     await upload(f, parent);
     await inspect(page);
     await preview(page, info, "incoming-queue");
-    await receive(page);
+    await receive(page, info);
     await expect(panel(page).getByRole("alert")).toContainText(
       "earlier message first",
     );

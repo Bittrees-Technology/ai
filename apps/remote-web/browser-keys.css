@@ -302,3 +302,10 @@
 .conversation-content-file label {
   margin-top: 16px;
 }
+
+.conversation-content.reviewing .conversation-content-columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+.conversation-content-review {
+  max-width: 68ch;
+}

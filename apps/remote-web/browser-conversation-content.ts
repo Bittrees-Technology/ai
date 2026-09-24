@@ -400,6 +400,8 @@ export function mountBrowserConversationContent(
         grant?.choices.permissions.questionsToBrowser
       );
     view.hidden = !!review;
+    sidebar.hidden = !!review;
+    box.classList.toggle("reviewing", !!review);
     reviewBox.hidden = !review;
     ack.disabled = busy;
     confirm.disabled = !ready || !review || !timed(review) || !ack.checked;
