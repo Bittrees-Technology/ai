@@ -1,9 +1,13 @@
+import { privateRelaySelectionSchema } from "../../modules/remote/private-relay-queue.js";
 import { z } from "zod";
 import {
   privateRelayStatusSchema,
   type RelayRecord,
 } from "./private-relay-state.js";
-import { privateRelayStorageReceiptSchema } from "../../modules/remote/private-relay-contracts.js";
+import {
+  privateRelayPageSchema,
+  privateRelayStorageReceiptSchema,
+} from "../../modules/remote/private-relay-contracts.js";
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const acceptedSchema = z.strictObject({
   operationId: z.uuid(),
@@ -59,19 +63,66 @@ const receivedSchema = z
     transport: transportSchema.optional(),
   })
   .refine((v) => (v.received ? !!v.transport : !v.transport));
+const queueItemSchema = z
+  .strictObject({
+    selection: privateRelaySelectionSchema,
+    cursor: privateRelayPageSchema.shape.after.unwrap(),
+    expiresAt: positive,
+  })
+  .refine(
+    (v) =>
+      v.cursor.messageId === v.selection.messageId &&
+      v.cursor.storedAt === v.selection.storedAt,
+  );
+const queueInspectionSchema = z
+  .strictObject({
+    transportOnly: z.literal(true),
+    item: queueItemSchema.nullable(),
+    nextCursor: privateRelayPageSchema.shape.after,
+  })
+  .refine(
+    (v) =>
+      !v.nextCursor ||
+      (!!v.item &&
+        v.nextCursor.messageId === v.item.cursor.messageId &&
+        v.nextCursor.storedAt === v.item.cursor.storedAt),
+  );
+type Queue = {
+  connection: RelayRecord;
+  after: z.infer<typeof privateRelayPageSchema>["after"];
+  item: z.infer<typeof queueItemSchema> | null;
+  visited: number;
+  checked: boolean;
+};
 type Snapshot = {
   relay: z.infer<typeof privateRelayStatusSchema>;
   tasks: z.infer<typeof tasksSchema>;
 };
-export type DeliveryAction = "check" | "accepted" | "result" | "send" | "stop";
+export type DeliveryAction =
+  | "check"
+  | "inspect"
+  | "next"
+  | "selected"
+  | "accepted"
+  | "result"
+  | "send"
+  | "stop";
 export const deliveryLabels: Record<DeliveryAction, string> = {
   check: "Check for one task",
+  inspect: "Inspect the first queued message",
+  next: "Look for a later message",
+  selected: "Check the selected message",
   accepted: "Prepare acceptance reply",
   result: "Prepare completed result",
   send: "Send saved reply",
   stop: "Stop reply retries",
 };
 export const deliveryDescriptions: Record<DeliveryAction, string> = {
+  inspect:
+    "Inspect one message waiting for this Mac. This shows its delivery reference only; it will not open, accept, delete or acknowledge the message.",
+  next: "Look for one message after the selected delivery reference. Leave the selected message in its existing state. This does not delete it or mark it accepted. Return to the start to inspect it again.",
+  selected:
+    "Check exactly this queued message under current task permission. Accept it only if its content authenticates and permission remains valid. A changed selection stops the action; a reply is not sent.",
   check:
     "Check for one encrypted browser task using this connection. Existing task permission controls whether it can be accepted into local work. This does not mean work is complete or send a reply.",
   accepted:
@@ -83,6 +134,7 @@ export const deliveryDescriptions: Record<DeliveryAction, string> = {
 };
 type Review = {
   action: DeliveryAction;
+  queue?: Queue;
   snapshot: Snapshot;
   connection?: RelayRecord;
   accepted?: z.infer<typeof acceptedSchema>;
@@ -98,11 +150,20 @@ type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
 export class PrivateTaskDeliveryState {
   state: {
     snapshot: Snapshot | null;
+    queue: Queue | null;
     review: Review | null;
     busy: boolean;
     error: string;
     notice: string;
-  } = { snapshot: null, review: null, busy: false, error: "", notice: "" };
+  } = {
+    snapshot: null,
+    queue: null,
+    review: null,
+    busy: false,
+    error: "",
+    notice: "",
+  };
+  private queue: Queue | null = null;
   private generation = 0;
   private pendingReview: Review | null = null;
   private fence: Promise<unknown> = Promise.resolve();
@@ -119,7 +180,14 @@ export class PrivateTaskDeliveryState {
   hide() {
     this.generation++;
     this.pendingReview = null;
-    this.set({ snapshot: null, review: null, error: "", notice: "" });
+    this.queue = null;
+    this.set({
+      snapshot: null,
+      queue: null,
+      review: null,
+      error: "",
+      notice: "",
+    });
     // Subsequent operations wait for the host cancellation before opening a new scope.
     this.fence = this.fence
       .catch(() => {})
@@ -129,6 +197,39 @@ export class PrivateTaskDeliveryState {
         }),
       );
     void this.fence.catch(() => {});
+  }
+  private saveQueue(queue: Queue | null) {
+    this.queue = queue ? structuredClone(queue) : null;
+    this.set({ queue: this.queue ? structuredClone(this.queue) : null });
+  }
+  resetQueue() {
+    if (this.state.busy) return;
+    this.pendingReview = null;
+    this.saveQueue(null);
+    this.set({
+      review: null,
+      error: "",
+      notice: "Queue view returned to the start. No message was changed.",
+    });
+  }
+  private reconcileQueue(snapshot: Snapshot) {
+    if (
+      this.queue &&
+      (!snapshot.tasks.enabled ||
+        !snapshot.relay.canCheckRemote ||
+        !snapshot.relay.canSetup ||
+        !snapshot.relay.available ||
+        !snapshot.tasks.available ||
+        !snapshot.relay.state.items.some(
+          (r) =>
+            same(r, this.queue!.connection) &&
+            !r.locked &&
+            r.phase === "active" &&
+            r.binding!.expiresAt > this.now() &&
+            r.permission!.expiresAt > this.now(),
+        ))
+    )
+      this.saveQueue(null);
   }
   private async snapshot() {
     const relay = privateRelayStatusSchema.parse(
@@ -201,12 +302,14 @@ export class PrivateTaskDeliveryState {
       this.pendingReview = null;
       this.set({ review: null });
       const snapshot = await this.snapshot();
-      if (current())
+      if (current()) {
+        this.reconcileQueue(snapshot);
         this.set({
           snapshot,
           notice:
             "Private task history loaded. Review each delivery action separately.",
         });
+      }
     });
   }
   prepare(action: DeliveryAction, connectionId?: string, targetId?: string) {
@@ -239,6 +342,19 @@ export class PrivateTaskDeliveryState {
           connection.binding!.expiresAt,
           connection.permission!.expiresAt,
         );
+      }
+      if (action === "next" || action === "selected") {
+        const queue = this.queue;
+        if (
+          !queue?.item ||
+          !same(queue.connection, r.connection) ||
+          (action === "next" && queue.visited >= 20) ||
+          (action === "selected" && queue.checked)
+        )
+          throw Error("DENIED");
+        r.queue = structuredClone(queue);
+        if (action === "selected")
+          r.expiresAt = Math.min(r.expiresAt, queue.item.expiresAt);
       }
       if (action === "accepted" || action === "result") {
         r.accepted = snapshot.tasks.acceptedTasks.find(
@@ -282,14 +398,54 @@ export class PrivateTaskDeliveryState {
         ? { id: r.connection.id, expectedRevision: r.connection.revision }
         : undefined;
       let notice: string;
-      if (r.action === "check") {
-        const value = receivedSchema.parse(
-          await this.api("/v1/private-relay/check-task", "POST", {
+      let nextQueue = this.queue;
+      if (r.action === "inspect" || r.action === "next") {
+        const after = r.action === "next" ? r.queue!.item!.cursor : null;
+        const value = queueInspectionSchema.parse(
+          await this.api("/v1/private-relay/inspect-task", "POST", {
             ...connection,
-            after: null,
+            after,
             confirmed: true,
           }),
         );
+        if (
+          value.item &&
+          (value.item.expiresAt <= this.now() ||
+            (after &&
+              (value.item.cursor.storedAt < after.storedAt ||
+                (value.item.cursor.storedAt === after.storedAt &&
+                  value.item.cursor.messageId <= after.messageId))))
+        )
+          throw Error("INVALID_RESPONSE");
+        nextQueue = {
+          connection: r.connection!,
+          after,
+          item: value.item,
+          visited: r.action === "next" ? r.queue!.visited + 1 : 1,
+          checked: false,
+        };
+        notice = value.item
+          ? "Queued message inspected. Its content has not been authenticated or accepted."
+          : "No message is currently waiting at this queue position. Return to the start to check again.";
+      } else if (r.action === "check" || r.action === "selected") {
+        const value = receivedSchema.parse(
+          await this.api("/v1/private-relay/check-task", "POST", {
+            ...connection,
+            after: r.action === "selected" ? r.queue!.after : null,
+            ...(r.action === "selected"
+              ? { selection: r.queue!.item!.selection }
+              : {}),
+            confirmed: true,
+          }),
+        );
+        if (
+          r.action === "selected" &&
+          (!value.received ||
+            value.received.messageId !== r.queue!.item!.selection.messageId)
+        )
+          throw Error("INVALID_RESPONSE");
+        nextQueue =
+          r.action === "selected" ? { ...r.queue!, checked: true } : null;
         notice = value.received
           ? `Task ${value.received.taskId} accepted locally. Work is not confirmed complete; a reply has not been sent.`
           : "No new browser task is waiting for this Mac.";
@@ -349,6 +505,8 @@ export class PrivateTaskDeliveryState {
       const snapshot = await this.snapshot();
       if (!current()) return;
       if (!this.valid(r)) throw Error("DENIED");
+      this.saveQueue(nextQueue);
+      this.reconcileQueue(snapshot);
       this.set({ snapshot, notice });
     });
   }
