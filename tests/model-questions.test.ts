@@ -105,7 +105,7 @@ test("actual model question, authenticated owner HTTP answer and resumed worker 
     assert.equal(calls.length, 3);
     assert.equal(
       (f.store.runHistory(owner, f.task.id)[0]!.model as any).questionPolicy,
-      "local-clarification-v1",
+      "local-clarification-v2",
     );
   } finally {
     server.closeAllConnections();
@@ -433,4 +433,57 @@ test("local source HTTP routes preserve explicit question choice and reject non-
       await new Promise<void>((r) => server.close(() => r()));
     store.close();
   }
+});
+
+test("credential-bearing model questions never create an Inbox wait or reach ordinary generation", async () => {
+  for (const question of [
+    "What is the user's password and login code?",
+    "Please share your API key.",
+    "What is your password reset code?",
+    "Please provide your password reset token.",
+    "What is your p\u200bassword?",
+    "Please provide your one-time code.",
+    "Which private key should I use?",
+    "What is your seed phrase?",
+    "Qual é a sua senha?",
+    "Qual é o seu código de autenticação?",
+    "What is your password manager password?",
+  ]) {
+    let calls = 0;
+    const f = fixture(async () => {
+      calls++;
+      return JSON.stringify({ decision: "ask", question });
+    });
+    try {
+      await f.worker.runOnce();
+      assert.equal(calls, 1);
+      assert.equal(f.store.get(owner, f.task.id).status, "failed");
+      assert.equal(
+        f.store.runHistory(owner, f.task.id)[0]!.outcome,
+        "invalid_model_output",
+      );
+      assert.deepEqual(f.store.inboxes(owner), []);
+      assert.deepEqual(f.store.inputWaitHistory(owner, f.task.id), []);
+    } finally {
+      f.store.close();
+    }
+  }
+});
+test("nonsecret security topics and ordinary missing facts remain valid clarification", () => {
+  for (const question of [
+    "Which password manager do you prefer?",
+    "Which password length does the policy require?",
+    "Which private key algorithm does your project use?",
+    "What is the model context token limit?",
+    "Which legal entity did you choose?",
+    "Would you like to attend the meeting?",
+  ]) {
+    assert.deepEqual(
+      readQuestionDecision(JSON.stringify({ decision: "ask", question })),
+      { decision: "ask", question },
+    );
+  }
+  assert.deepEqual(readQuestionDecision('{"decision":"continue"}'), {
+    decision: "continue",
+  });
 });
