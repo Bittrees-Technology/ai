@@ -188,6 +188,8 @@ jobs:
       - run: npm run build:remote
       - name: Check browser offer receipt history and actual version10 upgrade
         run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
+      - name: Check reviewed browser offer queue and receipt controls
+        run: npm run test:browser-private -- tests/browser/production-browser-relay-offers.spec.ts --max-failures=1
       - name: Check reviewed Mac encrypted offer uploads
         run: npm run test:browser-private -- tests/browser/conversation-relay-offers.spec.ts --max-failures=1
       - name: Check shared browser replay and actual version8 upgrade
@@ -558,6 +560,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload browser offer receipt previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-relay-offer-ui-preview
+          path: test-results/browser-relay-offer-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload browser conversation permission previews
         if: always()
         uses: actions/upload-artifact@v4
