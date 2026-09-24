@@ -295,6 +295,9 @@ test("Mac incoming review clears on focus loss and ignores a late authenticated 
     await expect(button(page, "Receive reviewed item")).toBeHidden();
     expect(g.messages()).toHaveLength(1);
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page
+      .getByRole("button", { name: "Refresh conversation choices", exact: true })
+      .click();
     await g.inspect();
     await g.review();
     let release!: () => void, entered!: () => void;
@@ -304,13 +307,22 @@ test("Mac incoming review clears on focus loss and ignores a late authenticated 
       entered();
       await held;
     };
+    const response = page.waitForResponse((r) =>
+      new URL(r.url()).pathname === "/v1/private-relay/check-conversation",
+    );
     await g.confirm();
     await started;
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     release();
-    await expect(button(page, "Refresh delivery history")).toBeEnabled();
-    await expect(region(page)).not.toContainText("saved on this Mac");
+    await (await response).finished();
+    // The parent permission view also clears on focus loss. A late response
+    // must not reopen it; fresh explicit access inspection restores controls.
+    await expect(region(page)).toHaveCount(0);
+    await expect(page.getByRole("status")).not.toContainText("saved on this Mac");
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page
+      .getByRole("button", { name: "Refresh conversation choices", exact: true })
+      .click();
     await button(page, "Refresh delivery history").click();
     await expect(
       button(page, "Review preparing storage receipt"),
