@@ -37,7 +37,7 @@ Renewal of an existing tuple remains possible at capacity. Revoked entries remai
 inspectable until content deletion; individual removal controls remain unfinished.
 
 Saved grants use a separate encrypted `private_conversation_consents` row at task
-schema28. Fresh/updated stores start with no grants. Local export includes saved
+schema28, retained by schema29. Fresh/updated stores start with no grants. Local export includes saved
 conversation choices; deleting local content clears them and increments the
 revision tombstone. Restoring a backup locks them. Reviewing one restored grant
 revokes the others rather than silently restoring their access. Corrupt storage
@@ -96,6 +96,36 @@ current identity/peer revocation. A pinned build of the actual preceding version
 providers verifies preserved task consent/ciphertext, empty conversation consent
 and old-writer refusal. These checks are authored and build successfully; their
 GitHub browser execution remains pending.
+
+## Retained Mac offers
+
+`PrivateConversationOffers` prepares an offer only for a current, explicitly
+approved Mac conversation grant. The encrypted local journal reserves the
+operation/message identity and shared outgoing sequence before encryption. Resume
+keeps that original identity; competing encryptors retain only the winning
+ciphertext. Reveal requires current consent again. New preparation does not send
+anything or approve the browser's independent choices.
+
+An offer carries the opaque thread reference, current Mac permission ID,
+directions and consent deadline; local thread/Inbox IDs and message content never
+enter the offer. Its encrypted envelope can be opened for at most five minutes
+and never after Mac permission expiry. Revocation, changed Inbox/key/peer/binding,
+missing identity or expiry prevents preparing/resuming/revealing it. Offline stop
+keeps history while preventing future reveal; copies already exported may remain
+readable to their intended recipient until expiry, but cannot override current
+Mac consent. The encrypted database export includes the journal and local deletion
+clears it. Backup restoration locks both offers and consent.
+
+Task schema29 adds the retained-offer journal and fences task28 writers. The
+actual compiled task28 engine was used to verify preserved waiting tasks and
+conversation consent, wrong-key isolation, empty offer state, old-writer refusal,
+encrypted backup/restore and original-backup rollback. Seven offer tests cover
+real authenticated decryption, exact retries/restart, competing encryption,
+revocation/scope/expiry, offline stop, native-resolution invalidation, restoration,
+owner deletion and corrupt storage. All755 engine tests pass. A browser consent
+case now consumes an offer from this actual Mac module; fresh GitHub acceptance
+is pending. User review/offer exchange controls and durable message delivery are
+still unfinished.
 
 ## Content boundary
 

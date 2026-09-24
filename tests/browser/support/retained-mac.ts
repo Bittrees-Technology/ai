@@ -1,3 +1,5 @@
+import { PrivateConversationConsent } from "../../../modules/remote/private-conversation-consent.js";
+import { PrivateConversationOffers } from "../../../modules/remote/private-conversation-offers.js";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { localApi } from "../../../apps/companion/http.js";
@@ -139,6 +141,85 @@ export async function retainedMac(
     binding,
     consent,
     work,
+    async conversationOffer() {
+      const conversationId = randomUUID(),
+        inboxId = "conversation-offer-pilot";
+      store.createInbox(owner, {
+        id: inboxId,
+        tenantId: owner.tenantId,
+        ownerId: owner.userId,
+        ownerType: "user",
+        memberUserIds: [owner.userId],
+      });
+      store.appendMessage(
+        owner,
+        {
+          conversationId,
+          recipientInboxId: inboxId,
+          type: "notification",
+          content: "Synthetic offer thread",
+        },
+        randomUUID(),
+      );
+      const consent = new PrivateConversationConsent(
+          store,
+          vault,
+          owner,
+          () => binding,
+          keys,
+          peers,
+          clock,
+        ),
+        browserKey = peers
+          .list()
+          .peers.find((p) => p.peerId === browser.deviceId)!,
+        review = await consent.prepare({
+          expectedRevision: consent.list().revision,
+          choices: {
+            peerId: browser.deviceId,
+            peerKeyEpoch: browserKey.keyEpoch,
+            conversationId,
+            inboxId,
+            permissions: {
+              messagesToMac: true,
+              messagesToBrowser: true,
+              questionsToBrowser: true,
+              answersToMac: true,
+            },
+            expiresAt: clock() + 300000,
+          },
+        }),
+        saved = consent.approve({
+          reviewId: review.id,
+          expectedRevision: review.revision,
+          confirmed: true,
+          acknowledged: true,
+        }),
+        offers = new PrivateConversationOffers(
+          store,
+          vault,
+          owner,
+          consent,
+          clock,
+        ),
+        reserved = await offers.prepare({
+          clientRequestId: randomUUID(),
+          permissionId: saved.grant.id,
+          expectedConsentRevision: saved.revision,
+          confirmed: true,
+        }),
+        ready = await offers.resume({
+          id: reserved.id,
+          expectedRevision: reserved.revision,
+          confirmed: true,
+        }),
+        envelope = await offers.delivery({
+          id: ready.id,
+          expectedRevision: ready.revision,
+          confirmed: true,
+        });
+      return { data: ready.value.offer, envelope };
+    },
     async connectRelay(
       device: {
         ownerId: string;

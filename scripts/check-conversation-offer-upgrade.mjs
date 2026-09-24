@@ -1,4 +1,4 @@
-/** Actual compiled task26 -> task27: request policy writer fence, synthetic only. */
+/** Actual compiled task28 -> task29: retained conversation offers, synthetic only. */
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
 if (!process.argv[2])
-  throw Error("Supply verified compiled task26 engine directory");
+  throw Error("Supply verified compiled task28 engine directory");
 const repo = fileURLToPath(new URL("../", import.meta.url)),
   legacy = resolve(process.argv[2]);
 const legacyHash = createHash("sha256")
@@ -14,7 +14,7 @@ const legacyHash = createHash("sha256")
   .digest("hex");
 assert.equal(
   legacyHash,
-  "68e4a5b3650082fd30898c37c7cc77aaba98a80d2e3709f68c2d3b61f793be5f",
+  "cd2ddd984a3372776fc07fe12a595ffd80900f33740e06412439973d4c717342",
 );
 const load = (base, path) =>
   import(pathToFileURL(join(base, path + ".js")).href);
@@ -23,14 +23,14 @@ const { Store: Old } = await load(legacy, "modules/storage/store"),
   { Vault } = await load(join(repo, "dist"), "modules/storage/vault"),
   oldBackup = await load(legacy, "modules/storage/backup"),
   backup = await load(join(repo, "dist"), "modules/storage/backup");
-const dir = await mkdtemp(join(tmpdir(), "bittrees-model-question-upgrade-")),
+const dir = await mkdtemp(join(tmpdir(), "bittrees-conversation-upgrade-")),
   path = join(dir, "tasks.db"),
   vault = new Vault(randomBytes(32)),
   owner = { userId: "synthetic", tenantId: "personal" };
 let old, current, restored, rollback;
 try {
   old = new Old(path, vault);
-  assert.equal(old.db.pragma("user_version", { simple: true }), 26);
+  assert.equal(old.db.pragma("user_version", { simple: true }), 28);
   old.createInbox(owner, {
     id: "personal",
     tenantId: "personal",
@@ -58,6 +58,23 @@ try {
     },
     "original-question",
   );
+  old.db
+    .prepare("INSERT INTO private_conversation_consents VALUES(?,?,?,?,?)")
+    .run(
+      owner.userId,
+      owner.tenantId,
+      4,
+      0,
+      vault.seal(
+        [],
+        JSON.stringify([
+          "private-conversation-consent:v1",
+          owner.tenantId,
+          owner.userId,
+        ]),
+      ),
+    );
+  const priorConsent = old.exportPrivateConversationConsent(owner);
   const before = old.export(owner),
     waits = old.exportInputWaits(owner);
   await oldBackup.encryptedBackup(old, vault, join(dir, "original.aib"));
@@ -65,12 +82,17 @@ try {
   old = undefined;
   assert.throws(() => new Current(path, new Vault(randomBytes(32))));
   old = new Old(path, vault);
-  assert.equal(old.db.pragma("user_version", { simple: true }), 26);
+  assert.equal(old.db.pragma("user_version", { simple: true }), 28);
   old.close();
   old = undefined;
   current = new Current(path, vault);
   assert.equal(current.db.pragma("user_version", { simple: true }), 29);
   assert.deepEqual(current.export(owner), before);
+  assert.deepEqual(
+    current.exportPrivateConversationConsent(owner),
+    priorConsent,
+  );
+  assert.deepEqual(current.exportPrivateConversationOffers(owner), []);
   assert.deepEqual(current.exportInputWaits(owner), waits);
   assert.equal(current.get(owner, task.id).input.allowQuestions, undefined);
   const opted = current.create(
@@ -101,6 +123,11 @@ try {
   restored = new Current(join(dir, "restored.db"), vault);
   assert.deepEqual(restored.export(owner), all);
   assert.deepEqual(restored.exportInputWaits(owner), allWaits);
+  assert.equal(
+    restored.exportPrivateConversationConsent(owner).needsReview,
+    true,
+  );
+  assert.deepEqual(restored.exportPrivateConversationOffers(owner), []);
   assert.equal(restored.get(owner, opted.id).input.allowQuestions, true);
   await oldBackup.restoreBackup(
     join(dir, "original.aib"),
@@ -108,20 +135,21 @@ try {
     join(dir, "rollback.db"),
   );
   rollback = new Old(join(dir, "rollback.db"), vault);
-  assert.equal(rollback.db.pragma("user_version", { simple: true }), 26);
+  assert.equal(rollback.db.pragma("user_version", { simple: true }), 28);
   assert.deepEqual(rollback.export(owner), before);
   assert.deepEqual(rollback.exportInputWaits(owner), waits);
   const proof = {
     verifiedAt: new Date().toISOString(),
-    from: 26,
+    from: 28,
     to: 29,
     legacyStoreSha256: legacyHash,
     checks: [
-      "existing waiting task/question preserved with omitted policy",
+      "existing waiting task/question and omitted policy preserved",
+      "existing conversation consent preserved; new offer table starts empty",
       "wrong-key upgrade leaves original usable",
-      "task26 writer refuses task27 request policy",
+      "task28 writer refuses task29 offer preparation",
       "encrypted backup/restore preserves old/new waits and explicit opt-in",
-      "untouched original backup remains task26-compatible",
+      "untouched original backup remains task28-compatible",
     ],
     boundaries: [
       "synthetic temporary stores only",
@@ -131,7 +159,7 @@ try {
   await writeFile(
     join(
       repo,
-      "docs/evidence/model-question-schema-compatibility-2026-09-24.json",
+      "docs/evidence/conversation-offer-schema-compatibility-2026-09-24.json",
     ),
     JSON.stringify(proof, null, 2) + "\n",
   );

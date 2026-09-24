@@ -1,4 +1,4 @@
-/** Actual compiled task27 -> task28: separate conversation consent, synthetic only. */
+/** Actual compiled task27 -> current schema29: separate conversation consent, synthetic only. */
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -69,7 +69,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 28);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 29);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.exportPrivateConversationConsent(owner), {
     revision: 0,
@@ -119,13 +119,13 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 27,
-    to: 28,
+    to: 29,
     legacyStoreSha256: legacyHash,
     checks: [
       "existing waiting task/question and omitted policy preserved",
       "new consent table starts empty and grants no access",
       "wrong-key upgrade leaves original usable",
-      "task27 writer refuses task28 conversation consent",
+      "task27 writer refuses current schema29",
       "encrypted backup/restore preserves old/new waits and explicit opt-in",
       "untouched original backup remains task27-compatible",
     ],

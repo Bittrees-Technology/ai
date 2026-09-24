@@ -161,7 +161,7 @@ test("conversation grants stay encrypted and separate from task permission acros
       (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
         .grants,
     ).toEqual([]);
-    const o = await offer(f),
+    const o = await f.mac.conversationOffer(),
       g = await approve(page, await prepare(page, f, o));
     const stored = await page.evaluate(() =>
       window.browserPeersTest.conversationInspect(),

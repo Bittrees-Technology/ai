@@ -646,7 +646,7 @@ test("Schema17 migration preserves tasks without granting consent; authenticated
     );
     f.store.db.exec("DROP TABLE private_task_consents; PRAGMA user_version=17");
     migrated = new Store(f.path, f.vault, f.clock);
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 28);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 29);
     assert.equal(migrated.get(owner, task.id).input.prompt, "preserve");
     assert.deepEqual(migrated.exportPrivateTaskConsent(owner), {
       revision: 0,

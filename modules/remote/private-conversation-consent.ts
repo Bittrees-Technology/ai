@@ -387,6 +387,18 @@ export class PrivateConversationConsent {
     };
     if (!current()) throw new PrivateConversationConsentError("DENIED");
     return {
+      /** Internal offer preparation only. Resolving these handles does not send
+       * an offer, authorize content delivery or approve browser consent. */
+      offerAccess: () => {
+        const g = current();
+        return g
+          ? {
+              grant: structuredClone(g),
+              localKey: { ...key.pair },
+              peerPublicKey: peer.publicKey,
+            }
+          : null;
+      },
       access: (
         rawScope: unknown,
         direction: keyof z.infer<typeof conversationPermissionsSchema>,
@@ -410,3 +422,5 @@ export class PrivateConversationConsent {
     };
   }
 }
+
+export { grantSchema as privateConversationGrantSchema };
