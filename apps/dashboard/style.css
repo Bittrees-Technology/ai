@@ -1128,3 +1128,21 @@ select.model-profile-select {
   flex: 0 0 auto;
   margin-top: 5px;
 }
+
+/* WebKit gives fieldsets a min-content floor unless explicitly bounded. */
+.conversation-content fieldset,
+.conversation-content label,
+.conversation-delivery-row,
+.conversation-delivery-review {
+  min-width: 0;
+  max-width: 100%;
+}
+.conversation-content fieldset {
+  width: 100%;
+  margin-inline: 0;
+}
+.conversation-content button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

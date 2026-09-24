@@ -123,15 +123,23 @@ async function shots(page: Page, browser: string, name: string) {
     ["phone", 390, 844],
   ] as const) {
     await page.setViewportSize({ width, height });
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
+    const layout = await page.evaluate(() => ({
+      viewport: innerWidth,
+      width: document.documentElement.scrollWidth,
+      overflowing: Array.from(document.querySelectorAll("body *"))
+        .filter((e) => e.getBoundingClientRect().right > innerWidth + 1)
+        .map((e) => ({
+          tag: e.tagName,
+          className: e.className,
+          width: e.getBoundingClientRect().width,
+          text: (e.textContent ?? "").slice(0, 100),
+        })),
+    }));
     await page.screenshot({
       path: `test-results/mac-conversation-delivery-ui/${browser}-${name}-${size}.png`,
       fullPage: true,
     });
+    expect(layout.width <= layout.viewport, JSON.stringify(layout)).toBe(true);
   }
 }
 test("Mac conversation controls prepare and separately upload the original encrypted message then stop offline", async ({
