@@ -102,7 +102,7 @@ export async function setupRecovery(
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(
         "org.bittrees.ai.browser-endpoint-keys",
-        6,
+        7,
       );
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
