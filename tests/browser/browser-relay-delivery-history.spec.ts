@@ -231,23 +231,36 @@ test("actual previous browser providers upgrade from common6 without rewriting k
         }),
       review.reviewId,
     );
-    const before = await page.evaluate(async () => ({
-      history: await window.browserPeersTest.historyStatus(),
-      keys: await window.browserPeersTest.key(),
-      consent: await window.browserPeersTest.consentStatus(),
-      exported: await window.browserPeersTest.taskExport(),
-    }));
+    const before = await page.evaluate(async () => {
+      const history = await window.browserPeersTest.historyStatus();
+      return {
+        history,
+        keys: await window.browserPeersTest.key(),
+        consent: await window.browserPeersTest.consentStatus(),
+        exported: await window.browserPeersTest.historyExport({
+          expectedRevision: history.meta!.revision,
+          confirmed: true,
+        }),
+      };
+    });
     await reopen(page, f.f);
     await f.authorize();
-    const after = await page.evaluate(async () => ({
-      history: await window.browserPeersTest.historyStatus(),
-      keys: await window.browserPeersTest.key(),
-      consent: await window.browserPeersTest.consentStatus(),
-      exported: await window.browserPeersTest.taskExport(),
-    }));
+    const after = await page.evaluate(async () => {
+      const history = await window.browserPeersTest.historyStatus();
+      return {
+        history,
+        keys: await window.browserPeersTest.key(),
+        consent: await window.browserPeersTest.consentStatus(),
+        exported: await window.browserPeersTest.historyExport({
+          expectedRevision: history.meta!.revision,
+          confirmed: true,
+        }),
+      };
+    });
     expect(after.keys).toEqual(before.keys);
     expect(after.consent).toEqual(before.consent);
     expect(after.exported).toEqual(before.exported);
+    expect(after.exported.entries[0]!.input).toEqual(payload);
     expect(after.history.entries[0]!.id).toBe(entry.id);
     expect(after.history.entries[0]!.relayDelivery).toBeNull();
     const owner = f.f.binding.ownerId;
