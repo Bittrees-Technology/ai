@@ -167,7 +167,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 31) {
+    if (version > 32) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -294,8 +294,9 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_incoming_replay(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,operation_hash TEXT NOT NULL,message_hash TEXT NOT NULL,sequence_hash TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,operation_hash),UNIQUE(user_id,tenant_id,message_hash),UNIQUE(user_id,tenant_id,sequence_hash))",
         );
-        // Schema31 fences older offer writers before durable relay history is saved.
-        this.db.pragma("user_version = 31");
+        // Schema32 fences older lifecycle writers before generation-time replay
+        // provenance can be saved. Legacy slots are never backfilled.
+        this.db.pragma("user_version = 32");
       })();
     } catch (error) {
       this.db.close();

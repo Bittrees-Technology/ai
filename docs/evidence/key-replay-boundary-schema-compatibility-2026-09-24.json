@@ -1,0 +1,28 @@
+{
+  "verifiedAt": "2026-09-24T15:48:15.717Z",
+  "from": 31,
+  "to": 32,
+  "legacySourceHead": "d3ee4a9e5f82533509fde131e2e284906ed2d9fe",
+  "legacyCompiledHashes": {
+    "modules/storage/store.js": "d9f95264dfb4304fe3aaaa944a20d5d964cd461b8cb6e4ecfe961a325d5b64fa",
+    "modules/remote/private-key-lifecycle.js": "284a32749861b5a7d1b5fb1a701f8c7888641f865a3e8c0005fe5b9554bfe6f4",
+    "modules/remote/private-endpoint-keys.js": "b20e924ef9f8e7d6df500dc42703c05fb7246c836872577a5e7ffab4e281ddb3"
+  },
+  "checks": [
+    "actual prior active and generated-but-preparing keys remain uncovered; native bytes unchanged",
+    "actual prior empty reservation gains provenance only after new cryptographic generation",
+    "explicit new key/epoch obtains coverage while old proof fails and old key bytes survive",
+    "actual legacy ciphertext opens with its preserved key but fails with new key and current epoch",
+    "messages, current consent records and shared incoming replay are preserved exactly",
+    "wrong vault key cannot publish the upgrade; old writer still opens unchanged schema31",
+    "schema31 writer refuses schema32; fresh coverage survives current writer reopen",
+    "encrypted backup retains provenance as history but restore locks runtime authority",
+    "owner deletion removes eligibility without affecting another owner",
+    "untouched schema31 backup rolls back using actual prior writer with restored authority locked"
+  ],
+  "limitations": [
+    "Mac generation provenance/current-proof prerequisite only; browser boundary and content admission not implemented",
+    "no reconstruction or all-time uniqueness guarantee for unknown historical message IDs",
+    "no personal data, native Keychain, browser, installed application, service or Acer changes"
+  ]
+}
