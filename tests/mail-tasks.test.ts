@@ -1,3 +1,4 @@
+import { conversationTaskAccess } from "../apps/companion/conversation-access.js";
 import { readMailEvidence } from "../apps/companion/mail-evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -1213,6 +1214,22 @@ test("Mail evidence rejects inconsistent stored identities and attachment-part h
         mock.mock.restore();
       }
     }
+  } finally {
+    store.close();
+  }
+});
+
+test("mail conversation access uses a fresh source read and fences local removal", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32)));
+  try {
+    const task = await f.adapter.create(store, input, "plain", "access");
+    const access = conversationTaskAccess(store, owner, f.sources);
+    const check = await access(task.id);
+    store.db.transaction(() => check()).immediate();
+    await f.connector.forgetLocal();
+    assert.throws(check, /SOURCE_DENIED/);
+    await assert.rejects(access(task.id));
   } finally {
     store.close();
   }

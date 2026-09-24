@@ -70,6 +70,9 @@ export class MailTasks {
       binding,
     );
   }
+  captureReadBoundary() {
+    return this.connector.captureReadBoundary();
+  }
   async validate(raw: SourceBinding) {
     const parsed = sourceBindingSchema.safeParse(raw);
     if (!parsed.success) throw new ConnectorError("SOURCE_DENIED");

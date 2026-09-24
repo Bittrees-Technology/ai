@@ -74,6 +74,9 @@ export class AutoNoteTasks {
       binding,
     );
   }
+  captureReadBoundary() {
+    return this.connector.captureReadBoundary();
+  }
   async validate(binding: SourceBinding) {
     if (
       binding.authority.sourceApp !== "autonote" ||

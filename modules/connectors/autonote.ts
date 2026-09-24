@@ -70,6 +70,7 @@ export class AutoNoteConnector {
   private pending?: { id: string; verifier: string; expires: number };
   private busy = false;
   private generation = 0;
+  private readBoundary = {};
   constructor(
     private readonly owner: string,
     private readonly secret: ConnectorSecret,
@@ -77,6 +78,22 @@ export class AutoNoteConnector {
     private readonly now = Date.now,
   ) {
     z.string().min(1).max(256).parse(owner);
+  }
+  /** A local mutation fence, not a cached source authorization. Capture before
+   * a fresh validated read and recheck synchronously before committing content. */
+  captureReadBoundary(): () => void {
+    const boundary = this.readBoundary,
+      generation = this.generation;
+    const check = () => {
+      if (
+        this.busy ||
+        boundary !== this.readBoundary ||
+        generation !== this.generation
+      )
+        throw new ConnectorError("SOURCE_DENIED");
+    };
+    check();
+    return check;
   }
   private async saved() {
     const raw = await this.secret.getSecret();
@@ -116,6 +133,7 @@ export class AutoNoteConnector {
   async begin() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     try {
       if (await this.status()) throw new ConnectorError("INVALID_CONNECTION");
       const verifier = randomBytes(32).toString("base64url"),
@@ -214,6 +232,7 @@ export class AutoNoteConnector {
     )
       throw new ConnectorError("INVALID_CONNECTION");
     this.busy = true;
+    this.readBoundary = {};
     this.pending = undefined; // No blind retry after an uncertain one-time exchange.
     try {
       const parsed = grantSchema.safeParse(
@@ -280,6 +299,7 @@ export class AutoNoteConnector {
       throw new ConnectorError("INVALID_CONNECTION");
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     try {
       const grant = await this.saved();
       if (grant.disconnectPending) throw new ConnectorError("CONNECTION_BUSY");
@@ -381,6 +401,7 @@ export class AutoNoteConnector {
   async disconnect() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     this.pending = undefined;
     this.generation++;
     try {
@@ -420,6 +441,7 @@ export class AutoNoteConnector {
   async forgetLocal() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     try {
       this.pending = undefined;
       this.generation++;

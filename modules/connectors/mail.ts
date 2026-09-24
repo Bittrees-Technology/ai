@@ -146,6 +146,7 @@ export class MailConnector {
   };
   private busy = false;
   private generation = 0;
+  private readBoundary = {};
   constructor(
     private readonly owner: string,
     private readonly secret: ConnectorSecret,
@@ -153,6 +154,22 @@ export class MailConnector {
     private readonly now = Date.now,
   ) {
     z.string().min(1).max(256).parse(owner);
+  }
+  /** A local mutation fence, not a cached source authorization. Capture before
+   * a fresh validated read and recheck synchronously before committing content. */
+  captureReadBoundary(): () => void {
+    const boundary = this.readBoundary,
+      generation = this.generation;
+    const check = () => {
+      if (
+        this.busy ||
+        boundary !== this.readBoundary ||
+        generation !== this.generation
+      )
+        throw new ConnectorError("SOURCE_DENIED");
+    };
+    check();
+    return check;
   }
   private async saved() {
     const raw = await this.secret.getSecret();
@@ -192,6 +209,7 @@ export class MailConnector {
   async begin() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     try {
       if (await this.status()) throw new ConnectorError("INVALID_CONNECTION");
       const verifier = randomBytes(32).toString("base64url"),
@@ -284,6 +302,7 @@ export class MailConnector {
     )
       throw new ConnectorError("INVALID_CONNECTION");
     this.busy = true;
+    this.readBoundary = {};
     this.pending = undefined; // No blind retry after an uncertain one-time exchange.
     try {
       const parsed = grantSchema.safeParse(
@@ -358,6 +377,7 @@ export class MailConnector {
   async disconnect() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     this.pending = undefined;
     this.generation++;
     try {
@@ -397,6 +417,7 @@ export class MailConnector {
   async forgetLocal() {
     if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
     this.busy = true;
+    this.readBoundary = {};
     try {
       this.pending = undefined;
       this.generation++;
