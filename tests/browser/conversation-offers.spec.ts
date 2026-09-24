@@ -190,7 +190,7 @@ test("conversation offers use actual Mac review API, download original encrypted
       .getByRole("button", { name: "Stop offer downloads", exact: true })
       .click();
     await expect(f.panel.getByRole("status")).toContainText(
-      "Future downloads stopped",
+      "Future downloads and uploads stopped",
     );
     expect(f.e.controls.conversationOfferStatus().offers[0]!.state).toBe(
       "stopped",

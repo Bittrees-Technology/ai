@@ -188,6 +188,8 @@ jobs:
         run: npm run test:browser-private -- tests/browser/browser-incoming-replay.spec.ts --max-failures=1
       - name: Check independent retained browser conversation consent
         run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
+      - name: Check reviewed Mac encrypted offer uploads
+        run: npm run test:browser-private -- tests/browser/conversation-relay-offers.spec.ts --max-failures=1
       - name: Check reviewed Mac conversation offer downloads
         run: npm run test:browser-private -- tests/browser/conversation-offers.spec.ts --max-failures=1
       - name: Check built browser conversation consent reviews
@@ -237,6 +239,15 @@ jobs:
         with:
           name: private-browser-results
           path: test-results/private-browser.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain Mac encrypted offer upload previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-relay-offer-ui-preview
+          path: test-results/conversation-relay-offer-ui/*.png
           if-no-files-found: error
           retention-days: 7
 

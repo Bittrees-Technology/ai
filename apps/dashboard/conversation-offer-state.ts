@@ -1,4 +1,14 @@
 import {
+  privateRelayStatusSchema,
+  type RelayStatus,
+} from "./private-relay-state.js";
+import {
+  privateRelayIdentitySchema,
+  privateRelayStorageReceiptSchema,
+  type PrivateRelayIdentity,
+} from "../../modules/remote/private-relay-contracts.js";
+import type { z } from "zod";
+import {
   privateEnvelopeSchema,
   type PrivateEnvelope,
 } from "../../modules/remote/private-envelope.js";
@@ -15,10 +25,18 @@ export type ConversationOfferItem = {
   createdAt: number;
   expiresAt: number;
   state: string;
+  relayAttempts?: number;
+  relayObservation?: {
+    receipt: z.infer<typeof privateRelayStorageReceiptSchema>;
+    observedAt: number;
+    attempt: number;
+  } | null;
 };
 export type ConversationOfferReview = {
   id: string;
-  action: "create" | "reveal" | "stop";
+  action: "create" | "reveal" | "stop" | "send";
+  relayRecipient?: PrivateRelayIdentity;
+  transportOnly?: true;
   expiresAt: number;
   offerId: string | null;
   offerExpiresAt: number;
@@ -37,6 +55,7 @@ export class ConversationOfferPanelState {
     canSetup: boolean;
     offers: ConversationOfferItem[];
   } | null = null;
+  relayStatus: RelayStatus | null = null;
   review: ConversationOfferReview | null = null;
   busy = false;
   error = "";
@@ -61,6 +80,7 @@ export class ConversationOfferPanelState {
     this.generation++;
     this.review = null;
     this.status = null;
+    this.relayStatus = null;
     this.error = "";
     this.notice = "";
     this.render();
@@ -112,6 +132,7 @@ export class ConversationOfferPanelState {
       if (current()) {
         this.review = null;
         this.status = null;
+        this.relayStatus = null;
         this.error =
           "The offer change could not be confirmed. Refresh saved offers before reviewing again. No automatic retry was made.";
       }
@@ -125,6 +146,73 @@ export class ConversationOfferPanelState {
     return this.act(async (current) => {
       const s = await this.api(endpoint);
       if (current()) this.status = s;
+    });
+  }
+  refreshConnections() {
+    this.discard();
+    return this.act(async (current) => {
+      const s = privateRelayStatusSchema.parse(
+        await this.api("/v1/private-relay"),
+      );
+      if (current()) this.relayStatus = s;
+    });
+  }
+  connections() {
+    return this.relayStatus?.canCheckRemote
+      ? this.relayStatus.state.items.filter(
+          (e) =>
+            !e.locked &&
+            e.phase === "active" &&
+            e.binding &&
+            e.binding.expiresAt > this.now() &&
+            e.permission?.state === "active" &&
+            e.permission.expiresAt > this.now(),
+        )
+      : [];
+  }
+  send(id: string, connectionId: string) {
+    const entry = this.status?.offers.find((e) => e.id === id),
+      connection = this.connections().find((e) => e.id === connectionId);
+    if (
+      !entry ||
+      !connection ||
+      !this.status?.canSetup ||
+      !this.matches(entry.choices) ||
+      entry.state !== "ready" ||
+      entry.expiresAt <= this.now()
+    )
+      return;
+    const retained = structuredClone(entry),
+      relay = structuredClone(connection);
+    this.discard();
+    return this.act(async (current) => {
+      const r = await this.api(endpoint + "/review", "POST", {
+        action: "send",
+        id,
+        expectedRevision: retained.revision,
+        connection: { id: relay.id, expectedRevision: relay.revision },
+      });
+      if (!current()) return;
+      const recipient = privateRelayIdentitySchema.parse(r.relayRecipient);
+      if (
+        r.transportOnly !== true ||
+        recipient.endpointKind !== "browser" ||
+        recipient.endpointId !== retained.choices.peerId ||
+        recipient.ownerId !== r.binding.ownerId ||
+        relay.binding?.ownerId !== r.binding.ownerId ||
+        relay.binding?.deviceId !== r.binding.deviceId ||
+        recipient.expiresAt < retained.expiresAt
+      )
+        throw Error("REVIEW_CHANGED");
+      this.accept(
+        r,
+        "send",
+        retained.choices,
+        retained.permissionId,
+        id,
+        current,
+        retained.expiresAt,
+      );
     });
   }
   private accept(
@@ -246,6 +334,20 @@ export class ConversationOfferPanelState {
       if (r.action === "stop") {
         if (result.envelope !== null || e.state !== "stopped")
           throw Error("RESULT_CHANGED");
+      } else if (r.action === "send") {
+        const receipt = privateRelayStorageReceiptSchema.parse(
+          result.transport?.receipt,
+        );
+        if (
+          result.envelope !== null ||
+          e.state !== "ready" ||
+          result.transport?.transportOnly !== true ||
+          !Number.isSafeInteger(e.relayAttempts) ||
+          e.relayAttempts! < 1 ||
+          e.relayObservation?.attempt !== e.relayAttempts ||
+          !same(e.relayObservation?.receipt, receipt)
+        )
+          throw Error("RESULT_CHANGED");
       } else {
         const wire = privateEnvelopeSchema.parse(result.envelope);
         if (
@@ -269,8 +371,10 @@ export class ConversationOfferPanelState {
         };
       this.notice =
         r.action === "stop"
-          ? "Future downloads stopped. Copies already downloaded remain; revoke conversation access to stop future sharing."
-          : "Offer download started. The paired browser must review its own conversation access. No messages were sent.";
+          ? "Future downloads and uploads stopped. Copies already downloaded remain; revoke conversation access to stop future sharing."
+          : r.action === "send"
+            ? "Offer storage history confirmed by ai.bittrees.org. The browser must still review its own access. No messages were sent."
+            : "Offer download started. The paired browser must review its own conversation access. No messages were sent.";
     });
   }
 }

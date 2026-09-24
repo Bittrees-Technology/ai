@@ -1,0 +1,23 @@
+{
+  "verifiedAt": "2026-09-24T14:20:06.743Z",
+  "from": 30,
+  "to": 31,
+  "legacySourceHead": "10c57250ea180205286bca5ee60d5063a3bf6382",
+  "legacyStoreSha256": "ea792bcb6f1fb2695a9a05c2ddaf2ff2e30714a2878930f2115e17eea459217c",
+  "legacyOffersSha256": "42681fa9ae7c7b6ad9a31b4c11b58cfe013f125d81f6b27a92dbfaae92ae7900",
+  "checks": [
+    "genuine prior consent, encrypted offer and incoming replay records preserved",
+    "legacy offers acquire no invented relay history",
+    "wrong-key upgrade leaves schema30 store usable",
+    "new upload attempt and receipt retain original ciphertext and outgoing sequence",
+    "upload receipt does not change conversation consent",
+    "schema30 writer refuses upgraded schema31",
+    "backup/restore preserves receipt history and locks sending authority",
+    "owner deletion removes retained offers and relay history without crossing owner scope",
+    "untouched schema30 backup remains readable by actual old writer with restored authority locked"
+  ],
+  "boundaries": [
+    "synthetic temporary stores and in-memory keys only",
+    "no service, browser, Keychain, installed app, inference or Acer changes"
+  ]
+}

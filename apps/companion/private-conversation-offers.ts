@@ -1,3 +1,5 @@
+import type { CompanionPrivateRelay } from "./private-relay.js";
+import type { PrivateRelayClient } from "../../modules/remote/private-relay-client.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PrivateConversationConsent } from "../../modules/remote/private-conversation-consent.js";
@@ -13,7 +15,17 @@ import type { RemoteClient } from "../../modules/remote/client.js";
 import type { Owner, Store } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const relayConnection = z.strictObject({
+  id: z.uuid(),
+  expectedRevision: revision,
+});
 const request = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("send"),
+    id: z.uuid(),
+    expectedRevision: revision,
+    connection: relayConnection,
+  }),
   z.strictObject({
     action: z.literal("create"),
     permissionId: z.uuid(),
@@ -42,10 +54,11 @@ type Review = {
   offerExpiresAt: number;
   monotonicAt: number;
   consentRevision: number;
+  relayRecipient?: Awaited<ReturnType<PrivateRelayClient["recipient"]>>;
 };
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
-/** Local owner review/export only. Never uploads an offer or grants browser consent. */
+/** Explicit local owner review/export/send. Sending never grants browser consent. */
 export class CompanionConversationOffers {
   private review?: Review;
   private generation = 0;
@@ -102,6 +115,8 @@ export class CompanionConversationOffers {
       choices: e.value.grant.choices,
       fingerprint: e.value.grant.peer.fingerprint,
       createdAt: e.value.header.issuedAt,
+      relayAttempts: e.value.relay?.attempts ?? 0,
+      relayObservation: e.value.relay?.observation ?? null,
       expiresAt: e.value.header.expiresAt,
       state: e.locked
         ? "locked"
@@ -137,7 +152,7 @@ export class CompanionConversationOffers {
       this.mono() - r.monotonicAt < r.expiresAt - r.createdAt
     );
   }
-  async prepare(raw: unknown) {
+  async prepare(raw: unknown, relay?: CompanionPrivateRelay) {
     this.invalidate();
     const generation = this.generation,
       parsed = request.safeParse(raw);
@@ -147,7 +162,11 @@ export class CompanionConversationOffers {
       input.action === "create" ? null : this.offers().get(input.id);
     if (input.action !== "create" && prior!.revision !== input.expectedRevision)
       throw new ConversationOfferError("CONFLICT");
-    const save = (grant: Grant, consentRevision: number) => {
+    const save = (
+      grant: Grant,
+      consentRevision: number,
+      relayRecipient?: Review["relayRecipient"],
+    ) => {
       if (generation !== this.generation)
         throw new ConversationOfferError("DENIED");
       const createdAt = this.now(),
@@ -167,6 +186,7 @@ export class CompanionConversationOffers {
         offerExpiresAt,
         monotonicAt: this.mono(),
         consentRevision,
+        ...(relayRecipient ? { relayRecipient } : {}),
       };
       return structuredClone({
         id: this.review.id,
@@ -178,9 +198,54 @@ export class CompanionConversationOffers {
         choices: grant.choices,
         binding: grant.local.binding,
         fingerprint: grant.peer.fingerprint,
+        ...(relayRecipient
+          ? { relayRecipient, transportOnly: true as const }
+          : {}),
       });
     };
     if (input.action === "stop") return save(prior!.value.grant, 0);
+    if (input.action === "send") {
+      this.live();
+      if (!relay) throw new ConversationOfferError("DENIED");
+      return relay.withTransport(
+        input.connection,
+        async (client, binding, limit) => {
+          const current = () =>
+            generation === this.generation ? binding() : null;
+          const consent = this.consent(current),
+            state = consent.list();
+          const handle = await consent.resolve(prior!.value.grant.id),
+            access = handle.offerAccess();
+          if (
+            !access ||
+            prior!.locked ||
+            prior!.value.state !== "ready" ||
+            !prior!.value.envelope ||
+            !same(prior!.value.grant, access.grant) ||
+            prior!.value.header.expiresAt <= this.now()
+          )
+            throw new ConversationOfferError("DENIED");
+          const recipient = await client.recipient({
+            endpointId: access.grant.choices.peerId,
+          });
+          if (
+            !current() ||
+            !handle.offerAccess() ||
+            consent.list().revision !== state.revision ||
+            prior!.value.header.expiresAt > Math.min(limit, recipient.expiresAt)
+          )
+            throw new ConversationOfferError("DENIED");
+          const latest = this.offers(consent).get(input.id);
+          if (
+            latest.revision !== input.expectedRevision ||
+            latest.locked ||
+            latest.value.state !== "ready"
+          )
+            throw new ConversationOfferError("CONFLICT");
+          return save(access.grant, state.revision, recipient);
+        },
+      );
+    }
     return this.live().withVerifiedDevice(async (scope) => {
       const current = () =>
           generation === this.generation ? scope.current() : null,
@@ -211,7 +276,7 @@ export class CompanionConversationOffers {
       return save(access.grant, state.revision);
     });
   }
-  async confirm(raw: unknown) {
+  async confirm(raw: unknown, relay?: CompanionPrivateRelay) {
     const generation = this.generation,
       r = this.review;
     this.review = undefined;
@@ -243,6 +308,57 @@ export class CompanionConversationOffers {
         })
         .immediate();
       return { offer: this.item(saved), envelope: null };
+    }
+    if (input.action === "send") {
+      this.live();
+      if (!relay || !r.relayRecipient)
+        throw new ConversationOfferError("DENIED");
+      return relay.withTransport(
+        input.connection,
+        async (client, binding, limit) => {
+          const current = () => (this.valid(r, generation) ? binding() : null);
+          const consent = this.consent(current);
+          if (consent.list().revision !== r.consentRevision)
+            throw new ConversationOfferError("CONFLICT");
+          const handle = await consent.resolve(r.grant.id),
+            access = handle.offerAccess();
+          if (!access || !same(access.grant, r.grant))
+            throw new ConversationOfferError("DENIED");
+          const recipient = await client.recipient({
+            endpointId: r.grant.choices.peerId,
+          });
+          if (
+            consent.list().revision !== r.consentRevision ||
+            !same(recipient, r.relayRecipient)
+          )
+            throw new ConversationOfferError("CONFLICT");
+          const offers = this.offers(consent),
+            attempt = await offers.beginRelayDelivery({
+              id: input.id,
+              expectedRevision: input.expectedRevision,
+              deliveryExpiresAt: Math.min(limit, recipient.expiresAt),
+              confirmed: true,
+            });
+          if (!current() || !handle.offerAccess())
+            throw new ConversationOfferError("DENIED");
+          const sent = await client.submit({
+            version: 1,
+            envelope: attempt.value.envelope!,
+          });
+          if (!current()) throw new ConversationOfferError("DENIED");
+          const saved = await offers.recordRelayDelivery({
+            id: attempt.id,
+            expectedRevision: attempt.revision,
+            receipt: sent.receipt,
+          });
+          if (!current()) throw new ConversationOfferError("DENIED");
+          return {
+            offer: this.item(saved),
+            envelope: null,
+            transport: { transportOnly: true as const, ...sent },
+          };
+        },
+      );
     }
     return this.live().withVerifiedDevice(async (scope) => {
       const current = () =>

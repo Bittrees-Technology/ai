@@ -315,11 +315,15 @@ export function localApi({
   });
   app.post("/v1/private-conversation-offers/review", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
-    res.json(await privateKeys.prepareConversationOffer(req.body));
+    res.json(
+      await privateKeys.prepareConversationOffer(req.body, privateRelay),
+    );
   });
   app.post("/v1/private-conversation-offers/confirm", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
-    res.json(await privateKeys.confirmConversationOffer(req.body));
+    res.json(
+      await privateKeys.confirmConversationOffer(req.body, privateRelay),
+    );
   });
   app.get("/v1/private-conversation-permissions", (_req, res) => {
     res.json(
