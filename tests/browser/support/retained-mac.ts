@@ -236,8 +236,7 @@ export async function retainedMac(
         data: ready.value.offer,
         envelope,
         async message(text: string, parentId: string | null = null) {
-          const localId = randomUUID();
-          store.appendMessage(
+          const local = store.appendMessage(
             owner,
             {
               conversationId,
@@ -246,8 +245,9 @@ export async function retainedMac(
               content: text,
               ...(parentId ? { replyToId: messageIds.get(parentId) } : {}),
             },
-            localId,
+            randomUUID(),
           );
+          const localId = local.id;
           const entry = await engine.prepare({
             id: randomUUID(),
             permissionId: saved.grant.id,
