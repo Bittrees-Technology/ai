@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { exportPrivateTaskReceipts } from "../../modules/remote/private-task-receipts.js";
 import type { Store, Owner } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
 import type { RemoteClient } from "../../modules/remote/client.js";
@@ -65,6 +66,19 @@ export class CompanionPrivateTasks {
       available: true,
       enabled: this.enabled && !!this.remote,
       transportActive: false,
+      // Owner-local history only. These identifiers cannot authorize response
+      // preparation or sending; those operations obtain fresh native scopes.
+      acceptedTasks: exportPrivateTaskReceipts(
+        this.store,
+        this.vault,
+        this.owner,
+      ).map((receipt) => ({
+        operationId: receipt.header.operationId,
+        taskId: receipt.taskId,
+        peerId: receipt.header.senderId,
+        peerKeyEpoch: receipt.header.senderKeyEpoch,
+        acceptedAt: receipt.acceptedAt,
+      })),
       responses: exportPrivateTaskResponses(
         this.store,
         this.vault,

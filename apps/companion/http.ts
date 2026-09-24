@@ -193,6 +193,7 @@ export function localApi({
         available: false,
         enabled: false,
         transportActive: false,
+        acceptedTasks: [],
         responses: [],
       },
     ),
