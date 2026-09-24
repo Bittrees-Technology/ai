@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { macRelayFixture } from "./mac-relay.js";
 
-export async function macConversationRelayFixture() {
-  const g = await macRelayFixture(),
+export async function macConversationRelayFixture(content = false) {
+  const g = await macRelayFixture(content),
     e = g.f.b;
   try {
     const inbox = {
@@ -79,7 +79,21 @@ export async function macConversationRelayFixture() {
       e.controls
         .conversationOfferStatus()
         .offers.find((o) => o.id === offer.offer.id)!;
-    return { ...g, e, offer, consent, input, prepare, confirm, statusOffer };
+    return {
+      ...g,
+      get relay() {
+        return g.relay;
+      },
+      e,
+      offer,
+      consent,
+      inbox,
+      conversationId,
+      input,
+      prepare,
+      confirm,
+      statusOffer,
+    };
   } catch (err) {
     g.close();
     throw err;

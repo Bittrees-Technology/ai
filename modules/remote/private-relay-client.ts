@@ -410,7 +410,9 @@ export class PrivateRelayClient {
       return target;
     });
   }
-  async submit(raw: unknown) {
+  /** Optional trusted host guard runs after async hashing immediately before
+   * network submission and on response; it cannot come from a wire payload. */
+  async submit(raw: unknown, sourceCheck: () => void = () => {}) {
     const body = input(privateRelaySubmitSchema, raw);
     return this.operation(async (c, check, post) => {
       const h = body.envelope.header;
@@ -422,9 +424,12 @@ export class PrivateRelayClient {
         h.expiresAt > c.identity.expiresAt
       )
         throw Error("DENIED");
+      sourceCheck();
       const hash = await privateRelayEnvelopeHash(body.envelope);
       check();
+      sourceCheck();
       const result = parsed(mutation, await post("submit", body));
+      sourceCheck();
       const r = receipt(result.receipt, this.now(), h.messageId);
       if (
         r.envelopeHash !== hash ||

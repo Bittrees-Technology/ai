@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-09-24T19:38:21.465Z",
+  "from": 34,
+  "to": 35,
+  "legacyHead": "4eafe8e83171fb298a6d4454ee6ce96dae0bf177",
+  "compiledHashes": {
+    "modules/storage/store.js": "d1049596aca8953f39e762ab9f04728357cb3680cccac52ba42c5a5af5f07332",
+    "modules/remote/private-conversation-content.js": "6cb3676da729a109e637bb83e0bb43f4e3e24503eda9417a3307665e8d5fcb07",
+    "modules/remote/private-key-lifecycle.js": "b949a643644ada7b67a67ab36f054885e27ac168e3cd0b9214bf0de794f02c21"
+  },
+  "checks": [
+    "actual34 original ciphertext and recipient receipt, Inbox, replay and key bytes preserved",
+    "wrong-key upgrade leaves prior writer usable",
+    "durable uncertain attempt and explicit retry retain original ciphertext",
+    "server observation remains separate from authenticated recipient receipt",
+    "prior writer refuses35",
+    "encrypted backup restores locked delivery history",
+    "owner-isolated deletion",
+    "untouched original34 backup usable with prior writer"
+  ],
+  "boundaries": [
+    "synthetic temporary stores and in-memory keys",
+    "no native/browser automation, installed app, personal data, live service or Acer changes"
+  ]
+}

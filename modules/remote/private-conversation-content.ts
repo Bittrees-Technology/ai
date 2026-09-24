@@ -1,3 +1,7 @@
+import {
+  privateRelayEnvelopeHash,
+  privateRelayStorageReceiptSchema,
+} from "./private-relay-contracts.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Owner, Store } from "../storage/store.js";
@@ -52,6 +56,26 @@ export const conversationReconcileInputSchema =
   });
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
+const relayJournalSchema = z
+  .strictObject({
+    stopped: z.boolean(),
+    attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    lastAttemptAt: positive.nullable(),
+    observation: z
+      .strictObject({
+        receipt: privateRelayStorageReceiptSchema,
+        observedAt: positive,
+        attempt: positive,
+      })
+      .nullable(),
+  })
+  .refine(
+    (v) =>
+      (v.attempts === 0
+        ? v.lastAttemptAt === null && v.observation === null
+        : v.lastAttemptAt !== null) &&
+      (!v.observation || v.observation.attempt <= v.attempts),
+  );
 const valueSchema = z
   .strictObject({
     direction: z.enum(["incoming", "outgoing"]),
@@ -65,6 +89,8 @@ const valueSchema = z
     receipt: conversationReceiptSchema.nullable(),
     receiptHeader: privateHeaderSchema.nullable(),
     receiptEnvelope: privateEnvelopeSchema.nullable(),
+    // Genuine schema34 rows have no relay history; upgrades invent none.
+    relay: relayJournalSchema.optional(),
   })
   .refine(
     (v) =>
@@ -73,6 +99,26 @@ const valueSchema = z
       v.content.scope.conversationRef === v.grant.conversationRef &&
       v.header.ownerId === v.grant.local.binding.ownerId &&
       (!v.envelope || same(v.envelope.header, v.header)) &&
+      (!v.relay ||
+        (() => {
+          const envelope =
+            v.direction === "incoming" ? v.receiptEnvelope : v.envelope;
+          return (
+            (!!envelope || (v.relay.stopped && v.relay.attempts === 0)) &&
+            (!v.relay.lastAttemptAt ||
+              (!!envelope &&
+                v.relay.lastAttemptAt >= envelope.header.issuedAt &&
+                v.relay.lastAttemptAt < envelope.header.expiresAt)) &&
+            (!v.relay.observation ||
+              (!!envelope &&
+                v.relay.observation.receipt.messageId ===
+                  envelope.header.messageId &&
+                v.relay.observation.receipt.storedAt >=
+                  envelope.header.issuedAt - 30000 &&
+                v.relay.observation.receipt.storedAt <=
+                  v.relay.observation.observedAt + 30000))
+          );
+        })()) &&
       (v.direction === "incoming"
         ? v.state === "accepted" &&
           !!v.envelope &&
@@ -617,6 +663,187 @@ export class PrivateConversationContent {
         bytes.fill(0);
       }
     });
+  }
+  /** Resolve the exact original under current source, key and independent consent.
+   * Network work may occur between calls, so every delivery transition reacquires it. */
+  private async deliveryAccess(
+    input: z.infer<typeof conversationSealInputSchema>,
+  ) {
+    const handle = await this.consent.resolve(input.permissionId),
+      proof = handle.offerAccess();
+    if (!proof) return fail();
+    const entry = this.get(proof.grant, input.id);
+    if (!entry) return fail();
+    this.checked(entry, handle);
+    if (entry.revision !== input.expectedRevision) fail("CONFLICT");
+    const message = this.message(proof.grant, entry.value.localMessageId),
+      guard = await this.taskGuard(message.input.requestId);
+    const envelope =
+      entry.value.direction === "incoming"
+        ? entry.value.receiptEnvelope
+        : entry.value.envelope;
+    if (
+      !envelope ||
+      entry.value.state === "preparing" ||
+      entry.value.relay?.stopped
+    )
+      return fail();
+    const check = () => {
+      this.checked(entry, handle);
+      guard.check();
+      const live = this.message(proof.grant, entry.value.localMessageId);
+      if (
+        !same(live.input, message.input) ||
+        live.input.content !== entry.value.content.content ||
+        (message.input.requestId &&
+          this.store.get(this.owner, message.input.requestId).revision !==
+            guard.revision)
+      )
+        fail("CONFLICT");
+      if (envelope.header.expiresAt <= this.now()) fail();
+      if (
+        entry.value.direction === "outgoing" &&
+        entry.value.content.type === "conversation.question"
+      ) {
+        const c = entry.value.content,
+          task = this.store.get(this.owner, c.taskId),
+          wait = this.store
+            .inputWaitHistory(this.owner, c.taskId)
+            .find((w) => w.questionId === message.id);
+        if (
+          task.revision !== c.taskRevision ||
+          !wait ||
+          wait.replyId ||
+          wait.deadline !== c.deadline ||
+          c.deadline <= this.now()
+        )
+          fail("CONFLICT");
+      }
+    };
+    check();
+    return { entry, envelope, handle, check };
+  }
+  inspectRelayDelivery(raw: unknown) {
+    return this.bounded(async () => {
+      const access = await this.deliveryAccess(
+        conversationSealInputSchema.parse(raw),
+      );
+      access.check();
+      return structuredClone(access.entry);
+    });
+  }
+  beginRelayDelivery(raw: unknown) {
+    return this.bounded(async () => {
+      const input = conversationSealInputSchema
+          .extend({ deliveryExpiresAt: positive })
+          .parse(raw),
+        access = await this.deliveryAccess(input);
+      if (access.envelope.header.expiresAt > input.deliveryExpiresAt)
+        return fail();
+      return this.store.db
+        .transaction(() => {
+          access.check();
+          const current = this.get(access.entry.value.grant, input.id);
+          if (!current || !same(current, access.entry)) return fail("CONFLICT");
+          const attempts = current.value.relay?.attempts ?? 0;
+          if (attempts >= Number.MAX_SAFE_INTEGER) fail("CAPACITY");
+          current.value.relay = {
+            stopped: false,
+            attempts: attempts + 1,
+            lastAttemptAt: this.now(),
+            observation: current.value.relay?.observation ?? null,
+          };
+          this.write(current);
+          access.check();
+          const retained = structuredClone(current);
+          // Trusted short-lived host guard; never serialized or accepted from input.
+          const check = () => {
+            access.check();
+            const live = this.get(retained.value.grant, input.id);
+            if (!live || !same(live, retained)) fail("CONFLICT");
+          };
+          return {
+            entry: retained,
+            envelope: structuredClone(access.envelope),
+            check,
+          };
+        })
+        .immediate();
+    });
+  }
+  recordRelayDelivery(raw: unknown) {
+    return this.bounded(async () => {
+      const input = conversationSealInputSchema
+          .extend({ receipt: privateRelayStorageReceiptSchema })
+          .parse(raw),
+        access = await this.deliveryAccess(input);
+      if (
+        input.receipt.messageId !== access.envelope.header.messageId ||
+        input.receipt.envelopeHash !==
+          (await privateRelayEnvelopeHash(access.envelope)) ||
+        input.receipt.storedAt < access.envelope.header.issuedAt - 30000 ||
+        input.receipt.storedAt > this.now() + 30000
+      )
+        return fail();
+      return this.store.db
+        .transaction(() => {
+          access.check();
+          const current = this.get(access.entry.value.grant, input.id);
+          if (!current || !same(current, access.entry)) return fail("CONFLICT");
+          if (!current.value.relay?.attempts) return fail();
+          const old = current.value.relay.observation?.receipt,
+            receipt = input.receipt,
+            rank = { stored: 0, received: 1, deleted: 2 };
+          if (
+            old &&
+            (receipt.storedAt !== old.storedAt ||
+              receipt.envelopeHash !== old.envelopeHash ||
+              receipt.revision < old.revision ||
+              rank[receipt.state] < rank[old.state] ||
+              (receipt.revision === old.revision && !same(receipt, old)))
+          )
+            fail("CONFLICT");
+          current.value.relay.observation = {
+            receipt,
+            observedAt: this.now(),
+            attempt: current.value.relay.attempts,
+          };
+          this.write(current);
+          access.check();
+          return structuredClone(current);
+        })
+        .immediate();
+    });
+  }
+  /** Offline local stop prevents future uploads; it cannot retract network data. */
+  stopRelayDelivery(raw: unknown) {
+    const input = conversationSealInputSchema.parse(raw);
+    return this.store.db
+      .transaction(() => {
+        const entry = exportPrivateConversationContent(
+          this.store,
+          this.vault,
+          this.owner,
+        ).find(
+          (e) =>
+            e.value.grant.id === input.permissionId &&
+            e.value.content.id === input.id,
+        );
+        if (!entry) return fail();
+        if (entry.revision !== input.expectedRevision) fail("CONFLICT");
+        if (!entry.value.relay?.stopped) {
+          entry.value.relay = {
+            attempts: 0,
+            lastAttemptAt: null,
+            observation: null,
+            ...entry.value.relay,
+            stopped: true,
+          };
+          this.write(entry);
+        }
+        return structuredClone(entry);
+      })
+      .immediate();
   }
   /** Recipient storage only. The original outgoing ciphertext and local message
    * remain authoritative; this cannot append content, answer or run a task. */

@@ -973,3 +973,165 @@ test("unsealed, incoming and unknown conversation records cannot receive outgoin
     f.close();
   }
 });
+
+test("content relay observations bind exact original envelopes and reject server history rollback", async () => {
+  const f = await fixture();
+  try {
+    const entry = await f.prepareContent(),
+      envelope = await f.sealContent(entry);
+    const input = {
+      permissionId: f.grant.id,
+      id: entry.value.content.id,
+      expectedRevision: 2,
+      confirmed: true,
+    };
+    const before = counts(f);
+    const attempt = await f.content.beginRelayDelivery({
+      ...input,
+      deliveryExpiresAt: f.clock() + 60000,
+    });
+    assert.equal(attempt.entry.value.relay!.attempts, 1);
+    assert.deepEqual(attempt.envelope, envelope);
+    const { privateRelayEnvelopeHash } =
+      await import("../modules/remote/private-relay-contracts.js");
+    const receipt = {
+      version: 1,
+      messageId: envelope.header.messageId,
+      envelopeHash: await privateRelayEnvelopeHash(envelope),
+      revision: 1,
+      storedAt: f.clock(),
+      state: "stored",
+    };
+    const record = (value: unknown, revision: number) =>
+      f.content.recordRelayDelivery({
+        ...input,
+        expectedRevision: revision,
+        receipt: value,
+      });
+    await assert.rejects(
+      record({ ...receipt, envelopeHash: "a".repeat(64) }, 3),
+      /DENIED/,
+    );
+    const saved = await record(receipt, 3);
+    assert.equal(saved.value.receiptEnvelope, null);
+    assert.deepEqual(
+      await f.content.seal({ ...input, expectedRevision: saved.revision }),
+      envelope,
+    );
+    const received = await record(
+      { ...receipt, state: "received", revision: 2 },
+      saved.revision,
+    );
+    for (const invalid of [
+      receipt,
+      { ...receipt, revision: 3 },
+      { ...receipt, state: "received", revision: 2, storedAt: f.clock() + 1 },
+    ])
+      await assert.rejects(record(invalid, received.revision), /CONFLICT/);
+    assert.deepEqual(
+      f.store.exportPrivateConversationContent(owner)[0],
+      received,
+    );
+    assert.deepEqual(counts(f), before);
+    const stopped = f.content.stopRelayDelivery({
+      ...input,
+      expectedRevision: received.revision,
+    });
+    await assert.rejects(
+      f.content.beginRelayDelivery({
+        ...input,
+        expectedRevision: stopped.revision,
+        deliveryExpiresAt: f.clock() + 60000,
+      }),
+      /DENIED/,
+    );
+    assert.deepEqual(stopped.value.envelope, envelope);
+  } finally {
+    f.close();
+  }
+});
+
+test("source revocation during relay attempt or observation commit rolls back and waiting questions cannot be sent after answer", async () => {
+  for (const phase of ["attempt", "observation", "answered"] as const) {
+    const f = await fixture(true);
+    const seal = f.vault.seal.bind(f.vault);
+    try {
+      const q = waiting(f),
+        entry = await f.prepareContent(q.question.id, "question"),
+        envelope = await f.sealContent(entry);
+      let input = {
+        permissionId: f.grant.id,
+        id: entry.value.content.id,
+        expectedRevision: 2,
+        confirmed: true,
+      };
+      if (phase === "answered") {
+        f.store.answerInput(
+          owner,
+          q.task.id,
+          {
+            questionId: q.question.id,
+            expectedRevision: q.task.revision,
+            content: "Synthetic answer",
+          },
+          randomUUID(),
+        );
+        const before = f.store.exportPrivateConversationContent(owner);
+        await assert.rejects(
+          f.content.beginRelayDelivery({
+            ...input,
+            deliveryExpiresAt: f.clock() + 60000,
+          }),
+        );
+        assert.deepEqual(
+          f.store.exportPrivateConversationContent(owner),
+          before,
+        );
+        continue;
+      }
+      if (phase === "observation") {
+        const begun = await f.content.beginRelayDelivery({
+          ...input,
+          deliveryExpiresAt: f.clock() + 60000,
+        });
+        input = { ...input, expectedRevision: begun.entry.revision };
+      }
+      const before = f.store.exportPrivateConversationContent(owner);
+      f.vault.seal = (value, aad) => {
+        const result = seal(value, aad);
+        if ((value as any)?.relay) f.deny();
+        return result;
+      };
+      if (phase === "attempt")
+        await assert.rejects(
+          f.content.beginRelayDelivery({
+            ...input,
+            deliveryExpiresAt: f.clock() + 60000,
+          }),
+          /SOURCE_DENIED/,
+        );
+      else {
+        const { privateRelayEnvelopeHash } =
+          await import("../modules/remote/private-relay-contracts.js");
+        await assert.rejects(
+          f.content.recordRelayDelivery({
+            ...input,
+            receipt: {
+              version: 1,
+              messageId: envelope.header.messageId,
+              envelopeHash: await privateRelayEnvelopeHash(envelope),
+              revision: 1,
+              storedAt: f.clock(),
+              state: "stored",
+            },
+          }),
+          /SOURCE_DENIED/,
+        );
+      }
+      assert.deepEqual(f.store.exportPrivateConversationContent(owner), before);
+    } finally {
+      f.vault.seal = seal;
+      f.close();
+    }
+  }
+});

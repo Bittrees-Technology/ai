@@ -332,6 +332,24 @@ export function localApi({
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.reconcileConversationReceipt(req.body));
   });
+  app.post(
+    "/v1/private-conversation-content/relay-review",
+    async (req, res) => {
+      if (!privateKeys) throw new StoreError("CONFLICT");
+      res.json(
+        await privateKeys.prepareConversationRelay(req.body, privateRelay),
+      );
+    },
+  );
+  app.post(
+    "/v1/private-conversation-content/relay-confirm",
+    async (req, res) => {
+      if (!privateKeys) throw new StoreError("CONFLICT");
+      res.json(
+        await privateKeys.confirmConversationRelay(req.body, privateRelay),
+      );
+    },
+  );
   app.get("/v1/private-conversation-offers", (_req, res) => {
     res.json(
       privateKeys?.conversationOfferStatus() ?? {

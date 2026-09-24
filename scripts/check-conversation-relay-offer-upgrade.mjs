@@ -135,7 +135,7 @@ try {
   reopened.close();
   reopened = undefined;
   upgraded = new Store(f.path, f.vault, f.clock);
-  assert.equal(upgraded.db.pragma("user_version", { simple: true }), 34);
+  assert.equal(upgraded.db.pragma("user_version", { simple: true }), 35);
   assert.deepEqual(
     upgraded.exportPrivateConversationOffers(owner),
     offersBefore,
@@ -229,7 +229,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 30,
-    to: 34,
+    to: 35,
     legacySourceHead: "10c57250ea180205286bca5ee60d5063a3bf6382",
     legacyStoreSha256: storeHash,
     legacyOffersSha256: offersHash,

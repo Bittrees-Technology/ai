@@ -8,8 +8,8 @@ import {
 import type { PrivateEnvelope } from "../../modules/remote/private-envelope.js";
 import { privateEndpoints } from "./private-endpoints.js";
 
-export async function macRelayFixture() {
-  const f = await privateEndpoints(),
+export async function macRelayFixture(conversations = false) {
+  const f = await privateEndpoints(true, conversations),
     wire = await f.submit();
   const credential = randomBytes(32).toString("base64url");
   let grant = {
