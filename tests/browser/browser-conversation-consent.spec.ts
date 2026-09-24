@@ -364,7 +364,7 @@ test("actual version7 browser storage upgrades without granting conversation acc
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationInspect()))
         .version,
-    ).toBe(8);
+    ).toBe(9);
     await expect(reopen(page, f.f, "conversation")).rejects.toThrow(
       "STORAGE_UNAVAILABLE",
     );

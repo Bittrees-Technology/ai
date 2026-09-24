@@ -147,7 +147,7 @@ const fixture = {
     o: string,
     b: PrivateBinding,
     time: number,
-    previous: boolean | "task" | "delivery" | "conversation" = false,
+    previous: boolean | "task" | "delivery" | "conversation" | "replay" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
@@ -173,13 +173,15 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "conversation"
-        ? "/legacy-conversation/index.js"
-        : previous === "delivery"
-          ? "/legacy-delivery/index.js"
-          : previous === "task"
-            ? "/legacy-composition/index.js"
-            : "/legacy-consent/index.js";
+      previous === "replay"
+        ? "/legacy-replay/index.js"
+        : previous === "conversation"
+          ? "/legacy-conversation/index.js"
+          : previous === "delivery"
+            ? "/legacy-delivery/index.js"
+            : previous === "task"
+              ? "/legacy-composition/index.js"
+              : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
@@ -187,15 +189,20 @@ const fixture = {
     consentProvider =
       previous === "task" ||
       previous === "delivery" ||
-      previous === "conversation"
+      previous === "conversation" ||
+      previous === "replay"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
-      previous === "delivery" || previous === "conversation"
+      previous === "delivery" ||
+      previous === "conversation" ||
+      previous === "replay"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
-      previous === "delivery" || previous === "conversation"
+      previous === "delivery" ||
+      previous === "conversation" ||
+      previous === "replay"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(

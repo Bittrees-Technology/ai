@@ -9,7 +9,8 @@ built-browser consent checks passed in Chromium, Firefox and WebKit at commit
 0514a768; full current-head browser and visual acceptance remain pending. Relay
 offer exchange, durable conversation transport and reconnect acceptance are not
 implemented. Shared incoming replay storage now participates in all current Mac receivers;
-browser integration and historical coverage remain unfinished.
+browser task/check integration is implemented and pending CI, while offer/content
+receivers and historical coverage remain unfinished.
 
 ## Separate Mac consent
 
@@ -76,7 +77,7 @@ are fixed by the offer. Separate local browser grant IDs cannot expand Mac acces
 Task consent does not grant conversation access.
 
 Choices are encrypted under a nonextractable browser key in the common private
-database's separate `conversation_consents` store (version8). The upgrade adds
+database's separate `conversation_consents` store (introduced in version8, retained in version9). The upgrade adds
 no grants and fences older writers. Each owner can retain at most64 grants;
 renewing one peer/thread tuple replaces that grant and leaves other threads
 unchanged. Explicit offline revocation preserves the record. Clearing choices
@@ -298,9 +299,49 @@ one shared record without new work. Actual compiled legacy challenge, response a
 encrypted backup/restore and original schema29 rollback are verified in
 `evidence/incoming-replay-schema-compatibility-2026-09-24.json`.
 
-Before conversation activation, complete the matching browser IndexedDB transaction and legacy coverage. Older peer-check records retain incoming envelope hashes but lack incoming IDs and sequence headers; older Mac outboxes retain the acceptance payload without its incoming envelope.
+Before conversation activation, verify the matching browser IndexedDB transaction and complete offer/content integration and legacy coverage. Older peer-check records retain incoming envelope hashes but lack incoming IDs and sequence headers; older Mac outboxes retain the acceptance payload without its incoming envelope.
 An empty new ledger cannot prove those identities were unused. Preserve that
 history and establish explicit reconciliation or a fresh-key epoch boundary before
 a broader cross-family replay guarantee. Offer inspection still neither consumes
 replay evidence nor acknowledges a relay message. Missing parents and denied task
 answers must remain unacknowledged and consume no final replay record.
+
+
+## Shared browser replay (version9; CI acceptance pending)
+
+The existing common database now has `incoming_replay`, with unique indexes on
+owner-scoped operation/role, message identity and directed epoch-channel sequence.
+Every browser task acceptance/result and device-check challenge/response writes
+this ledger in the same IndexedDB transaction as its retained outcome and any
+outgoing counter change. Cryptography and hashing finish before the write lock;
+current key, peer, consent and deadline guards run inside it. Exact original
+ciphertext retries preserve the prior outcome. Newly encrypted replacements
+conflict even if the plaintext is equivalent. Acceptance and result are separate
+roles of one operation, so both may be received in either order.
+
+This is hash-only metadata, not an encrypted content record: it stores the
+protocol type, owner hash, four identity/transcript hashes and an existing-store
+record reference. It contains no private text, key material or plaintext receipt.
+Linked outcomes retain their existing encrypted storage and remain subject to
+current permission. The ledger cannot authorize anything by itself, and missing
+or mismatched linked outcomes cannot be recreated as duplicates. The namespace
+uses `browserPrivateIdentity.scope`, shared across all receiver families; the
+distinct local key scope is only part of device-check outcome references.
+
+The bound is 4,096 records per owner, with no eviction at capacity. Targeted task
+or check deletion preserves these minimal replay fences and shared counters;
+removing all site storage removes them and requires fresh device setup. Broader
+owner export/maintenance and fresh-key historical reconciliation still need
+acceptance before conversation transport is enabled.
+
+Version9 preserves existing rows and fences version8 writers. The pinned actual
+version8 providers from `96c7172f7d3fec5132ce4dcd346e08466e94b257` are built by
+`scripts/prepare-legacy-browser-replay.mjs`; the module archive SHA256 is
+`6f4cc07df5dd940a5baf1cb81157fd22992637db45074165feddbc4a9bdf6078`.
+The authored browser upgrade test checks preservation of tasks/keys and populates
+one replay row only after authenticating a retained original receipt. No automatic
+backfill or complete historical coverage is claimed. Ten new browser cases (30
+across the three engines) exercise current receivers, cross-family collisions,
+concurrent/reloaded retries, transaction rollback, expiry, corruption, capacity,
+targeted deletion and actual previous-provider migration. Run those on disposable
+GitHub runners; local compilation is not browser acceptance.

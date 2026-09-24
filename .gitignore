@@ -38,3 +38,6 @@ tests/browser/fixture/public/legacy-delivery/
 .legacy-browser-conversation/
 
 tests/browser/fixture/public/legacy-conversation/
+
+.legacy-browser-replay/
+tests/browser/fixture/public/legacy-replay/
