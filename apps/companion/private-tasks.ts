@@ -17,6 +17,15 @@ import {
 } from "../../modules/remote/private-task-responses.js";
 
 const responseId = z.strictObject({ id: z.uuid(), confirmed: z.literal(true) });
+export const responsePrepareSchema = z.strictObject({
+  operationId: z.uuid(),
+  peerId: z.uuid(),
+  kind: z.enum(["accepted", "result"]),
+  confirmed: z.literal(true),
+});
+export const responseDeliverySchema = responseId.extend({
+  expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
 type ResponseEntry = ReturnType<PrivateTaskResponses["get"]>;
 // Only local routing/state metadata crosses the controller boundary. Plaintext
 // response content and key/permission proofs stay inside the protocol modules.
@@ -153,16 +162,46 @@ export class CompanionPrivateTasks {
     };
   }
   async prepareResponse(raw: unknown) {
-    const input = z
-      .strictObject({
-        operationId: z.uuid(),
-        peerId: z.uuid(),
-        kind: z.enum(["accepted", "result"]),
-        confirmed: z.literal(true),
-      })
-      .parse(raw);
+    const input = responsePrepareSchema.parse(raw);
     return this.scope(input.peerId, async (current, providers) =>
       summary(await this.responses(current, providers.respond).prepare(input)),
+    );
+  }
+  async prepareResponseVerified(
+    raw: unknown,
+    current: () => PrivateBinding | null,
+    deliveryLimit: number,
+  ) {
+    const input = responsePrepareSchema.parse(raw);
+    return this.withCurrent(input.peerId, current, async (live, providers) =>
+      summary(
+        await this.responses(live, providers.respond).prepare(
+          input,
+          deliveryLimit,
+        ),
+      ),
+    );
+  }
+  responseTarget(raw: unknown) {
+    const input = responseDeliverySchema.parse(raw),
+      stored = this.responses().get(input.id);
+    if (stored.revision !== input.expectedRevision)
+      throw new PrivateTaskError("CONFLICT");
+    return summary(stored);
+  }
+  async responseEnvelopeVerified(
+    raw: unknown,
+    current: () => PrivateBinding | null,
+    deliveryLimit: number,
+  ) {
+    const input = responseDeliverySchema.parse(raw),
+      target = this.responseTarget(input);
+    return this.withCurrent(target.peerId, current, (live, providers) =>
+      this.responses(live, providers.respond).delivery(
+        input.id,
+        input.expectedRevision,
+        deliveryLimit,
+      ),
     );
   }
   async resumeResponse(raw: unknown) {

@@ -709,6 +709,7 @@ export class PrivateRelayCustody {
     action: (
       client: PrivateRelayClient,
       current: () => PrivateBinding | null,
+      deliveryExpiresAt: number,
     ) => Promise<T>,
   ): Promise<T> {
     const input = z
@@ -775,8 +776,10 @@ export class PrivateRelayCustody {
         this.client = client;
         try {
           // Metadata-only live authority; the native relay secret never leaves this module.
-          const result = await action(client, () =>
-            current() ? { ...before.payload!.binding } : null,
+          const result = await action(
+            client,
+            () => (current() ? { ...before.payload!.binding } : null),
+            identity.expiresAt,
           );
           if (!current()) throw Error("DENIED");
           return result;

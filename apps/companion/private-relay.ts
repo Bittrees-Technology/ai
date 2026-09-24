@@ -114,6 +114,7 @@ export class CompanionPrivateRelay {
     action: (
       client: PrivateRelayClient,
       current: () => PrivateBinding | null,
+      deliveryExpiresAt: number,
     ) => Promise<T>,
   ) {
     return this.exclusive(async () => {
