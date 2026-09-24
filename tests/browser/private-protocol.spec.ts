@@ -838,7 +838,7 @@ test("Browser expiry, connection closure and database version changes fail witho
     await page.evaluate(
       () =>
         new Promise<void>((resolve, reject) => {
-          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 8);
           r.onerror = () => reject(r.error);
           r.onblocked = () => reject(Error("blocked"));
           r.onsuccess = () => {
