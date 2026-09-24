@@ -96,7 +96,7 @@ async function fixture(questions = false) {
             senderKeyEpoch: 1,
             recipientKeyEpoch: 1,
             messageId: randomUUID(),
-            operationId: body.id,
+            operationId: body.operationId ?? body.id,
             sequence: sequence++,
             issuedAt: f.clock(),
             expiresAt: f.clock() + 60000,
@@ -445,6 +445,60 @@ test("conversation operations share the native key and permission lock", async (
   } finally {
     release?.();
     await pending;
+    await f.close();
+  }
+});
+
+test("authenticated receipt reconciliation retains recipient storage separately from execution and returns metadata only", async () => {
+  const f = await fixture();
+  try {
+    const prepared = await f.ok("/prepare", f.prepare()),
+      original = await f.ok("/envelope", f.seal(prepared.entry)),
+      message = await f.open(original.envelope),
+      envelope = await f.envelope({
+        version: 1,
+        type: "conversation.received",
+        scope: message.scope,
+        acceptedId: message.id,
+        acceptedType: message.type,
+        operationId: message.id,
+        acceptedAt: f.clock(),
+      }),
+      request = { ...f.seal({ ...prepared.entry, revision: 2 }), envelope },
+      inbox = f.e.store.messages(f.e.owner, f.inbox.id, f.conversationId);
+    for (const [body, headers, status] of [
+      [request, { Authorization: "" }, 401],
+      [request, { Origin: "https://untrusted.test" }, 403],
+      [{ ...request, confirmed: false }, {}, 400],
+      [{ ...request, authority: "injected" }, {}, 400],
+    ] as const)
+      assert.equal((await f.call("/reconcile", body, headers)).status, status);
+    const accepted = await f.ok("/reconcile", request);
+    assert.equal(accepted.status, "recipient-storage-confirmed");
+    assert.equal(accepted.duplicate, false);
+    assert.equal(accepted.entry.recipientAccepted, true);
+    assert.equal(accepted.entry.recipientAcceptedAt, f.clock());
+    assert.equal(accepted.entry.receiptPrepared, false);
+    assert.doesNotMatch(
+      JSON.stringify(accepted),
+      /SYNTHETIC_NEVER_IN_OFFER|publicKey|binding|sourceRefs|ciphertext/,
+    );
+    assert.deepEqual(
+      f.e.store.messages(f.e.owner, f.inbox.id, f.conversationId),
+      inbox,
+    );
+    f.reopen();
+    const history = await f.ok("");
+    assert.equal(history.items[0].recipientAccepted, true);
+    const retry = { ...request, expectedRevision: history.items[0].revision };
+    assert.equal((await f.ok("/reconcile", retry)).duplicate, true);
+    assert.deepEqual(
+      await f.ok("/envelope", f.seal(history.items[0])),
+      original,
+    );
+    f.replace(f.e.build(true, true, f.e.owner, false));
+    assert.notEqual((await f.call("/reconcile", retry)).status, 200);
+  } finally {
     await f.close();
   }
 });

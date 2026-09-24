@@ -11,6 +11,7 @@ import {
   conversationPrepareInputSchema,
   conversationSealInputSchema,
   conversationReceiveInputSchema,
+  conversationReconcileInputSchema,
   type ConversationTaskAccess,
 } from "../../modules/remote/private-conversation-content.js";
 
@@ -29,7 +30,10 @@ function summary(entry: Entry) {
     peerId: v.grant.choices.peerId,
     localMessageId: v.localMessageId,
     expiresAt: v.header.expiresAt,
-    receiptPrepared: !!v.receiptEnvelope,
+    receiptPrepared: v.direction === "incoming" && !!v.receiptEnvelope,
+    recipientAccepted: v.direction === "outgoing" && !!v.receiptEnvelope,
+    recipientAcceptedAt:
+      v.direction === "outgoing" ? (v.receipt?.acceptedAt ?? null) : null,
   };
 }
 
@@ -122,6 +126,17 @@ export class CompanionConversationContent {
       const result = await engine.accept(input);
       return {
         status: "accepted-locally" as const,
+        duplicate: result.duplicate,
+        entry: summary(result.entry),
+      };
+    });
+  }
+  reconcile(raw: unknown) {
+    const input = conversationReconcileInputSchema.parse(raw);
+    return this.scope(async (engine) => {
+      const result = await engine.reconcile(input);
+      return {
+        status: "recipient-storage-confirmed" as const,
         duplicate: result.duplicate,
         entry: summary(result.entry),
       };

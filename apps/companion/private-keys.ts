@@ -428,6 +428,11 @@ export class CompanionPrivateKeys {
   conversationContentEnvelope(raw: unknown) {
     return this.protocolOperation(() => this.conversationContent.envelope(raw));
   }
+  reconcileConversationReceipt(raw: unknown) {
+    return this.protocolOperation(() =>
+      this.conversationContent.reconcile(raw),
+    );
+  }
   receiveConversationContent(raw: unknown) {
     return this.protocolOperation(() => this.conversationContent.receive(raw));
   }

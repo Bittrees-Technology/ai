@@ -328,6 +328,10 @@ export function localApi({
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.receiveConversationContent(req.body));
   });
+  app.post("/v1/private-conversation-content/reconcile", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.reconcileConversationReceipt(req.body));
+  });
   app.get("/v1/private-conversation-offers", (_req, res) => {
     res.json(
       privateKeys?.conversationOfferStatus() ?? {

@@ -46,6 +46,10 @@ export const conversationReceiveInputSchema = z.strictObject({
   envelope: privateEnvelopeSchema,
   confirmed: z.literal(true),
 });
+export const conversationReconcileInputSchema =
+  conversationSealInputSchema.extend({
+    envelope: privateEnvelopeSchema,
+  });
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 const valueSchema = z
@@ -91,9 +95,22 @@ const valueSchema = z
           (!v.receiptEnvelope ||
             same(v.receiptEnvelope.header, v.receiptHeader))
         : v.state !== "accepted" &&
-          !v.receipt &&
-          !v.receiptHeader &&
-          !v.receiptEnvelope &&
+          ((!v.receipt && !v.receiptHeader && !v.receiptEnvelope) ||
+            (v.state === "ready" &&
+              !!v.receipt &&
+              !!v.receiptHeader &&
+              !!v.receiptEnvelope &&
+              v.receipt.acceptedId === v.content.id &&
+              v.receipt.acceptedType === v.content.type &&
+              v.receipt.operationId === v.content.id &&
+              same(v.receipt.scope, v.content.scope) &&
+              v.receiptHeader.operationId === v.content.id &&
+              v.receiptHeader.ownerId === v.header.ownerId &&
+              v.receiptHeader.senderId === v.header.recipientId &&
+              v.receiptHeader.recipientId === v.header.senderId &&
+              v.receiptHeader.senderKeyEpoch === v.header.recipientKeyEpoch &&
+              v.receiptHeader.recipientKeyEpoch === v.header.senderKeyEpoch &&
+              same(v.receiptEnvelope.header, v.receiptHeader))) &&
           (v.state === "ready" ? !!v.envelope : !v.envelope) &&
           v.header.senderId === v.grant.local.binding.deviceId &&
           v.header.senderKeyEpoch === v.grant.local.keyEpoch &&
@@ -599,6 +616,120 @@ export class PrivateConversationContent {
       } finally {
         bytes.fill(0);
       }
+    });
+  }
+  /** Recipient storage only. The original outgoing ciphertext and local message
+   * remain authoritative; this cannot append content, answer or run a task. */
+  reconcile(raw: unknown) {
+    return this.bounded(async () => {
+      const input = conversationReconcileInputSchema.parse(raw),
+        handle = await this.consent.resolve(input.permissionId),
+        p = handle.offerAccess();
+      if (!p) return fail();
+      const before = this.get(p.grant, input.id);
+      if (!before) return fail();
+      this.checked(before, handle);
+      if (before.revision !== input.expectedRevision) fail("CONFLICT");
+      const v = before.value,
+        h = input.envelope.header;
+      if (
+        v.direction !== "outgoing" ||
+        v.state !== "ready" ||
+        !v.envelope ||
+        h.operationId !== v.content.id ||
+        h.ownerId !== v.header.ownerId ||
+        h.senderId !== v.header.recipientId ||
+        h.recipientId !== v.header.senderId ||
+        h.senderKeyEpoch !== v.header.recipientKeyEpoch ||
+        h.recipientKeyEpoch !== v.header.senderKeyEpoch ||
+        h.issuedAt < v.header.issuedAt - 30000 ||
+        h.expiresAt > v.header.expiresAt
+      )
+        return fail();
+      const opened = await openPrivateEnvelope(
+        input.envelope,
+        h,
+        { recipientKey: p.localKey, senderPublicKey: p.peerPublicKey },
+        this.now,
+      );
+      let receipt: z.infer<typeof conversationReceiptSchema>;
+      try {
+        receipt = conversationReceiptSchema.parse(
+          JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
+          ),
+        );
+      } finally {
+        opened.plaintext.fill(0);
+      }
+      if (
+        receipt.acceptedId !== v.content.id ||
+        receipt.operationId !== v.content.id ||
+        receipt.acceptedType !== v.content.type ||
+        !same(receipt.scope, v.content.scope) ||
+        receipt.acceptedAt < v.header.issuedAt - 30000 ||
+        receipt.acceptedAt >= v.header.expiresAt ||
+        receipt.acceptedAt > h.issuedAt + 30000 ||
+        receipt.acceptedAt > this.now() + 30000
+      )
+        return fail();
+      const replay = await privateReplayIdentity(input.envelope, receipt.type),
+        message = this.message(p.grant, v.localMessageId),
+        guard = await this.taskGuard(message.input.requestId);
+      const check = () => {
+        this.checked(before, handle);
+        guard.check();
+        const current = this.message(p.grant, v.localMessageId);
+        if (
+          !same(current.input, message.input) ||
+          current.input.content !== v.content.content ||
+          (message.input.requestId &&
+            this.store.get(this.owner, message.input.requestId).revision !==
+              guard.revision)
+        )
+          fail("CONFLICT");
+        if (h.expiresAt <= this.now()) fail();
+      };
+      return this.store.db
+        .transaction(() => {
+          check();
+          const current = this.get(p.grant, input.id);
+          if (!current) return fail();
+          this.checked(current, handle);
+          if (
+            current.value.direction !== "outgoing" ||
+            current.value.state !== "ready" ||
+            !same(current.value.content, v.content) ||
+            !same(current.value.envelope, v.envelope) ||
+            current.value.localMessageId !== v.localMessageId
+          )
+            fail("CONFLICT");
+          const duplicate = !!current.value.receiptEnvelope;
+          if (duplicate) {
+            if (
+              !same(current.value.receiptEnvelope, input.envelope) ||
+              !same(current.value.receipt, receipt)
+            )
+              fail("CONFLICT");
+          } else {
+            if (current.revision !== input.expectedRevision) fail("CONFLICT");
+            current.value.receipt = receipt;
+            current.value.receiptHeader = h;
+            current.value.receiptEnvelope = input.envelope;
+            this.write(current);
+          }
+          const admission = consumePrivateIncomingReplay(
+            this.store,
+            this.vault,
+            this.owner,
+            replay,
+            { collection: "messages", id: v.localMessageId },
+          );
+          if (admission !== (duplicate ? "duplicate" : "new")) fail("CONFLICT");
+          check();
+          return { entry: structuredClone(current), duplicate };
+        })
+        .immediate();
     });
   }
   /** Authenticated messages and exact answers enter the existing Inbox only.

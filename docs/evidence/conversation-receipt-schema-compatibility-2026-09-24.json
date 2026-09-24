@@ -1,0 +1,26 @@
+{
+  "verifiedAt": "2026-09-24T19:02:46.224Z",
+  "from": 33,
+  "to": 34,
+  "legacyHead": "7e9a7543f0da91f77cc101cead2a2e766e818fa7",
+  "compiledHashes": {
+    "modules/storage/store.js": "dd7d907119c518c581cdc3b21388eb00ebe7d1bbeb78e0b73d233982d6fb8ae8",
+    "modules/remote/private-conversation-content.js": "867d643bb0d04e509f725f0cd09427e31ee2d2629db87a12c08eef53433c4229",
+    "modules/remote/private-key-lifecycle.js": "b949a643644ada7b67a67ab36f054885e27ac168e3cd0b9214bf0de794f02c21"
+  },
+  "checks": [
+    "actual schema33 outgoing ciphertext, Inbox, replay and key bytes preserved",
+    "wrong-key upgrade leaves prior writer usable",
+    "authenticated receipt updates original outgoing row once",
+    "original ciphertext retry unchanged after receipt",
+    "no extra Inbox effect",
+    "prior writer refuses schema34",
+    "encrypted backup retains receipt with restore lock",
+    "owner-isolated deletion",
+    "untouched original schema33 backup usable with prior writer"
+  ],
+  "boundaries": [
+    "synthetic temporary stores and in-memory keys",
+    "no local browser/native automation, installed app, personal data, live service or Acer changes"
+  ]
+}

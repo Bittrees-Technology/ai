@@ -692,3 +692,284 @@ test("actual HTTP export hides source-bound journal text and ciphertext, while r
     f.close();
   }
 });
+
+async function outgoingReceipt(
+  f: Awaited<ReturnType<typeof fixture>>,
+  question = false,
+) {
+  const q = question ? waiting(f) : null;
+  const prepared = await f.prepareContent(
+    q?.question.id,
+    question ? "question" : "message",
+  );
+  const original = await f.sealContent(prepared);
+  const opened = await openPrivateEnvelope(
+    original,
+    original.header,
+    {
+      recipientKey: f.sender,
+      senderPublicKey: (await f.keys.resolve()).pair.publicKey,
+    },
+    f.clock,
+  );
+  let body;
+  try {
+    body = JSON.parse(new TextDecoder().decode(opened.plaintext));
+  } finally {
+    opened.plaintext.fill(0);
+  }
+  const receipt = {
+    version: 1,
+    type: "conversation.received",
+    scope: body.scope,
+    acceptedId: body.id,
+    acceptedType: body.type,
+    operationId: body.id,
+    acceptedAt: f.clock(),
+  };
+  const make = (changes = {}, header = {}) =>
+    f.envelope(
+      { ...receipt, ...changes },
+      {
+        operationId: body.id,
+        ...header,
+      },
+    );
+  const request = (
+    envelope: Awaited<ReturnType<typeof make>>,
+    expectedRevision = 2,
+  ) => ({
+    permissionId: f.grant.id,
+    id: body.id,
+    expectedRevision,
+    envelope,
+    confirmed: true,
+  });
+  return { original, receipt, make, request, q, id: body.id };
+}
+
+test("recipient storage receipts survive reopen and duplicate reconciliation preserves original ciphertext without Inbox or task effects", async () => {
+  const f = await fixture(true, true);
+  try {
+    const o = await outgoingReceipt(f, true),
+      env = await o.make(),
+      before = counts(f);
+    const result = await f.content.reconcile(o.request(env));
+    assert.equal(result.duplicate, false);
+    assert.deepEqual(result.entry.value.receipt, o.receipt);
+    assert.equal(result.entry.revision, 3);
+    assert.deepEqual(counts(f), {
+      ...before,
+      private_incoming_replay: before.private_incoming_replay! + 1,
+    });
+    assert.equal(f.store.get(owner, o.q!.task.id).status, "awaiting_input");
+    assert.equal(
+      f.store.inputWaitHistory(owner, o.q!.task.id)[0]!.replyId,
+      null,
+    );
+    const saved = f.store.exportPrivateConversationContent(owner);
+    const reopened = new Store(f.path, f.vault, f.clock);
+    try {
+      const b = f.build(reopened),
+        core = new PrivateConversationContent(
+          reopened,
+          f.vault,
+          owner,
+          b.consent,
+          b.keys,
+          f.access,
+          f.clock,
+        );
+      assert.equal((await core.reconcile(o.request(env, 3))).duplicate, true);
+      assert.deepEqual(reopened.exportPrivateConversationContent(owner), saved);
+      assert.deepEqual(
+        await core.seal({
+          permissionId: f.grant.id,
+          id: o.id,
+          expectedRevision: 3,
+          confirmed: true,
+        }),
+        o.original,
+      );
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    f.close();
+  }
+});
+
+test("receipt framing, direction, accepted type and delivery window must match the original", async () => {
+  const f = await fixture();
+  try {
+    const o = await outgoingReceipt(f),
+      before = counts(f);
+    for (const changes of [
+      { acceptedId: randomUUID() },
+      { operationId: randomUUID() },
+      { acceptedType: "conversation.answer" },
+      { scope: { ...o.receipt.scope, permissionId: randomUUID() } },
+      { scope: { ...o.receipt.scope, conversationRef: randomUUID() } },
+      { acceptedAt: f.clock() - 30001 },
+      { acceptedAt: f.clock() + 60000 },
+    ])
+      await assert.rejects(
+        f.content.reconcile(o.request(await o.make(changes))),
+      );
+    for (const header of [
+      { operationId: randomUUID() },
+      { senderKeyEpoch: 2 },
+      { expiresAt: f.clock() + 60001 },
+      { recipientId: randomUUID() },
+    ])
+      await assert.rejects(
+        f.content.reconcile(o.request(await o.make({}, header))),
+      );
+    assert.deepEqual(counts(f), before);
+    assert.equal(
+      f.store.exportPrivateConversationContent(owner)[0]!.value.receipt,
+      null,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("receipt journal and shared replay admission roll back together on storage or authority loss", async () => {
+  const f = await fixture();
+  try {
+    const o = await outgoingReceipt(f),
+      env = await o.make(),
+      before = counts(f),
+      entries = f.store.exportPrivateConversationContent(owner);
+    f.store.db.exec(
+      "CREATE TRIGGER fail_receipt BEFORE INSERT ON private_incoming_replay BEGIN SELECT RAISE(ABORT,'receipt replay failure'); END",
+    );
+    await assert.rejects(
+      f.content.reconcile(o.request(env)),
+      /receipt replay failure/,
+    );
+    assert.deepEqual(counts(f), before);
+    assert.deepEqual(f.store.exportPrivateConversationContent(owner), entries);
+    f.store.db.exec("DROP TRIGGER fail_receipt");
+    const seal = f.vault.seal.bind(f.vault);
+    f.vault.seal = ((...args: Parameters<Vault["seal"]>) => {
+      const result = seal(...args);
+      if (String(args[1]).includes("private-conversation-content:v1"))
+        f.setBinding(null);
+      return result;
+    }) as Vault["seal"];
+    await assert.rejects(f.content.reconcile(o.request(env)));
+    assert.deepEqual(counts(f), before);
+    assert.deepEqual(f.store.exportPrivateConversationContent(owner), entries);
+  } finally {
+    f.close();
+  }
+});
+
+test("changed receipt ciphertext and missing original outcomes cannot recreate recipient acceptance", async () => {
+  const f = await fixture();
+  try {
+    const o = await outgoingReceipt(f),
+      env = await o.make();
+    await f.content.reconcile(o.request(env));
+    const before = counts(f),
+      saved = f.store.exportPrivateConversationContent(owner);
+    await assert.rejects(
+      f.content.reconcile(o.request(await o.make(), 3)),
+      /CONFLICT/,
+    );
+    assert.deepEqual(counts(f), before);
+    assert.deepEqual(f.store.exportPrivateConversationContent(owner), saved);
+    f.store.db
+      .prepare("DELETE FROM messages WHERE id=?")
+      .run(f.localMessage.id);
+    await assert.rejects(f.content.reconcile(o.request(env, 3)));
+    assert.deepEqual(f.store.exportPrivateConversationContent(owner), saved);
+  } finally {
+    f.close();
+  }
+});
+
+test("task-source denial and shared cross-family sequence collision prevent recipient receipt effects", async () => {
+  const f = await fixture(true, true);
+  try {
+    const o = await outgoingReceipt(f, true),
+      env = await o.make(),
+      before = counts(f);
+    f.deny();
+    await assert.rejects(f.content.reconcile(o.request(env)), /SOURCE_DENIED/);
+    assert.deepEqual(counts(f), before);
+  } finally {
+    f.close();
+  }
+  const g = await fixture();
+  try {
+    const incoming = await g.envelope(g.message());
+    await g.accept(incoming);
+    const o = await outgoingReceipt(g),
+      before = counts(g);
+    await assert.rejects(
+      g.content.reconcile(
+        o.request(
+          await o.make(
+            {},
+            {
+              sequence: incoming.header.sequence,
+            },
+          ),
+        ),
+      ),
+      /CONFLICT/,
+    );
+    assert.deepEqual(counts(g), before);
+    assert.equal(
+      g.store
+        .exportPrivateConversationContent(owner)
+        .find((e) => e.value.content.id === o.id)!.value.receipt,
+      null,
+    );
+  } finally {
+    g.close();
+  }
+});
+
+test("unsealed, incoming and unknown conversation records cannot receive outgoing storage receipts", async () => {
+  const f = await fixture();
+  try {
+    const prepared = await f.prepareContent(),
+      make = (id: string) =>
+        f.envelope(
+          {
+            version: 1,
+            type: "conversation.received",
+            scope: f.scope,
+            acceptedId: id,
+            acceptedType: "conversation.message",
+            operationId: id,
+            acceptedAt: f.clock(),
+          },
+          { operationId: id },
+        ),
+      request = async (id: string, revision: number) => ({
+        permissionId: f.grant.id,
+        id,
+        expectedRevision: revision,
+        envelope: await make(id),
+        confirmed: true,
+      }),
+      before = counts(f);
+    await assert.rejects(
+      f.content.reconcile(await request(prepared.value.content.id, 1)),
+    );
+    await assert.rejects(f.content.reconcile(await request(randomUUID(), 1)));
+    assert.deepEqual(counts(f), before);
+    const incoming = f.message();
+    await f.accept(await f.envelope(incoming));
+    const accepted = counts(f);
+    await assert.rejects(f.content.reconcile(await request(incoming.id, 1)));
+    assert.deepEqual(counts(f), accepted);
+  } finally {
+    f.close();
+  }
+});
