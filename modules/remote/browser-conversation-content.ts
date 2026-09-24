@@ -67,6 +67,7 @@ type Guard = {
   wall: number;
   mono: number;
   binding: PrivateBinding;
+  deliveryCheck: () => void;
 };
 type Snapshot = { rows: (Row | null)[]; sequence: number };
 export class BrowserConversationContentError extends Error {
@@ -188,6 +189,7 @@ export class BrowserConversationContent {
     this.db.close();
   }
   private check(g: Guard) {
+    g.deliveryCheck();
     const n = this.now(),
       elapsed = this.mono() - g.mono;
     if (this.closed) fail("STORAGE_UNAVAILABLE");
@@ -203,7 +205,10 @@ export class BrowserConversationContent {
     )
       fail();
   }
-  private async operation<T>(fn: (g: Guard) => Promise<T>) {
+  private async operation<T>(
+    fn: (g: Guard) => Promise<T>,
+    deliveryCheck: () => void = () => {},
+  ) {
     if (this.busy) fail("BUSY");
     this.busy = true;
     try {
@@ -212,6 +217,7 @@ export class BrowserConversationContent {
         wall: this.now(),
         mono: this.mono(),
         binding: privateBindingSchema.parse(this.current()),
+        deliveryCheck,
       };
       this.check(g);
       const result = await fn(g);
@@ -866,7 +872,10 @@ export class BrowserConversationContent {
   }
   /** Authenticate recipient storage only. The original outgoing content and
    * ciphertext remain intact; no task, parent, queue or outgoing sequence effect. */
-  reconcile(raw: unknown): Promise<{
+  reconcile(
+    raw: unknown,
+    deliveryCheck: () => void = () => {},
+  ): Promise<{
     status: "recipient-storage-confirmed";
     duplicate: boolean;
     entry: Summary;
@@ -983,7 +992,7 @@ export class BrowserConversationContent {
           );
         }),
       );
-    });
+    }, deliveryCheck);
   }
   read(raw: unknown): Promise<Summary & { content: ConversationContent }> {
     return this.operation(async (g) => {
@@ -1005,7 +1014,10 @@ export class BrowserConversationContent {
       );
     });
   }
-  accept(raw: unknown): Promise<{ duplicate: boolean; entry: Summary }> {
+  accept(
+    raw: unknown,
+    deliveryCheck: () => void = () => {},
+  ): Promise<{ duplicate: boolean; entry: Summary }> {
     return this.operation(async (g) => {
       const input = z
         .strictObject({
@@ -1175,7 +1187,7 @@ export class BrowserConversationContent {
           );
         }),
       );
-    });
+    }, deliveryCheck);
   }
 
   private allRows<T>(io: BrowserStorageIO<T>, done: (rows: Row[]) => void) {

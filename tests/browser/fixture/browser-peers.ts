@@ -632,6 +632,10 @@ const fixture = {
     host
       ? host.relayConversationContentAPI.stop(raw)
       : conversationContentStore().then((c) => c.stopRelayDelivery(raw)),
+  contentRelayInspect: (raw: unknown) =>
+    host!.relayConversationContentAPI.inspect(raw),
+  contentRelayReceive: (raw: unknown) =>
+    host!.relayConversationContentAPI.receive(raw),
   contentRelaySend: (raw: unknown) =>
     host!.relayConversationContentAPI.send(raw),
   contentList: (raw: unknown) =>

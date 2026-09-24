@@ -750,3 +750,378 @@ test("host relay carries an exact browser answer through Mac HTTP into one real 
     f.mac.close();
   }
 });
+
+async function uploadToBrowser(f: Fixture, envelope: unknown) {
+  const record = f.native.record();
+  return f.native.relay.withTransport(
+    { id: record.id, expectedRevision: record.revision },
+    (client) => client.submit({ version: 1, envelope }),
+  );
+}
+const inspectContentRelay = (page: Page, after: any = null) =>
+  page.evaluate((raw) => window.browserPeersTest.contentRelayInspect(raw), {
+    after,
+    confirmed: true,
+  });
+const receiveContentRelay = (
+  page: Page,
+  selection: any,
+  target: any,
+  after: any = null,
+) =>
+  page.evaluate((raw) => window.browserPeersTest.contentRelayReceive(raw), {
+    after,
+    selection,
+    target,
+    confirmed: true,
+  });
+const receiveTarget = (grantId: string) => ({ action: "receive", grantId });
+const ackPath = "/browser/relay/messages/acknowledge";
+
+for (const loss of ["before", "after"] as const)
+  test(`incoming conversation relay retains accepted content across acknowledgement loss ${loss} server persistence and browser reload`, async ({
+    page,
+    identityServer,
+  }) => {
+    identityServer.enablePrivateRelay();
+    const f = await ready(
+      page,
+      identityServer.pool,
+      identityServer.nativeTransport,
+    );
+    try {
+      const selected = await grant(page, f),
+        envelope = await selected.offer.message("SYNTHETIC_RELAY_RECEIVED");
+      await uploadToBrowser(f, envelope);
+      const before = await snapshot(page),
+        queue = await inspectContentRelay(page);
+      expect(await snapshot(page)).toEqual(before);
+      expect(JSON.stringify(queue)).not.toContain("SYNTHETIC_RELAY_RECEIVED");
+      expect(JSON.stringify(queue)).not.toContain("ciphertext");
+      if (loss === "before") identityServer.reject(ackPath);
+      else identityServer.loseResponse(ackPath);
+      await expect(
+        receiveContentRelay(
+          page,
+          queue.item!.selection,
+          receiveTarget(selected.grant.id),
+        ),
+      ).rejects.toThrow();
+      const entries = await list(page, selected.grant.id);
+      expect(entries).toHaveLength(1);
+      expect((await read(page, entries[0])).content.content).toBe(
+        "SYNTHETIC_RELAY_RECEIVED",
+      );
+      const committed = await snapshot(page);
+      await page.reload();
+      await page.waitForFunction(() => !!window.browserPeersTest);
+      await page.evaluate(() => window.browserPeersTest.resume());
+      const remaining = await inspectContentRelay(page);
+      if (loss === "before") {
+        const retry = await receiveContentRelay(
+          page,
+          remaining.item!.selection,
+          receiveTarget(selected.grant.id),
+        );
+        expect(retry.received.duplicate).toBe(true);
+        expect(retry.transport.transportOnly).toBe(true);
+        expect(JSON.stringify(retry)).not.toContain("SYNTHETIC_RELAY_RECEIVED");
+      } else expect(remaining.item).toBeNull();
+      expect(await snapshot(page)).toEqual(committed);
+      expect((await inspectContentRelay(page)).item).toBeNull();
+      // Receipt preparation/upload is a separate action, never an admission side effect.
+      expect(
+        identityServer.events.filter(
+          (p) => p === "/browser/relay/messages/submit",
+        ),
+      ).toEqual([]);
+    } finally {
+      f.mac.close();
+    }
+  });
+
+test("incoming conversation relay reconciles only the selected outgoing copy and recovers a committed receipt after acknowledgement failure", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id),
+      original = await wire(page, prepared),
+      saved = await read(page, prepared),
+      receipt = await selected.offer.receipt(original);
+    await uploadToBrowser(f, receipt);
+    const queue = await inspectContentRelay(page),
+      before = await snapshot(page);
+    const target = { action: "reconcile", ...relayTarget(saved) };
+    delete (target as any).confirmed;
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, {
+        ...target,
+        id: randomUUID(),
+      }),
+    ).rejects.toThrow();
+    expect(await snapshot(page)).toEqual(before);
+    identityServer.reject(ackPath);
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, target),
+    ).rejects.toThrow();
+    const accepted = await read(page, saved);
+    expect(accepted.recipientAccepted).toBe(true);
+    expect(accepted.revision).toBe(saved.revision + 1);
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, target),
+    ).rejects.toThrow("CONFLICT");
+    await page.reload();
+    await page.waitForFunction(() => !!window.browserPeersTest);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const retry = await receiveContentRelay(page, queue.item!.selection, {
+      ...target,
+      expectedRevision: accepted.revision,
+    });
+    expect(retry.received.duplicate).toBe(true);
+    expect(retry.received.entry.recipientAccepted).toBe(true);
+    expect(await wire(page, accepted)).toEqual(original);
+    expect(await list(page, selected.grant.id)).toHaveLength(1);
+    expect((await inspectContentRelay(page)).item).toBeNull();
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("incoming conversation relay leaves replies pending until their exact parent is navigated to and rejects changed selections", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      parent = await selected.offer.message("SYNTHETIC_PARENT"),
+      reply = await selected.offer.message(
+        "SYNTHETIC_REPLY",
+        parent.header.operationId,
+      );
+    await uploadToBrowser(f, reply);
+    await uploadToBrowser(f, parent);
+    const queue = await inspectContentRelay(page),
+      before = await snapshot(page),
+      target = receiveTarget(selected.grant.id);
+    expect(queue.item!.selection.messageId).toBe(reply.header.messageId);
+    await expect(
+      receiveContentRelay(
+        page,
+        {
+          ...queue.item!.selection,
+          revision: queue.item!.selection.revision + 1,
+        },
+        target,
+      ),
+    ).rejects.toThrow("CONFLICT");
+    await expect(
+      receiveContentRelay(page, undefined, target),
+    ).rejects.toThrow();
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, target),
+    ).rejects.toThrow("PARENT_PENDING");
+    expect(await snapshot(page)).toEqual(before);
+    expect(identityServer.events.filter((p) => p === ackPath)).toEqual([]);
+    const later = await inspectContentRelay(page, queue.item!.cursor);
+    expect(later.item!.selection.messageId).toBe(parent.header.messageId);
+    await receiveContentRelay(
+      page,
+      later.item!.selection,
+      target,
+      queue.item!.cursor,
+    );
+    const accepted = await receiveContentRelay(
+      page,
+      queue.item!.selection,
+      target,
+    );
+    expect(accepted.received.duplicate).toBe(false);
+    expect((await read(page, accepted.received.entry)).content).toMatchObject({
+      type: "conversation.message",
+      parentId: parent.header.operationId,
+    });
+    expect(await list(page, selected.grant.id)).toHaveLength(2);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("incoming conversation relay rolls back a failed content write and revoked consent leaves the queue unacknowledged", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      envelope = await selected.offer.message("SYNTHETIC_DENIED_RECEIVE");
+    await uploadToBrowser(f, envelope);
+    const queue = await inspectContentRelay(page),
+      before = await snapshot(page),
+      target = receiveTarget(selected.grant.id);
+    await page.evaluate(() =>
+      window.browserPeersTest.contentFailWrite(),
+    );
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, target),
+    ).rejects.toThrow("CAPACITY");
+    expect(await snapshot(page)).toEqual(before);
+    await page.evaluate(async (grantId) => {
+      const api = window.browserPeersTest,
+        status = await api.conversationStatus();
+      await api.conversationRevoke({
+        grantId,
+        expectedRevision: status.revision,
+        confirmed: true,
+      });
+    }, selected.grant.id);
+    const revoked = await snapshot(page);
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, target),
+    ).rejects.toThrow("DENIED");
+    expect(await snapshot(page)).toEqual(revoked);
+    expect((await inspectContentRelay(page)).item!.selection).toEqual(
+      queue.item!.selection,
+    );
+    expect(identityServer.events.filter((p) => p === ackPath)).toEqual([]);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("incoming conversation relay cancellation during encryption prevents admission and acknowledgement", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      envelope = await selected.offer.message("SYNTHETIC_HELD_RECEIVE");
+    await uploadToBrowser(f, envelope);
+    const queue = await inspectContentRelay(page),
+      before = await snapshot(page),
+      target = receiveTarget(selected.grant.id);
+    await page.evaluate(() => window.browserPeersTest.contentHoldEncryption());
+    const pending = receiveContentRelay(page, queue.item!.selection, target),
+      rejected = expect(pending).rejects.toThrow("DENIED");
+    await page.waitForFunction(() => window.browserPeersTest.held());
+    await expect(
+      receiveContentRelay(page, queue.item!.selection, target),
+    ).rejects.toThrow("BUSY");
+    await page.evaluate(() => window.browserPeersTest.contentCancel());
+    await page.evaluate(() => window.browserPeersTest.release());
+    await rejected;
+    expect(await snapshot(page)).toEqual(before);
+    expect(identityServer.events.filter((p) => p === ackPath)).toEqual([]);
+    expect((await inspectContentRelay(page)).item!.selection).toEqual(
+      queue.item!.selection,
+    );
+  } finally {
+    await page.evaluate(() => window.browserPeersTest.release());
+    f.mac.close();
+  }
+});
+
+test("incoming conversation relay rejects another protocol family without changing content or acknowledging its queue item", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f);
+    const otherOffer = await f.mac.conversationOffer(
+      f.native.record().permission!.expiresAt,
+    );
+    await uploadToBrowser(f, otherOffer.envelope);
+    const queue = await inspectContentRelay(page),
+      before = await snapshot(page);
+    await expect(
+      receiveContentRelay(
+        page,
+        queue.item!.selection,
+        receiveTarget(selected.grant.id),
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(await snapshot(page)).toEqual(before);
+    expect((await inspectContentRelay(page)).item!.selection).toEqual(
+      queue.item!.selection,
+    );
+    expect(identityServer.events.filter((p) => p === ackPath)).toEqual([]);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("incoming conversation relay carries a real worker question to the browser and the exact answer back through Mac HTTP once", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  const api = await f.native.openLocalApi();
+  try {
+    const selected = await grant(page, f, true),
+      question = await selected.offer.question();
+    await uploadToBrowser(f, question.envelope);
+    const queue = await inspectContentRelay(page),
+      accepted = await receiveContentRelay(
+        page,
+        queue.item!.selection,
+        receiveTarget(selected.grant.id),
+      );
+    expect(accepted.received.entry.kind).toBe("conversation.question");
+    expect(question.task().status).toBe("awaiting_input");
+    const answer = await prepare(page, selected.grant.id, {
+      kind: "answer",
+      parentId: accepted.received.entry.id,
+      content: "Lisbon",
+    });
+    await wire(page, answer);
+    await relaySendContent(page, await read(page, answer));
+    await receiveThroughMacApi(f, api, {
+      action: "receive",
+      permissionId: selected.offer.data.scope.permissionId,
+    });
+    expect(question.task().status).toBe("queued");
+    await question.run();
+    expect(question.task().status).toBe("completed");
+    expect(question.calls()).toBe(3);
+    await question.run();
+    expect(question.calls()).toBe(3);
+  } finally {
+    await api.close();
+    f.mac.close();
+  }
+});
