@@ -25,6 +25,27 @@ import { consumePrivateIncomingReplay } from "./private-incoming-replay.js";
 import { reservePrivateSequence } from "./private-send-sequence.js";
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+export const conversationPrepareInputSchema = z.strictObject({
+  id: z.uuid(),
+  permissionId: z.uuid(),
+  expectedConsentRevision: positive,
+  localMessageId: z.uuid(),
+  parentId: z.uuid().nullable(),
+  kind: z.enum(["message", "question"]),
+  expiresAt: positive,
+  confirmed: z.literal(true),
+});
+export const conversationSealInputSchema = z.strictObject({
+  permissionId: z.uuid(),
+  id: z.uuid(),
+  expectedRevision: positive,
+  confirmed: z.literal(true),
+});
+export const conversationReceiveInputSchema = z.strictObject({
+  permissionId: z.uuid(),
+  envelope: privateEnvelopeSchema,
+  confirmed: z.literal(true),
+});
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 const valueSchema = z
@@ -368,18 +389,7 @@ export class PrivateConversationContent {
    * Client IDs are stable wire IDs, never arbitrary local Inbox selectors. */
   prepare(raw: unknown) {
     return this.bounded(async () => {
-      const input = z
-        .strictObject({
-          id: z.uuid(),
-          permissionId: z.uuid(),
-          expectedConsentRevision: positive,
-          localMessageId: z.uuid(),
-          parentId: z.uuid().nullable(),
-          kind: z.enum(["message", "question"]),
-          expiresAt: positive,
-          confirmed: z.literal(true),
-        })
-        .parse(raw);
+      const input = conversationPrepareInputSchema.parse(raw);
       const handle = await this.consent.resolve(input.permissionId),
         offered = handle.offerAccess();
       if (!offered) return fail();
@@ -504,14 +514,7 @@ export class PrivateConversationContent {
    * the winning ciphertext; a retry never allocates another sequence. */
   seal(raw: unknown) {
     return this.bounded(async () => {
-      const input = z
-          .strictObject({
-            permissionId: z.uuid(),
-            id: z.uuid(),
-            expectedRevision: positive,
-            confirmed: z.literal(true),
-          })
-          .parse(raw),
+      const input = conversationSealInputSchema.parse(raw),
         handle = await this.consent.resolve(input.permissionId),
         p = handle.offerAccess();
       if (!p) return fail();
@@ -602,13 +605,7 @@ export class PrivateConversationContent {
    * Missing parents consume no replay record or receipt. */
   accept(raw: unknown) {
     return this.bounded(async () => {
-      const input = z
-          .strictObject({
-            permissionId: z.uuid(),
-            envelope: privateEnvelopeSchema,
-            confirmed: z.literal(true),
-          })
-          .parse(raw),
+      const input = conversationReceiveInputSchema.parse(raw),
         handle = await this.consent.resolve(input.permissionId),
         p = handle.offerAccess();
       if (!p || !this.keys.validateReplayCoverage(p.grant.local)) return fail();

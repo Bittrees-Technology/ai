@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { privateEndpoints } from "./private-endpoints.js";
-export async function conversationOfferEndpoints() {
-  const f = await privateEndpoints(),
+export async function conversationOfferEndpoints(
+  options: { content?: boolean; questions?: boolean } = {},
+) {
+  const f = await privateEndpoints(true, options.content ?? false),
     e = f.b;
   const inbox = {
     id: "personal",
@@ -36,8 +38,8 @@ export async function conversationOfferEndpoints() {
     permissions: {
       messagesToMac: true,
       messagesToBrowser: true,
-      questionsToBrowser: false,
-      answersToMac: false,
+      questionsToBrowser: options.questions ?? false,
+      answersToMac: options.questions ?? false,
     },
   });
   const approved = await e.controls.confirmConversationPermission({
