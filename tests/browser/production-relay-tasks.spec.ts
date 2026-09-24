@@ -143,7 +143,11 @@ test("shipped private task controls review exact preparation and delivery, then 
     await expect(panel(page).getByRole("status")).toContainText(
       "does not confirm Mac acceptance or task completion",
     );
+    await refresh(page);
     await expect(row(page, id)).toContainText("Prepared task");
+    await expect(row(page, id)).toContainText(
+      "Last relay confirmation: stored for delivery",
+    );
     expect(
       identityServer.events.filter(
         (p) => p === "/browser/relay/messages/submit",
@@ -220,6 +224,9 @@ test("shipped private task controls retain one submitted task after a lost reply
       }),
     ).toBeHidden();
     await refresh(page);
+    await expect(row(page, f.entry.id)).toContainText(
+      "latest handoff attempt has no saved relay confirmation",
+    );
     await send(page, f.entry.id);
     await expect(panel(page).getByRole("status")).toContainText(
       "original message was already recorded",

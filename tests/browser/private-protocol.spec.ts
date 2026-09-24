@@ -1749,7 +1749,7 @@ test("Authenticated malformed, wrong-task, wrong-key and impossible-time results
     };
     await page.evaluate(
       async ({ id, envelope }) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
         await new Promise<void>((resolve, reject) => {
           r.onerror = () => reject(r.error);
           r.onsuccess = () => {

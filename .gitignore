@@ -31,3 +31,6 @@ tests/browser/fixture/public/legacy-consent/
 
 .legacy-browser-composition/
 tests/browser/fixture/public/legacy-composition/
+
+.legacy-browser-delivery/
+tests/browser/fixture/public/legacy-delivery/

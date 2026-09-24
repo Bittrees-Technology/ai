@@ -464,6 +464,23 @@ export function mountBrowserTasks(
           "browser-keys-reference",
         ),
       );
+      if (privateDelivery) {
+        li.append(
+          el(
+            "p",
+            row.relayDelivery
+              ? `Last relay confirmation: ${row.relayDelivery.state === "stored" ? "stored for delivery" : row.relayDelivery.state === "received" ? "destination acknowledged delivery" : "message removed"}. Recorded ${new Date(row.relayDelivery.observedAt).toLocaleString()}. This does not confirm task acceptance or reading.`
+              : "No relay acknowledgement is saved.",
+          ),
+        );
+        if (row.attempts > (row.relayDelivery?.attempt ?? 0))
+          li.append(
+            el(
+              "p",
+              "The latest handoff attempt has no saved relay confirmation. Review before retrying the original task.",
+            ),
+          );
+      }
       const add = (text: string, action: Action, online = true) => {
         const b = button(text, () => void openReview(action, row));
         b.dataset.online = String(online);

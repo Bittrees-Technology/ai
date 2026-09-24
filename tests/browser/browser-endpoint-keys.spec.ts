@@ -404,7 +404,7 @@ test("Tampered stored handles, public bytes and record identity fail closed", as
   for (const kind of ["private", "public", "identity", "extractable"]) {
     await page.evaluate(async (kind) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
         r.onsuccess = () => resolve(r.result);
         r.onerror = () => reject(r.error);
       });
