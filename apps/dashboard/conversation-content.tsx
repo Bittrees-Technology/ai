@@ -109,11 +109,20 @@ export function ConversationContent({
                   <option value="">Choose saved browser access</option>
                   {grants.map((g) => (
                     <option key={g.id} value={g.id}>
-                      Browser {g.choices.peerId} — access {g.id}
+                      Browser {g.choices.peerId.slice(0, 8)} /{" "}
+                      {g.id.slice(0, 6)}
                     </option>
                   ))}
                 </select>
               </label>
+              {grants.find((g) => g.id === permission) && (
+                <p className="prose">
+                  Selected browser:{" "}
+                  {grants.find((g) => g.id === permission)!.choices.peerId}
+                  <br />
+                  Saved access: {permission}
+                </p>
+              )}
               <label>
                 Saved local message
                 <select
@@ -183,7 +192,7 @@ export function ConversationContent({
                   <option value="">Choose a connection</option>
                   {c.connections().map((v) => (
                     <option key={v.id} value={v.id}>
-                      Connection {v.id}
+                      Connection {v.id.slice(0, 8)}
                     </option>
                   ))}
                 </select>
@@ -194,6 +203,9 @@ export function ConversationContent({
                 relay settings.
               </p>
             ))}
+          {c.connections().some((v) => v.id === connection) && (
+            <p className="prose">Selected connection: {connection}</p>
+          )}
           <h5>Saved delivery history</h5>
           {items.length === 0 && (
             <p>No encrypted message copies are saved for this conversation.</p>

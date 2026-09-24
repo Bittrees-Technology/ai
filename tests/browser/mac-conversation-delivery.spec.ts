@@ -123,8 +123,7 @@ async function shots(page: Page, browser: string, name: string) {
     ["phone", 390, 844],
   ] as const) {
     await page.setViewportSize({ width, height });
-    // WebKit can retain the previous viewport's scroll extent until paint.
-    // Measure the rendered layout after resize rather than its stale extent.
+    // Let resized controls paint before checking their rendered width.
     await page.evaluate(
       () =>
         new Promise<void>((resolve) =>
