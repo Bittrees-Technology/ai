@@ -56,6 +56,7 @@ export interface PrivateRelayTransaction {
   db: PoolClient;
   identity: PrivateRelayIdentity;
   recipient: (endpointId: string) => Promise<PrivateRelayIdentity>;
+  validUntil: (deadline: number) => void;
   check: () => void;
 }
 /** Inactive server permission foundation. No routes, listener, delivery or key
@@ -555,6 +556,7 @@ export class RemotePrivateRelayAccess {
       db,
       identity: structuredClone(identity),
       check: gate.check,
+      validUntil: gate.validUntil,
       recipient: async (id: string) => {
         gate.check();
         if (!uuid.safeParse(id).success || id === identity.endpointId)
@@ -573,6 +575,17 @@ export class RemotePrivateRelayAccess {
         return result;
       },
     };
+  }
+  /** Owner-local relay history maintenance, independent of endpoint grants. */
+  withOwner<T>(
+    session: string,
+    owner: string,
+    fn: (db: PoolClient, check: () => void) => Promise<T>,
+  ) {
+    return this.tx(async (db, gate) => {
+      await this.session(db, gate, session, owner);
+      return fn(db, gate.check);
+    });
   }
   withBrowser<T>(
     session: string,
