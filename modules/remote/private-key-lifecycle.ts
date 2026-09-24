@@ -18,6 +18,7 @@ const slotSchema = z.strictObject({
   keyEpoch: positive,
   binding: privateBindingSchema,
   createdAt: positive,
+  incomingReplayBoundary: z.literal("from-generation-v1").optional(),
   state: z.enum(["preparing", "active", "retired", "deleting", "deleted"]),
   publicKey: z
     .string()
@@ -343,6 +344,7 @@ export class PrivateKeyLifecycle {
         keyEpoch: a.keyEpoch,
         confirmed: true,
       });
+      const generated = await this.keys.resolve();
       return this.tx((s) => {
         this.same(s, input.expectedRevision);
         const current = this.authority(),
@@ -353,11 +355,17 @@ export class PrivateKeyLifecycle {
           !v ||
           v.state !== "preparing" ||
           created.keyId !== v.id ||
-          created.keyEpoch !== v.keyEpoch
+          created.keyEpoch !== v.keyEpoch ||
+          generated.keyId !== created.keyId ||
+          generated.keyEpoch !== created.keyEpoch ||
+          generated.publicKey !== created.publicKey
         )
           throw new PrivateKeyLifecycleError("CONFLICT");
         v.state = "active";
         v.publicKey = created.publicKey;
+        if (generated.incomingReplayCovered)
+          v.incomingReplayBoundary = "from-generation-v1";
+        else delete v.incomingReplayBoundary;
         return {
           revision: write(this.store, this.vault, this.owner, s),
           keyId: v.id,
@@ -388,6 +396,29 @@ export class PrivateKeyLifecycle {
       return false;
     }
   }
+  /** Current-key prerequisite for future content admission. Invoke again inside
+   * the transaction that checks consent and commits replay/Inbox effects.
+   * This does not grant conversation permission or reconstruct older history. */
+  validateReplayCoverage(proof: PrivateKeyProof) {
+    if (!this.validate(proof)) return false;
+    try {
+      const s = read(this.store, this.vault, this.owner);
+      return (
+        !s.locked &&
+        s.revision === proof.revision &&
+        s.state.slots.some(
+          (slot) =>
+            slot.id === proof.keyId &&
+            slot.keyEpoch === proof.keyEpoch &&
+            slot.publicKey === proof.publicKey &&
+            slot.state === "active" &&
+            slot.incomingReplayBoundary === "from-generation-v1",
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
   async resolve() {
     return this.exclusive(async () => {
       const proof = this.proof(),
@@ -396,7 +427,8 @@ export class PrivateKeyLifecycle {
         !this.validate(proof) ||
         key.keyId !== proof.keyId ||
         key.keyEpoch !== proof.keyEpoch ||
-        key.publicKey !== proof.publicKey
+        key.publicKey !== proof.publicKey ||
+        this.validateReplayCoverage(proof) !== key.incomingReplayCovered
       )
         throw new PrivateKeyLifecycleError("CONFLICT");
       return { pair: key.pair, proof };

@@ -117,7 +117,9 @@ test("Mac endpoint keys require explicit fresh creation, survive manager reopen 
   first.pair.privateKey = substitute.privateKey;
   assert.equal((await keys.resolve()).pair.privateKey, second.pair.privateKey);
   assert.equal(second.pair.privateKey.extractable, false);
-  await assert.rejects(crypto.subtle.exportKey("pkcs8", second.pair.privateKey));
+  await assert.rejects(
+    crypto.subtle.exportKey("pkcs8", second.pair.privateKey),
+  );
   f.set({ ...f.current()!, creationAllowed: false });
   assert.deepEqual(await f.manager().create(f.request()), created);
   assert.equal((await f.manager().resolve()).publicKey, created.publicKey);
@@ -378,4 +380,24 @@ test("Host invalidation cancels late key resolution even if the same identity re
   await assert.rejects(pending, /CONFLICT/);
   f.slot().key.beforeRead = undefined;
   assert.equal((await keys.resolve()).keyId, f.current()!.keyId);
+});
+
+test("Replay provenance is minted by generation and never backfilled into an existing native key", async () => {
+  const f = fixture(),
+    keys = f.manager();
+  const created = await keys.create(f.request());
+  assert.equal((await keys.resolve()).incomingReplayCovered, true);
+  assert.equal((await f.manager().resolve()).incomingReplayCovered, true);
+  const record = JSON.parse(Buffer.from(f.slot().key.value!).toString("utf8"));
+  assert.equal(record.incomingReplayBoundary, "from-generation-v1");
+  delete record.incomingReplayBoundary;
+  const legacyBytes = Buffer.from(JSON.stringify(record));
+  f.slot().key.value = legacyBytes;
+  assert.equal((await keys.resolve()).incomingReplayCovered, false);
+  assert.deepEqual(await f.manager().create(f.request()), created);
+  assert.deepEqual(f.slot().key.value, legacyBytes);
+  assert.equal((await f.manager().resolve()).incomingReplayCovered, false);
+  record.incomingReplayBoundary = "unrecognized-generation";
+  f.slot().key.value = Buffer.from(JSON.stringify(record));
+  await assert.rejects(keys.resolve(), /STORAGE_UNAVAILABLE/);
 });

@@ -135,7 +135,7 @@ try {
   reopened.close();
   reopened = undefined;
   upgraded = new Store(f.path, f.vault, f.clock);
-  assert.equal(upgraded.db.pragma("user_version", { simple: true }), 31);
+  assert.equal(upgraded.db.pragma("user_version", { simple: true }), 32);
   assert.deepEqual(
     upgraded.exportPrivateConversationOffers(owner),
     offersBefore,
@@ -229,7 +229,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 30,
-    to: 31,
+    to: 32,
     legacySourceHead: "10c57250ea180205286bca5ee60d5063a3bf6382",
     legacyStoreSha256: storeHash,
     legacyOffersSha256: offersHash,
@@ -239,7 +239,7 @@ try {
       "wrong-key upgrade leaves schema30 store usable",
       "new upload attempt and receipt retain original ciphertext and outgoing sequence",
       "upload receipt does not change conversation consent",
-      "schema30 writer refuses upgraded schema31",
+      "schema30 writer refuses upgraded schema32",
       "backup/restore preserves receipt history and locks sending authority",
       "owner deletion removes retained offers and relay history without crossing owner scope",
       "untouched schema30 backup remains readable by actual old writer with restored authority locked",

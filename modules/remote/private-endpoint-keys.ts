@@ -14,6 +14,7 @@ const identitySchema = z.strictObject({
 });
 const recordSchema = identitySchema.extend({
   version: z.literal(1),
+  incomingReplayBoundary: z.literal("from-generation-v1").optional(),
   publicKey: z
     .string()
     .length(87)
@@ -74,7 +75,12 @@ export class PrivateEndpointKeys {
     this.generation++;
     this.cache = undefined;
   }
-  private cache?: { record: Buffer; scope: string; pair: CryptoKeyPair };
+  private cache?: {
+    record: Buffer;
+    scope: string;
+    pair: CryptoKeyPair;
+    incomingReplayCovered: boolean;
+  };
   constructor(
     private localOwner: string,
     private entryFor: (keyId: string) => PrivateKeyEntries,
@@ -136,10 +142,12 @@ export class PrivateEndpointKeys {
     try {
       if (raw.length > 4096) throw new PrivateKeyError("STORAGE_UNAVAILABLE");
       let pair: CryptoKeyPair;
+      let incomingReplayCovered: boolean;
       if (this.cache && same(this.cache.record, await this.digest(raw))) {
         if (this.cache.scope !== JSON.stringify(identity(a)))
           throw new PrivateKeyError("CONFLICT");
         pair = this.cache.pair;
+        incomingReplayCovered = this.cache.incomingReplayCovered;
       } else {
         const record = recordSchema.parse(
           JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)),
@@ -155,6 +163,8 @@ export class PrivateEndpointKeys {
           ) !== JSON.stringify(identity(a))
         )
           throw new PrivateKeyError("CONFLICT");
+        incomingReplayCovered =
+          record.incomingReplayBoundary === "from-generation-v1";
         const privateBytes = Buffer.from(record.privateKey, "base64url"),
           publicBytes = Buffer.from(record.publicKey, "base64url");
         try {
@@ -215,6 +225,7 @@ export class PrivateEndpointKeys {
           record: await this.digest(raw),
           scope: JSON.stringify(identity(a)),
           pair,
+          incomingReplayCovered,
         };
       }
       this.unchanged(a);
@@ -236,6 +247,7 @@ export class PrivateEndpointKeys {
         keyId: a.keyId,
         keyEpoch: a.keyEpoch,
         publicKey,
+        incomingReplayCovered,
         pair: { privateKey: pair.privateKey, publicKey: pair.publicKey },
       };
     } finally {
@@ -313,6 +325,9 @@ export class PrivateEndpointKeys {
         ).toString("base64url");
         encoded = encode({
           version: 1,
+          // Only actual generation mints this provenance. Existing native entries
+          // and resumed pre-upgrade attempts are read without backfilling it.
+          incomingReplayBoundary: "from-generation-v1",
           ...identity(a),
           publicKey,
           privateKey: secret.toString("base64url"),

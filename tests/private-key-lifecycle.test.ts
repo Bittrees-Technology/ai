@@ -182,6 +182,10 @@ test("Interrupted provisioning resumes the original persisted slot, but a missin
       confirmed: true,
     });
     assert.deepEqual(f.entries(pending.keyId).key.value, bytes);
+    assert.equal(
+      reopened.validateReplayCoverage((await reopened.resolve()).proof),
+      true,
+    );
     const second = reopened.begin(review(reopened));
     f.entries(second.keyId).attempt.afterAdd = async () => {
       throw Error("marker acknowledgement lost");
@@ -468,7 +472,7 @@ test("Schema16 upgrade preserves tasks and the new schema records no key authori
     );
     f.store.db.exec("DROP TABLE private_key_lifecycle; PRAGMA user_version=16");
     const migrated = f.db();
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 31);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 32);
     assert.equal(migrated.get(owner, task.id).input.prompt, "preserved");
     assert.deepEqual(f.lifecycle(migrated).list(), {
       revision: 0,
@@ -691,5 +695,114 @@ test("Data deletion rechecks newly selected keys after asynchronous remote journ
       await new Promise<void>((resolve) => server.close(() => resolve()));
       f.close();
     }
+  }
+});
+
+test("Replay coverage follows the exact active proof and cannot survive revocation, deletion, logout or owner changes", async () => {
+  const f = fixture();
+  try {
+    const first = await activate(f.keys),
+      selected = await f.keys.resolve();
+    assert.equal(f.keys.validateReplayCoverage(selected.proof), true);
+    const reopened = f.lifecycle(f.db());
+    assert.equal(
+      reopened.validateReplayCoverage((await reopened.resolve()).proof),
+      true,
+    );
+    for (const proof of [
+      { ...selected.proof, revision: selected.proof.revision + 1 },
+      { ...selected.proof, keyId: randomUUID() },
+      { ...selected.proof, keyEpoch: selected.proof.keyEpoch + 1 },
+      { ...selected.proof, publicKey: "A".repeat(87) },
+      {
+        ...selected.proof,
+        binding: { ...selected.proof.binding, deviceId: randomUUID() },
+      },
+    ])
+      assert.equal(reopened.validateReplayCoverage(proof), false);
+    assert.equal(
+      f
+        .lifecycle(f.db(), { ...owner, userId: "bob" })
+        .validateReplayCoverage(selected.proof),
+      false,
+    );
+    const binding = f.current();
+    f.set(null);
+    assert.equal(reopened.validateReplayCoverage(selected.proof), false);
+    f.set(binding);
+    reopened.revoke({ keyId: first.keyId, ...review(reopened) });
+    assert.equal(reopened.validateReplayCoverage(selected.proof), false);
+    const next = await activate(reopened),
+      nextProof = (await reopened.resolve()).proof;
+    assert.notEqual(next.publicKey, first.publicKey);
+    assert.equal(reopened.validateReplayCoverage(nextProof), true);
+    assert.ok(f.entries(first.keyId).key.value);
+    await reopened.remove({ keyId: next.keyId, ...review(reopened) });
+    assert.equal(reopened.validateReplayCoverage(nextProof), false);
+  } finally {
+    f.close();
+  }
+});
+
+test("Resuming old generated material preserves the key without inventing replay history", async () => {
+  const f = fixture();
+  try {
+    const pending = f.keys.begin(review(f.keys));
+    f.entries(pending.keyId).key.afterAdd = async () => {
+      throw Error("lost native reply");
+    };
+    const command = {
+      keyId: pending.keyId,
+      expectedRevision: pending.revision,
+      confirmed: true,
+    };
+    await assert.rejects(f.keys.provision(command), /STORAGE_UNAVAILABLE/);
+    f.entries(pending.keyId).key.afterAdd = undefined;
+    const record = JSON.parse(
+      Buffer.from(f.entries(pending.keyId).key.value!).toString("utf8"),
+    );
+    delete record.incomingReplayBoundary;
+    const oldBytes = Buffer.from(JSON.stringify(record));
+    f.entries(pending.keyId).key.value = oldBytes;
+    const reopened = f.lifecycle(f.db());
+    await reopened.provision(command);
+    const selected = await reopened.resolve();
+    assert.equal(reopened.validate(selected.proof), true);
+    assert.equal(reopened.validateReplayCoverage(selected.proof), false);
+    assert.equal(reopened.list().slots[0]!.incomingReplayBoundary, undefined);
+    assert.deepEqual(f.entries(pending.keyId).key.value, oldBytes);
+    const next = await activate(reopened);
+    assert.notEqual(next.publicKey, selected.proof.publicKey);
+    assert.equal(
+      reopened.validateReplayCoverage((await reopened.resolve()).proof),
+      true,
+    );
+    assert.deepEqual(f.entries(pending.keyId).key.value, oldBytes);
+  } finally {
+    f.close();
+  }
+});
+
+test("Encrypted backup preserves provenance for history but restored and deleted stores cannot use it as authority", async () => {
+  const f = fixture();
+  try {
+    await activate(f.keys);
+    const selected = await f.keys.resolve(),
+      snapshot = f.keys.list();
+    const backup = join(f.dir, "coverage.aib"),
+      path = join(f.dir, "restored.db");
+    await encryptedBackup(f.store, f.vault, backup);
+    await restoreBackup(backup, f.vault, path);
+    const restored = f.db(path),
+      keys = f.lifecycle(restored);
+    assert.deepEqual(keys.list().slots, snapshot.slots);
+    assert.equal(keys.list().needsFreshPairing, true);
+    assert.equal(keys.validateReplayCoverage(selected.proof), false);
+    await assert.rejects(keys.resolve(), /DENIED/);
+    f.store.deleteAll(owner);
+    assert.equal(f.keys.validateReplayCoverage(selected.proof), false);
+    assert.equal(f.keys.list().slots.length, 0);
+  } finally {
+    f.close();
   }
 });

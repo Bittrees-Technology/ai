@@ -87,6 +87,7 @@ try {
   const reopened = manager(),
     key = await reopened.resolve();
   assert.equal(key.publicKey, first.publicKey);
+  assert.equal(key.incomingReplayCovered, true);
   assert.equal(key.pair.privateKey.extractable, false);
   await assert.rejects(crypto.subtle.exportKey("pkcs8", key.pair.privateKey));
   assert.equal(
@@ -191,7 +192,9 @@ try {
       confirmed: true,
     });
     const reopened = lifecycle(db(join(folder, "tasks.db")));
-    assert.equal((await reopened.resolve()).proof.publicKey, active.publicKey);
+    const proof = (await reopened.resolve()).proof;
+    assert.equal(proof.publicKey, active.publicKey);
+    assert.equal(reopened.validateReplayCoverage(proof), true);
     await encryptedBackup(store, vault, join(folder, "backup.aib"));
     await restoreBackup(
       join(folder, "backup.aib"),
@@ -200,10 +203,15 @@ try {
     );
     const restored = lifecycle(db(join(folder, "restored.db")));
     assert.equal(restored.list().needsFreshPairing, true);
+    assert.equal(restored.validateReplayCoverage(proof), false);
     await assert.rejects(restored.resolve(), /DENIED/);
     await reopened.clearAll({ confirmed: true });
     assert.equal(await managedEntries(active.keyId).key.getSecret(), undefined);
     assert.equal(reopened.list().pendingKeyDeletionCount, 0);
+    assert.equal(reopened.validateReplayCoverage(proof), false);
+    console.log(
+      "Packaged key replay boundary: generation, native reopen, restore lock and deletion passed",
+    );
     console.log(
       "Packaged key lifecycle: SQLite selection, native key reopen, restore lock and native cleanup passed",
     );
