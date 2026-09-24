@@ -14,9 +14,14 @@ const button = (page: Page, name: string) =>
   panel(page).getByRole("button", { name, exact: true });
 const ack = "I reviewed this conversation and this exact action.";
 type Fixture = Awaited<ReturnType<typeof ready>>;
-async function openBuilt(page: Page, f: Fixture) {
-  await openRemotePanel(page, undefined, f.wallet);
-  await loginRemotePanel(page);
+async function openBuilt(page: Page, f: Fixture, reload = false) {
+  if (reload) {
+    await page.reload();
+    await expect(page.locator("#account")).toContainText("Verified wallet:");
+  } else {
+    await openRemotePanel(page, undefined, f.wallet);
+    await loginRemotePanel(page);
+  }
   await openRecovery(page);
   await refreshRegistration(page);
   await keyControls(page)
@@ -201,7 +206,7 @@ test("built conversation delivery reviews the original message, recovers a lost 
       "result was not confirmed",
     );
     const original = await incomingOriginal(f);
-    await openBuilt(page, f);
+    await openBuilt(page, f, true);
     await expect(panel(page)).toContainText("1 upload attempt");
     await expect(panel(page)).toContainText("Upload result unconfirmed");
     await preview(page, info, "uncertain-history");
@@ -307,7 +312,7 @@ test("built conversation delivery history and reviewed stopping work offline aft
     await setup(page, f);
     await saveMessage(page, "SYNTHETIC_OFFLINE_RETAINED");
     await prepareCopy(page);
-    await openBuilt(page, f);
+    await openBuilt(page, f, true);
     identityServer.offline(true);
     identityServer.events.length = 0;
     await refresh(page);
