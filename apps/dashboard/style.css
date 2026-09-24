@@ -1091,10 +1091,12 @@ select.model-profile-select {
   margin: 0 0 8px;
 }
 .conversation-content label {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   margin: 12px 0;
 }
 .conversation-content select {
+  display: block;
   width: 100%;
   max-width: 100%;
   min-width: 0;

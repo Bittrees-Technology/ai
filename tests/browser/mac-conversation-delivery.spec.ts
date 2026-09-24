@@ -123,15 +123,31 @@ async function shots(page: Page, browser: string, name: string) {
     ["phone", 390, 844],
   ] as const) {
     await page.setViewportSize({ width, height });
+    // WebKit can retain the previous viewport's scroll extent until paint.
+    // Measure the rendered layout after resize rather than its stale extent.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     const layout = await page.evaluate(() => ({
       viewport: innerWidth,
+      scrollX,
       width: document.documentElement.scrollWidth,
       overflowing: Array.from(document.querySelectorAll("body *"))
-        .filter((e) => e.getBoundingClientRect().right > innerWidth + 1)
+        .filter(
+          (e) =>
+            e.getBoundingClientRect().right + scrollX > innerWidth + 1 ||
+            e.scrollWidth > e.clientWidth + 1,
+        )
         .map((e) => ({
           tag: e.tagName,
           className: e.className,
           width: e.getBoundingClientRect().width,
+          scrollWidth: e.scrollWidth,
+          clientWidth: e.clientWidth,
+          left: e.getBoundingClientRect().left,
           text: (e.textContent ?? "").slice(0, 100),
         })),
     }));
