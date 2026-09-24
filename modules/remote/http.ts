@@ -148,7 +148,11 @@ export function createRemoteApp(
     }
     if (req.method === "GET" && config.assets) {
       if (req.path === "/settings.json")
-        return res.json({ origin: config.origin, chainId: config.chainId });
+        return res.json({
+          origin: config.origin,
+          chainId: config.chainId,
+          ...(privatePolicy ? { privateRelay: true } : {}),
+        });
       const files: Record<string, string> = {
         "/": "index.html",
         "/app.js": "app.js",

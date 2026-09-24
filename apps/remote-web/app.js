@@ -1,4 +1,5 @@
 import "./browser-runtime.ts";
+import { mountBrowserRelay } from "./browser-relay.ts";
 import { BrowserSessionCoordinator } from "./browser-session.ts";
 import { BrowserSetupMount } from "./browser-setup-mount.ts";
 import { RemoteWebController, browserApi } from "./controller.js";
@@ -28,6 +29,14 @@ if (!settings || settings.origin !== location.origin) {
     el("browser-recovery-notice"),
     () => controller?.sessionContext() ?? null,
   );
+  const relay =
+    settings.privateRelay === true
+      ? mountBrowserRelay(
+          el("private-relay-controls"),
+          () => controller?.sessionContext() ?? null,
+          () => controller?.state.devices ?? [],
+        )
+      : null;
   controller = new RemoteWebController(
     api,
     window.ethereum,
@@ -38,6 +47,7 @@ if (!settings || settings.origin !== location.origin) {
   function render(s) {
     accountId = s.account?.ownerId ?? null;
     setup.sync();
+    relay?.sync();
     el("error").textContent = s.error;
     el("notice").textContent = s.notice;
     el("account").textContent = s.account
@@ -225,12 +235,14 @@ if (!settings || settings.origin !== location.origin) {
       });
     }
     setup.sync();
+    relay?.sync();
   }, 1000);
   window.addEventListener(
     "pagehide",
     () => {
       clearInterval(expiry);
       setup.destroy();
+      relay?.destroy();
       sessions.close();
       controller.invalidateSession();
     },

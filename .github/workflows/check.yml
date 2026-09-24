@@ -399,3 +399,11 @@ jobs:
           path: test-results/mac-relay-*.png
           if-no-files-found: error
           retention-days: 7
+      - name: Retain browser relay control previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-relay-ui-preview
+          path: test-results/browser-relay-*.png
+          if-no-files-found: error
+          retention-days: 7

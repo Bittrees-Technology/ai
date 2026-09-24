@@ -1,0 +1,7 @@
+# Browser private connection review
+
+Extend the existing remote companion page with a signed-in, explicitly configured private connection section. Keep its Avenir type, pale blue canvas, dark ink, white controls, ruled sections and visible blue keyboard focus. Use a short explanation followed by browser review, paired Mac choices, permission history and a single inline review stage. Device/approval identifiers wrap at 390px; no horizontal scrolling. No remote images or new assets.
+
+The review must show the verified owner, exact browser/Mac identifier and credential version, current permission if one exists, proposed expiry and replacement effect. An unchecked acknowledgement enables one confirmation. Mac approval shows a selectable approval ID and its short deadline, with a separate instruction to accept on that Mac. Lost replies retain the original operation ID for explicit checking and never retry a mutation. Revocation uses a freshly inspected permission and exact revision; history remains available after device credentials are lost.
+
+Keep scope and review lifetime separate from permission lifetime. Account changes, expiry, blur, Escape and page exit invalidate reviews and late responses. No automatic browser registration, native acceptance, encryption-key setup, task permission or message delivery. Expose the section only when a validated remote private policy explicitly enables the routes; no live policy selection here. Tests need real browser/cookie integration and desktop/narrow screenshots on disposable GitHub runners.
