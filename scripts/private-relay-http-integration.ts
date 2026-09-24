@@ -5,6 +5,7 @@ import { Vault } from "../modules/storage/vault.js";
 import {
   PrivateRelayClient,
   PrivateRelayOwnerClient,
+  BrowserRelayPermissionsClient,
 } from "../modules/remote/private-relay-client.js";
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
@@ -90,10 +91,31 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       ownerId,
       session,
       browserId: registration.body.binding.deviceId,
+      browserEpoch: registration.body.binding.credentialEpoch,
       mac: redeemed.body,
       status: { Authorization: "Bearer " + redeemed.body.credential },
     };
   }
+  const transportFor =
+    (owner: Record<string, string>): typeof fetch =>
+    async (url, init) => {
+      assert.equal(new URL(String(url)).origin, browser.Origin);
+      assert.equal(init?.redirect, "error");
+      assert.equal(init?.cache, "no-store");
+      const headers = Object.fromEntries(new Headers(init?.headers).entries());
+      assert.equal(headers.cookie, undefined);
+      if (init?.credentials === "same-origin") Object.assign(headers, owner);
+      else {
+        assert.equal(init?.credentials, "omit");
+        assert.ok(headers.authorization);
+      }
+      const r = await call(
+        new URL(String(url)).pathname,
+        JSON.parse(String(init?.body)),
+        headers,
+      );
+      return Response.json(r.body, { status: r.status });
+    };
   const f = await fixture(),
     other = await fixture(),
     request = () => ({
@@ -102,9 +124,80 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
       expiresAt: Date.now() + 600000,
       confirmed: true,
     });
+  for (const identity of [
+    { deviceId: other.browserId, credentialEpoch: f.browserEpoch },
+    { deviceId: f.browserId, credentialEpoch: f.browserEpoch + 1 },
+  ]) {
+    assert.equal(
+      (
+        await call(
+          "/browser/relay/permission/enable",
+          { ...request(), ...identity },
+          f.owner,
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await call("/browser/relay/permission/inspect", {}, f.owner)).body,
+      null,
+    );
+  }
+  assert.equal(
+    (await call("/browser/relay/permission/enable", request(), f.owner)).status,
+    400,
+  );
+  const permissions = new BrowserRelayPermissionsClient(
+    () => ({ ownerId: f.ownerId, scope: "https-owner" }),
+    transportFor(f.owner),
+  );
+  const browserLookup = {
+    endpointKind: "browser",
+    endpointId: f.browserId,
+    credentialEpoch: f.browserEpoch,
+  };
+  const macLookup = {
+    endpointKind: "mac",
+    endpointId: f.mac.deviceId,
+    credentialEpoch: f.mac.epoch,
+  };
+  assert.equal(
+    (await permissions.inspectEndpoint(browserLookup)).permission,
+    null,
+  );
+  assert.equal((await permissions.inspectEndpoint(macLookup)).permission, null);
+  for (const lookup of [
+    { ...macLookup, endpointId: other.mac.deviceId },
+    { ...macLookup, credentialEpoch: f.mac.epoch + 1 },
+    { ...browserLookup, endpointId: other.browserId },
+  ])
+    await assert.rejects(permissions.inspectEndpoint(lookup), /DENIED/);
+  assert.equal(
+    (await disabled("/browser/relay/permissions/endpoint", macLookup, f.owner))
+      .status,
+    404,
+  );
+  assert.equal(
+    (
+      await call("/browser/relay/permissions/endpoint", macLookup, {
+        ...f.owner,
+        "X-Bittrees-Account": other.ownerId,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await call("/browser/relay/permissions/endpoint", macLookup, {
+        ...f.owner,
+        Origin: "https://other.invalid",
+      })
+    ).status,
+    403,
+  );
   const enabled = await call(
     "/browser/relay/permission/enable",
-    request(),
+    { ...request(), deviceId: f.browserId, credentialEpoch: f.browserEpoch },
     f.owner,
   );
   assert.equal(enabled.status, 200);
@@ -225,24 +318,7 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
   const message = { version: 1, envelope },
     submitPath = "/browser/relay/messages/submit",
     page = { after: null, limit: 20 };
-  const actualTransport: typeof fetch = async (url, init) => {
-    assert.equal(new URL(String(url)).origin, browser.Origin);
-    assert.equal(init?.redirect, "error");
-    assert.equal(init?.cache, "no-store");
-    const headers = Object.fromEntries(new Headers(init?.headers).entries());
-    assert.equal(headers.cookie, undefined);
-    if (init?.credentials === "same-origin") Object.assign(headers, f.owner);
-    else {
-      assert.equal(init?.credentials, "omit");
-      assert.ok(headers.authorization);
-    }
-    const r = await call(
-      new URL(String(url)).pathname,
-      JSON.parse(String(init?.body)),
-      headers,
-    );
-    return Response.json(r.body, { status: r.status });
-  };
+  const actualTransport = transportFor(f.owner);
   const browserContext = {
     kind: "browser" as const,
     scope: "https-session",
@@ -472,15 +548,37 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     "deleted",
   );
   // Replacing permission cannot silently authorize a previously prepared client.
-  const replacement = await call(
-    "/browser/relay/permission/enable",
-    {
-      ...request(),
-      expected: { id: enabled.body.id, revision: enabled.body.revision },
-    },
-    f.owner,
+  const observed = await permissions.inspectEndpoint(browserLookup);
+  assert.equal(observed.permission?.id, enabled.body.id);
+  assert.equal(
+    (await permissions.inspectEndpoint(macLookup)).permission?.revision,
+    native.body.grant.revision,
   );
-  assert.equal(replacement.status, 200);
+  const replacement = await permissions.enableBrowser({
+    ...request(),
+    expected: {
+      id: observed.permission!.id,
+      revision: observed.permission!.revision,
+    },
+    deviceId: f.browserId,
+    credentialEpoch: f.browserEpoch,
+  });
+  assert.equal(
+    (await permissions.inspectOperation(replacement.operationId)).id,
+    replacement.id,
+  );
+  assert.equal((await permissions.inspect(replacement.id)).state, "active");
+  assert.equal(
+    (
+      await permissions.inspectBrowser({
+        ownerId: f.ownerId,
+        deviceId: f.browserId,
+        credentialEpoch: f.browserEpoch,
+        expiresAt: observed.endpoint.expiresAt,
+      })
+    )?.id,
+    replacement.id,
+  );
   const staleMessage = {
     version: 1,
     envelope: await sealPrivateEnvelope(
@@ -537,25 +635,45 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
     ).body.items.length,
     2,
   );
+  const ownerPage = await permissions.list({ after: null, limit: 2 });
+  assert.equal(ownerPage.items.length, 2);
+  assert.ok(ownerPage.nextCursor);
+  assert.equal(
+    (await permissions.list({ after: ownerPage.nextCursor, limit: 2 })).items
+      .length,
+    1,
+  );
+  const ownerRevoked = await permissions.revoke({
+    id: replacement.id,
+    expectedRevision: replacement.revision,
+    confirmed: true,
+  });
+  assert.equal(ownerRevoked.state, "revoked");
+  assert.equal(
+    (await permissions.inspectEndpoint(browserLookup)).permission,
+    null,
+  );
   assert.equal((await call("/browser/logout", {}, f.owner)).status, 200);
   assert.equal(
     (await call("/browser/relay/history/export", page, f.owner)).status,
     403,
   );
+  await assert.rejects(permissions.inspectEndpoint(macLookup), /DENIED/);
   // Actual native identity/enrollment and durable journal against the TLS host.
   // Synthetic in-memory secret slots exercise the OS-provider contract without Keychain access.
   const local = await fixture(),
     localOwner = { userId: "synthetic-native", tenantId: "personal" };
-  const localApproval = await call(
-    "/browser/relay/mac/approve",
-    {
+  const localPermissions = new BrowserRelayPermissionsClient(
+    () => ({ ownerId: local.ownerId, scope: "https-native-owner" }),
+    transportFor(local.owner),
+  );
+  const localApproval = {
+    body: await localPermissions.approveMac({
       ...request(),
       deviceId: local.mac.deviceId,
       credentialEpoch: local.mac.epoch,
-    },
-    local.owner,
-  );
-  assert.equal(localApproval.status, 200);
+    }),
+  };
   let saved = Buffer.from(
     JSON.stringify({
       localOwner: localOwner.userId,
@@ -679,6 +797,9 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
   }
   console.log(
     "Private relay native custody: actual TLS identity, one-use acceptance, separate synthetic OS slots, journal reopen, polling, revoke and cleanup passed.",
+  );
+  console.log(
+    "Browser relay permissions: exact endpoint lookup, owner client approval/replacement, operation recovery, paged history and revoke passed.",
   );
   console.log(
     "Private relay HTTPS: default-disabled routes, real SIWE/cookies and native opt-in, credential/CSRF separation, maximum encrypted payload, exact receipts, owner history/deletion and revocation passed.",

@@ -22,6 +22,7 @@ async function startIdentityServer() {
     cert: Buffer,
     holdPath = "",
     dropPath = "",
+    loseResponsePath = "",
     rejectPath = "",
     rejectSkip = 0,
     offline = false,
@@ -156,6 +157,19 @@ async function startIdentityServer() {
               .end('{"error":"UNAVAILABLE"}');
             return;
           }
+          if (loseResponsePath === url.pathname) {
+            loseResponsePath = "";
+            const end = res.end.bind(res);
+            // Preserve the committed operation but replace its reply. A complete
+            // error response avoids Chromium's transparent connection-level retry.
+            res.end = (() => {
+              res.statusCode = 503;
+              res.removeHeader("content-length");
+              res.removeHeader("etag");
+              res.setHeader("content-type", "application/json");
+              return end('{"error":"UNAVAILABLE"}');
+            }) as typeof res.end;
+          }
           if (dropPath === url.pathname) {
             dropPath = "";
             res.end = (() => {
@@ -268,6 +282,7 @@ async function startIdentityServer() {
         app = newApp();
         holdPath = "";
         dropPath = "";
+        loseResponsePath = "";
         rejectPath = "";
         rejectSkip = 0;
         heldIdentity = false;
@@ -293,6 +308,9 @@ async function startIdentityServer() {
       },
       drop(path: string) {
         dropPath = path;
+      },
+      loseResponse(path: string) {
+        loseResponsePath = path;
       },
       reject(path: string, skip = 0) {
         rejectPath = path;

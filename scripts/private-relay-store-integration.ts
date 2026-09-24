@@ -72,7 +72,11 @@ export async function checkPrivateRelayStore(pool: Pool) {
       session.token,
       session.ownerId,
       browser.credential,
-      request(),
+      {
+        ...request(),
+        deviceId: browser.identity.binding.deviceId,
+        credentialEpoch: browser.identity.binding.credentialEpoch,
+      },
     );
     const pending = await access.approveMac(session.token, session.ownerId, {
       ...request(),
@@ -323,6 +327,8 @@ export async function checkPrivateRelayStore(pool: Pool) {
     f.browser.credential,
     {
       ...request(),
+      deviceId: f.browser.identity.binding.deviceId,
+      credentialEpoch: f.browser.identity.binding.credentialEpoch,
       expected: null,
     },
   );

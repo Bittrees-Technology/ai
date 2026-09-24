@@ -140,3 +140,28 @@ footer {
 #browser-setup .browser-keys {
   margin: 20px 0;
 }
+
+#private-relay-controls {
+  overflow-wrap: anywhere;
+}
+.relay-review {
+  border: 1px solid #aabec5;
+  border-left: 4px solid #29658b;
+  background: #fff;
+  padding: 18px;
+  margin: 20px 0;
+}
+.relay-review label {
+  display: block;
+  margin: 16px 0;
+}
+.relay-review button {
+  margin: 8px 8px 0 0;
+}
+.relay-permission {
+  border-bottom: 1px solid #c6d9dd;
+  padding: 12px 0;
+}
+#private-relay-controls [role="alert"] {
+  color: #8a2630;
+}

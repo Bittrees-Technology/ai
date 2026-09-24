@@ -54,6 +54,7 @@ export function mountPrivateRelayRoutes(
     res.json(await access.approveMac(session, account, req.body));
   });
   const ownerPermission = {
+    endpoint: access.inspectOwnerEndpoint.bind(access),
     inspect: access.inspectOwner.bind(access),
     operation: access.inspectOwnerOperation.bind(access),
     list: access.listOwner.bind(access),

@@ -87,6 +87,7 @@ test("built page completes saved-code and saved-file activation under CSP and re
   await open(page);
   await login(page);
   await expect(reg(page)).toHaveCount(0);
+  await expect(page.locator("#private-relay-controls")).toBeHidden();
   await recovery(page);
   await register(page);
   await start(page);
