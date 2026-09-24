@@ -576,18 +576,34 @@ const fixture = {
       db.close();
     }
   },
+  contentList: (raw: unknown) =>
+    host
+      ? host.conversationContentAPI.list(raw)
+      : withKey(async () => (await conversationContentStore()).list(raw)),
   contentPrepare: (raw: unknown) =>
-    withKey(async () => (await conversationContentStore()).prepare(raw)),
+    host
+      ? host.conversationContentAPI.prepare(raw)
+      : withKey(async () => (await conversationContentStore()).prepare(raw)),
   contentEnvelope: (raw: unknown) =>
-    withKey(async () => (await conversationContentStore()).envelope(raw)),
+    host
+      ? host.conversationContentAPI.envelope(raw)
+      : withKey(async () => (await conversationContentStore()).envelope(raw)),
   contentAccept: (raw: unknown) =>
-    withKey(async () => (await conversationContentStore()).accept(raw)),
+    host
+      ? host.conversationContentAPI.accept(raw)
+      : withKey(async () => (await conversationContentStore()).accept(raw)),
   contentRead: (raw: unknown) =>
-    withKey(async () => (await conversationContentStore()).read(raw)),
+    host
+      ? host.conversationContentAPI.read(raw)
+      : withKey(async () => (await conversationContentStore()).read(raw)),
   contentExport: (raw: unknown) =>
-    conversationContentStore().then((c) => c.export(raw)),
+    host
+      ? host.conversationContentAPI.export(raw)
+      : conversationContentStore().then((c) => c.export(raw)),
   contentClear: (raw: unknown) =>
-    conversationContentStore().then((c) => c.clear(raw)),
+    host
+      ? host.conversationContentAPI.clear(raw)
+      : conversationContentStore().then((c) => c.clear(raw)),
   async contentInspect(action?: "corrupt" | "remove" | "strip-coverage") {
     // CI-only fault/inspection surface. Never included in the product bundle.
     const db = await new Promise<IDBDatabase>((resolve, reject) => {

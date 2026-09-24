@@ -47,8 +47,28 @@ interoperability, exact question answers, storage failure, revoked authority dur
 crypto, retention/export/deletion and actual version12 preservation. Local build
 success alone is not browser acceptance.
 
-Remaining work includes browser host/UI wiring, reviewed relay content transfer,
+Remaining work includes browser UI wiring, reviewed relay content transfer,
 receipt reconciliation, complete end-to-end historical replay acceptance and release
 acceptance. No personal data, native credential access, local browser automation,
 installed application replacement, live service activation or model changes are part
 of this package.
+
+## Trusted browser host
+
+`BrowserKeyHost.conversationContentAPI` supplies per-operation verified device
+identity and current key/peer proof for list/read/prepare/envelope/accept. The engine
+rechecks those proofs and independent consent through its common database writes.
+Selected-grant listing decrypts locally but returns only metadata; it does not open
+messages for display or grant permission to send. Expired delivery deadlines do not
+erase saved rows or remove them from an otherwise current authorized listing.
+
+Explicit archive export requires current matching owner/device verification but
+permits retained history after key revocation. It exports no private key or reusable
+authority. Explicit local deletion requires the same signed-in host owner/session
+and confirmation, works without a network call, locks conversation consent and
+leaves task permission and hash-only replay fences intact. Logging out invalidates
+all these operations. The shared host operation lock, close, cancellation and
+account/registration-change paths include conversation content.
+
+The authenticated host adds no relay call or automatic send. Browser UI review,
+relay transport and end-to-end user acceptance remain separate work.
