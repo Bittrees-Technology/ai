@@ -143,15 +143,18 @@ export class PrivateTaskReceiver {
         envelopeHash = hash("envelope", envelope);
       return this.store.db
         .transaction(() => {
-          const current = this.permission(h.senderId);
-          if (
-            JSON.stringify(current.value) !== JSON.stringify(p) ||
-            current.key.privateKey !== permission.key.privateKey ||
-            current.key.publicKey !== permission.key.publicKey ||
-            !this.peers.validate(peer.proof) ||
-            h.expiresAt <= this.now()
-          )
-            throw new PrivateTaskError("DENIED");
+          const checkCurrent = () => {
+            const current = this.permission(h.senderId);
+            if (
+              JSON.stringify(current.value) !== JSON.stringify(p) ||
+              current.key.privateKey !== permission.key.privateKey ||
+              current.key.publicKey !== permission.key.publicKey ||
+              !this.peers.validate(peer.proof) ||
+              h.expiresAt <= this.now()
+            )
+              throw new PrivateTaskError("DENIED");
+          };
+          checkCurrent();
           const previous = this.store.db
             .prepare(
               "SELECT operation_hash,message_hash,sequence_hash,envelope_hash,payload FROM private_task_receipts WHERE user_id=? AND tenant_id=? AND (operation_hash=? OR message_hash=? OR sequence_hash=?)",
@@ -195,6 +198,7 @@ export class PrivateTaskReceiver {
                 id: receipt.id,
               },
             );
+            checkCurrent();
             return receipt;
           }
           const count = this.store.db
@@ -254,6 +258,7 @@ export class PrivateTaskReceiver {
               id: receipt.id,
             },
           );
+          checkCurrent();
           return receipt;
         })
         .immediate();

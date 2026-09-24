@@ -25,6 +25,22 @@ const { Store: Old } = await load(legacy, "modules/storage/store"),
     join(repo, "dist"),
     "modules/remote/private-task-receiver",
   ),
+  { PrivateTaskOutbox } = await load(
+    join(repo, "dist"),
+    "modules/remote/private-task-outbox",
+  ),
+  { PrivatePeerChecks } = await load(
+    join(repo, "dist"),
+    "modules/remote/private-peer-checks",
+  ),
+  { PrivatePeerEnrollment } = await load(
+    join(repo, "dist"),
+    "modules/remote/private-peers",
+  ),
+  { PrivateKeyLifecycle } = await load(
+    join(repo, "dist"),
+    "modules/remote/private-key-lifecycle",
+  ),
   { privateEndpoints } = await load(legacy, "tests/helpers/private-endpoints"),
   oldBackup = await load(legacy, "modules/storage/backup"),
   backup = await load(join(repo, "dist"), "modules/storage/backup"),
@@ -39,10 +55,19 @@ const { Store: Old } = await load(legacy, "modules/storage/store"),
 const dir = await mkdtemp(join(tmpdir(), "bittrees-incoming-upgrade-")),
   path = join(dir, "tasks.db"),
   f = await privateEndpoints();
-let current, restored, rollback, prior;
+let current, restored, rollback, prior, sender;
 try {
   const task = await f.submit();
   await f.b.controls.receiveTask(task.envelope);
+  const reply = await f.prepare(task.envelope),
+    replyEnvelope = await f.b.controls.taskResponseEnvelope({
+      id: reply.id,
+      confirmed: true,
+    });
+  await f.withOutbox((outbox) => outbox.acceptReceipt(replyEnvelope));
+  const senderBefore = f.a.store.exportPrivateTaskOutbox(f.a.owner),
+    senderChecks = f.a.store.exportPrivatePeerChecks(f.a.owner);
+  await f.a.store.backup(join(dir, "sender.db"));
   const before = f.b.store.export(f.b.owner),
     receipts = f.b.store.exportPrivateTaskReceipts(f.b.owner),
     checks = f.b.store.exportPrivatePeerChecks(f.b.owner),
@@ -87,8 +112,78 @@ try {
     assert.deepEqual(await receiver.accept(task.envelope), receipts[0]);
     assert.deepEqual(await receiver.accept(task.envelope), receipts[0]);
   });
+  assert.deepEqual(current.exportPrivateIncomingReplay(f.b.owner), [
+    { identity, outcome },
+  ]);
+  await f.b.remote.withVerifiedDevice(async (scope) => {
+    const keys = new PrivateKeyLifecycle(
+        current,
+        f.b.vault,
+        f.b.owner,
+        scope.current,
+        f.b.entries,
+        undefined,
+        f.clock,
+      ),
+      peers = new PrivatePeerEnrollment(
+        current,
+        f.b.vault,
+        f.b.owner,
+        scope.current,
+        f.clock,
+      ),
+      receiver = new PrivatePeerChecks(
+        current,
+        f.b.vault,
+        f.b.owner,
+        scope.current,
+        keys,
+        peers,
+        f.clock,
+      );
+    const originalChallenge = senderChecks.find((e) => e.role === "challenge")
+        .value.envelope,
+      originalResponse = senderChecks.find((e) => e.role === "response").value
+        .envelope;
+    const response = await receiver.respond({
+      envelope: originalChallenge,
+      confirmed: true,
+    });
+    assert.deepEqual(
+      await receiver.respond({ envelope: originalChallenge, confirmed: true }),
+      response,
+    );
+    const completed = await receiver.complete({
+      envelope: originalResponse,
+      confirmed: true,
+    });
+    assert.deepEqual(
+      await receiver.complete({ envelope: originalResponse, confirmed: true }),
+      completed,
+    );
+    assert.deepEqual(current.exportPrivatePeerChecks(f.b.owner), checks);
+  });
+  sender = new Current(join(dir, "sender.db"), f.a.vault);
+  assert.deepEqual(sender.exportPrivateTaskOutbox(f.a.owner), senderBefore);
+  await f.a.remote.withVerifiedDevice(async (scope) => {
+    const providers = await f.a
+        .consent(scope.current)
+        .resolve(f.b.grant.deviceId),
+      outbox = new PrivateTaskOutbox(
+        sender,
+        f.a.vault,
+        f.a.owner,
+        scope.current,
+        providers.send,
+        f.clock,
+      );
+    const first = await outbox.acceptReceipt(replyEnvelope);
+    assert.deepEqual(await outbox.acceptReceipt(replyEnvelope), first);
+  });
+  assert.deepEqual(sender.exportPrivateTaskOutbox(f.a.owner), senderBefore);
+  assert.equal(sender.exportPrivateIncomingReplay(f.a.owner).length, 1);
   const replay = current.exportPrivateIncomingReplay(f.b.owner);
-  assert.deepEqual(replay, [{ identity, outcome }]);
+  assert.equal(replay.length, 3);
   assert.deepEqual(current.export(f.b.owner), before);
   await backup.encryptedBackup(current, f.b.vault, join(dir, "current.aib"));
   current.close();
@@ -137,6 +232,7 @@ try {
       "actual legacy task, receipt, device checks and task consent preserved",
       "new shared ledger starts empty without retroactive historical coverage claims",
       "actual legacy ciphertext retry adds one shared replay record and preserves its original receipt without duplicating work",
+      "actual legacy challenge, response and acceptance retries retain original check/outbox outcomes while adding one shared record each",
       "wrong-key upgrade leaves schema29 usable",
       "schema29 writer refuses schema30",
       "encrypted backup retains replay denial and locks restored authority",
@@ -144,8 +240,8 @@ try {
     ],
     boundaries: [
       "Synthetic temporary stores and memory-backed keys only",
-      "Mac task admission integrated; peer checks, Mac receipt receiver and browser shared ledger remain unfinished",
-      "Historical peer-check incoming IDs were not retained; reconciliation or a fresh-key epoch boundary is required before conversation activation",
+      "All current Mac receivers integrated; browser shared ledger remains unfinished",
+      "Historical peer-check and outbox receipt incoming IDs were not retained; reconciliation or a fresh-key epoch boundary is required before conversation activation",
       "No installed app, personal keys/content, model/runtime, live service or Acer changes",
     ],
   };
@@ -158,7 +254,7 @@ try {
   );
   console.log(JSON.stringify(proof));
 } finally {
-  for (const s of [current, restored, rollback, prior]) s?.close();
+  for (const s of [current, restored, rollback, prior, sender]) s?.close();
   f.close();
   await rm(dir, { recursive: true, force: true });
 }

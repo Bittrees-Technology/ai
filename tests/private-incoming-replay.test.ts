@@ -313,6 +313,7 @@ test("capacity never evicts retained replay evidence and still permits an exact 
 test("actual Mac task admission shares replay state and rolls back a cross-family collision without creating work", async () => {
   const { privateEndpoints } = await import("./helpers/private-endpoints.js");
   const f = await privateEndpoints();
+  const baseline = f.b.store.exportPrivateIncomingReplay(f.b.owner).length;
   try {
     const task = await f.submit();
     const prior = await privateReplayIdentity(
@@ -335,7 +336,10 @@ test("actual Mac task admission shares replay state and rolls back a cross-famil
     const again = await f.b.controls.receiveTask(fresh.envelope);
     assert.deepEqual(again, first);
     assert.equal(f.b.store.export(f.b.owner).length, 1);
-    assert.equal(f.b.store.exportPrivateIncomingReplay(f.b.owner).length, 2);
+    assert.equal(
+      f.b.store.exportPrivateIncomingReplay(f.b.owner).length,
+      baseline + 2,
+    );
   } finally {
     f.close();
   }

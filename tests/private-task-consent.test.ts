@@ -178,7 +178,8 @@ async function fixture() {
       confirmed: true,
       acknowledged: true,
     });
-  let sequence = 0;
+  // The synthetic sender already used this channel for its device-check reply.
+  let sequence = response.header.sequence;
   const envelope = async () => {
     const local = await keys.resolve();
     const header = {

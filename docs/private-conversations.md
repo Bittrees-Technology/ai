@@ -8,8 +8,8 @@ consent, reviewed Mac offer export and a browser file/paste offer review. Focuse
 built-browser consent checks passed in Chromium, Firefox and WebKit at commit
 0514a768; full current-head browser and visual acceptance remain pending. Relay
 offer exchange, durable conversation transport and reconnect acceptance are not
-implemented. Shared incoming replay storage now participates in Mac task admission;
-other receiver integrations and historical coverage remain unfinished.
+implemented. Shared incoming replay storage now participates in all current Mac receivers;
+browser integration and historical coverage remain unfinished.
 
 ## Separate Mac consent
 
@@ -271,7 +271,7 @@ does not establish conversation delivery, browser consent, source authorization,
 independent cryptographic review, model quality or live deployment acceptance.
 
 
-## Shared incoming replay: task admission integrated
+## Shared incoming replay: current Mac receivers integrated
 
 `private-replay.ts` derives portable identities only after authenticated decryption
 and strict payload parsing. The authenticated type distinguishes operation roles;
@@ -281,30 +281,25 @@ conflicts even when its decrypted text is identical. This helper is not authorit
 
 Task schema30 adds `private_incoming_replay`. Its owner-scoped unique operation,
 message and sequence indexes retain an encrypted identity and outcome reference.
-The store is bounded to4,096 records per owner, refuses new records at capacity
+The store is bounded to 4,096 records per owner, refuses new records at capacity
 without eviction, exports with local content and is removed by owner deletion.
 Backup retains replay records while existing restore rules lock endpoint authority.
 The helper requires the caller's existing SQLite transaction; it never opens a
 second transaction around Inbox or task effects.
 
-Mac task admission now consumes that shared identity with its fresh permission/key
-checks, task and existing receipt in one transaction. An exact retained task retry
+Mac task admission, device-check challenge/response and acceptance-receipt receivers now consume that shared identity with fresh permission/key checks and their task, check or receipt effects in one transaction. An exact retained task retry
 preserves its original receipt and task. Collision, corrupt evidence or capacity
-failure rolls back any new work. A synthetic actual-API test proves the task
-receiver sees a cross-family ledger collision; this does not imply peer-check
-receivers already write the shared ledger.
+failure rolls back any new work. All current Mac receivers recheck live authority and deadlines after replay bookkeeping and before commit; expiry during ledger sealing rolls back the complete transaction. Actual receiver tests reseal authenticated messages with IDs or sequences already accepted by a different family. Task/check and receipt/check collisions are rejected without new work, outgoing sequence reservations or verification changes. Exact original receipt ciphertext is required; equivalent plaintext in a newly encrypted envelope cannot replace it.
 
-All776 engine tests pass, including eleven new identity/storage/integration tests.
+All 781 engine tests pass, including sixteen new identity/storage/integration tests.
 The actual compiled schema29 engine verifies preservation of tasks, receipts,
 completed device checks and permission history; authenticated legacy retries add
-one shared record without new work. Wrong-key isolation, schema29 writer refusal,
+one shared record without new work. Actual compiled legacy challenge, response and acceptance retries preserve their original check/outbox outcomes while adding shared replay evidence. Wrong-key isolation, schema29 writer refusal,
 encrypted backup/restore and original schema29 rollback are verified in
 `evidence/incoming-replay-schema-compatibility-2026-09-24.json`.
 
-Before conversation activation, complete Mac peer-check and receipt integrations,
-the matching browser IndexedDB transaction, and legacy coverage. Older peer-check
-records retain incoming envelope hashes but lack incoming IDs and sequence headers;
-an empty new ledger cannot prove those identities were unused. Preserve that
+Before conversation activation, complete the matching browser IndexedDB transaction and legacy coverage. Older peer-check records retain incoming envelope hashes but lack incoming IDs and sequence headers; older Mac outboxes retain the acceptance payload without its incoming envelope.
+An empty new ledger cannot prove those identities were unused. Preserve that
 history and establish explicit reconciliation or a fresh-key epoch boundary before
 a broader cross-family replay guarantee. Offer inspection still neither consumes
 replay evidence nor acknowledges a relay message. Missing parents and denied task

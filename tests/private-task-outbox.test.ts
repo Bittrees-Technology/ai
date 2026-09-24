@@ -208,14 +208,16 @@ test("Durable outbox retries identical ciphertext after restart and reconciles a
     assert.deepEqual(retry, wire);
     assert.deepEqual(await f.receiver.accept(retry), first);
     assert.equal(f.target.list(owner).length, 1);
-    const accepted = await resumed.acceptReceipt(await f.ack(first));
+    const receiptEnvelope = await f.ack(first),
+      accepted = await resumed.acceptReceipt(receiptEnvelope);
     assert.equal(accepted.value.state, "accepted");
     assert.deepEqual(accepted.value.receipt, first);
     assert.equal(accepted.value.attempts, 2);
     assert.equal(
-      (await resumed.acceptReceipt(await f.ack(first))).revision,
+      (await resumed.acceptReceipt(receiptEnvelope)).revision,
       accepted.revision,
     );
+    await assert.rejects(resumed.acceptReceipt(await f.ack(first)), /CONFLICT/);
     assert.throws(() => resumed.delivery(entry.id), /DENIED/);
     assert.equal((await resumed.enqueue(request)).id, entry.id);
     assert.equal(reopened.exportPrivateTaskOutbox(owner).length, 1);
