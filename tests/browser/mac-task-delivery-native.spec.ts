@@ -38,7 +38,11 @@ test("Mac delivery buttons use the authenticated local API and real relay for ta
       (path: string, method?: string, body?: unknown) =>
         api.call(path, method, body),
     );
-    await macPage.goto("/?mac-task-delivery-native");
+    await macPage.goto("https://ai.bittrees.org/?mac-task-delivery-native");
+    await expect(macPage).toHaveURL(
+      "https://ai.bittrees.org/?mac-task-delivery-native",
+    );
+    await expect.poll(() => errors).toEqual([]);
     await expect(
       macPage.getByRole("button", { name: "Open private task delivery" }),
     ).toBeVisible();
