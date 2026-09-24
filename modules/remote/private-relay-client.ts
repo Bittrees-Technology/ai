@@ -11,6 +11,7 @@ import { z } from "zod";
 import { privateEnvelopeSchema } from "./private-envelope.js";
 import {
   privateRelayIdentitySchema,
+  privateRelayRecipientSchema,
   privateRelaySubmitSchema,
   privateRelayPageSchema,
   privateRelayAcknowledgeSchema,
@@ -387,6 +388,26 @@ export class PrivateRelayClient {
       const result = await fn(c, check, post);
       check();
       return result;
+    });
+  }
+  /** Readiness metadata only. Submission revalidates both grants in its transaction. */
+  async recipient(raw: unknown) {
+    const body = input(privateRelayRecipientSchema, raw);
+    return this.operation(async (c, _check, post) => {
+      if (body.endpointId === c.identity.endpointId) throw Error("DENIED");
+      const target = parsed(
+        privateRelayIdentitySchema,
+        await post("recipient", body),
+      );
+      if (
+        target.ownerId !== c.identity.ownerId ||
+        target.endpointId !== body.endpointId ||
+        target.endpointKind === c.identity.endpointKind ||
+        target.permissionId === c.identity.permissionId ||
+        target.expiresAt <= this.now()
+      )
+        throw invalid();
+      return target;
     });
   }
   async submit(raw: unknown) {

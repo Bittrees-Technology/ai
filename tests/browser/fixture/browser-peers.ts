@@ -1,3 +1,4 @@
+import { BrowserRelayPermissionsClient } from "../../../modules/remote/private-relay-client.js";
 import { BrowserTaskComposition } from "../../../modules/remote/browser-task-composition.js";
 import { BrowserTaskHistory } from "../../../modules/remote/browser-task-history.js";
 import { BrowserTaskConsent } from "../../../modules/remote/browser-task-consent.js";
@@ -529,6 +530,12 @@ const fixture = {
           },
           () => now,
         ),
+  relayEnable: (raw: unknown) =>
+    new BrowserRelayPermissionsClient(context).enableBrowser(raw),
+  relayApprove: (raw: unknown) =>
+    new BrowserRelayPermissionsClient(context).approveMac(raw),
+  relayPrepare: (raw: unknown) => host!.relayTaskAPI.prepare(raw),
+  relaySend: (raw: unknown) => host!.relayTaskAPI.send(raw),
   composePrepare: (raw: unknown) =>
     host
       ? host.taskAPI.prepare(raw)

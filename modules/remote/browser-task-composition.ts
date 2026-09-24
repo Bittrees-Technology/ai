@@ -86,9 +86,11 @@ export class BrowserTaskComposition {
       this.busy = false;
     }
   }
-  prepare(raw: unknown) {
+  prepare(raw: unknown, deliveryLimit = Number.MAX_SAFE_INTEGER) {
     return this.exclusive(async (g) => {
       this.pending = null;
+      if (!Number.isSafeInteger(deliveryLimit) || deliveryLimit <= this.now())
+        throw Error("DENIED");
       const input = z
           .strictObject({ ...route, payload: privateTaskPayloadSchema })
           .parse(raw),
@@ -112,12 +114,12 @@ export class BrowserTaskComposition {
         this.check(g, sender.context);
         const review: Review = {
           ...g,
-          expiresAt: Math.min(g.expiresAt, sender.taskDeadline),
+          expiresAt: Math.min(g.expiresAt, sender.taskDeadline, deliveryLimit),
           reviewId: crypto.randomUUID(),
           operationId: crypto.randomUUID(),
           context: sender.context,
           payload: structuredClone(input.payload),
-          deliveryExpiresAt: sender.taskDeadline,
+          deliveryExpiresAt: Math.min(sender.taskDeadline, deliveryLimit),
         };
         this.pending = review;
         return structuredClone({
