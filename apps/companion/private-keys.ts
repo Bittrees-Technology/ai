@@ -436,11 +436,22 @@ export class CompanionPrivateKeys {
   receiveConversationContent(raw: unknown) {
     return this.protocolOperation(() => this.conversationContent.receive(raw));
   }
+  prepareConversationRelay(raw: unknown, relay?: CompanionPrivateRelay) {
+    return this.protocolOperation(() =>
+      this.conversationContent.prepareRelay(raw, relay),
+    );
+  }
+  confirmConversationRelay(raw: unknown, relay?: CompanionPrivateRelay) {
+    return this.exclusive(() =>
+      this.conversationContent.confirmRelay(raw, relay),
+    );
+  }
   conversationOfferStatus() {
     return this.conversationOffers.status();
   }
   prepareConversationOffer(raw: unknown, relay?: CompanionPrivateRelay) {
     return this.exclusive(async () => {
+      this.conversationContent.invalidate();
       this.review = undefined;
       this.peers.invalidate();
       this.permissions.invalidate();

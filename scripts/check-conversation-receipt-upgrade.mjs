@@ -100,7 +100,7 @@ try {
   unchanged.close();
   const s = new Store(f.path, f.vault, f.clock);
   stores.push(s);
-  assert.equal(s.db.pragma("user_version", { simple: true }), 34);
+  assert.equal(s.db.pragma("user_version", { simple: true }), 35);
   assert.deepEqual(s.exportPrivateConversationContent(owner), rows);
   assert.deepEqual(s.exportPrivateIncomingReplay(owner), incomingReplay);
   assert.deepEqual(s.message(owner, f.message.id), message);
@@ -225,7 +225,7 @@ try {
   const resultProof = {
     verifiedAt: new Date().toISOString(),
     from: 33,
-    to: 34,
+    to: 35,
     legacyHead: "7e9a7543f0da91f77cc101cead2a2e766e818fa7",
     compiledHashes: expected,
     checks: [
@@ -234,7 +234,7 @@ try {
       "authenticated receipt updates original outgoing row once",
       "original ciphertext retry unchanged after receipt",
       "no extra Inbox effect",
-      "prior writer refuses schema34",
+      "prior writer refuses current schema35",
       "encrypted backup retains receipt with restore lock",
       "owner-isolated deletion",
       "untouched original schema33 backup usable with prior writer",

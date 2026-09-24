@@ -822,7 +822,7 @@ test("schema six migration preserves tasks and adds the AutoNote operation ledge
     store = new Store(path, vault);
     assert.deepEqual(store.get(owner, task.id), task);
     assert.deepEqual(store.autoNoteReviews(owner, task.id), []);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 34);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 35);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
