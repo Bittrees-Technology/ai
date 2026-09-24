@@ -187,6 +187,7 @@ export class PrivateConversationOffers {
             clientRequestId: z.uuid(),
             permissionId: z.uuid(),
             expectedConsentRevision: positive,
+            expiresAt: positive.optional(),
             confirmed: z.literal(true),
           }),
           raw,
@@ -213,6 +214,13 @@ export class PrivateConversationOffers {
           }
           if (this.consent.list().revision !== input.expectedConsentRevision)
             throw new ConversationOfferError("CONFLICT");
+          if (
+            input.expiresAt !== undefined &&
+            (input.expiresAt <= this.now() ||
+              input.expiresAt > this.now() + 300000 ||
+              input.expiresAt > p.grant.choices.expiresAt)
+          )
+            throw new ConversationOfferError("DENIED");
           const count = this.store.db
             .prepare(
               "SELECT COUNT(*) AS count FROM private_conversation_offers WHERE user_id=? AND tenant_id=?",
@@ -254,7 +262,8 @@ export class PrivateConversationOffers {
               operationId: id,
               sequence,
               issuedAt,
-              expiresAt: Math.min(issuedAt + 300000, offer.expiresAt),
+              expiresAt:
+                input.expiresAt ?? Math.min(issuedAt + 300000, offer.expiresAt),
             }),
             e: Entry = {
               id,

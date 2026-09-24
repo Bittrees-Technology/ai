@@ -1,3 +1,4 @@
+import { ConversationOfferError } from "../../modules/remote/private-conversation-offers.js";
 import { PrivateConversationConsentError } from "../../modules/remote/private-conversation-consent.js";
 import {
   CompanionRelayError,
@@ -302,6 +303,23 @@ export function localApi({
   app.post("/v1/private-peer-checks/stop", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.stopPeerCheck(req.body));
+  });
+  app.get("/v1/private-conversation-offers", (_req, res) => {
+    res.json(
+      privateKeys?.conversationOfferStatus() ?? {
+        available: false,
+        canSetup: false,
+        offers: [],
+      },
+    );
+  });
+  app.post("/v1/private-conversation-offers/review", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareConversationOffer(req.body));
+  });
+  app.post("/v1/private-conversation-offers/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmConversationOffer(req.body));
   });
   app.get("/v1/private-conversation-permissions", (_req, res) => {
     res.json(
@@ -1542,6 +1560,7 @@ export function localApi({
             err instanceof PrivateResponseError ||
             err instanceof PrivateConsentError ||
             err instanceof PrivateConversationConsentError ||
+            err instanceof ConversationOfferError ||
             err instanceof PrivateKeyError ||
             err instanceof PrivateKeyLifecycleError ||
             err instanceof RemoteClientError ||
@@ -1560,7 +1579,8 @@ export function localApi({
         : code === "MODEL_UNAVAILABLE" ||
             ((err instanceof CompanionRelayError ||
               err instanceof PrivateKeyError ||
-              err instanceof PrivateKeyLifecycleError) &&
+              err instanceof PrivateKeyLifecycleError ||
+              err instanceof ConversationOfferError) &&
               code === "STORAGE_UNAVAILABLE")
           ? 503
           : code === "NOT_FOUND"

@@ -6,8 +6,8 @@ briefings remain independent. This work does not install or activate any service
 The current implementation provides strict encrypted message framing and a Mac
 consent boundary. It does not yet deliver conversations. The Mac review controls and authenticated local API are implemented; their
 browser acceptance is pending. Independent browser consent now has an internal
-implementation with authenticated offer validation, pending browser tests. Offer
-creation/exchange controls, durable transport, shared incoming replay coordination
+implementation with authenticated offer validation, pending browser tests. Reviewed local offer export routes are implemented. Visible offer
+controls/exchange, durable transport, shared incoming replay coordination
 and end-to-end reconnect acceptance remain unfinished.
 
 ## Separate Mac consent
@@ -124,8 +124,36 @@ real authenticated decryption, exact retries/restart, competing encryption,
 revocation/scope/expiry, offline stop, native-resolution invalidation, restoration,
 owner deletion and corrupt storage. All755 engine tests pass. A browser consent
 case now consumes an offer from this actual Mac module; fresh GitHub acceptance
-is pending. User review/offer exchange controls and durable message delivery are
+is pending. Visible offer review/exchange controls and durable message delivery are
 still unfinished.
+
+## Reviewed local offer export
+
+The authenticated local API now exposes `GET /v1/private-conversation-offers`
+(history metadata), `POST /v1/private-conversation-offers/review` and
+`POST /v1/private-conversation-offers/confirm`. Review supports creating a new
+offer for an exact saved permission, revealing one retained original, or stopping
+future reveal. It returns the local thread/Inbox, browser fingerprint, directions,
+permission deadline and exact offer-opening deadline. Review creates no journal
+entry and never returns ciphertext. History is owner-local and excludes ciphertext.
+
+Confirmation consumes a two-minute review with wall/monotonic bounds and fresh
+binding/key/peer/permission checks. The opening deadline shown at review is fixed;
+a delayed confirmation cannot extend it. Create/reveal returns the original
+recipient-encrypted offer after a separate acknowledgement. There is no network
+upload or implicit browser approval. The shared key/peer operation lock prevents
+local deletion during native resolution; logout and competing reviews invalidate
+pending confirmation. A lost response requires refreshing history and reviewing
+the retained offer, without an automatic retry. Stop works offline and does not
+revoke copies already exported; current Mac consent still governs future content.
+
+Five controller/API tests cover real recipient decryption, exact retry after
+restart, scope and permission changes, expiry on both clocks, consumed reviews,
+late identity responses, competing reviews, offline stop, authentication/origin,
+delete/logout races, export/deletion and owner isolation. An additional journal
+test verifies fixed opening deadlines and rejects expired/expanded windows.
+All761 engine tests pass. Visible controls and browser offer import/relay exchange
+are still required before this becomes a complete user flow.
 
 ## Content boundary
 

@@ -256,3 +256,31 @@ test("foreign and corrupted offer rows never return content or silently reset re
     f.close();
   }
 });
+
+test("reviewed offer deadlines remain exact and reject expired or expanded opening windows", async () => {
+  const f = await fixture();
+  try {
+    for (const expiresAt of [f.clock(), f.clock() + 300001, f.clock() - 1])
+      await assert.rejects(
+        f.offers.prepare({ ...f.input, expiresAt }),
+        /DENIED/,
+      );
+    assert.deepEqual(
+      f.store.db
+        .prepare("SELECT count(*) AS count FROM private_conversation_offers")
+        .get(),
+      { count: 0 },
+    );
+    const expiresAt = f.clock() + 60000;
+    const e = await f.offers.prepare({ ...f.input, expiresAt });
+    assert.equal(e.value.header.expiresAt, expiresAt);
+    await assert.rejects(
+      f.offers.prepare({ ...f.input, expiresAt: expiresAt + 1 }),
+      /CONFLICT/,
+    );
+    f.time(expiresAt);
+    await assert.rejects(f.offers.resume(command(e)), /DENIED/);
+  } finally {
+    f.close();
+  }
+});
