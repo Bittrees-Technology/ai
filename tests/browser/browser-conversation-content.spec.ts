@@ -279,13 +279,12 @@ test("wire IDs and replay identities cannot be reused within or across protocol 
     for (const header of [
       { messageId: a.envelope.header.messageId },
       { sequence: a.envelope.header.sequence },
-      { operationId: f.offer.envelope.header.operationId },
+      { messageId: f.offer.envelope.header.messageId },
+      { sequence: f.offer.envelope.header.sequence },
     ]) {
-      const b = await incoming(
-        f,
-        header.operationId ? { id: header.operationId } : {},
-        header,
-      );
+      // Operation IDs are role-scoped (e.g. acceptance and result share one).
+      // Message IDs and directed sequences are shared across all families.
+      const b = await incoming(f, {}, header);
       await expect(accept(page, f, b.envelope)).rejects.toThrow("CONFLICT");
       expect(await inspect(page)).toEqual(before);
     }
