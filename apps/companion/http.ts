@@ -1,3 +1,4 @@
+import { ConversationContentError } from "../../modules/remote/private-conversation-content.js";
 import { conversationTaskAccess } from "./conversation-access.js";
 import { ConversationOfferError } from "../../modules/remote/private-conversation-offers.js";
 import { PrivateConversationConsentError } from "../../modules/remote/private-conversation-consent.js";
@@ -304,6 +305,28 @@ export function localApi({
   app.post("/v1/private-peer-checks/stop", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.stopPeerCheck(req.body));
+  });
+  app.get("/v1/private-conversation-content", (_req, res) => {
+    res.json(
+      privateKeys?.conversationContentStatus() ?? {
+        available: false,
+        enabled: false,
+        transportActive: false,
+        items: [],
+      },
+    );
+  });
+  app.post("/v1/private-conversation-content/prepare", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareConversationContent(req.body));
+  });
+  app.post("/v1/private-conversation-content/envelope", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.conversationContentEnvelope(req.body));
+  });
+  app.post("/v1/private-conversation-content/receive", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.receiveConversationContent(req.body));
   });
   app.get("/v1/private-conversation-offers", (_req, res) => {
     res.json(
@@ -1595,6 +1618,7 @@ export function localApi({
             err instanceof PrivateConsentError ||
             err instanceof PrivateConversationConsentError ||
             err instanceof ConversationOfferError ||
+            err instanceof ConversationContentError ||
             err instanceof PrivateKeyError ||
             err instanceof PrivateKeyLifecycleError ||
             err instanceof RemoteClientError ||
@@ -1614,12 +1638,15 @@ export function localApi({
             ((err instanceof CompanionRelayError ||
               err instanceof PrivateKeyError ||
               err instanceof PrivateKeyLifecycleError ||
-              err instanceof ConversationOfferError) &&
+              err instanceof ConversationOfferError ||
+              err instanceof ConversationContentError) &&
               code === "STORAGE_UNAVAILABLE")
           ? 503
           : code === "NOT_FOUND"
             ? 404
-            : code === "CONFLICT" || code === "STALE_CLAIM"
+            : code === "CONFLICT" ||
+                code === "STALE_CLAIM" ||
+                code === "PARENT_PENDING"
               ? 409
               : code === "INTERNAL"
                 ? 500

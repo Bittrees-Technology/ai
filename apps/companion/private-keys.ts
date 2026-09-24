@@ -1,3 +1,5 @@
+import { CompanionConversationContent } from "./private-conversation-content.js";
+import type { ConversationTaskAccess } from "../../modules/remote/private-conversation-content.js";
 import { CompanionConversationOffers } from "./private-conversation-offers.js";
 import { CompanionConversationPermissions } from "./private-conversation-permissions.js";
 import {
@@ -57,6 +59,7 @@ export class CompanionPrivateKeys {
   private permissions: CompanionPrivateTaskPermissions;
   private conversations: CompanionConversationPermissions;
   private conversationOffers: CompanionConversationOffers;
+  private conversationContent: CompanionConversationContent;
   private tasks: CompanionPrivateTasks;
   private review?: Review;
   private running = false;
@@ -69,6 +72,10 @@ export class CompanionPrivateKeys {
     private setupEnabled = false,
     private now = Date.now,
     private privateTasksEnabled = false,
+    conversationOptions: {
+      enabled?: boolean;
+      taskAccess?: ConversationTaskAccess;
+    } = {},
   ) {
     this.owner = { ...owner };
     this.peerChecks = new CompanionPeerChecks(
@@ -116,6 +123,16 @@ export class CompanionPrivateKeys {
       setupEnabled,
       now,
     );
+    this.conversationContent = new CompanionConversationContent(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled && conversationOptions.enabled === true,
+      conversationOptions.taskAccess,
+      now,
+    );
     this.peers = new CompanionPrivatePeers(
       store,
       vault,
@@ -153,6 +170,7 @@ export class CompanionPrivateKeys {
     this.permissions.invalidate();
     this.conversations.invalidate();
     this.conversationOffers.invalidate();
+    this.conversationContent.invalidate();
     this.remote?.invalidatePrivateIdentity();
   }
   peerStatus() {
@@ -164,6 +182,7 @@ export class CompanionPrivateKeys {
       this.permissions.invalidate();
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
       return this.peers.invitation(raw);
     });
   }
@@ -173,6 +192,7 @@ export class CompanionPrivateKeys {
       this.permissions.invalidate();
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
       return this.peers.prepare(raw);
     });
   }
@@ -376,6 +396,7 @@ export class CompanionPrivateKeys {
       this.peers.invalidate();
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
       return this.permissions.prepare(raw);
     });
   }
@@ -391,11 +412,24 @@ export class CompanionPrivateKeys {
       this.peers.invalidate();
       this.permissions.invalidate();
       this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
       return this.conversations.prepare(raw);
     });
   }
   confirmConversationPermission(raw: unknown) {
     return this.exclusive(async () => this.conversations.confirm(raw));
+  }
+  conversationContentStatus() {
+    return this.conversationContent.status();
+  }
+  prepareConversationContent(raw: unknown) {
+    return this.protocolOperation(() => this.conversationContent.prepare(raw));
+  }
+  conversationContentEnvelope(raw: unknown) {
+    return this.protocolOperation(() => this.conversationContent.envelope(raw));
+  }
+  receiveConversationContent(raw: unknown) {
+    return this.protocolOperation(() => this.conversationContent.receive(raw));
   }
   conversationOfferStatus() {
     return this.conversationOffers.status();
@@ -457,6 +491,7 @@ export class CompanionPrivateKeys {
       this.permissions.invalidate();
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
       const parsed = request.safeParse(raw);
       if (!parsed.success) throw new PrivateKeyLifecycleError("DENIED");
       const input = parsed.data;

@@ -1,3 +1,5 @@
+import { conversationTaskAccess } from "../../apps/companion/conversation-access.js";
+import { SourceTasks } from "../../modules/connectors/source-tasks.js";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -42,7 +44,10 @@ class Slot {
     return true;
   }
 }
-export async function privateEndpoints(verifyKeys = true) {
+export async function privateEndpoints(
+  verifyKeys = true,
+  conversations = false,
+) {
   const dir = mkdtempSync(join(tmpdir(), "mac-private-dispatch-")),
     accountId = randomUUID();
   let now = Date.now();
@@ -123,7 +128,12 @@ export async function privateEndpoints(verifyKeys = true) {
         });
       return slots.get(id)!;
     };
-    const build = (enabled = true, online = true, otherOwner = owner) =>
+    const build = (
+      enabled = true,
+      online = true,
+      otherOwner = owner,
+      conversationEnabled = conversations,
+    ) =>
       new CompanionPrivateKeys(
         store,
         vault,
@@ -133,6 +143,16 @@ export async function privateEndpoints(verifyKeys = true) {
         true,
         clock,
         enabled,
+        {
+          enabled: conversationEnabled,
+          taskAccess: conversationTaskAccess(
+            store,
+            otherOwner,
+            new SourceTasks(),
+            undefined,
+            clock,
+          ),
+        },
       );
     let controls = build();
     const review = await controls.prepare({

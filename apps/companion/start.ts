@@ -1,3 +1,4 @@
+import { conversationTaskAccess } from "./conversation-access.js";
 import { CompanionPrivateRelay } from "./private-relay.js";
 import { macPrivateRelayEntries } from "./private-relay-entry.js";
 import {
@@ -207,6 +208,15 @@ const privateKeys =
         process.env.BITTREES_PRIVATE_KEYS === "1",
         Date.now,
         process.env.BITTREES_PRIVATE_TASKS === "1",
+        {
+          enabled: process.env.BITTREES_PRIVATE_CONVERSATIONS === "1",
+          taskAccess: conversationTaskAccess(
+            store,
+            owner,
+            new SourceTasks(sources, autonoteSources, mailSources),
+            memory,
+          ),
+        },
       )
     : undefined;
 const privateRelay =
