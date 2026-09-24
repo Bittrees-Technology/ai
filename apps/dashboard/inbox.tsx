@@ -175,6 +175,7 @@ export function Inbox({
                 api={api}
                 inboxId={inbox}
                 conversationId={conversation}
+                messages={messages}
               />
             )}
             {messages.map((m) => (
