@@ -30,9 +30,10 @@ let keys: BrowserKeyLifecycle,
   host: BrowserKeyHost | null = null;
 let checks: BrowserPeerChecks | undefined;
 let consents: BrowserTaskConsent | undefined;
+let contentProvider = BrowserConversationContent;
 let contentStore: BrowserConversationContent | undefined;
 async function conversationContentStore() {
-  return (contentStore ??= await BrowserConversationContent.open(
+  return (contentStore ??= await contentProvider.open(
     owner,
     () => binding,
     await conversationStore(),
@@ -167,7 +168,8 @@ const fixture = {
       | "replay"
       | "offer-replay"
       | "offer-ack"
-      | "content" = false,
+      | "content"
+      | "receipts" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
@@ -195,29 +197,36 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "content"
-        ? "/legacy-content/index.js"
-        : previous === "offer-ack"
-          ? "/legacy-offer-ack/index.js"
-          : previous === "offer-replay"
-            ? "/legacy-offer-replay/index.js"
-            : previous === "replay"
-              ? "/legacy-replay/index.js"
-              : previous === "conversation"
-                ? "/legacy-conversation/index.js"
-                : previous === "delivery"
-                  ? "/legacy-delivery/index.js"
-                  : previous === "task"
-                    ? "/legacy-composition/index.js"
-                    : "/legacy-consent/index.js";
+      previous === "receipts"
+        ? "/legacy-receipts/index.js"
+        : previous === "content"
+          ? "/legacy-content/index.js"
+          : previous === "offer-ack"
+            ? "/legacy-offer-ack/index.js"
+            : previous === "offer-replay"
+              ? "/legacy-offer-replay/index.js"
+              : previous === "replay"
+                ? "/legacy-replay/index.js"
+                : previous === "conversation"
+                  ? "/legacy-conversation/index.js"
+                  : previous === "delivery"
+                    ? "/legacy-delivery/index.js"
+                    : previous === "task"
+                      ? "/legacy-composition/index.js"
+                      : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
+    contentProvider =
+      previous === "receipts"
+        ? providers.BrowserConversationContent
+        : BrowserConversationContent;
     conversationProvider =
       previous === "offer-replay" ||
       previous === "offer-ack" ||
-      previous === "content"
+      previous === "content" ||
+      previous === "receipts"
         ? providers.BrowserConversationConsent
         : BrowserConversationConsent;
     consentProvider =
@@ -227,7 +236,8 @@ const fixture = {
       previous === "replay" ||
       previous === "offer-replay" ||
       previous === "offer-ack" ||
-      previous === "content"
+      previous === "content" ||
+      previous === "receipts"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
@@ -236,7 +246,8 @@ const fixture = {
       previous === "replay" ||
       previous === "offer-replay" ||
       previous === "offer-ack" ||
-      previous === "content"
+      previous === "content" ||
+      previous === "receipts"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
@@ -245,7 +256,8 @@ const fixture = {
       previous === "replay" ||
       previous === "offer-replay" ||
       previous === "offer-ack" ||
-      previous === "content"
+      previous === "content" ||
+      previous === "receipts"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -592,6 +604,10 @@ const fixture = {
     host
       ? host.conversationContentAPI.accept(raw)
       : withKey(async () => (await conversationContentStore()).accept(raw)),
+  contentReconcile: (raw: unknown) =>
+    host
+      ? host.conversationContentAPI.reconcile(raw)
+      : withKey(async () => (await conversationContentStore()).reconcile(raw)),
   contentRead: (raw: unknown) =>
     host
       ? host.conversationContentAPI.read(raw)
@@ -688,6 +704,16 @@ const fixture = {
       }
       return original(...args);
     }) as SubtleCrypto["encrypt"];
+  },
+  contentFailReceiptWrite() {
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (this.name === "conversation_content") {
+        IDBObjectStore.prototype.put = original;
+        throw new DOMException("synthetic", "QuotaExceededError");
+      }
+      return original.apply(this, args);
+    };
   },
   contentFailWrite() {
     const original = IDBObjectStore.prototype.add;

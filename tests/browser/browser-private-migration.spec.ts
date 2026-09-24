@@ -266,7 +266,7 @@ test("Task writes and shared reservations serialize, roll back failed publicatio
       (c) => window.privateMigrationTest.sharedReserve(c),
       old.config,
     ),
-  ).toBe(13);
+  ).toBe(14);
   const deleted = await page.evaluate(() =>
     window.privateMigrationTest.clear(),
   );

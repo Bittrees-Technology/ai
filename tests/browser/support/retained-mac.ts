@@ -351,6 +351,19 @@ export async function retainedMac(
           messageIds.set(entry.value.content.id, localId);
           return sealed;
         },
+        async receipt(incoming: unknown) {
+          const { entry } = await engine.accept({
+            permissionId: saved.grant.id,
+            envelope: incoming,
+            confirmed: true,
+          });
+          return engine.seal({
+            permissionId: saved.grant.id,
+            id: entry.value.content.id,
+            expectedRevision: entry.revision,
+            confirmed: true,
+          });
+        },
         async receive(incoming: unknown) {
           const accepted = await engine.accept({
             permissionId: saved.grant.id,

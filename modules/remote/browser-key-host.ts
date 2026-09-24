@@ -806,6 +806,10 @@ export class BrowserKeyHost {
       this.verifiedPeer(async () =>
         (await this.conversationContentStore()).accept(raw),
       ),
+    reconcile: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationContentStore()).reconcile(raw),
+      ),
     read: (raw: unknown) =>
       this.verifiedPeer(async () =>
         (await this.conversationContentStore()).read(raw),

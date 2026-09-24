@@ -7,10 +7,14 @@ import {
   privateEnvelopeSuite,
 } from "../../modules/remote/private-envelope.js";
 
-async function setup(page: Page, previous: false | "content" = false) {
+async function setup(
+  page: Page,
+  previous: false | "content" | "receipts" = false,
+  questions = false,
+) {
   const f = await ready(page, previous);
   try {
-    const offer = await f.mac.conversationOffer();
+    const offer = await f.mac.conversationOffer(undefined, { questions });
     const grant = await page.evaluate(
       async ({ offer, pin, now }) => {
         const api = window.browserPeersTest;
@@ -489,7 +493,7 @@ test("actual version12 upgrade preserves keys, grants, shared replay and channel
     expect(before.version).toBe(12);
     await reopen(page, f.f);
     const after = await inspect(page);
-    expect(after.version).toBe(13);
+    expect(after.version).toBe(14);
     expect(after.count).toBe(0);
     const oldRows = JSON.parse(before.all),
       newRows = JSON.parse(after.all);
@@ -605,6 +609,340 @@ test("narrowing independent conversation directions rejects new admission and ol
       accept(page, { ...f, grant }, message.envelope),
     ).rejects.toThrow("DENIED");
     expect(await inspect(page)).toEqual(before);
+  } finally {
+    f.mac.close();
+  }
+});
+
+const reconcile = (
+  page: Page,
+  entry: any,
+  envelope: unknown,
+  patch: Record<string, unknown> = {},
+) =>
+  page.evaluate((raw) => window.browserPeersTest.contentReconcile(raw), {
+    grantId: entry.grantId,
+    id: entry.id,
+    expectedRevision: entry.revision,
+    envelope,
+    confirmed: true,
+    ...patch,
+  });
+async function independentReceipt(
+  f: Fixture,
+  original: any,
+  bodyPatch: Record<string, unknown> = {},
+  headerPatch: Record<string, unknown> = {},
+) {
+  const content = await openMac(f, original);
+  const key = await f.mac.keys.resolve(),
+    peer = await f.mac.peers.resolve(f.f.binding.deviceId, f.local.keyEpoch);
+  const sequence = (sequences.get(f) ?? 1000) + 1;
+  sequences.set(f, sequence);
+  return sealPrivateEnvelope(
+    {
+      ...original.header,
+      senderId: original.header.recipientId,
+      recipientId: original.header.senderId,
+      senderKeyEpoch: original.header.recipientKeyEpoch,
+      recipientKeyEpoch: original.header.senderKeyEpoch,
+      messageId: randomUUID(),
+      sequence,
+      ...headerPatch,
+    },
+    new TextEncoder().encode(
+      JSON.stringify({
+        version: 1,
+        type: "conversation.received",
+        scope: content.scope,
+        acceptedId: content.id,
+        acceptedType: content.type,
+        operationId: content.id,
+        acceptedAt: f.f.now,
+        ...bodyPatch,
+      }),
+    ),
+    { senderKey: key.pair, recipientPublicKey: peer.publicKey },
+    () => f.f.now,
+  );
+}
+
+test("actual Mac storage receipt survives reload and duplicate inspection without replacing outgoing ciphertext", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared);
+    const entry = await read(page, prepared),
+      receipt = await f.offer.receipt(envelope);
+    const before = await inspect(page),
+      admitted = await reconcile(page, entry, receipt);
+    expect(admitted).toMatchObject({
+      status: "recipient-storage-confirmed",
+      duplicate: false,
+      entry: {
+        id: entry.id,
+        revision: 3,
+        recipientAccepted: true,
+        state: "ready",
+        recipientAcceptedAt: f.f.now,
+      },
+    });
+    expect(JSON.stringify(admitted)).not.toContain("SYNTHETIC");
+    const after = await inspect(page);
+    expect(after.count).toBe(before.count);
+    expect(after.channels).toBe(before.channels);
+    expect(after.ledger).not.toBe(before.ledger);
+    expect(after.json).not.toContain("SYNTHETIC");
+    await reopen(page, f.f);
+    expect((await reconcile(page, admitted.entry, receipt)).duplicate).toBe(
+      true,
+    );
+    expect(await inspect(page)).toEqual(after);
+    expect(await wire(page, admitted.entry)).toEqual(envelope);
+    await expect(reconcile(page, entry, receipt)).rejects.toThrow("CONFLICT");
+    expect(await inspect(page)).toEqual(after);
+    const archive = await page.evaluate(() =>
+      window.browserPeersTest.contentExport({ confirmed: true }),
+    );
+    expect(archive.items[0]).toMatchObject({
+      recipientAccepted: true,
+      envelope,
+      receiptEnvelope: receipt,
+    });
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("storage receipts for exact answers do not run or complete the Mac worker", async ({
+  page,
+}) => {
+  const f = await setup(page, false, true);
+  try {
+    const worker = await f.offer.question();
+    const question = await accept(page, f, worker.envelope);
+    const answer = await prepare(page, f, {
+      kind: "answer",
+      parentId: question.entry.id,
+      content: "Lisbon",
+    });
+    const envelope = await wire(page, answer),
+      receipt = await f.offer.receipt(envelope);
+    expect(worker.task().status).toBe("queued");
+    const calls = worker.calls();
+    const admitted = await reconcile(page, await read(page, answer), receipt);
+    expect(admitted.entry).toMatchObject({
+      kind: "conversation.answer",
+      recipientAccepted: true,
+    });
+    expect(worker.task().status).toBe("queued");
+    expect(worker.calls()).toBe(calls);
+    await reconcile(page, admitted.entry, receipt);
+    expect(worker.calls()).toBe(calls);
+    await worker.run();
+    expect(worker.task().status).toBe("completed");
+    expect(worker.calls()).toBeGreaterThan(calls);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("receipt identity, type, consent, directed keys and delivery bounds cannot be substituted", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      entry = await read(page, prepared);
+    const before = await inspect(page);
+    const cases: [Record<string, unknown>, Record<string, unknown>][] = [
+      [{ acceptedId: randomUUID() }, {}],
+      [{ operationId: randomUUID() }, {}],
+      [{ acceptedType: "conversation.answer" }, {}],
+      [{ scope: { ...f.offer.data.scope, conversationRef: randomUUID() } }, {}],
+      [{ acceptedAt: f.f.now - 30001 }, {}],
+      [{ acceptedAt: f.f.now + 30001 }, {}],
+      [{}, { operationId: randomUUID() }],
+      [{}, { recipientId: randomUUID() }],
+      [{}, { senderKeyEpoch: envelope.header.recipientKeyEpoch + 1 }],
+      [{}, { expiresAt: envelope.header.expiresAt + 1 }],
+      [{}, { issuedAt: f.f.now - 30001 }],
+      [{}, { sequence: f.offer.envelope.header.sequence }],
+      [{}, { messageId: f.offer.envelope.header.messageId }],
+    ];
+    for (const [body, header] of cases) {
+      await expect(
+        reconcile(
+          page,
+          entry,
+          await independentReceipt(f, envelope, body, header),
+        ),
+      ).rejects.toThrow();
+      expect(await inspect(page)).toEqual(before);
+    }
+    const receipt = await independentReceipt(f, envelope);
+    for (const patch of [
+      { confirmed: false },
+      { grantId: randomUUID() },
+      { ownerId: randomUUID() },
+      { id: randomUUID() },
+    ]) {
+      await expect(reconcile(page, entry, receipt, patch)).rejects.toThrow();
+      expect(await inspect(page)).toEqual(before);
+    }
+    const admitted = await reconcile(page, entry, receipt);
+    const saved = await inspect(page);
+    await expect(
+      reconcile(page, admitted.entry, await independentReceipt(f, envelope)),
+    ).rejects.toThrow("CONFLICT");
+    expect(await inspect(page)).toEqual(saved);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("receipt write failure rolls back the already-inserted shared replay outcome", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      entry = await read(page, prepared);
+    const receipt = await f.offer.receipt(envelope),
+      before = await inspect(page);
+    await page.evaluate(() =>
+      window.browserPeersTest.contentFailReceiptWrite(),
+    );
+    await expect(reconcile(page, entry, receipt)).rejects.toThrow("CAPACITY");
+    expect(await inspect(page)).toEqual(before);
+    expect((await reconcile(page, entry, receipt)).duplicate).toBe(false);
+  } finally {
+    f.mac.close();
+  }
+});
+
+for (const loss of ["identity", "permission", "coverage", "deadline"] as const)
+  test(`receipt reconciliation loses ${loss} during encryption without retained or replay effects`, async ({
+    page,
+  }) => {
+    const f = await setup(page);
+    try {
+      const prepared = await prepare(page, f),
+        envelope = await wire(page, prepared),
+        entry = await read(page, prepared);
+      const receipt = await f.offer.receipt(envelope),
+        before = await inspect(page);
+      await page.evaluate(() =>
+        window.browserPeersTest.contentHoldEncryption(),
+      );
+      const pending = reconcile(page, entry, receipt).then(
+        () => "unexpected",
+        () => "denied",
+      );
+      await page.waitForFunction(() => window.browserPeersTest.held());
+      if (loss === "identity")
+        await page.evaluate(() => window.browserPeersTest.set(null));
+      if (loss === "permission")
+        await page.evaluate(async (grantId) => {
+          const api = window.browserPeersTest,
+            state = await api.conversationStatus();
+          await api.conversationRevoke({
+            grantId,
+            expectedRevision: state.revision,
+            confirmed: true,
+          });
+        }, f.grant.id);
+      if (loss === "coverage")
+        await page.evaluate(() =>
+          window.browserPeersTest.contentInspect("strip-coverage"),
+        );
+      if (loss === "deadline")
+        await page.evaluate(
+          (time) => window.browserPeersTest.time(time, 120000),
+          f.f.now + 120000,
+        );
+      await page.evaluate(() => window.browserPeersTest.release());
+      expect(await pending).toBe("denied");
+      const after = await inspect(page);
+      expect(after.json).toBe(before.json);
+      expect(after.ledger).toBe(before.ledger);
+      expect(after.channels).toBe(before.channels);
+    } finally {
+      f.mac.close();
+    }
+  });
+
+test("receipts cannot acknowledge unsealed, incoming or deleted originals", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f),
+      other = await prepare(page, f);
+    const envelope = await wire(page, prepared),
+      entry = await read(page, prepared),
+      receipt = await f.offer.receipt(envelope);
+    const incomingMessage = await f.offer.message("SYNTHETIC_DIRECTION"),
+      incomingEntry = await accept(page, f, incomingMessage);
+    const before = await inspect(page);
+    await expect(reconcile(page, other, receipt)).rejects.toThrow();
+    await expect(
+      reconcile(page, incomingEntry.entry, receipt),
+    ).rejects.toThrow();
+    expect(await inspect(page)).toEqual(before);
+    await reconcile(page, entry, receipt);
+    await page.evaluate(() => window.browserPeersTest.contentInspect("remove"));
+    const removed = await inspect(page);
+    await expect(
+      reconcile(page, { ...entry, revision: 3 }, receipt),
+    ).rejects.toThrow();
+    expect(await inspect(page)).toEqual(removed);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("actual version13 upgrade preserves encrypted originals and receipts fence the old writer", async ({
+  page,
+}) => {
+  const f = await setup(page, "receipts");
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      before = await inspect(page);
+    expect(before.version).toBe(13);
+    const receipt = await f.offer.receipt(envelope);
+    await reopen(page, f.f);
+    const upgraded = await inspect(page);
+    expect(upgraded.version).toBe(14);
+    expect(upgraded.all).toBe(before.all);
+    expect(await wire(page, { ...prepared, revision: 2 })).toEqual(envelope);
+    const result = await reconcile(page, await read(page, prepared), receipt);
+    await expect(reopen(page, f.f, "receipts")).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
+    await reopen(page, f.f);
+    expect((await reconcile(page, result.entry, receipt)).duplicate).toBe(true);
+    expect(await wire(page, result.entry)).toEqual(envelope);
+    const consent = await page.evaluate(() =>
+      window.browserPeersTest.conversationStatus(),
+    );
+    const ledger = (await inspect(page)).ledger;
+    await page.evaluate(
+      (expectedConsentRevision) =>
+        window.browserPeersTest.contentClear({
+          expectedConsentRevision,
+          confirmed: true,
+        }),
+      consent.revision,
+    );
+    const cleared = await inspect(page);
+    expect(cleared.count).toBe(0);
+    expect(cleared.ledger).toBe(ledger);
   } finally {
     f.mac.close();
   }
