@@ -16,7 +16,7 @@ export const conversationPermissionsSchema = z
       (p.messagesToMac || p.messagesToBrowser || p.questionsToBrowser) &&
       (!p.answersToMac || p.questionsToBrowser),
   );
-/** Opaque thread reference and current receiver-issued permission identity.
+/** Opaque thread reference and current Mac-issued permission identity.
  * Neither value is an authority token or a local Inbox/conversation selector. */
 export const conversationScopeSchema = z.strictObject({
   conversationRef: uuid,

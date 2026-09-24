@@ -5,9 +5,10 @@ briefings remain independent. This work does not install or activate any service
 
 The current implementation provides strict encrypted message framing and a Mac
 consent boundary. It does not yet deliver conversations. The Mac review controls and authenticated local API are implemented; their
-browser acceptance is pending. Browser consent, offer exchange, durable transport,
-shared incoming replay coordination and end-to-end reconnect acceptance remain
-unfinished.
+browser acceptance is pending. Independent browser consent now has an internal
+implementation with authenticated offer validation, pending browser tests. Offer
+creation/exchange controls, durable transport, shared incoming replay coordination
+and end-to-end reconnect acceptance remain unfinished.
 
 ## Separate Mac consent
 
@@ -63,6 +64,38 @@ pending UI review. Late responses cannot reinstate a discarded review. Expiry is
 bounded by wall and monotonic clocks; a lost confirmation requires refreshing the
 saved choices, without an automatic retry. Revoking future access does not erase
 messages or copies already shared.
+
+## Independent browser consent
+
+`BrowserConversationConsent` decrypts and authenticates an offer from the selected
+Mac before preparing a review. The browser chooses a subset of the offered
+message/question/answer directions, with expiry bounded by the offer and current
+verified identity. The Mac-issued permission identity and opaque thread reference
+are fixed by the offer. Separate local browser grant IDs cannot expand Mac access.
+Task consent does not grant conversation access.
+
+Choices are encrypted under a nonextractable browser key in the common private
+database's separate `conversation_consents` store (version8). The upgrade adds
+no grants and fences older writers. Each owner can retain at most64 grants;
+renewing one peer/thread tuple replaces that grant and leaves other threads
+unchanged. Explicit offline revocation preserves the record. Clearing choices
+retains a revision tombstone and requires a fresh device identity before reset.
+Status/export does not import authority.
+
+Reviews are one use, bounded to two minutes by wall and monotonic clocks.
+Confirmation rechecks current identity, both stored key/peer proofs and completed
+possession checks in the same IndexedDB transaction as consent. Operation-scoped
+access supplies a guard that a future content/replay transaction must run against
+the current consent row. Resolving keys alone is not delivery authorization.
+This module is not yet wired to browser review UI or message transport.
+
+Eight new browser cases (24 across three engines) cover authenticated/narrowed
+offers, independent possession, immutable review, ciphertext retention/reload,
+renewal, invalidation, clock bounds, offline revocation/clear, corruption and
+current identity/peer revocation. A pinned build of the actual preceding version7
+providers verifies preserved task consent/ciphertext, empty conversation consent
+and old-writer refusal. These checks are authored and build successfully; their
+GitHub browser execution remains pending.
 
 ## Content boundary
 

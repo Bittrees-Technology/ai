@@ -204,7 +204,7 @@ async function exported(p: Page) {
 async function stored(p: Page) {
   return p.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });

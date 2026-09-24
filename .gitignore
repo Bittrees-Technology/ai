@@ -34,3 +34,7 @@ tests/browser/fixture/public/legacy-composition/
 
 .legacy-browser-delivery/
 tests/browser/fixture/public/legacy-delivery/
+
+.legacy-browser-conversation/
+
+tests/browser/fixture/public/legacy-conversation/
