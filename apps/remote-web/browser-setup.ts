@@ -149,7 +149,6 @@ export function mountBrowserSetup(
     peerView.invalidate();
     checkView.invalidate();
     permissionView.invalidate();
-    taskView.invalidate();
   });
   const stamp = () => {
     const c = host.session();
@@ -224,6 +223,7 @@ export function mountBrowserSetup(
     peerView.invalidate();
     checkView.invalidate();
     permissionView.invalidate();
+    taskView.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
