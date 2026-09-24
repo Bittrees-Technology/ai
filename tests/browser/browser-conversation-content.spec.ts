@@ -1269,8 +1269,8 @@ for (const kind of ["message", "question"] as const)
       );
       expect(replacement.keyEpoch).toBe(f.local.keyEpoch + 1);
       expect(replacement.publicKey).not.toBe(f.local.publicKey);
-      await expect(accept(page, f, oldWire)).rejects.toThrow("DENIED");
-      await expect(prepare(page, f)).rejects.toThrow("DENIED");
+      await expect(accept(page, f, oldWire)).rejects.toThrow("CONFLICT");
+      await expect(prepare(page, f)).rejects.toThrow("CONFLICT");
       expect((await inspect(page)).count).toBe(0);
       expect(
         await page.evaluate(
@@ -1278,6 +1278,23 @@ for (const kind of ["message", "question"] as const)
           f.local.keyId,
         ),
       ).toEqual(old.kit);
+      const retiredInvitation = await f.mac.invitation();
+      await page.evaluate(async () => {
+        const api = window.browserPeersTest;
+        return api.reset({
+          expectedRevision: (await api.status()).revision,
+          confirmed: true,
+        });
+      });
+      await expect(
+        page.evaluate(
+          (invitation) => window.browserPeersTest.prepare(invitation),
+          retiredInvitation.invitation,
+        ),
+      ).rejects.toThrow("DENIED");
+      await f.mac.activate();
+      const newMacKey = (await f.mac.keys.resolve()).proof;
+      expect(newMacKey.keyEpoch).toBe(f.pin.keyEpoch + 1);
       // Re-pin both directions against the new local proof, then run the real
       // challenge/response protocol. Neither step renews conversation consent.
       const outgoing = await page.evaluate(
@@ -1300,7 +1317,7 @@ for (const kind of ["message", "question"] as const)
         (invitation) => window.browserPeersTest.prepare(invitation),
         macInvitation.invitation,
       );
-      await page.evaluate(
+      const pin = await page.evaluate(
         (review) =>
           window.browserPeersTest.approve({
             reviewId: review.reviewId,
@@ -1383,12 +1400,12 @@ for (const kind of ["message", "question"] as const)
         {
           envelope: offer.envelope,
           permissions: offer.data.permissions,
-          peerId: f.pin.peerId,
-          peerKeyEpoch: f.pin.keyEpoch,
+          peerId: pin.peerId,
+          peerKeyEpoch: pin.keyEpoch,
           now: f.f.now,
         },
       );
-      const next = { ...f, offer, grant, local: replacement };
+      const next = { ...f, offer, grant, pin, local: replacement };
       const worker = kind === "question" ? await offer.question() : null;
       const envelope =
         worker?.envelope ?? (await offer.message("SYNTHETIC_NEW_KEY_MESSAGE"));
