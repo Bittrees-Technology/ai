@@ -978,7 +978,7 @@ test("incoming conversation relay rolls back a failed content write and revoked 
       before = await snapshot(page),
       target = receiveTarget(selected.grant.id);
     await page.evaluate(() =>
-      window.browserPeersTest.contentFailReceiptWrite(),
+      window.browserPeersTest.contentFailWrite(),
     );
     await expect(
       receiveContentRelay(page, queue.item!.selection, target),
