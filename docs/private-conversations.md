@@ -6,8 +6,8 @@ briefings remain independent. This work does not install or activate any service
 The current implementation provides strict encrypted message framing and a Mac
 consent boundary. It does not yet deliver conversations. The Mac review controls and authenticated local API are implemented; their
 browser acceptance is pending. Independent browser consent now has an internal
-implementation with authenticated offer validation, pending browser tests. Reviewed local offer export routes are implemented. Visible offer
-controls/exchange, durable transport, shared incoming replay coordination
+implementation with authenticated offer validation, pending browser tests. Reviewed local offer export routes are implemented. Mac offer controls are now implemented. Browser offer review/exchange,
+durable transport, shared incoming replay coordination
 and end-to-end reconnect acceptance remain unfinished.
 
 ## Separate Mac consent
@@ -124,7 +124,7 @@ real authenticated decryption, exact retries/restart, competing encryption,
 revocation/scope/expiry, offline stop, native-resolution invalidation, restoration,
 owner deletion and corrupt storage. All755 engine tests pass. A browser consent
 case now consumes an offer from this actual Mac module; fresh GitHub acceptance
-is pending. Visible offer review/exchange controls and durable message delivery are
+is pending. Browser offer review/exchange and durable message delivery are
 still unfinished.
 
 ## Reviewed local offer export
@@ -152,8 +152,32 @@ restart, scope and permission changes, expiry on both clocks, consumed reviews,
 late identity responses, competing reviews, offline stop, authentication/origin,
 delete/logout races, export/deletion and owner isolation. An additional journal
 test verifies fixed opening deadlines and rejects expired/expanded windows.
-All761 engine tests pass. Visible controls and browser offer import/relay exchange
-are still required before this becomes a complete user flow.
+All761 engine tests pass. Browser offer import/relay exchange
+is still required before this becomes a complete user flow.
+
+## Mac offer controls
+
+The selected conversation now includes explicitly refreshed offer history and
+reviewed create/download/stop controls. Only that thread's saved permissions and
+offers are shown. One exact review shows browser identity/fingerprint, directions,
+access expiry and the fixed opening deadline; its acknowledgement starts unchecked.
+New offers download recipient-encrypted JSON. Reopening history downloads the
+original retained ciphertext after fresh authority checks. No relay upload,
+implicit browser approval or message delivery occurs.
+
+Downloaded ciphertext is not kept in UI state or browser storage. Blob URLs are
+revoked after download, on blur or unmount. Changing thread, hiding the page,
+blur, Escape, expired review or late/lost responses prevents download. A lost
+confirmation requires explicit history refresh and another review. Offline stop
+clearly preserves already exported copies and points to separate consent revocation.
+Permission review replaces the offer panel, preventing simultaneous confirmations.
+
+Four panel-state tests cover one-shot confirmation, scope/destination checks,
+monotonic expiry, offline stop and late/lost responses. Three actual-API browser
+scenarios (nine across Chromium/Firefox/WebKit) cover recipient decryption of
+downloaded bytes, exact retained retry, offline stop, lost-response reconciliation,
+discarded reviews and thread changes. Twenty-four desktop/phone offer previews are
+authored for CI review. Current browser and visual acceptance remain pending.
 
 ## Content boundary
 

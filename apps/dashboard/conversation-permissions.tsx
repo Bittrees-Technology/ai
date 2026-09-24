@@ -1,29 +1,14 @@
+import {
+  conversationDirections,
+  ConversationChoicesView,
+} from "./conversation-choices.js";
+import { ConversationOffers } from "./conversation-offers.js";
 import React, { useEffect, useId, useMemo, useState } from "react";
 import {
   ConversationPermissionPanelState,
   emptyConversationForm,
-  type ConversationDirections,
-  type ConversationChoices,
   type ConversationForm,
 } from "./conversation-permission-state.js";
-const directions: [keyof ConversationDirections, string][] = [
-  ["messagesToMac", "Messages from this browser to the Mac"],
-  ["messagesToBrowser", "Messages from the Mac to this browser"],
-  ["questionsToBrowser", "Task questions from the Mac to this browser"],
-  ["answersToMac", "Reviewed answers from this browser to the Mac"],
-];
-function Choices({ choices }: { choices: ConversationChoices }) {
-  return (
-    <ul>
-      {directions.map(([key, label]) => (
-        <li key={key}>
-          {label}:{" "}
-          <strong>{choices.permissions[key] ? "Allowed" : "Off"}</strong>
-        </li>
-      ))}
-    </ul>
-  );
-}
 export function ConversationPermissions({
   api,
   inboxId,
@@ -145,7 +130,7 @@ export function ConversationPermissions({
                       : "Choices saved; connection not checked"}
               </h4>
               <p className="prose">Browser {g.choices.peerId}</p>
-              <Choices choices={g.choices} />
+              <ConversationChoicesView choices={g.choices} />
               <p>Expires {new Date(g.choices.expiresAt).toLocaleString()}</p>
               {g.state !== "revoked" && (
                 <button
@@ -191,7 +176,7 @@ export function ConversationPermissions({
                   <option value={60}>1 hour</option>
                 </select>
               </label>
-              {directions.map(([key, label]) => (
+              {conversationDirections.map(([key, label]) => (
                 <label className="conversation-choice" key={key}>
                   <input
                     type="checkbox"
@@ -228,6 +213,15 @@ export function ConversationPermissions({
           )}
         </>
       )}
+      {!review && status && (
+        <ConversationOffers
+          key={JSON.stringify([inboxId, conversationId, status.revision])}
+          api={api}
+          inboxId={inboxId}
+          conversationId={conversationId}
+          permissions={status}
+        />
+      )}
       {review && (
         <div className="conversation-permission-review">
           <h4>
@@ -246,7 +240,7 @@ export function ConversationPermissions({
           <p className="prose">
             Verified browser fingerprint: {review.fingerprint}
           </p>
-          <Choices choices={review.choices} />
+          <ConversationChoicesView choices={review.choices} />
           <p>
             Access ends {new Date(review.choices.expiresAt).toLocaleString()}.
             Review ends {new Date(review.expiresAt).toLocaleString()}.

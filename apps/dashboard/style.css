@@ -1058,3 +1058,20 @@ select.model-profile-select {
   padding: 0.5rem 1rem;
   margin-top: 1rem;
 }
+
+.conversation-offers {
+  border-top: 1px solid #aabec5;
+  margin-top: 24px;
+  padding-top: 12px;
+}
+.conversation-offer-row {
+  margin: 16px 0;
+}
+.conversation-offers h5 {
+  font-size: 1rem;
+  margin: 20px 0 8px;
+}
+.conversation-offers .actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
