@@ -275,7 +275,7 @@ export class ConversationContentPanelState {
         this.queue = null;
         this.error =
           error instanceof Error && error.message.includes("PARENT_PENDING")
-            ? "Receive the earlier message first. Refresh connections, inspect incoming messages and inspect the next item. This message remains queued."
+            ? "Receive the earlier message first. Choose Refresh delivery history, then Refresh message connections. Inspect incoming conversation, then Inspect next conversation item. This message remains queued."
             : "The delivery change could not be confirmed. Refresh delivery history before reviewing again. No automatic retry was made.";
       }
     } finally {
