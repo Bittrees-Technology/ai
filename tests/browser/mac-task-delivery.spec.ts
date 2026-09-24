@@ -103,6 +103,13 @@ test("Mac delivery opens explicitly and reviews receive, prepare and send separa
     "Browser authentication or reading is not confirmed",
   );
   expect(await calls(page, "/responses/send")).toHaveLength(1);
+  await panel(page)
+    .getByRole("button", { name: "Refresh private task history" })
+    .click();
+  await expect(
+    panel(page).getByText(/Last relay confirmation: stored for delivery/),
+  ).toBeVisible();
+  expect(await calls(page, "/responses/send")).toHaveLength(1);
   await preview(page, info, "stored");
 });
 test("Mac lost-send result requires fresh history and a new review of the same reply", async ({
@@ -129,6 +136,9 @@ test("Mac lost-send result requires fresh history and a new review of the same r
   await panel(page)
     .getByRole("button", { name: "Refresh private task history" })
     .click();
+  await expect(
+    panel(page).getByText(/The latest sending attempt is unconfirmed/),
+  ).toBeVisible();
   await select(page);
   await panel(page)
     .getByRole("button", { name: "Review sending this reply" })

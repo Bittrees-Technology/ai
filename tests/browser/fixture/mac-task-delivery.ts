@@ -56,6 +56,7 @@ type Reply = {
   peerId: string;
   expiresAt: number;
   attempts: number;
+  delivery?: { state: string; observedAt: number; attempt: number };
 };
 const tasks = {
   available: true,
@@ -147,6 +148,11 @@ const api = async (path: string, _method?: string, body?: any) => {
     r.attempts++;
     r.revision++;
     if (fixture.failSend) throw Error("UNAVAILABLE");
+    r.delivery = {
+      state: "stored",
+      observedAt: Date.now(),
+      attempt: r.attempts,
+    };
     return {
       transportOnly: true,
       receipt: receipt(r.id),

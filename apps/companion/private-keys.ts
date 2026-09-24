@@ -278,6 +278,13 @@ export class CompanionPrivateKeys {
             Math.min(expiresAt, recipient.expiresAt),
           );
           const result = await client.submit({ version: 1, envelope });
+          if (!current()) throw new PrivateKeyLifecycleError("DENIED");
+          await this.tasks.recordResponseDelivery(
+            input.response.id,
+            input.response.expectedRevision + 1,
+            envelope,
+            result.receipt,
+          );
           // Server storage acknowledgement is not a browser application receipt.
           return { transportOnly: true as const, ...result };
         },

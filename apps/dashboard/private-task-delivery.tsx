@@ -172,6 +172,13 @@ export function PrivateTaskDeliveryPanel({
                   Version {r.revision}. Sending attempts {r.attempts}. Delivery
                   deadline {new Date(r.expiresAt).toLocaleString()}.
                 </p>
+                <p>
+                  {r.delivery
+                    ? `Last relay confirmation: ${r.delivery.state === "stored" ? "stored for delivery" : r.delivery.state === "received" ? "destination acknowledged delivery" : "message removed"}. Recorded ${new Date(r.delivery.observedAt).toLocaleString()}. Browser authentication or reading is not confirmed.`
+                    : "No relay acknowledgement is saved."}
+                  {r.attempts > (r.delivery?.attempt ?? 0) &&
+                    " The latest sending attempt is unconfirmed. Review before retrying the original reply."}
+                </p>
                 {r.state === "pending" && !r.locked && (
                   <button
                     disabled={s.busy || !selected || r.expiresAt <= Date.now()}

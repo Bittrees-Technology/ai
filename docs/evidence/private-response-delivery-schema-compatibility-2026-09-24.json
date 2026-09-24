@@ -1,0 +1,18 @@
+{
+  "verifiedAt": "2026-09-24T06:59:49.556Z",
+  "legacyStoreSha256": "f608e692db4c90213a6d238a478358fadab67f6ecdd6379b882ccb5b0913f982",
+  "from": 24,
+  "to": 25,
+  "checks": [
+    "actual task24 history/result/profile preserved",
+    "wrong-key migration rolls back without new table",
+    "empty delivery journal grants no authority",
+    "old writer rejects current schema25",
+    "upgraded backup restores history",
+    "original backup remains usable by old writer"
+  ],
+  "boundaries": [
+    "disposable synthetic database only",
+    "no OS credential access, app installation, runtime or Acer change"
+  ]
+}

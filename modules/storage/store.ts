@@ -164,7 +164,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 24) {
+    if (version > 25) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -276,7 +276,10 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_relay_credentials(id TEXT NOT NULL,user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,phase TEXT NOT NULL,grant_hash TEXT NOT NULL,payload BLOB,PRIMARY KEY(user_id,tenant_id,id),UNIQUE(user_id,tenant_id,grant_hash)); CREATE UNIQUE INDEX IF NOT EXISTS private_relay_one_active ON private_relay_credentials(user_id,tenant_id) WHERE locked=0 AND phase IN ('accepting','storing','active')",
         );
-        this.db.pragma("user_version = 24");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_response_delivery(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,response_id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,response_id),FOREIGN KEY(user_id,tenant_id,response_id) REFERENCES private_task_responses(user_id,tenant_id,id) ON DELETE CASCADE)",
+        );
+        this.db.pragma("user_version = 25");
       })();
     } catch (error) {
       this.db.close();
