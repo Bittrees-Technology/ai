@@ -1,6 +1,12 @@
 import {
+  privateRelayStorageReceiptSchema,
+  privateRelayEnvelopeHash,
+} from "./private-relay-contracts.js";
+import { privateRelaySelectionSchema } from "./private-relay-queue.js";
+import {
   consumeBrowserIncomingReplay,
   browserIncomingReplayStore,
+  browserIncomingReplaySchema,
 } from "./browser-incoming-replay.js";
 import {
   privateReplayIdentity,
@@ -73,6 +79,37 @@ const subset = (
   (Object.keys(chosen) as (keyof typeof chosen)[]).every(
     (k) => !chosen[k] || offered[k],
   );
+const relayAcknowledgementSchema = z
+  .strictObject({
+    selection: privateRelaySelectionSchema,
+    deliveryExpiresAt: positive,
+    attempts: positive,
+    lastAttemptAt: positive,
+    observation: z
+      .strictObject({
+        receipt: privateRelayStorageReceiptSchema,
+        observedAt: positive,
+        attempt: positive,
+      })
+      .nullable(),
+  })
+  .refine(
+    (v) =>
+      v.lastAttemptAt < v.deliveryExpiresAt &&
+      (!v.observation ||
+        (v.observation.attempt <= v.attempts &&
+          v.observation.observedAt < v.deliveryExpiresAt &&
+          v.observation.receipt.messageId === v.selection.messageId &&
+          v.observation.receipt.envelopeHash === v.selection.envelopeHash &&
+          v.observation.receipt.storedAt === v.selection.storedAt &&
+          v.observation.receipt.state !== "stored" &&
+          v.observation.receipt.revision > v.selection.revision)),
+  );
+const acknowledgementInputSchema = z.strictObject({
+  grantId: z.uuid(),
+  expectedRevision: positive,
+  confirmed: z.literal(true),
+});
 const grantSchema = z
   .strictObject({
     id: z.uuid(),
@@ -86,11 +123,17 @@ const grantSchema = z
     offerReplay: privateReplayIdentitySchema
       .extend({ type: z.literal("conversation.offer") })
       .optional(),
+    // Genuine pre-version11 grants have no relay observation. Import/approval
+    // alone must never invent transport delivery history.
+    relayAcknowledgement: relayAcknowledgementSchema.optional(),
     local: browserKeyProofSchema,
     peer: browserPeerProofSchema,
   })
   .refine(
     (v) =>
+      (!v.relayAcknowledgement ||
+        (!!v.offerReplay &&
+          v.relayAcknowledgement.deliveryExpiresAt <= v.offer.expiresAt)) &&
       same(v.local, v.peer.key) &&
       same(v.choices.scope, v.offer.scope) &&
       subset(v.choices.permissions, v.offer.permissions) &&
@@ -694,6 +737,9 @@ export class BrowserConversationConsent {
           choices: r.choices,
           offer: r.offer,
           offerReplay: r.replay,
+          relayAcknowledgement: retained
+            ? prior?.relayAcknowledgement
+            : undefined,
           local: p.proof.local,
           peer: p.proof.peer,
         });
@@ -752,6 +798,225 @@ export class BrowserConversationConsent {
             });
         },
         r.expiresAt,
+      );
+    });
+  }
+  /** Prove the original replay outcome still exists. A transport retry may
+   * neither recreate a missing outcome nor consume a new replay identity. */
+  private retainedOffer<T>(
+    io: BrowserStorageIO<T>,
+    scope: string,
+    grant: Grant,
+    done: () => void,
+  ) {
+    const replay = grant.offerReplay;
+    if (!replay) throw new BrowserConversationConsentError("DENIED");
+    io.request(
+      io
+        .store(browserIncomingReplayStore)
+        .index("operation")
+        .get([scope, replay.operation]),
+      (raw) => {
+        const expected = browserIncomingReplaySchema.parse({
+          scope,
+          ...replay,
+          outcome: {
+            store: "conversation_consents",
+            key: [this.scope, replay.operation],
+          },
+        });
+        const found = browserIncomingReplaySchema.safeParse(raw);
+        if (!found.success || !same(found.data, expected))
+          throw new BrowserConversationConsentError("CONFLICT");
+        done();
+      },
+    );
+  }
+  private async acknowledgementGrant(
+    g: Guard,
+    input: z.infer<typeof acknowledgementInputSchema>,
+  ) {
+    const { row, grants } = await this.read(g);
+    if (!row || row.locked || row.revision !== input.expectedRevision)
+      throw new BrowserConversationConsentError("CONFLICT");
+    const grant = grants.find((v) => v.id === input.grantId);
+    if (!grant || grant.revoked || !grant.offerReplay)
+      throw new BrowserConversationConsentError("DENIED");
+    const p = await this.proofs(
+      g,
+      grant.choices.peerId,
+      grant.choices.peerKeyEpoch,
+    );
+    this.active(row, p.proof.deviceHash);
+    if (!same(grant.local, p.proof.local) || !same(grant.peer, p.proof.peer))
+      throw new BrowserConversationConsentError("DENIED");
+    this.check(g, p.proof.local, grant.choices.expiresAt);
+    const identity = await browserPrivateIdentity(p.local.proof.binding);
+    return { row, grants, grant, p, identity };
+  }
+  /** Internal host operation. First attempt binds the exact encrypted offer
+   * already approved. Retry uses only its retained transport identity, even when
+   * a successful but lost server reply removed the offer from the queue. */
+  beginOfferAcknowledgement(raw: unknown, check: () => void = () => {}) {
+    this.pending = undefined;
+    return this.exclusive(async (g) => {
+      const input = this.input(
+        acknowledgementInputSchema.extend({
+          selected: z
+            .strictObject({
+              envelope: privateEnvelopeSchema,
+              selection: privateRelaySelectionSchema,
+            })
+            .optional(),
+        }),
+        raw,
+      );
+      check();
+      const { row, grants, grant, p, identity } =
+        await this.acknowledgementGrant(g, input);
+      let previous = grant.relayAcknowledgement;
+      if (input.selected) {
+        const { envelope, selection } = input.selected,
+          replay = await privateReplayIdentity(envelope, "conversation.offer"),
+          hash = await privateRelayEnvelopeHash(envelope);
+        if (
+          !same(replay, grant.offerReplay) ||
+          selection.messageId !== envelope.header.messageId ||
+          selection.envelopeHash !== hash ||
+          selection.storedAt > this.now() + 30000 ||
+          selection.storedAt < envelope.header.issuedAt - 30000 ||
+          (previous &&
+            (!same(previous.selection, selection) ||
+              previous.deliveryExpiresAt !== envelope.header.expiresAt))
+        )
+          throw new BrowserConversationConsentError("CONFLICT");
+        previous ??= {
+          selection,
+          deliveryExpiresAt: envelope.header.expiresAt,
+          attempts: 0,
+          lastAttemptAt: this.now(),
+          observation: null,
+        };
+      }
+      if (!previous) throw new BrowserConversationConsentError("DENIED");
+      if (previous.attempts >= Number.MAX_SAFE_INTEGER)
+        throw new BrowserConversationConsentError("CAPACITY");
+      const deadline = Math.min(
+        previous.deliveryExpiresAt,
+        grant.choices.expiresAt,
+      );
+      this.check(g, p.proof.local, deadline);
+      check();
+      grant.relayAcknowledgement = relayAcknowledgementSchema.parse({
+        ...previous,
+        attempts: previous.attempts + 1,
+        lastAttemptAt: this.now(),
+      });
+      const revision = this.next(row);
+      grant.revision = revision;
+      const next = await this.encrypted(
+        { ...row, revision },
+        grants,
+        retainedKey(row.key),
+      );
+      return this.tx<{
+        grant: Grant;
+        revision: number;
+        acknowledgement: {
+          messageId: string;
+          envelopeHash: string;
+          expectedRevision: number;
+          confirmed: true;
+        };
+      }>(
+        g,
+        "readwrite",
+        p.proof,
+        (io, current) => {
+          check();
+          if (!same(current, row))
+            throw new BrowserConversationConsentError("CONFLICT");
+          this.retainedOffer(io, identity.scope, grant, () => {
+            check();
+            this.check(g, p.proof.local, deadline);
+            io.store("conversation_consents").put(next);
+            const selection = grant.relayAcknowledgement!.selection;
+            io.done({
+              grant: structuredClone(grant),
+              revision,
+              acknowledgement: {
+                messageId: selection.messageId,
+                envelopeHash: selection.envelopeHash,
+                expectedRevision: selection.revision,
+                confirmed: true as const,
+              },
+            });
+          });
+        },
+        deadline,
+      );
+    });
+  }
+  recordOfferAcknowledgement(raw: unknown, check: () => void = () => {}) {
+    return this.exclusive(async (g) => {
+      const input = this.input(
+        acknowledgementInputSchema.extend({
+          receipt: privateRelayStorageReceiptSchema,
+        }),
+        raw,
+      );
+      check();
+      const { row, grants, grant, p, identity } =
+          await this.acknowledgementGrant(g, input),
+        ack = grant.relayAcknowledgement,
+        receipt = input.receipt;
+      if (
+        !ack ||
+        receipt.messageId !== ack.selection.messageId ||
+        receipt.envelopeHash !== ack.selection.envelopeHash ||
+        receipt.storedAt !== ack.selection.storedAt ||
+        receipt.state === "stored" ||
+        receipt.revision <= ack.selection.revision ||
+        (ack.observation &&
+          (receipt.revision < ack.observation.receipt.revision ||
+            (receipt.revision === ack.observation.receipt.revision &&
+              !same(receipt, ack.observation.receipt)) ||
+            (ack.observation.receipt.state === "deleted" &&
+              receipt.state !== "deleted")))
+      )
+        throw new BrowserConversationConsentError("CONFLICT");
+      const deadline = Math.min(ack.deliveryExpiresAt, grant.choices.expiresAt);
+      this.check(g, p.proof.local, deadline);
+      // The observation time can follow the attempt time. Keep a separate
+      // timestamp; later retries retain this earlier confirmed observation.
+      ack.observation = {
+        receipt,
+        observedAt: this.now(),
+        attempt: ack.attempts,
+      };
+      const revision = this.next(row);
+      grant.revision = revision;
+      const next = await this.encrypted(
+        { ...row, revision },
+        grants,
+        retainedKey(row.key),
+      );
+      return this.tx<{ grant: Grant; revision: number }>(
+        g,
+        "readwrite",
+        p.proof,
+        (io, current) => {
+          check();
+          if (!same(current, row))
+            throw new BrowserConversationConsentError("CONFLICT");
+          this.retainedOffer(io, identity.scope, grant, () => {
+            check();
+            this.check(g, p.proof.local, deadline);
+            io.store("conversation_consents").put(next);
+            io.done({ grant: structuredClone(grant), revision });
+          });
+        },
+        deadline,
       );
     });
   }

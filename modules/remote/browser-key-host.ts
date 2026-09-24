@@ -647,6 +647,118 @@ export class BrowserKeyHost {
       this.verified(async () => (await this.consentStore()).reset(raw)),
     invalidate: () => this.cancelKeys(),
   };
+  /** Offer transport is independent of task delivery and conversation consent.
+   * Queue inspection and opening never acknowledge or approve an offer. */
+  readonly relayConversationAPI = {
+    inspect: (raw: unknown) => this.relayTaskAPI.inspect(raw),
+    open: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = z
+          .strictObject({
+            after: privateRelayPageSchema.shape.after,
+            selection: privateRelaySelectionSchema,
+            peerId: z.uuid(),
+            peerKeyEpoch: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER),
+            expectedRevision: z
+              .number()
+              .int()
+              .nonnegative()
+              .max(Number.MAX_SAFE_INTEGER),
+            confirmed: z.literal(true),
+          })
+          .parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          const page = await client.poll({ after: input.after, limit: 1 }),
+            item = page.items[0];
+          check();
+          if (!item || !relaySelectionMatches(item, input.selection))
+            throw Error("CONFLICT");
+          const opened = await (
+            await this.conversationStore()
+          ).inspectOffer({
+            expectedRevision: input.expectedRevision,
+            peerId: input.peerId,
+            peerKeyEpoch: input.peerKeyEpoch,
+            envelope: item.envelope,
+          });
+          check();
+          return {
+            opened,
+            envelope: item.envelope,
+            selection: input.selection,
+            nextCursor: page.nextCursor,
+            transportOnly: true as const,
+          };
+        });
+      }),
+    acknowledge: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = z
+          .strictObject({
+            grantId: z.uuid(),
+            expectedRevision: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER),
+            confirmed: z.literal(true),
+            selected: z
+              .strictObject({
+                after: privateRelayPageSchema.shape.after,
+                selection: privateRelaySelectionSchema,
+              })
+              .optional(),
+          })
+          .parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          let selected;
+          if (input.selected) {
+            const page = await client.poll({
+                after: input.selected.after,
+                limit: 1,
+              }),
+              item = page.items[0];
+            check();
+            if (!item || !relaySelectionMatches(item, input.selected.selection))
+              throw Error("CONFLICT");
+            selected = {
+              envelope: item.envelope,
+              selection: input.selected.selection,
+            };
+          }
+          const store = await this.conversationStore(),
+            attempt = await store.beginOfferAcknowledgement(
+              {
+                grantId: input.grantId,
+                expectedRevision: input.expectedRevision,
+                confirmed: true,
+                ...(selected ? { selected } : {}),
+              },
+              check,
+            );
+          check();
+          const result = await client.acknowledge(attempt.acknowledgement);
+          check();
+          const saved = await store.recordOfferAcknowledgement(
+            {
+              grantId: input.grantId,
+              expectedRevision: attempt.revision,
+              confirmed: true,
+              receipt: result.receipt,
+            },
+            check,
+          );
+          return {
+            ...saved,
+            transport: { transportOnly: true as const, ...result },
+          };
+        });
+      }),
+  };
   /** Independent conversation consent. Inspection authenticates an offer without
    * granting access; no keys, content-authority handle or sender leaves this API. */
   readonly conversationAPI = {
