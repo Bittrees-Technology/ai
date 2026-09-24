@@ -432,6 +432,16 @@ export async function retainedMac(
         true,
         Date.now,
         true,
+        {
+          enabled: true,
+          taskAccess: conversationTaskAccess(
+            store,
+            owner,
+            new SourceTasks(),
+            undefined,
+            clock,
+          ),
+        },
       );
       const relaySlots = new Map<string, PrivateKeyEntries>();
       const relay = new CompanionPrivateRelay(
@@ -543,6 +553,8 @@ export async function retainedMac(
             "GET /v1/private-tasks",
             "POST /v1/private-relay/cancel-review",
             "POST /v1/private-relay/check-task",
+            "POST /v1/private-relay/inspect-conversation",
+            "POST /v1/private-relay/check-conversation",
             "POST /v1/private-relay/inspect-task",
             "POST /v1/private-relay/responses/prepare",
             "POST /v1/private-relay/responses/send",

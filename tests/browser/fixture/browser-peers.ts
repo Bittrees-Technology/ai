@@ -169,6 +169,7 @@ const fixture = {
       | "offer-replay"
       | "offer-ack"
       | "content"
+      | "relay-content"
       | "receipts" = false,
   ) {
     sender?.outbox.close();
@@ -197,36 +198,39 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "receipts"
-        ? "/legacy-receipts/index.js"
-        : previous === "content"
-          ? "/legacy-content/index.js"
-          : previous === "offer-ack"
-            ? "/legacy-offer-ack/index.js"
-            : previous === "offer-replay"
-              ? "/legacy-offer-replay/index.js"
-              : previous === "replay"
-                ? "/legacy-replay/index.js"
-                : previous === "conversation"
-                  ? "/legacy-conversation/index.js"
-                  : previous === "delivery"
-                    ? "/legacy-delivery/index.js"
-                    : previous === "task"
-                      ? "/legacy-composition/index.js"
-                      : "/legacy-consent/index.js";
+      previous === "relay-content"
+        ? "/legacy-relay-content/index.js"
+        : previous === "receipts"
+          ? "/legacy-receipts/index.js"
+          : previous === "content"
+            ? "/legacy-content/index.js"
+            : previous === "offer-ack"
+              ? "/legacy-offer-ack/index.js"
+              : previous === "offer-replay"
+                ? "/legacy-offer-replay/index.js"
+                : previous === "replay"
+                  ? "/legacy-replay/index.js"
+                  : previous === "conversation"
+                    ? "/legacy-conversation/index.js"
+                    : previous === "delivery"
+                      ? "/legacy-delivery/index.js"
+                      : previous === "task"
+                        ? "/legacy-composition/index.js"
+                        : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
     contentProvider =
-      previous === "receipts"
+      previous === "receipts" || previous === "relay-content"
         ? providers.BrowserConversationContent
         : BrowserConversationContent;
     conversationProvider =
       previous === "offer-replay" ||
       previous === "offer-ack" ||
       previous === "content" ||
-      previous === "receipts"
+      previous === "receipts" ||
+      previous === "relay-content"
         ? providers.BrowserConversationConsent
         : BrowserConversationConsent;
     consentProvider =
@@ -237,7 +241,8 @@ const fixture = {
       previous === "offer-replay" ||
       previous === "offer-ack" ||
       previous === "content" ||
-      previous === "receipts"
+      previous === "receipts" ||
+      previous === "relay-content"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
@@ -247,7 +252,8 @@ const fixture = {
       previous === "offer-replay" ||
       previous === "offer-ack" ||
       previous === "content" ||
-      previous === "receipts"
+      previous === "receipts" ||
+      previous === "relay-content"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
@@ -257,7 +263,8 @@ const fixture = {
       previous === "offer-replay" ||
       previous === "offer-ack" ||
       previous === "content" ||
-      previous === "receipts"
+      previous === "receipts" ||
+      previous === "relay-content"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -588,6 +595,45 @@ const fixture = {
       db.close();
     }
   },
+  contentCancel: () =>
+    host
+      ? host.conversationContentAPI.invalidate()
+      : contentStore?.invalidate(),
+  holdRelayDigest() {
+    const original = crypto.subtle.digest.bind(crypto.subtle);
+    crypto.subtle.digest = (async (
+      ...args: Parameters<SubtleCrypto["digest"]>
+    ) => {
+      if (
+        new TextDecoder()
+          .decode(args[1])
+          .startsWith("org.bittrees.ai/private-relay-envelope/v1")
+      ) {
+        crypto.subtle.digest = original;
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      return original(...args);
+    }) as SubtleCrypto["digest"];
+  },
+  contentRelayBegin: (raw: unknown) =>
+    withKey(async () => {
+      const attempt = await (
+        await conversationContentStore()
+      ).beginRelayDelivery(raw);
+      await attempt.check();
+      return { entry: attempt.entry, envelope: attempt.envelope };
+    }),
+  contentRelayRecord: (raw: unknown) =>
+    withKey(async () =>
+      (await conversationContentStore()).recordRelayDelivery(raw),
+    ),
+  contentRelayStop: (raw: unknown) =>
+    host
+      ? host.relayConversationContentAPI.stop(raw)
+      : conversationContentStore().then((c) => c.stopRelayDelivery(raw)),
+  contentRelaySend: (raw: unknown) =>
+    host!.relayConversationContentAPI.send(raw),
   contentList: (raw: unknown) =>
     host
       ? host.conversationContentAPI.list(raw)

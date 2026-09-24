@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { privateRelayStorageReceiptSchema } from "./private-relay-contracts.js";
 import { browserConversationGrantSchema } from "./browser-conversation-consent.js";
 import {
   conversationContentSchema,
@@ -25,6 +26,28 @@ export const browserConversationValueSchema = z
     receiptHeader: privateHeaderSchema.nullable(),
     receiptEnvelope: privateEnvelopeSchema.nullable(),
     requestHash: hex,
+    // Version14 records have no delivery attempts; an upgrade invents none.
+    relay: z
+      .strictObject({
+        stopped: z.boolean(),
+        attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        lastAttemptAt: positive.nullable(),
+        observation: z
+          .strictObject({
+            receipt: privateRelayStorageReceiptSchema,
+            observedAt: positive,
+            attempt: positive,
+          })
+          .nullable(),
+      })
+      .refine(
+        (v) =>
+          (v.attempts === 0
+            ? v.lastAttemptAt === null && v.observation === null
+            : v.lastAttemptAt !== null) &&
+          (!v.observation || v.observation.attempt <= v.attempts),
+      )
+      .optional(),
   })
   .refine(
     (v) =>

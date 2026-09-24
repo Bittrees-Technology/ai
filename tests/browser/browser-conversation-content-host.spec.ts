@@ -4,8 +4,8 @@ import { ready } from "./support/relay-endpoints.js";
 import { randomUUID } from "node:crypto";
 
 type Fixture = Awaited<ReturnType<typeof ready>>;
-async function grant(page: Page, f: Fixture) {
-  const offer = await f.mac.conversationOffer();
+async function grant(page: Page, f: Fixture, questions = false) {
+  const offer = await f.mac.conversationOffer(undefined, { questions });
   const saved = await page.evaluate(
     async ({ envelope, route, permissions, expiresAt }) => {
       const api = window.browserPeersTest,
@@ -467,6 +467,286 @@ test("authenticated receipt reconciliation denies offline identity and preserves
     await expect(reconcile(stored)).rejects.toThrow("DENIED");
     expect(await snapshot(page)).toEqual(committed);
   } finally {
+    f.mac.close();
+  }
+});
+
+const relayTarget = (entry: any) => ({
+  grantId: entry.grantId,
+  id: entry.id,
+  expectedRevision: entry.revision,
+  confirmed: true,
+});
+const relaySendContent = (page: Page, entry: any) =>
+  page.evaluate(
+    (raw) => window.browserPeersTest.contentRelaySend(raw),
+    relayTarget(entry),
+  );
+async function receiveThroughMacApi(
+  f: Fixture,
+  api: Awaited<ReturnType<Fixture["native"]["openLocalApi"]>>,
+  target: any,
+) {
+  const record = f.native.record(),
+    query = {
+      connection: { id: record.id, expectedRevision: record.revision },
+      after: null,
+      confirmed: true,
+    };
+  const inspected = await api.call(
+    "/v1/private-relay/inspect-conversation",
+    "POST",
+    query,
+  );
+  expect(inspected.item).not.toBeNull();
+  return api.call("/v1/private-relay/check-conversation", "POST", {
+    ...query,
+    selection: inspected.item.selection,
+    target,
+  });
+}
+
+test("host relay message upload survives a lost server reply and reload before actual Mac HTTP admission", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  const api = await f.native.openLocalApi();
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id),
+      original = await wire(page, prepared);
+    const entry = await read(page, prepared);
+    identityServer.loseResponse("/browser/relay/messages/submit");
+    await expect(relaySendContent(page, entry)).rejects.toThrow();
+    const uncertain = await read(page, entry);
+    expect(uncertain.relayAttempts).toBe(1);
+    expect(uncertain.relayObservation).toBeNull();
+    await page.reload();
+    await page.waitForFunction(() => !!window.browserPeersTest);
+    await page.evaluate(() => window.browserPeersTest.resume());
+    const retry = await relaySendContent(page, await read(page, entry));
+    expect(retry.entry.relayAttempts).toBe(2);
+    expect(retry.entry.recipientAccepted).toBe(false);
+    expect(retry.transport.transportOnly).toBe(true);
+    expect(retry.transport.duplicate).toBe(true);
+    expect(await wire(page, retry.entry)).toEqual(original);
+    const received = await receiveThroughMacApi(f, api, {
+      action: "receive",
+      permissionId: selected.offer.data.scope.permissionId,
+    });
+    expect(received.received.status).toBe("accepted-locally");
+    expect(received.received.duplicate).toBe(false);
+    expect(JSON.stringify(received)).not.toContain(
+      "SYNTHETIC_HOST_PRIVATE_REPLY",
+    );
+    expect((await selected.offer.receive(original)).duplicate).toBe(true);
+    const receipt = await selected.offer.receipt(original);
+    const reconciled = await page.evaluate(
+      (raw) => window.browserPeersTest.contentReconcile(raw),
+      { ...relayTarget(retry.entry), envelope: receipt },
+    );
+    expect(reconciled.entry.recipientAccepted).toBe(true);
+    expect(await wire(page, reconciled.entry)).toEqual(original);
+  } finally {
+    await api.close();
+    f.mac.close();
+  }
+});
+
+test("host relay sends only an incoming message storage receipt and Mac HTTP reconciles the exact outgoing original", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  const api = await f.native.openLocalApi();
+  try {
+    const selected = await grant(page, f),
+      original = await selected.offer.message("SYNTHETIC_RECEIPT_ONLY");
+    const accepted = await accept(page, selected.grant.id, original);
+    await expect(relaySendContent(page, accepted.entry)).rejects.toThrow(
+      "DENIED",
+    );
+    const receipt = await wire(page, accepted.entry),
+      saved = await read(page, accepted.entry);
+    expect(receipt).not.toEqual(original);
+    const sent = await relaySendContent(page, saved);
+    expect(sent.entry.direction).toBe("incoming");
+    expect(sent.entry.recipientAccepted).toBe(false);
+    const outgoing = f.native.controls
+      .conversationContentStatus()
+      .items.find((e) => e.id === original.header.operationId)!;
+    const received = await receiveThroughMacApi(f, api, {
+      action: "reconcile",
+      permissionId: selected.offer.data.scope.permissionId,
+      id: outgoing.id,
+      expectedRevision: outgoing.revision,
+    });
+    expect(received.received.status).toBe("recipient-storage-confirmed");
+    expect(received.received.entry.recipientAccepted).toBe(true);
+    expect(await wire(page, sent.entry)).toEqual(receipt);
+    expect((await read(page, sent.entry)).content.content).toBe(
+      "SYNTHETIC_RECEIPT_ONLY",
+    );
+  } finally {
+    await api.close();
+    f.mac.close();
+  }
+});
+
+test("host relay denies failed identity or recipient access without an attempt and local stop still works offline", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id);
+    await wire(page, prepared);
+    const entry = await read(page, prepared),
+      before = await snapshot(page);
+    identityServer.reject("/browser/relay/messages/recipient");
+    await expect(relaySendContent(page, entry)).rejects.toThrow();
+    expect(await snapshot(page)).toEqual(before);
+    identityServer.offline(true);
+    await expect(relaySendContent(page, entry)).rejects.toThrow();
+    expect(await snapshot(page)).toEqual(before);
+    identityServer.events.length = 0;
+    const stopped = await page.evaluate(
+      (raw) => window.browserPeersTest.contentRelayStop(raw),
+      relayTarget(entry),
+    );
+    expect(stopped.relayStopped).toBe(true);
+    expect(identityServer.events).toEqual([]);
+    identityServer.offline(false);
+    await expect(relaySendContent(page, stopped)).rejects.toThrow("DENIED");
+  } finally {
+    identityServer.offline(false);
+    f.mac.close();
+  }
+});
+
+test("host relay excludes concurrent work and rejects a response after identity cancellation while retaining the uncertain attempt", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id);
+    await wire(page, prepared);
+    const entry = await read(page, prepared);
+    identityServer.hold("/browser/relay/messages/submit");
+    const pending = relaySendContent(page, entry),
+      rejected = expect(pending).rejects.toThrow();
+    await expect.poll(identityServer.held).toBe(true);
+    await expect(relaySendContent(page, entry)).rejects.toThrow("BUSY");
+    await page.evaluate(() => window.browserPeersTest.contentCancel());
+    identityServer.release();
+    await rejected;
+    const saved = await read(page, entry);
+    expect(saved.relayAttempts).toBe(1);
+    expect(saved.relayObservation).toBeNull();
+    expect(saved.recipientAccepted).toBe(false);
+  } finally {
+    identityServer.release();
+    f.mac.close();
+  }
+});
+
+test("host relay rechecks the durable original after asynchronous hashing and prevents a deleted copy from reaching the network", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const selected = await grant(page, f),
+      prepared = await prepare(page, selected.grant.id);
+    await wire(page, prepared);
+    const entry = await read(page, prepared);
+    identityServer.events.length = 0;
+    await page.evaluate(() => window.browserPeersTest.holdRelayDigest());
+    const pending = relaySendContent(page, entry),
+      rejected = expect(pending).rejects.toThrow("CONFLICT");
+    await page.waitForFunction(() => window.browserPeersTest.held());
+    await page.evaluate(() => window.browserPeersTest.contentInspect("remove"));
+    await page.evaluate(() => window.browserPeersTest.release());
+    await rejected;
+    expect(
+      identityServer.events.filter(
+        (p) => p === "/browser/relay/messages/submit",
+      ),
+    ).toEqual([]);
+    expect((await snapshot(page)).count).toBe(0);
+  } finally {
+    await page.evaluate(() => window.browserPeersTest.release());
+    f.mac.close();
+  }
+});
+
+test("host relay carries an exact browser answer through Mac HTTP into one real worker continuation", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  const api = await f.native.openLocalApi();
+  try {
+    const selected = await grant(page, f, true),
+      question = await selected.offer.question();
+    expect(question.task().status).toBe("awaiting_input");
+    const accepted = await accept(page, selected.grant.id, question.envelope);
+    const answer = await prepare(page, selected.grant.id, {
+      kind: "answer",
+      parentId: accepted.entry.id,
+      content: "Lisbon",
+    });
+    await wire(page, answer);
+    const sent = await relaySendContent(page, await read(page, answer));
+    expect(sent.entry.recipientAccepted).toBe(false);
+    expect(question.task().status).toBe("awaiting_input");
+    await receiveThroughMacApi(f, api, {
+      action: "receive",
+      permissionId: selected.offer.data.scope.permissionId,
+    });
+    expect(question.task().status).toBe("queued");
+    expect(question.calls()).toBe(1);
+    await question.run();
+    expect(question.task().status).toBe("completed");
+    expect(question.calls()).toBe(3);
+    await question.run();
+    expect(question.calls()).toBe(3);
+  } finally {
+    await api.close();
     f.mac.close();
   }
 });

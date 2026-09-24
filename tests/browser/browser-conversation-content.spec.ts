@@ -9,7 +9,7 @@ import {
 
 async function setup(
   page: Page,
-  previous: false | "content" | "receipts" = false,
+  previous: false | "content" | "receipts" | "relay-content" = false,
   questions = false,
 ) {
   const f = await ready(page, previous);
@@ -493,7 +493,7 @@ test("actual version12 upgrade preserves keys, grants, shared replay and channel
     expect(before.version).toBe(12);
     await reopen(page, f.f);
     const after = await inspect(page);
-    expect(after.version).toBe(14);
+    expect(after.version).toBe(15);
     expect(after.count).toBe(0);
     const oldRows = JSON.parse(before.all),
       newRows = JSON.parse(after.all);
@@ -918,7 +918,7 @@ test("actual version13 upgrade preserves encrypted originals and receipts fence 
     const receipt = await f.offer.receipt(envelope);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(14);
+    expect(upgraded.version).toBe(15);
     expect(upgraded.all).toBe(before.all);
     expect(await wire(page, { ...prepared, revision: 2 })).toEqual(envelope);
     const result = await reconcile(page, await read(page, prepared), receipt);
@@ -943,6 +943,161 @@ test("actual version13 upgrade preserves encrypted originals and receipts fence 
     const cleared = await inspect(page);
     expect(cleared.count).toBe(0);
     expect(cleared.ledger).toBe(ledger);
+  } finally {
+    f.mac.close();
+  }
+});
+
+const relayInput = (entry: any) => ({
+  grantId: entry.grantId,
+  id: entry.id,
+  expectedRevision: entry.revision,
+  confirmed: true,
+});
+const beginRelay = (page: Page, entry: any, expiresAt: number) =>
+  page.evaluate((raw) => window.browserPeersTest.contentRelayBegin(raw), {
+    ...relayInput(entry),
+    deliveryExpiresAt: expiresAt,
+  });
+const recordRelay = (page: Page, entry: any, receipt: unknown) =>
+  page.evaluate((raw) => window.browserPeersTest.contentRelayRecord(raw), {
+    ...relayInput(entry),
+    receipt,
+  });
+
+test("conversation relay attempts survive reload and retain original ciphertext across explicit retry and server observations", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      entry = await read(page, prepared);
+    const before = await inspect(page);
+    const first = await beginRelay(page, entry, f.f.now + 180000);
+    expect(first.envelope).toEqual(envelope);
+    expect(first.entry.relayAttempts).toBe(1);
+    expect(first.entry.relayObservation).toBeNull();
+    await reopen(page, f.f);
+    const saved = await read(page, entry);
+    expect(saved.relayAttempts).toBe(1);
+    const retry = await beginRelay(page, saved, f.f.now + 180000);
+    expect(retry.envelope).toEqual(envelope);
+    expect(retry.entry.relayAttempts).toBe(2);
+    const { privateRelayEnvelopeHash } =
+      await import("../../modules/remote/private-relay-contracts.js");
+    const receipt = {
+      version: 1,
+      messageId: envelope.header.messageId,
+      envelopeHash: await privateRelayEnvelopeHash(envelope),
+      revision: 1,
+      state: "stored",
+      storedAt: f.f.now,
+    };
+    await expect(
+      recordRelay(page, retry.entry, {
+        ...receipt,
+        envelopeHash: "0".repeat(64),
+      }),
+    ).rejects.toThrow("DENIED");
+    const recorded = await recordRelay(page, retry.entry, receipt);
+    expect(recorded.relayObservation?.attempt).toBe(2);
+    expect(recorded.recipientAccepted).toBe(false);
+    const advanced = await recordRelay(page, recorded, {
+      ...receipt,
+      revision: 2,
+      state: "received",
+    });
+    await expect(recordRelay(page, advanced, receipt)).rejects.toThrow(
+      "CONFLICT",
+    );
+    expect(await wire(page, advanced)).toEqual(envelope);
+    const after = await inspect(page);
+    expect(after.ledger).toBe(before.ledger);
+    expect(after.channels).toEqual(before.channels);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("conversation relay stop remains local after identity loss and prevents later uploads without erasing content", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      entry = await read(page, prepared);
+    await page.evaluate(() => window.browserPeersTest.set(null));
+    const stopped = await page.evaluate(
+      (raw) => window.browserPeersTest.contentRelayStop(raw),
+      relayInput(entry),
+    );
+    expect(stopped.relayStopped).toBe(true);
+    expect(stopped.relayAttempts).toBe(0);
+    await reopen(page, f.f);
+    await expect(beginRelay(page, stopped, f.f.now + 180000)).rejects.toThrow(
+      "DENIED",
+    );
+    expect(await wire(page, stopped)).toEqual(envelope);
+    expect((await read(page, stopped)).content.content).toBe(
+      "SYNTHETIC_PRIVATE_BROWSER_MESSAGE",
+    );
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("failed conversation relay attempt writes roll back and short delivery windows cannot create attempts", async ({
+  page,
+}) => {
+  const f = await setup(page);
+  try {
+    const prepared = await prepare(page, f);
+    await wire(page, prepared);
+    const entry = await read(page, prepared),
+      before = await inspect(page);
+    await expect(beginRelay(page, entry, f.f.now + 1000)).rejects.toThrow(
+      "DENIED",
+    );
+    await page.evaluate(() =>
+      window.browserPeersTest.contentFailReceiptWrite(),
+    );
+    await expect(beginRelay(page, entry, f.f.now + 180000)).rejects.toThrow(
+      "CAPACITY",
+    );
+    expect(await inspect(page)).toEqual(before);
+    expect(
+      (await beginRelay(page, entry, f.f.now + 180000)).entry.relayAttempts,
+    ).toBe(1);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("actual version14 content upgrades without invented relay history and the old writer is fenced", async ({
+  page,
+}) => {
+  const f = await setup(page, "relay-content");
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      before = await inspect(page);
+    expect(before.version).toBe(14);
+    await reopen(page, f.f);
+    const upgraded = await inspect(page);
+    expect(upgraded.version).toBe(15);
+    expect(upgraded.all).toBe(before.all);
+    const entry = await read(page, prepared);
+    expect(entry.relayAttempts).toBe(0);
+    expect(entry.relayObservation).toBeNull();
+    expect(await wire(page, entry)).toEqual(envelope);
+    await expect(reopen(page, f.f, "relay-content")).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
+    await reopen(page, f.f);
+    const attempt = await beginRelay(page, entry, f.f.now + 180000);
+    expect(attempt.envelope).toEqual(envelope);
   } finally {
     f.mac.close();
   }
