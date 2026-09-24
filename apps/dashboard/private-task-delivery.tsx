@@ -24,7 +24,8 @@ export function PrivateTaskDeliveryPanel({
     [ack, setAck] = useState(false);
   const s = controller.state,
     review = s.review,
-    active = controller.activeConnections();
+    active = controller.activeConnections(),
+    queue = s.queue;
   const hide = () => {
     controller.hide();
     setAck(false);
@@ -93,7 +94,10 @@ export function PrivateTaskDeliveryPanel({
             <select
               value={selected}
               disabled={s.busy}
-              onChange={(e) => setConnection(e.target.value)}
+              onChange={(e) => {
+                controller.resetQueue();
+                setConnection(e.target.value);
+              }}
             >
               <option value="">Choose an active connection</option>
               {active.map((r) => (
@@ -115,6 +119,81 @@ export function PrivateTaskDeliveryPanel({
           >
             Review checking for a task
           </button>
+          <section aria-label="Queued message recovery">
+            <h4>Review queued messages</h4>
+            <p>
+              If a task check cannot be completed, inspect the queue and choose
+              whether to check that message or look for a later one. Inspection
+              never accepts or removes a message.
+            </p>
+            <button
+              disabled={s.busy || !selected}
+              onClick={() => prepare("inspect")}
+            >
+              Review inspecting the queue
+            </button>
+            {queue && queue.connection.id === selected && (
+              <>
+                <p>
+                  Queue position {queue.visited} of at most 20 in this view.
+                  This position is cleared when you close the panel or change
+                  the connection.
+                </p>
+                {queue.item ? (
+                  <>
+                    <p className="private-delivery-identifier">
+                      Message {queue.item.selection.messageId}, version{" "}
+                      {queue.item.selection.revision}.
+                    </p>
+                    <p>
+                      Stored{" "}
+                      {new Date(queue.item.selection.storedAt).toLocaleString()}
+                      . Delivery deadline{" "}
+                      {new Date(queue.item.expiresAt).toLocaleString()}.
+                    </p>
+                    <p>
+                      {queue.checked
+                        ? "This selected message was accepted locally. Work is not confirmed complete."
+                        : "This is a delivery reference. Its content has not been authenticated or accepted."}
+                    </p>
+                    <button
+                      disabled={
+                        s.busy ||
+                        queue.checked ||
+                        queue.item.expiresAt <= Date.now()
+                      }
+                      onClick={() => prepare("selected")}
+                    >
+                      Review checking this message
+                    </button>
+                    <button
+                      disabled={s.busy || queue.visited >= 20}
+                      onClick={() => prepare("next")}
+                    >
+                      Review looking past this message
+                    </button>
+                    {queue.visited >= 20 && (
+                      <p>
+                        This view has reached its 20-position limit. Return to
+                        the start to inspect again.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p>No queued message was found at this position.</p>
+                )}
+                <button
+                  disabled={s.busy}
+                  onClick={() => {
+                    setAck(false);
+                    controller.resetQueue();
+                  }}
+                >
+                  Return to queue start
+                </button>
+              </>
+            )}
+          </section>
           <h4>Tasks accepted on this Mac</h4>
           <p>
             This is saved acceptance history, not current permission or
@@ -218,6 +297,27 @@ export function PrivateTaskDeliveryPanel({
                 <dd>
                   {review.connection.id}, version {review.connection.revision}
                 </dd>
+              </>
+            )}
+            {review.queue?.item && (
+              <>
+                <dt>
+                  {review.action === "next"
+                    ? "Look after message"
+                    : "Selected message"}
+                </dt>
+                <dd className="private-delivery-identifier">
+                  {review.queue.item.selection.messageId}, version{" "}
+                  {review.queue.item.selection.revision}
+                </dd>
+                <dt>Stored</dt>
+                <dd>
+                  {new Date(
+                    review.queue.item.selection.storedAt,
+                  ).toLocaleString()}
+                </dd>
+                <dt>Queue position</dt>
+                <dd>{review.queue.visited} of 20</dd>
               </>
             )}
             {review.accepted && (
