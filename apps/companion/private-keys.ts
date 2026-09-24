@@ -1,3 +1,5 @@
+import type { CompanionPrivateRelay } from "./private-relay.js";
+import { privateRelayPageSchema } from "../../modules/remote/private-relay-contracts.js";
 import { CompanionPeerChecks } from "./private-peer-checks.js";
 import { CompanionPrivateTaskPermissions } from "./private-task-permissions.js";
 import { CompanionPrivateTasks } from "./private-tasks.js";
@@ -49,7 +51,7 @@ export class CompanionPrivateKeys {
     private remote?: RemoteClient,
     private setupEnabled = false,
     private now = Date.now,
-    privateTasksEnabled = false,
+    private privateTasksEnabled = false,
   ) {
     this.owner = { ...owner };
     this.peerChecks = new CompanionPeerChecks(
@@ -171,6 +173,52 @@ export class CompanionPrivateKeys {
   }
   receiveTask(raw: unknown) {
     return this.protocolOperation(() => this.tasks.receive(raw));
+  }
+  /** One explicit bounded pull. Transport acknowledgement follows durable local
+   * authenticated admission; it is never a receipt/result sent to the browser. */
+  checkRelayedTask(relay: CompanionPrivateRelay, raw: unknown) {
+    if (!this.setupEnabled || !this.privateTasksEnabled || !this.remote)
+      return Promise.reject(new PrivateKeyLifecycleError("DENIED"));
+    const input = z
+      .strictObject({
+        id: z.uuid(),
+        expectedRevision: z
+          .number()
+          .int()
+          .positive()
+          .max(Number.MAX_SAFE_INTEGER),
+        after: privateRelayPageSchema.shape.after,
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    return this.protocolOperation(() =>
+      relay.withTransport(
+        { id: input.id, expectedRevision: input.expectedRevision },
+        async (client, current) => {
+          const page = await client.poll({ after: input.after, limit: 1 });
+          const item = page.items[0];
+          if (!item) return { received: null, nextCursor: page.nextCursor };
+          const received = await this.tasks.receiveVerified(
+            item.envelope,
+            current,
+          );
+          // A stop/logout after admission may leave a queued task but must fence ack.
+          // Retrying the exact message reconciles the durable local receipt.
+          if (!current()) throw new PrivateKeyLifecycleError("DENIED");
+          const transport = await client.acknowledge({
+            messageId: item.receipt.messageId,
+            envelopeHash: item.receipt.envelopeHash,
+            expectedRevision: item.receipt.revision,
+            confirmed: true,
+          });
+          return {
+            received: { ...received, messageId: item.receipt.messageId },
+            transport: { transportOnly: true, ...transport },
+            nextCursor: page.nextCursor,
+          };
+        },
+      ),
+    );
   }
   prepareTaskResponse(raw: unknown) {
     return this.protocolOperation(() => this.tasks.prepareResponse(raw));

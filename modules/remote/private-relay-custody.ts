@@ -706,7 +706,10 @@ export class PrivateRelayCustody {
   }
   async withClient<T>(
     raw: unknown,
-    action: (client: PrivateRelayClient) => Promise<T>,
+    action: (
+      client: PrivateRelayClient,
+      current: () => PrivateBinding | null,
+    ) => Promise<T>,
   ): Promise<T> {
     const input = z
       .strictObject({ id: z.uuid(), expectedRevision: positive })
@@ -738,11 +741,13 @@ export class PrivateRelayCustody {
             Math.min(grant.expiresAt, before.payload.binding.expiresAt)
         )
           throw Error("DENIED");
+        let closed = false;
         const current = () => {
           try {
             const r = this.exact(before.id, before.revision);
             this.current(scope, before.payload!.binding);
             if (
+              closed ||
               generation !== this.generation ||
               r.locked ||
               r.phase !== "active" ||
@@ -769,10 +774,14 @@ export class PrivateRelayCustody {
         );
         this.client = client;
         try {
-          const result = await action(client);
+          // Metadata-only live authority; the native relay secret never leaves this module.
+          const result = await action(client, () =>
+            current() ? { ...before.payload!.binding } : null,
+          );
           if (!current()) throw Error("DENIED");
           return result;
         } finally {
+          closed = true;
           client.invalidate();
           this.client = null;
         }
