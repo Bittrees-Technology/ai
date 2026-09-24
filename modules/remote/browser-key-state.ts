@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 12;
+export const browserKeyDatabaseVersion = 13;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -152,7 +152,14 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         for (const field of ["operation", "message", "sequence"])
           replay.createIndex(field, ["scope", field], { unique: true });
       }
+      if (event.oldVersion < 13) {
+        const content = r.result.createObjectStore("conversation_content", {
+          keyPath: ["scope", "id"],
+        });
+        content.createIndex("scope", "scope");
+      }
     };
+    // Version13 fences older writers before atomic encrypted conversation content.
     // Version12 fences older writers before generation-time replay provenance.
     // Version11 fences older writers before durable offer acknowledgements.
     // Version10 fences older writers before offer replay metadata enters grants.

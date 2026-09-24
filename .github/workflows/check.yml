@@ -185,9 +185,13 @@ jobs:
           node scripts/prepare-legacy-browser-offer-ack.mjs
           git fetch --no-tags --depth=1 origin 5474f6767e2b7e1a8eb4c5731d6ee47d5e186f4b
           node scripts/prepare-legacy-browser-key-boundary.mjs
+          git fetch --no-tags --depth=1 origin 25a119464989d50790f1861d50bdf9cc12abf3c8
+          node scripts/prepare-legacy-browser-content.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check atomic browser conversation content and actual version12 upgrade
+        run: npm run test:browser-private -- tests/browser/browser-conversation-content.spec.ts --max-failures=1
       - name: Check browser generation provenance and actual version11 upgrade
         run: npm run test:browser-private -- tests/browser/browser-key-replay-boundary.spec.ts --max-failures=1
       - name: Check browser offer receipt history and actual version10 upgrade

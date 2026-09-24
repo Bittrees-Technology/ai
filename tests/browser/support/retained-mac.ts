@@ -1,3 +1,4 @@
+import { PrivateConversationContent } from "../../../modules/remote/private-conversation-content.js";
 import { PrivateConversationConsent } from "../../../modules/remote/private-conversation-consent.js";
 import { PrivateConversationOffers } from "../../../modules/remote/private-conversation-offers.js";
 import { createServer } from "node:http";
@@ -221,7 +222,64 @@ export async function retainedMac(
           expectedRevision: ready.revision,
           confirmed: true,
         });
-      return { data: ready.value.offer, envelope };
+      const engine = new PrivateConversationContent(
+        store,
+        vault,
+        owner,
+        consent,
+        keys,
+        undefined,
+        clock,
+      );
+      const messageIds = new Map<string, string>();
+      return {
+        data: ready.value.offer,
+        envelope,
+        async message(text: string, parentId: string | null = null) {
+          const local = store.appendMessage(
+            owner,
+            {
+              conversationId,
+              recipientInboxId: inboxId,
+              type: "notification",
+              content: text,
+              ...(parentId ? { replyToId: messageIds.get(parentId) } : {}),
+            },
+            randomUUID(),
+          );
+          const localId = local.id;
+          const entry = await engine.prepare({
+            id: randomUUID(),
+            permissionId: saved.grant.id,
+            expectedConsentRevision: consent.list().revision,
+            localMessageId: localId,
+            parentId,
+            kind: "message",
+            expiresAt: clock() + 120000,
+            confirmed: true,
+          });
+          const sealed = await engine.seal({
+            permissionId: saved.grant.id,
+            id: entry.value.content.id,
+            expectedRevision: entry.revision,
+            confirmed: true,
+          });
+          messageIds.set(entry.value.content.id, localId);
+          return sealed;
+        },
+        async receive(incoming: unknown) {
+          const accepted = await engine.accept({
+            permissionId: saved.grant.id,
+            envelope: incoming,
+            confirmed: true,
+          });
+          messageIds.set(
+            accepted.entry.value.content.id,
+            accepted.entry.value.localMessageId,
+          );
+          return accepted;
+        },
+      };
     },
     async connectRelay(
       device: {

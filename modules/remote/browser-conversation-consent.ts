@@ -110,7 +110,7 @@ const acknowledgementInputSchema = z.strictObject({
   expectedRevision: positive,
   confirmed: z.literal(true),
 });
-const grantSchema = z
+export const browserConversationGrantSchema = z
   .strictObject({
     id: z.uuid(),
     revision: positive,
@@ -146,7 +146,7 @@ const grantSchema = z
       v.choices.expiresAt - v.approvedAt <= 86400000,
   );
 const grantsSchema = z
-  .array(grantSchema)
+  .array(browserConversationGrantSchema)
   .max(64)
   .refine(
     (v) =>
@@ -168,7 +168,7 @@ const rowSchema = z
       ? v.iv === null && v.ciphertext === null && v.key === null
       : !!v.iv && !!v.ciphertext && !!v.key,
   );
-type Grant = z.infer<typeof grantSchema>;
+type Grant = z.infer<typeof browserConversationGrantSchema>;
 type Row = z.infer<typeof rowSchema>;
 type Choices = z.infer<typeof choicesSchema>;
 type Guard = { generation: number; wall: number; mono: number };
@@ -729,7 +729,7 @@ export class BrowserConversationConsent {
           same(prior.offerReplay, r.replay) &&
           same(prior.offer, r.offer),
         next = this.next(r.row),
-        grant = grantSchema.parse({
+        grant = browserConversationGrantSchema.parse({
           id: crypto.randomUUID(),
           revision: next,
           approvedAt: this.now(),

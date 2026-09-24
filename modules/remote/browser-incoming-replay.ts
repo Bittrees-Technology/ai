@@ -13,6 +13,10 @@ const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const outcomeSchema = z.discriminatedUnion("store", [
   z.strictObject({ store: z.literal("entries"), key: z.tuple([z.uuid()]) }),
   z.strictObject({
+    store: z.literal("conversation_content"),
+    key: z.tuple([hex, hex]),
+  }),
+  z.strictObject({
     store: z.literal("peer_checks"),
     key: z.tuple([hex, z.uuid()]),
   }),
