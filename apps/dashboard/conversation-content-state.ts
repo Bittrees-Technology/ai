@@ -1,12 +1,15 @@
+import { privateRelaySelectionSchema } from "../../modules/remote/private-relay-queue.js";
 import { z } from "zod";
 import { privateEnvelopeSchema } from "../../modules/remote/private-envelope.js";
 import {
   privateRelayIdentitySchema,
+  privateRelayPageSchema,
   privateRelayStorageReceiptSchema,
 } from "../../modules/remote/private-relay-contracts.js";
 import {
   privateRelayStatusSchema,
   type RelayStatus,
+  type RelayRecord,
 } from "./private-relay-state.js";
 import { taskQuestionViewSchema } from "../../modules/contracts/task-answer.js";
 import type { ConversationPermissionStatus } from "./conversation-permission-state.js";
@@ -73,6 +76,45 @@ const relayReviewSchema = z.object({
   transportOnly: z.literal(true),
   relayRecipient: privateRelayIdentitySchema.optional(),
 });
+const queueItemSchema = z
+  .strictObject({
+    selection: privateRelaySelectionSchema,
+    cursor: privateRelayPageSchema.shape.after.unwrap(),
+    expiresAt: positive,
+  })
+  .refine(
+    (v) =>
+      v.cursor.messageId === v.selection.messageId &&
+      v.cursor.storedAt === v.selection.storedAt,
+  );
+const queueSchema = z
+  .strictObject({
+    transportOnly: z.literal(true),
+    item: queueItemSchema.nullable(),
+    nextCursor: privateRelayPageSchema.shape.after,
+  })
+  .refine(
+    (v) => !v.nextCursor || (!!v.item && same(v.nextCursor, v.item.cursor)),
+  );
+const receivedSchema = z.strictObject({
+  received: z.strictObject({
+    status: z.enum(["accepted-locally", "recipient-storage-confirmed"]),
+    duplicate: z.boolean(),
+    entry: conversationDeliveryItemSchema,
+    messageId: z.uuid(),
+  }),
+  transport: z.strictObject({
+    transportOnly: z.literal(true),
+    receipt: privateRelayStorageReceiptSchema,
+    duplicate: z.boolean(),
+  }),
+  nextCursor: privateRelayPageSchema.shape.after,
+});
+type Queue = {
+  connection: RelayRecord;
+  after: z.infer<typeof privateRelayPageSchema>["after"];
+  item: z.infer<typeof queueItemSchema> | null;
+};
 type Prepare = {
   id: string;
   permissionId: string;
@@ -84,7 +126,10 @@ type Prepare = {
   confirmed: true;
 };
 export type ContentReview = {
-  action: "prepare" | "seal" | "send" | "stop";
+  action:
+    "prepare" | "seal" | "send" | "stop" | "receive" | "reconcile" | "receipt";
+  queue?: Queue;
+  permissionId?: string;
   expiresAt: number;
   peerId: string;
   fingerprint: string;
@@ -127,6 +172,7 @@ export class ConversationContentPanelState {
   status: z.infer<typeof statusSchema> | null = null;
   relayStatus: RelayStatus | null = null;
   review: ContentReview | null = null;
+  queue: Queue | null = null;
   busy = false;
   error = "";
   notice = "";
@@ -159,6 +205,7 @@ export class ConversationContentPanelState {
     this.discard();
     this.status = null;
     this.relayStatus = null;
+    this.queue = null;
     this.render();
   }
   dispose() {
@@ -220,13 +267,16 @@ export class ConversationContentPanelState {
     const current = () => !this.disposed && generation === this.generation;
     try {
       await work(current);
-    } catch {
+    } catch (error) {
       if (current()) {
         this.review = null;
         this.status = null;
         this.relayStatus = null;
+        this.queue = null;
         this.error =
-          "The delivery change could not be confirmed. Refresh delivery history before reviewing again. No automatic retry was made.";
+          error instanceof Error && error.message.includes("PARENT_PENDING")
+            ? "Receive the earlier message first. Refresh connections, inspect incoming messages and inspect the next item. This message remains queued."
+            : "The delivery change could not be confirmed. Refresh delivery history before reviewing again. No automatic retry was made.";
       }
     } finally {
       this.busy = false;
@@ -238,6 +288,7 @@ export class ConversationContentPanelState {
   }
   refresh() {
     this.discard();
+    this.queue = null;
     return this.act(async (current) => {
       const s = await this.load();
       if (current()) this.status = s;
@@ -245,12 +296,313 @@ export class ConversationContentPanelState {
   }
   refreshConnections() {
     this.discard();
+    this.queue = null;
     return this.act(async (current) => {
       const s = privateRelayStatusSchema.parse(
         await this.api("/v1/private-relay"),
       );
       if (current()) this.relayStatus = s;
     });
+  }
+  clearIncoming() {
+    this.discard();
+    this.queue = null;
+    this.render();
+  }
+  inspectIncoming(connectionId: string, next = false) {
+    const connection = this.connections().find((e) => e.id === connectionId);
+    if (
+      !connection ||
+      !this.status?.enabled ||
+      (next && (!this.queue?.item || !same(connection, this.queue.connection)))
+    )
+      return;
+    const selected = structuredClone(connection),
+      after = next ? structuredClone(this.queue!.item!.cursor) : null;
+    this.discard();
+    this.queue = null;
+    return this.act(async (current) => {
+      const value = queueSchema.parse(
+        await this.api("/v1/private-relay/inspect-conversation", "POST", {
+          connection: { id: selected.id, expectedRevision: selected.revision },
+          after,
+          confirmed: true,
+        }),
+      );
+      if (!current()) return;
+      this.queue = { connection: selected, after, item: value.item };
+      this.notice = value.item
+        ? "Incoming item inspected. Its content has not been authenticated or saved."
+        : "No incoming item here. Inspect from the start to check earlier messages.";
+    });
+  }
+  private async freshIncoming(
+    queue: Queue,
+    permissionId: string,
+    current: () => boolean,
+  ) {
+    const permissions: ConversationPermissionStatus = await this.api(
+      "/v1/private-conversation-permissions",
+    );
+    if (!current()) return null;
+    if (!same(permissions, this.permissions)) throw Error("PERMISSION_CHANGED");
+    const status = await this.load();
+    if (!current()) return null;
+    const relay = privateRelayStatusSchema.parse(
+      await this.api("/v1/private-relay"),
+    );
+    if (!current()) return null;
+    const grant = this.grants().find((g) => g.id === permissionId),
+      peer = permissions.peers.find(
+        (p) =>
+          p.peerId === grant?.choices.peerId &&
+          p.keyEpoch === grant.choices.peerKeyEpoch,
+      );
+    if (
+      !status.enabled ||
+      !permissions.canSetup ||
+      !grant ||
+      grant.state !== "saved" ||
+      grant.choices.expiresAt <= this.now() ||
+      !peer ||
+      !queue.item ||
+      queue.item.expiresAt <= this.now() ||
+      !relay.canCheckRemote ||
+      !relay.state.items.some((c) => same(c, queue.connection))
+    )
+      throw Error("ACCESS_CHANGED");
+    return { status, grant, peer };
+  }
+  reviewIncoming(permissionId: string, copyId?: string) {
+    if (!this.queue?.item || !this.status?.enabled) return;
+    const queue = structuredClone(this.queue),
+      action = copyId ? "reconcile" : "receive";
+    const original = copyId
+      ? this.items().find(
+          (e) =>
+            e.id === copyId &&
+            e.permissionId === permissionId &&
+            e.direction === "outgoing" &&
+            e.state === "ready" &&
+            !e.locked,
+        )
+      : undefined;
+    if (copyId && !original) return;
+    const entry = original && structuredClone(original);
+    this.discard();
+    const started = { wall: this.now(), mono: this.mono() };
+    return this.act(async (current) => {
+      const fresh = await this.freshIncoming(queue, permissionId, current);
+      if (!fresh || !current()) return;
+      const grant = fresh.grant;
+      if (
+        action === "receive" &&
+        !grant.choices.permissions.messagesToMac &&
+        !grant.choices.permissions.answersToMac
+      )
+        throw Error("ACCESS_CHANGED");
+      let message: Message | undefined;
+      if (entry) {
+        if (!fresh.status.items.some((e) => same(e, entry)))
+          throw Error("COPY_CHANGED");
+        message = await this.read(entry.localMessageId);
+        if (!current()) return;
+      }
+      this.accept(
+        {
+          action,
+          queue,
+          permissionId,
+          connectionId: queue.connection.id,
+          entry,
+          message,
+          peerId: grant.choices.peerId,
+          fingerprint: fresh.peer.fingerprint,
+          expiresAt: Math.min(
+            started.wall + 120000,
+            grant.choices.expiresAt,
+            queue.item!.expiresAt,
+            queue.connection.binding!.expiresAt,
+            queue.connection.permission!.expiresAt,
+          ),
+        },
+        started,
+      );
+    });
+  }
+  private async confirmIncoming(r: ContentReview, active: () => boolean) {
+    const queue = r.queue!,
+      fresh = await this.freshIncoming(queue, r.permissionId!, active);
+    if (!fresh || !active()) return;
+    if (
+      fresh.peer.fingerprint !== r.fingerprint ||
+      fresh.grant.choices.peerId !== r.peerId
+    )
+      throw Error("DESTINATION_CHANGED");
+    if (r.entry) {
+      if (!fresh.status.items.some((e) => same(e, r.entry)))
+        throw Error("COPY_CHANGED");
+      const message = await this.read(r.entry.localMessageId);
+      if (!active()) return;
+      if (!same(message, r.message)) throw Error("SOURCE_CHANGED");
+    }
+    const result = receivedSchema.parse(
+      await this.api("/v1/private-relay/check-conversation", "POST", {
+        connection: {
+          id: queue.connection.id,
+          expectedRevision: queue.connection.revision,
+        },
+        after: queue.after,
+        selection: queue.item!.selection,
+        confirmed: true,
+        target:
+          r.action === "receive"
+            ? { action: "receive", permissionId: r.permissionId }
+            : {
+                action: "reconcile",
+                permissionId: r.permissionId,
+                id: r.entry!.id,
+                expectedRevision: r.entry!.revision,
+              },
+      }),
+    );
+    if (!active()) return;
+    const e = result.received.entry,
+      selected = queue.item!.selection,
+      receipt = result.transport.receipt;
+    if (
+      result.received.messageId !== selected.messageId ||
+      receipt.messageId !== selected.messageId ||
+      receipt.envelopeHash !== selected.envelopeHash ||
+      receipt.storedAt !== selected.storedAt ||
+      receipt.revision <= selected.revision ||
+      receipt.state !== "received" ||
+      e.permissionId !== r.permissionId ||
+      e.peerId !== r.peerId ||
+      e.locked
+    )
+      throw Error("RESULT_CHANGED");
+    if (r.action === "receive") {
+      if (
+        result.received.status !== "accepted-locally" ||
+        e.direction !== "incoming" ||
+        e.state !== "accepted"
+      )
+        throw Error("RESULT_CHANGED");
+    } else if (
+      result.received.status !== "recipient-storage-confirmed" ||
+      !e.recipientAccepted ||
+      e.direction !== "outgoing" ||
+      e.id !== r.entry!.id ||
+      e.localMessageId !== r.entry!.localMessageId ||
+      e.kind !== r.entry!.kind ||
+      e.revision < r.entry!.revision
+    )
+      throw Error("RESULT_CHANGED");
+    const status = await this.load();
+    if (!active()) return;
+    if (!status.items.some((item) => same(item, e)))
+      throw Error("RESULT_CHANGED");
+    this.status = status;
+    this.queue = null;
+    this.notice =
+      r.action === "receive"
+        ? "Conversation item saved on this Mac. Refresh Inbox messages to read it. A storage receipt has not been uploaded."
+        : "Browser storage receipt authenticated for this copy. Reading and task completion are not confirmed.";
+  }
+  prepareReceipt(id: string, permissionId: string) {
+    const entry = this.items().find(
+        (e) => e.id === id && e.permissionId === permissionId,
+      ),
+      grant = this.grants().find((g) => g.id === permissionId),
+      peer = this.permissions.peers.find(
+        (p) =>
+          p.peerId === entry?.peerId &&
+          p.keyEpoch === grant?.choices.peerKeyEpoch,
+      );
+    if (
+      !this.status?.enabled ||
+      !this.permissions.canSetup ||
+      !entry ||
+      entry.direction !== "incoming" ||
+      entry.locked ||
+      entry.receiptPrepared ||
+      entry.relayStopped ||
+      entry.expiresAt <= this.now() ||
+      !grant ||
+      grant.state !== "saved" ||
+      grant.choices.expiresAt <= this.now() ||
+      !peer
+    )
+      return;
+    const original = structuredClone(entry);
+    this.discard();
+    const started = { wall: this.now(), mono: this.mono() };
+    return this.act(async (current) => {
+      const message = await this.read(entry.localMessageId);
+      if (!current()) return;
+      this.accept(
+        {
+          action: "receipt",
+          entry: original,
+          message,
+          peerId: peer.peerId,
+          fingerprint: peer.fingerprint,
+          expiresAt: Math.min(
+            started.wall + 120000,
+            entry.expiresAt,
+            grant.choices.expiresAt,
+          ),
+        },
+        started,
+      );
+    });
+  }
+  private async confirmReceipt(r: ContentReview, active: () => boolean) {
+    const entry = r.entry!,
+      permissions = await this.api("/v1/private-conversation-permissions");
+    if (!active()) return;
+    if (!same(permissions, this.permissions)) throw Error("PERMISSION_CHANGED");
+    const before = await this.load();
+    if (!active()) return;
+    if (!before.enabled || !before.items.some((e) => same(e, entry)))
+      throw Error("COPY_CHANGED");
+    const message = await this.read(entry.localMessageId);
+    if (!active()) return;
+    if (!same(message, r.message)) throw Error("SOURCE_CHANGED");
+    const result = await this.api(endpoint + "/envelope", "POST", {
+      id: entry.id,
+      permissionId: entry.permissionId,
+      expectedRevision: entry.revision,
+      confirmed: true,
+    });
+    if (!active()) return;
+    const wire = privateEnvelopeSchema.parse(result.envelope);
+    if (
+      wire.header.operationId !== entry.id ||
+      wire.header.recipientId !== r.peerId ||
+      wire.header.expiresAt !== entry.expiresAt ||
+      wire.header.recipientKeyEpoch !==
+        this.grants().find((g) => g.id === entry.permissionId)?.choices
+          .peerKeyEpoch
+    )
+      throw Error("ENVELOPE_CHANGED");
+    const status = await this.load();
+    if (!active()) return;
+    const saved = status.items.find(
+      (e) => e.id === entry.id && e.permissionId === entry.permissionId,
+    );
+    if (
+      !saved ||
+      !saved.receiptPrepared ||
+      saved.direction !== "incoming" ||
+      saved.localMessageId !== entry.localMessageId ||
+      saved.relayAttempts !== entry.relayAttempts
+    )
+      throw Error("RESULT_CHANGED");
+    this.status = status;
+    this.notice =
+      "Storage receipt prepared on this Mac. Review uploading it separately.";
   }
   private async read(id: string) {
     const m = messageSchema.parse(
@@ -478,7 +830,11 @@ export class ConversationContentPanelState {
     return this.act(async (current) => {
       this.review = null;
       const active = () => current() && available() && this.valid(r);
-      if (r.action === "prepare" || r.action === "seal") {
+      if (r.action === "receipt") {
+        await this.confirmReceipt(r, active);
+      } else if (r.action === "receive" || r.action === "reconcile") {
+        await this.confirmIncoming(r, active);
+      } else if (r.action === "prepare" || r.action === "seal") {
         const m = await this.read(r.message!.id);
         if (!active()) return;
         const q = await this.question(m);
