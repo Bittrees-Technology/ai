@@ -1198,6 +1198,17 @@ for (const kind of ["message", "question"] as const)
         "SYNTHETIC_FRESH_CONSENT_OLD_KEY",
       );
       const renewed = await inspect(page);
+      const oldReplay = JSON.parse(old.ledger);
+      const renewedReplay = JSON.parse(renewed.ledger);
+      expect(renewedReplay).toHaveLength(oldReplay.length + 1);
+      expect(renewedReplay).toEqual(expect.arrayContaining(oldReplay));
+      expect(
+        renewedReplay
+          .filter((entry: { type: string }) =>
+            entry.type.startsWith("conversation."),
+          )
+          .map((entry: { type: string }) => entry.type),
+      ).toEqual(["conversation.offer", "conversation.offer"]);
       await expect(
         page.evaluate((raw) => window.browserPeersTest.contentAccept(raw), {
           grantId: saved.id,
@@ -1210,7 +1221,7 @@ for (const kind of ["message", "question"] as const)
       await expect(accept(page, f, envelope)).rejects.toThrow("DENIED");
       const final = await inspect(page);
       expect(final.count).toBe(0);
-      expect(final.ledger).toBe(old.ledger);
+      expect(final.ledger).toBe(renewed.ledger);
       expect(final.channels).toBe(renewed.channels);
       expect(JSON.parse(final.all).slots).toEqual(oldSlots);
       expect(
