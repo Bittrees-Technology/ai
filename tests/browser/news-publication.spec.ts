@@ -463,6 +463,7 @@ test("publication cancel, focus loss and expiry discard consent, including a del
 });
 test("source-blocked feeds cannot publish and a read-only connection cannot request publication", async ({
   page,
+  context,
 }, info) => {
   const f = await fixture(page, { blocked: true }),
     review = await load(f);
@@ -500,8 +501,10 @@ test("source-blocked feeds cannot publish and a read-only connection cannot requ
   );
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await relayCancelled;
-  await page.unrouteAll({ behavior: "wait" });
-  const reader = await fixture(page, { publish: false });
+  // Independent authority fixtures get independent pages; do not replace a
+  // routed server underneath an already mounted workspace and its pending reads.
+  const readerPage = await context.newPage();
+  const reader = await fixture(readerPage, { publish: false });
   await expect(
     reader.panel.getByRole("button", {
       name: "Review public edition",
