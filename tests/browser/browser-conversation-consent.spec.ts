@@ -684,7 +684,11 @@ test("offer approval rolls back consent and replay together on failed writes, ex
         { mode, expiry: review.expiresAt },
       );
       await expect(approve(page, review)).rejects.toThrow(
-        mode.endsWith("write") ? "CAPACITY" : "DENIED",
+        mode.endsWith("write")
+          ? "CAPACITY"
+          : mode === "identity"
+            ? "CONFLICT"
+            : "DENIED",
       );
       expect(await replaySnapshot(page)).toEqual(before);
       await reopen(page, f.f);
