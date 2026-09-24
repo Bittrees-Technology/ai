@@ -1238,3 +1238,215 @@ for (const kind of ["message", "question"] as const)
       f.mac.close();
     }
   });
+
+for (const kind of ["message", "question"] as const)
+  test(`actual version11 replacement requires new consent before fresh ${kind} delivery and old recovery stays historical`, async ({
+    page,
+  }) => {
+    const f = await setup(page, "key-boundary", kind === "question");
+    try {
+      const oldWire = await f.offer.message("SYNTHETIC_OLD_KEY_HISTORY");
+      const old = await page.evaluate(
+        async (keyId) => ({
+          code: window.browserPeersTest.recoveryCode(),
+          kit: await window.browserPeersTest.recovery(keyId),
+        }),
+        f.local.keyId,
+      );
+      await reopen(page, f.f);
+      const upgraded = await inspect(page);
+      const recovered = await page.evaluate(
+        ({ code, kit }) => window.browserPeersTest.checkRecovery(kit, code),
+        old,
+      );
+      expect(recovered.publicKey).toBe(f.local.publicKey);
+      expect(recovered.privateExtractable).toBe(false);
+      await expect(accept(page, f, oldWire)).rejects.toThrow("DENIED");
+      expect(await inspect(page)).toEqual(upgraded);
+
+      const replacement = await page.evaluate(() =>
+        window.browserPeersTest.activate(),
+      );
+      expect(replacement.keyEpoch).toBe(f.local.keyEpoch + 1);
+      expect(replacement.publicKey).not.toBe(f.local.publicKey);
+      await expect(accept(page, f, oldWire)).rejects.toThrow("DENIED");
+      await expect(prepare(page, f)).rejects.toThrow("DENIED");
+      expect((await inspect(page)).count).toBe(0);
+      expect(
+        await page.evaluate(
+          (id) => window.browserPeersTest.recovery(id),
+          f.local.keyId,
+        ),
+      ).toEqual(old.kit);
+      // Re-pin both directions against the new local proof, then run the real
+      // challenge/response protocol. Neither step renews conversation consent.
+      const outgoing = await page.evaluate(
+        (id) =>
+          window.browserPeersTest.invitation({
+            recipientId: id,
+            confirmed: true,
+          }),
+        f.mac.binding.deviceId,
+      );
+      const macReview = await f.mac.peers.prepare(outgoing.invitation);
+      f.mac.peers.approve({
+        reviewId: macReview.reviewId,
+        expectedRevision: macReview.expectedRevision,
+        comparedFingerprint: outgoing.fingerprint,
+        confirmed: true,
+      });
+      const macInvitation = await f.mac.invitation();
+      const browserReview = await page.evaluate(
+        (invitation) => window.browserPeersTest.prepare(invitation),
+        macInvitation.invitation,
+      );
+      await page.evaluate(
+        (review) =>
+          window.browserPeersTest.approve({
+            reviewId: review.reviewId,
+            expectedRevision: review.expectedRevision,
+            comparedFingerprint: review.fingerprint,
+            confirmed: true,
+          }),
+        browserReview,
+      );
+      const start = await page.evaluate(async (peerId) => {
+        const api = window.browserPeersTest;
+        return api.checkBegin({
+          peerId,
+          expectedKeyRevision: (await api.keyStatus()).revision,
+          expectedPeerRevision: (await api.status()).revision,
+          confirmed: true,
+        });
+      }, f.mac.binding.deviceId);
+      const challenge = await page.evaluate(
+        (id) => window.browserPeersTest.checkEnvelope({ id, confirmed: true }),
+        start.id,
+      );
+      const response = await f.mac.checks.respond({
+        envelope: challenge,
+        confirmed: true,
+      });
+      const responseWire = await f.mac.checks.delivery({
+        id: response.id,
+        confirmed: true,
+      });
+      await page.evaluate(
+        (envelope) =>
+          window.browserPeersTest.checkComplete({ envelope, confirmed: true }),
+        responseWire,
+      );
+      const macCheck = await f.mac.checks.begin({
+        peerId: f.f.binding.deviceId,
+        expectedKeyRevision: f.mac.keys.list().revision,
+        expectedPeerRevision: f.mac.peers.list().revision,
+        confirmed: true,
+      });
+      const macChallenge = await f.mac.checks.delivery({
+        id: macCheck.id,
+        confirmed: true,
+      });
+      const browserResponse = await page.evaluate(
+        (envelope) =>
+          window.browserPeersTest.checkRespond({ envelope, confirmed: true }),
+        macChallenge,
+      );
+      const browserWire = await page.evaluate(
+        (id) => window.browserPeersTest.checkEnvelope({ id, confirmed: true }),
+        browserResponse.id,
+      );
+      await f.mac.checks.complete({ envelope: browserWire, confirmed: true });
+      await expect(prepare(page, f)).rejects.toThrow("DENIED");
+      await expect(accept(page, f, oldWire)).rejects.toThrow("DENIED");
+
+      const offer = await f.mac.conversationOffer(undefined, {
+        questions: kind === "question",
+      });
+      const grant = await page.evaluate(
+        async ({ envelope, permissions, peerId, peerKeyEpoch, now }) => {
+          const api = window.browserPeersTest;
+          const review = await api.conversationPrepare({
+            expectedRevision: (await api.conversationStatus()).revision,
+            envelope,
+            permissions,
+            peerId,
+            peerKeyEpoch,
+            expiresAt: now + 240000,
+          });
+          return api.conversationApprove({
+            reviewId: review.reviewId,
+            expectedRevision: review.expectedRevision,
+            confirmed: true,
+            acknowledged: true,
+          });
+        },
+        {
+          envelope: offer.envelope,
+          permissions: offer.data.permissions,
+          peerId: f.pin.peerId,
+          peerKeyEpoch: f.pin.keyEpoch,
+          now: f.f.now,
+        },
+      );
+      const next = { ...f, offer, grant, local: replacement };
+      const worker = kind === "question" ? await offer.question() : null;
+      const envelope =
+        worker?.envelope ?? (await offer.message("SYNTHETIC_NEW_KEY_MESSAGE"));
+      const accepted = await accept(page, next, envelope);
+      expect(accepted.duplicate).toBe(false);
+      expect((await read(page, accepted.entry)).content.type).toBe(
+        `conversation.${kind}`,
+      );
+      const beforeDuplicate = await inspect(page);
+      expect((await accept(page, next, envelope)).duplicate).toBe(true);
+      expect(await inspect(page)).toEqual(beforeDuplicate);
+      const reply = await prepare(page, next, {
+        parentId: accepted.entry.id,
+        content: "SYNTHETIC_ORDINARY_REPLY",
+      });
+      const replyWire = await wire(page, reply);
+      expect((await offer.receive(replyWire)).duplicate).toBe(false);
+      if (worker) {
+        expect(worker.task().status).toBe("awaiting_input");
+        const answer = await prepare(page, next, {
+          kind: "answer",
+          parentId: accepted.entry.id,
+          content: "Lisbon",
+        });
+        const answerWire = await wire(page, answer);
+        expect((await offer.receive(answerWire)).duplicate).toBe(false);
+        expect(worker.task().status).toBe("queued");
+        await worker.run();
+        expect(worker.task().status).toBe("completed");
+        const calls = worker.calls();
+        expect((await offer.receive(answerWire)).duplicate).toBe(true);
+        await worker.run();
+        expect(worker.calls()).toBe(calls);
+      }
+      await reopen(page, f.f);
+      expect((await accept(page, next, envelope)).duplicate).toBe(true);
+      expect(await wire(page, { ...reply, revision: 2 })).toEqual(replyWire);
+      const beforeRecovery = await inspect(page);
+      expect(
+        (
+          await page.evaluate(
+            ({ code, kit }) => window.browserPeersTest.checkRecovery(kit, code),
+            old,
+          )
+        ).publicKey,
+      ).toBe(f.local.publicKey);
+      await expect(accept(page, f, oldWire)).rejects.toThrow("DENIED");
+      expect(await inspect(page)).toEqual(beforeRecovery);
+      expect(
+        (await page.evaluate(() => window.browserPeersTest.key())).proof,
+      ).toEqual(replacement);
+      expect(
+        await page.evaluate(
+          (id) => window.browserPeersTest.recovery(id),
+          f.local.keyId,
+        ),
+      ).toEqual(old.kit);
+    } finally {
+      f.mac.close();
+    }
+  });
