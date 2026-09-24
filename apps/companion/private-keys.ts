@@ -1,3 +1,8 @@
+import {
+  privateRelaySelectionSchema,
+  relayQueueReview,
+  relaySelectionMatches,
+} from "../../modules/remote/private-relay-queue.js";
 import type { CompanionPrivateRelay } from "./private-relay.js";
 import { privateRelayPageSchema } from "../../modules/remote/private-relay-contracts.js";
 import { CompanionPeerChecks } from "./private-peer-checks.js";
@@ -182,9 +187,8 @@ export class CompanionPrivateKeys {
   receiveTask(raw: unknown) {
     return this.protocolOperation(() => this.tasks.receive(raw));
   }
-  /** One explicit bounded pull. Transport acknowledgement follows durable local
-   * authenticated admission; it is never a receipt/result sent to the browser. */
-  checkRelayedTask(relay: CompanionPrivateRelay, raw: unknown) {
+  /** Inspect one queued transport record without decrypting, admitting or acknowledging it. */
+  inspectRelayedTask(relay: CompanionPrivateRelay, raw: unknown) {
     if (!this.setupEnabled || !this.privateTasksEnabled || !this.remote)
       return Promise.reject(new PrivateKeyLifecycleError("DENIED"));
     const input = z
@@ -204,7 +208,42 @@ export class CompanionPrivateKeys {
         { id: input.id, expectedRevision: input.expectedRevision },
         async (client, current) => {
           const page = await client.poll({ after: input.after, limit: 1 });
+          if (!current()) throw new PrivateKeyLifecycleError("DENIED");
+          return {
+            transportOnly: true as const,
+            item: relayQueueReview(page.items[0]),
+            nextCursor: page.nextCursor,
+          };
+        },
+      ),
+    );
+  }
+  /** One explicit bounded pull. Transport acknowledgement follows durable local
+   * authenticated admission; it is never a receipt/result sent to the browser. */
+  checkRelayedTask(relay: CompanionPrivateRelay, raw: unknown) {
+    if (!this.setupEnabled || !this.privateTasksEnabled || !this.remote)
+      return Promise.reject(new PrivateKeyLifecycleError("DENIED"));
+    const input = z
+      .strictObject({
+        id: z.uuid(),
+        expectedRevision: z
+          .number()
+          .int()
+          .positive()
+          .max(Number.MAX_SAFE_INTEGER),
+        after: privateRelayPageSchema.shape.after,
+        selection: privateRelaySelectionSchema.optional(),
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    return this.protocolOperation(() =>
+      relay.withTransport(
+        { id: input.id, expectedRevision: input.expectedRevision },
+        async (client, current) => {
+          const page = await client.poll({ after: input.after, limit: 1 });
           const item = page.items[0];
+          if (!relaySelectionMatches(item, input.selection))
+            throw new PrivateKeyLifecycleError("CONFLICT");
           if (!item) return { received: null, nextCursor: page.nextCursor };
           const received = await this.tasks.receiveVerified(
             item.envelope,

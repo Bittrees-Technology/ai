@@ -1,0 +1,11 @@
+# Bounded private relay queue inspection
+
+A queued envelope can be structurally valid and still fail endpoint authentication or task permission. Explicit inspection lets each client obtain one transport record and its cursor without decrypting, admitting, acknowledging or deleting it. A later explicit check can use that cursor to reach another message. Starting again with a null cursor still exposes the unacknowledged first message.
+
+The Mac authenticated local API provides `POST /v1/private-relay/inspect-task` with the same exact connection ID/revision, nullable `after` cursor and `confirmed: true` as task checking. The trusted browser host provides `relayTaskAPI.inspect({ after, confirmed: true })`. Both require a current verified device and separate live relay custody/permission. Each request polls at most one message; caller-supplied limits or authority are rejected. No scanner, scheduler or new task permission is added.
+
+Inspection returns only `transportOnly`, an optional item containing an exact selection (message ID, envelope hash, relay revision and storage time), its cursor and expiry, and the next-page cursor. The metadata does not authenticate the content, prove task permission or identify a completed task. Ciphertext, plaintext, sender-provided content, keys and credentials do not cross the inspection result.
+
+Mac `check-task` and browser `relayTaskAPI.check` accept an optional exact `selection`. When supplied, a changed or missing queue head fails before endpoint decryption, admission or acknowledgement. Existing checks without a selection retain their one-message behavior. Every actual admission still passes the existing key, peer, task/result consent, replay, deadline and durable-store checks. A cursor alone grants no authority. Connection or account changes invalidate inspection; selections cannot revive stale permission.
+
+This package adds the controller/API foundation and synthetic acceptance tests. User-facing review, look-past, return-to-start and cancellation controls still need implementation and visual acceptance before queue recovery is complete. It does not add durable queue position or silently discard an unaccepted message. Independent review, final dependency/PR checks and live/personal acceptance remain open. Installed Mac software, models and Acer news processing remain unchanged.
