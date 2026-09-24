@@ -241,3 +241,44 @@
 .browser-tasks textarea {
   resize: vertical;
 }
+
+.conversation-content-columns {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(0, 2fr);
+  gap: 24px;
+  margin-top: 24px;
+}
+.conversation-content-stage {
+  min-width: 0;
+  background: var(--paper);
+  border-left: 4px solid var(--evergreen);
+  padding: 22px;
+}
+.conversation-content-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 68ch;
+  line-height: 1.65;
+}
+.conversation-content-file {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+  margin-top: 22px;
+}
+.conversation-content textarea {
+  resize: vertical;
+}
+.conversation-content label {
+  display: block;
+}
+.conversation-content .browser-keys-check {
+  display: flex;
+}
+@media (max-width: 720px) {
+  .conversation-content-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .conversation-content-stage {
+    padding: 16px;
+  }
+}

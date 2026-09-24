@@ -1,3 +1,5 @@
+import { conversationTaskAccess } from "../../../apps/companion/conversation-access.js";
+import { SourceTasks } from "../../../modules/connectors/source-tasks.js";
 import { PrivateConversationContent } from "../../../modules/remote/private-conversation-content.js";
 import { PrivateConversationConsent } from "../../../modules/remote/private-conversation-consent.js";
 import { PrivateConversationOffers } from "../../../modules/remote/private-conversation-offers.js";
@@ -142,9 +144,12 @@ export async function retainedMac(
     binding,
     consent,
     work,
-    async conversationOffer(deliveryExpiresAt?: number) {
+    async conversationOffer(
+      deliveryExpiresAt?: number,
+      options: { questions?: boolean } = {},
+    ) {
       const conversationId = randomUUID(),
-        inboxId = "conversation-offer-pilot";
+        inboxId = options.questions ? "personal" : "conversation-offer-pilot";
       store.createInbox(owner, {
         id: inboxId,
         tenantId: owner.tenantId,
@@ -228,13 +233,92 @@ export async function retainedMac(
         owner,
         consent,
         keys,
-        undefined,
+        conversationTaskAccess(
+          store,
+          owner,
+          new SourceTasks(),
+          undefined,
+          clock,
+        ),
         clock,
       );
       const messageIds = new Map<string, string>();
       return {
         data: ready.value.offer,
         envelope,
+        original: (id: string) =>
+          engine.seal({
+            permissionId: saved.grant.id,
+            id,
+            expectedRevision: 2,
+            confirmed: true,
+          }),
+        async question() {
+          if (!options.questions)
+            throw Error("Question fixture was not enabled");
+          const task = store.create(
+            owner,
+            {
+              conversationId,
+              kind: "query",
+              prompt: "Prepare a travel checklist",
+              modelProfileId: profile.id,
+              allowQuestions: true,
+            },
+            randomUUID(),
+          );
+          let calls = 0;
+          const worker = new LocalWorker(
+            store,
+            owner,
+            {
+              pin: async () => ({ profile, digest: "c".repeat(64) }),
+              generate: async (_model, prompt, _signal, format) => {
+                calls++;
+                if (format)
+                  return JSON.stringify(
+                    calls === 1
+                      ? {
+                          decision: "ask",
+                          question: "Where are you travelling?",
+                        }
+                      : { decision: "continue" },
+                  );
+                if (!prompt.includes("Lisbon"))
+                  throw Error("Exact browser answer not supplied to worker");
+                return "Bring a map of Lisbon.";
+              },
+            },
+            () => profile,
+          );
+          await worker.runOnce();
+          const wait = store.inputWaitHistory(owner, task.id)[0];
+          if (!wait || store.get(owner, task.id).status !== "awaiting_input")
+            throw Error("Worker did not ask its question");
+          const entry = await engine.prepare({
+            id: randomUUID(),
+            permissionId: saved.grant.id,
+            expectedConsentRevision: consent.list().revision,
+            localMessageId: wait.questionId,
+            parentId: null,
+            kind: "question",
+            expiresAt: Math.min(clock() + 120000, wait.deadline),
+            confirmed: true,
+          });
+          const envelope = await engine.seal({
+            permissionId: saved.grant.id,
+            id: entry.value.content.id,
+            expectedRevision: entry.revision,
+            confirmed: true,
+          });
+          messageIds.set(entry.value.content.id, wait.questionId);
+          return {
+            envelope,
+            task: () => store.get(owner, task.id),
+            run: () => worker.runOnce(),
+            calls: () => calls,
+          };
+        },
         async message(text: string, parentId: string | null = null) {
           const local = store.appendMessage(
             owner,
