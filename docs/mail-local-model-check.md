@@ -39,3 +39,7 @@ The small model remains unaccepted for reliable replies. Citation existence is i
 Malformed Mail JSON, disallowed fields/reply modes, and fabricated or invalid evidence references now raise `ModelError("INVALID_OUTPUT")`. The worker keeps the task terminally failed with no result, records only the fixed run outcome `invalid_model_output`, and does not automatically retry. Run history labels this **Answer rejected**, explains the format/evidence problem and suggests starting a fresh draft with another model or revised request.
 
 Actual source denial/version changes continue to fail independently. Run-history access still rechecks source permission and is concealed after revocation. Raw rejected text and exception details are not included in the persisted failure outcome. This adds a run-outcome value without changing the SQLite schema or weakening validation. Older synthetic comparison artifacts retain the error names observed when they were generated.
+
+## Twelve new production-flow cases — 25 September 2026
+
+The [new fixed synthetic comparison](mail-heldout-production-2026-09-25.md) exercised both installed 9B models through unchanged production prompts. Original Qwen met both summary/reply criteria in9/12 cases; Huihui did so in6/12. All outputs parsed, but role errors, marker echo, omissions and Huihui reply reversals remained. Exact raw evidence and manual cautions are retained. No prompt/default switch or broad quality acceptance is claimed.
