@@ -340,6 +340,12 @@ test("private drafts and reviews clear on escape and focus loss without saving o
     await panel(page)
       .getByRole("button", { name: "Review saving message", exact: true })
       .click();
+    await expect(
+      panel(page).getByRole("heading", {
+        name: "Save this message for your Mac",
+        exact: true,
+      }),
+    ).toBeFocused();
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await expect(panel(page)).not.toContainText(secret);
     await expect(
