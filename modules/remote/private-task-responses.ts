@@ -1,3 +1,11 @@
+import {
+  readResponseDelivery,
+  saveResponseDelivery,
+} from "./private-response-delivery.js";
+import {
+  privateRelayEnvelopeHash,
+  privateRelayStorageReceiptSchema,
+} from "./private-relay-contracts.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Store, Owner } from "../storage/store.js";
@@ -78,6 +86,7 @@ type Entry = {
   locked: boolean;
   kind: Kind;
   value: State;
+  delivery?: ReturnType<typeof readResponseDelivery>;
 };
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -124,6 +133,14 @@ function read(store: Store, vault: Vault, owner: Owner, id: string): Entry {
       locked: row.locked === 1,
       kind,
       value,
+      delivery: readResponseDelivery(
+        store,
+        vault,
+        owner,
+        id,
+        value.envelope,
+        value.attempts,
+      ),
     };
   } catch (e) {
     if (e instanceof PrivateResponseError) throw e;
@@ -529,6 +546,51 @@ export class PrivateTaskResponses {
     } catch (e) {
       if (e instanceof PrivateResponseError) throw e;
       throw new PrivateResponseError("DENIED");
+    }
+  }
+  async recordDelivery(
+    id: string,
+    expectedRevision: number,
+    envelope: unknown,
+    rawReceipt: unknown,
+  ) {
+    try {
+      const wire = privateEnvelopeSchema.parse(envelope),
+        receipt = privateRelayStorageReceiptSchema.parse(rawReceipt);
+      if (
+        receipt.messageId !== wire.header.messageId ||
+        receipt.envelopeHash !== (await privateRelayEnvelopeHash(wire)) ||
+        receipt.storedAt < wire.header.issuedAt - 30000 ||
+        receipt.storedAt > this.now() + 30000
+      )
+        throw new PrivateResponseError("DENIED");
+      return this.store.db
+        .transaction(() => {
+          const entry = this.get(id);
+          if (entry.revision !== expectedRevision)
+            throw new PrivateResponseError("CONFLICT");
+          if (
+            entry.locked ||
+            entry.value.state !== "pending" ||
+            !same(entry.value.envelope, wire) ||
+            entry.value.attempts < 1
+          )
+            throw new PrivateResponseError("DENIED");
+          saveResponseDelivery(
+            this.store,
+            this.vault,
+            this.owner,
+            id,
+            wire,
+            entry.value.attempts,
+            receipt,
+            this.now(),
+          );
+        })
+        .immediate();
+    } catch (error) {
+      if (error instanceof PrivateResponseError) throw error;
+      throw new PrivateResponseError("STORAGE_UNAVAILABLE");
     }
   }
   stop(raw: unknown) {

@@ -1,3 +1,9 @@
+import {
+  privateRelaySelectionSchema,
+  privateRelayQueueQuerySchema,
+  relayQueueReview,
+  relaySelectionMatches,
+} from "./private-relay-queue.js";
 import { privateRelayPageSchema } from "./private-relay-contracts.js";
 import { BrowserRelayTransport } from "./browser-relay-transport.js";
 import { BrowserPrivateOutbox } from "./browser-outbox.js";
@@ -434,6 +440,20 @@ export class BrowserKeyHost {
   /** Explicit relay operations over retained task ciphertext. Neither a storage
    * receipt nor recipient readiness confers task execution or decryption consent. */
   readonly relayTaskAPI = {
+    /** One explicit metadata-only queue inspection; nothing is acknowledged or opened. */
+    inspect: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = privateRelayQueueQuerySchema.parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          const page = await client.poll({ after: input.after, limit: 1 });
+          check();
+          return {
+            transportOnly: true as const,
+            item: relayQueueReview(page.items[0]),
+            nextCursor: page.nextCursor,
+          };
+        });
+      }),
     /** One explicit pull. A server delivery acknowledgement follows durable,
      * authenticated browser receipt/result storage and carries no task authority. */
     check: (raw: unknown) =>
@@ -441,12 +461,15 @@ export class BrowserKeyHost {
         const input = z
           .strictObject({
             after: privateRelayPageSchema.shape.after,
+            selection: privateRelaySelectionSchema.optional(),
             confirmed: z.literal(true),
           })
           .parse(raw);
         return this.relay.withClient(async (client, _identity, check) => {
           const page = await client.poll({ after: input.after, limit: 1 });
           const item = page.items[0];
+          if (!relaySelectionMatches(item, input.selection))
+            throw Error("CONFLICT");
           if (!item) return { received: null, nextCursor: page.nextCursor };
           const received = await (
             await this.compositionStore()
@@ -490,7 +513,7 @@ export class BrowserKeyHost {
       }),
     send: (raw: unknown) =>
       this.verifiedPeer(async () =>
-        this.relay.withClient(async (client, sender) => {
+        this.relay.withClient(async (client, sender, check) => {
           const input = z
             .strictObject({
               peerId: z.uuid(),
@@ -519,10 +542,20 @@ export class BrowserKeyHost {
             Math.min(sender.expiresAt, recipient.expiresAt)
           )
             throw Error("DENIED");
-          return {
-            transportOnly: true as const,
-            ...(await client.submit({ version: 1, envelope })),
-          };
+          const result = await client.submit({ version: 1, envelope });
+          check();
+          await (
+            await this.historyStore()
+          ).recordRelayDelivery(
+            {
+              id: input.id,
+              expectedRevision: input.expectedRevision + 1,
+              envelope,
+              receipt: result.receipt,
+            },
+            check,
+          );
+          return { transportOnly: true as const, ...result };
         }),
       ),
   };

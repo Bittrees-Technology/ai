@@ -1,4 +1,4 @@
-/** Actual compiled task23 -> task24; disposable data, no Keychain or network. */
+/** Actual compiled task23 -> current task25; disposable data, no Keychain or network. */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -76,7 +76,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 24);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 25);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.profiles(owner), profiles);
   assert.deepEqual(current.exportPrivateRelayCredentials(owner), {
@@ -111,12 +111,12 @@ try {
     verifiedAt: new Date().toISOString(),
     legacyStoreSha256: legacyHash,
     from: 23,
-    to: 24,
+    to: 25,
     checks: [
       "actual task23 history/result/profile preserved",
       "wrong-key migration rolls back without new table",
       "empty custody journal grants no authority",
-      "old writer rejects schema24",
+      "old writer rejects current schema25",
       "upgraded backup restores history",
       "original backup remains usable by old writer",
     ],

@@ -175,9 +175,13 @@ jobs:
           node scripts/prepare-legacy-browser-consent.mjs
           git fetch --no-tags --depth=1 origin 9fbecfcc864843fc59fd43daf447f65178244be7
           node scripts/prepare-legacy-browser-composition.mjs
+          git fetch --no-tags --depth=1 origin 515b1b369e0f0c4f62a7058484b059c81e3d59e7
+          node scripts/prepare-legacy-browser-delivery.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check reviewed browser queue controls over real relay
+        run: npm run test:browser-private -- tests/browser/browser-relay-queue-controls.spec.ts --max-failures=1
       - name: Check narrow permission layout before full suite
         run: npm run test:browser-private -- tests/browser/production-browser-permissions.spec.ts --project=webkit --grep 'permission choices, review and history' --max-failures=1
       - name: Check reviewed task flow before full suite
@@ -190,6 +194,18 @@ jobs:
         run: npm run test:browser-private -- tests/browser/browser-relay-transfer.spec.ts --max-failures=1
       - name: Check reviewed private task delivery before full suite
         run: npm run test:browser-private -- tests/browser/production-relay-tasks.spec.ts --max-failures=1
+      - name: Check future browser storage version fences before full suite
+        run: npm run test:browser-private -- tests/browser/browser-endpoint-keys.spec.ts tests/browser/browser-peers.spec.ts tests/browser/private-protocol.spec.ts --grep 'database version' --max-failures=1
+      - name: Check retained browser delivery history before full suite
+        run: npm run test:browser-private -- tests/browser/browser-relay-delivery-history.spec.ts tests/browser/browser-delivery-upgrade.spec.ts --max-failures=1
+      - name: Check Mac task delivery controls before full suite
+        run: npm run test:browser-private -- tests/browser/mac-task-delivery.spec.ts --max-failures=1
+      - name: Check Mac UI over authenticated local API and real relay
+        run: npm run test:browser-private -- tests/browser/mac-task-delivery-native.spec.ts --max-failures=1
+      - name: Check bounded relay queue recovery before full suite
+        run: npm run test:browser-private -- tests/browser/relay-queue-inspection.spec.ts --max-failures=1
+      - name: Check reviewed Mac queue controls over real local API and relay
+        run: npm run test:browser-private -- tests/browser/mac-relay-queue-controls.spec.ts --max-failures=1
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - uses: actions/upload-artifact@v4
@@ -197,6 +213,15 @@ jobs:
         with:
           name: private-browser-results
           path: test-results/private-browser.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain browser queue recovery previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-queue-ui-preview
+          path: test-results/browser-queue-*.png
           if-no-files-found: error
           retention-days: 7
 
@@ -422,5 +447,23 @@ jobs:
         with:
           name: browser-relay-tasks-ui-preview
           path: test-results/browser-relay-tasks-*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain Mac task delivery previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-task-delivery-ui-preview
+          path: test-results/mac-task-delivery-*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain Mac queue recovery previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-queue-ui-preview
+          path: test-results/mac-queue-*.png
           if-no-files-found: error
           retention-days: 7

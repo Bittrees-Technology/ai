@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { exportPrivateTaskReceipts } from "../../modules/remote/private-task-receipts.js";
 import type { Store, Owner } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
 import type { RemoteClient } from "../../modules/remote/client.js";
@@ -40,6 +41,13 @@ function summary(e: ResponseEntry) {
     peerId: e.value.header.recipientId,
     expiresAt: e.value.header.expiresAt,
     attempts: e.value.attempts,
+    delivery: e.delivery
+      ? {
+          state: e.delivery.receipt.state,
+          observedAt: e.delivery.observedAt,
+          attempt: e.delivery.attempt,
+        }
+      : null,
   };
 }
 /** Parent serializes these operations with key/peer/consent changes and deletion.
@@ -65,6 +73,19 @@ export class CompanionPrivateTasks {
       available: true,
       enabled: this.enabled && !!this.remote,
       transportActive: false,
+      // Owner-local history only. These identifiers cannot authorize response
+      // preparation or sending; those operations obtain fresh native scopes.
+      acceptedTasks: exportPrivateTaskReceipts(
+        this.store,
+        this.vault,
+        this.owner,
+      ).map((receipt) => ({
+        operationId: receipt.header.operationId,
+        taskId: receipt.taskId,
+        peerId: receipt.header.senderId,
+        peerKeyEpoch: receipt.header.senderKeyEpoch,
+        acceptedAt: receipt.acceptedAt,
+      })),
       responses: exportPrivateTaskResponses(
         this.store,
         this.vault,
@@ -202,6 +223,19 @@ export class CompanionPrivateTasks {
         input.expectedRevision,
         deliveryLimit,
       ),
+    );
+  }
+  recordResponseDelivery(
+    id: string,
+    expectedRevision: number,
+    envelope: unknown,
+    receipt: unknown,
+  ) {
+    return this.responses().recordDelivery(
+      id,
+      expectedRevision,
+      envelope,
+      receipt,
     );
   }
   async resumeResponse(raw: unknown) {

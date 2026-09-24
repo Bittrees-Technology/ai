@@ -170,6 +170,10 @@ export function localApi({
     if (!privateRelay) throw new StoreError("CONFLICT");
     res.json(await privateRelay.confirm(req.body));
   });
+  app.post("/v1/private-relay/inspect-task", async (req, res) => {
+    if (!privateRelay || !privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.inspectRelayedTask(privateRelay, req.body));
+  });
   app.post("/v1/private-relay/check-task", async (req, res) => {
     if (!privateRelay || !privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.checkRelayedTask(privateRelay, req.body));
@@ -193,6 +197,7 @@ export function localApi({
         available: false,
         enabled: false,
         transportActive: false,
+        acceptedTasks: [],
         responses: [],
       },
     ),

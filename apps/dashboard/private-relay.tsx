@@ -1,3 +1,4 @@
+import { PrivateTaskDeliveryPanel } from "./private-task-delivery.js";
 import React, { useEffect, useRef, useState } from "react";
 import {
   PrivateRelayPanelState,
@@ -49,7 +50,8 @@ export function PrivateRelayPanel({
   );
   const [state, setState] = useState(controller.state),
     [approval, setApproval] = useState(""),
-    [ack, setAck] = useState(false);
+    [ack, setAck] = useState(false),
+    [deliveryOpen, setDeliveryOpen] = useState(false);
   useEffect(() => {
     mounted.current = true;
     void controller.refresh();
@@ -284,6 +286,20 @@ export function PrivateRelayPanel({
             </button>
           </div>
         </section>
+      )}
+      {status?.available && !deliveryOpen && (
+        <button
+          disabled={state.busy || !!state.review}
+          onClick={() => setDeliveryOpen(true)}
+        >
+          Open private task delivery
+        </button>
+      )}
+      {deliveryOpen && (
+        <PrivateTaskDeliveryPanel
+          api={api}
+          onClose={() => setDeliveryOpen(false)}
+        />
       )}
     </article>
   );

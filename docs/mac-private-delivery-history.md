@@ -1,0 +1,13 @@
+# Saved Mac relay acknowledgements
+
+The companion saves a successful relay acknowledgement for each retained encrypted reply. Refreshing private task history, reopening the application or exporting local history preserves that observation. It remains historical transport evidence: neither a stored envelope nor a destination acknowledgement proves the browser authenticated the content or that the user read it.
+
+The task25 database adds an encrypted, owner-scoped delivery journal linked to the response row. Existing task24 response content, envelope, sequence, permission and retry state are unchanged. The journal records the exact envelope fingerprint, verified message/hash receipt, observed time and sending attempt. A stale response revision, different envelope, stopped or restored/locked response cannot acquire a new acknowledgement. Older server revisions or backwards state transitions are rejected. The native transport validates its response before recording; there is no public route for supplying a receipt.
+
+A sending attempt is still saved before transport. If the network reply or journal write is lost, no acknowledgement is invented. The UI shows that the latest attempt is unconfirmed and requires a fresh review before retrying the original ciphertext. If an earlier acknowledgement exists, it remains visible as the last confirmed state alongside the newer uncertainty. Recording an acknowledgement does not stop retries, change task progress or grant authority.
+
+History stays available offline. Stopping retries preserves historical evidence, and owner deletion removes the journal with its response. Encrypted backup preserves history while restore locks the response and credentials; history cannot re-enable sending. Corrupt history fails closed instead of silently becoming an empty successful state.
+
+Five focused engine cases exercise restart/export/restore, lost replies, unchanged-ciphertext reconciliation, cross-owner isolation, foreign/stale receipts, state regression, stopping, deletion, failed journal writes and corrupt ciphertext. The existing real browser/Mac/local-HTTP/HTTPS relay test now verifies that refresh retains the acknowledgement. UI tests verify both retained confirmation and unconfirmed retries. The actual compiled task24-to-task25 upgrade check covers history/profile preservation, wrong-key rollback, older-writer rejection and backup restoration.
+
+This change covers outbound Mac replies. It does not add automatic polling, browser authentication/read receipts, browser-side durable transport history, conversation messages, approvals, task resume, live activation or model changes. Acer news processing and the installed companion are unchanged.

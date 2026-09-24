@@ -1,0 +1,13 @@
+# Reviewed Mac queue recovery
+
+The private task delivery panel can inspect one waiting message, review checking that exact message, or deliberately look for one later message. Each network action has an unchecked, one-use confirmation and the existing exact connection/snapshot, wall-clock and monotonic review bounds. Looking past a message neither deletes nor acknowledges it. Returning to the start is a local view reset, with no network request or stored message change.
+
+Queue metadata is held only in this open panel and bound to the exact connection record. Closing, blur, hidden visibility, Escape, connection selection or a changed/stopped native connection clears the position. Host cancellation fences an in-flight native poll; a late response cannot restore a hidden selection. At most twenty positions can be inspected in one view before returning to the start. There is no automatic scan, retry or durable cursor.
+
+If a selected message cannot be accepted, refreshing local task history preserves its queue reference only while the exact connection remains valid. The user can review looking past it without claiming why acceptance failed. Selected checks include the exact message/hash/revision/storage time; a changed queue head fails before admission. An accepted selection is no longer offered for another check, while looking beyond its old position remains explicit. Task authentication, replay checks and task/result permissions stay authoritative.
+
+The UI keeps the existing Avenir typography, pale blue canvas (#edf3f6), dark ink (#183945), white review surfaces (#ffffff), muted text (#47666e) and green controls (#28685c). Queue navigation is grouped under delivery with plain explanations and wrapped message references. It distinguishes inspected metadata, locally accepted work and completed work. Narrow views retain the same review order and unchecked confirmation.
+
+Five new engine cases exercise the visible controller over actual native controllers, crypto and SQLite, including malformed ciphertext, unchanged-message recovery, exact internal reviews, expiry, late polling, connection stop, cursor ordering and the twenty-position bound. Three browser cases per engine exercise shipped controls over authenticated local HTTP and real HTTPS/PostgreSQL, with six preview states per browser. Credential slots and inference remain synthetic. Actual browser/visual results, final dependency and own PR acceptance must be recorded before completion is claimed.
+
+Browser queue controls remain separate. No installed application, personal Keychain, live policy, runtime/model selection or Acer news processing changes are made.

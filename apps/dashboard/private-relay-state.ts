@@ -227,3 +227,5 @@ export class PrivateRelayPanelState {
     });
   }
 }
+
+export { statusSchema as privateRelayStatusSchema };

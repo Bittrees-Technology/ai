@@ -1,3 +1,6 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { localApi } from "../../../apps/companion/http.js";
 import { RemoteClient } from "../../../modules/remote/client.js";
 import { CompanionPrivateKeys } from "../../../apps/companion/private-keys.js";
 import { CompanionPrivateRelay } from "../../../apps/companion/private-relay.js";
@@ -227,12 +230,22 @@ export async function retainedMac(
         controls,
         relay,
         record,
-        check() {
+        inspect(after: any = null) {
+          const r = record();
+          return controls.inspectRelayedTask(relay, {
+            id: r.id,
+            expectedRevision: r.revision,
+            after,
+            confirmed: true,
+          });
+        },
+        check(after: any = null, selection?: any) {
           const r = record();
           return controls.checkRelayedTask(relay, {
             id: r.id,
             expectedRevision: r.revision,
-            after: null,
+            after,
+            ...(selection ? { selection } : {}),
             confirmed: true,
           });
         },
@@ -263,6 +276,71 @@ export async function retainedMac(
             },
             confirmed: true,
           });
+        },
+        async openLocalApi() {
+          const server = createServer();
+          await new Promise<void>((resolve) =>
+            server.listen(0, "127.0.0.1", resolve),
+          );
+          const port = (server.address() as AddressInfo).port;
+          const token = randomBytes(32).toString("hex");
+          const origin = `http://127.0.0.1:${port}`;
+          server.on(
+            "request",
+            localApi({
+              store,
+              owner,
+              port,
+              token,
+              privateKeys: controls,
+              privateRelay: relay,
+            }),
+          );
+          const calls: { path: string; method: string; status: number }[] = [];
+          // Only these local routes are exposed to the test's rendered Mac panel.
+          // The token stays in the Node test process; this is not a native-shell test.
+          const allowed = new Set([
+            "GET /v1/private-relay",
+            "GET /v1/private-tasks",
+            "POST /v1/private-relay/cancel-review",
+            "POST /v1/private-relay/check-task",
+            "POST /v1/private-relay/inspect-task",
+            "POST /v1/private-relay/responses/prepare",
+            "POST /v1/private-relay/responses/send",
+            "POST /v1/private-tasks/responses/stop",
+          ]);
+          return {
+            calls,
+            async deniedStatus() {
+              const res = await fetch(origin + "/v1/private-tasks");
+              return { status: res.status, body: await res.json() };
+            },
+            async call(path: string, method = "GET", body?: unknown) {
+              if (!allowed.has(`${method} ${path}`))
+                throw Error("Fixture route denied");
+              const res = await fetch(origin + path, {
+                method,
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+              });
+              calls.push({ path, method, status: res.status });
+              if (res.status === 204) return;
+              const data = await res.json();
+              if (!res.ok)
+                throw Error(data.error ?? "Local API rejected request");
+              return data;
+            },
+            async close() {
+              server.closeAllConnections();
+              if (server.listening)
+                await new Promise<void>((resolve) =>
+                  server.close(() => resolve()),
+                );
+            },
+          };
         },
         tasks: () => store.export(owner),
         task: (id: string) => store.get(owner, id),

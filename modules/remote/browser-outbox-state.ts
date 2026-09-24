@@ -1,3 +1,4 @@
+import { privateRelayStorageReceiptSchema } from "./private-relay-contracts.js";
 import { z } from "zod";
 import { privateBindingSchema } from "./private-peer-contracts.js";
 import {
@@ -43,6 +44,13 @@ export const browserOutboxEntrySchema = z
     resultReceivedAt: positive.nullable().default(null),
     // Older wire-only entries have no durable local composition material.
     composed: z.literal(true).optional(),
+    relayDelivery: z
+      .strictObject({
+        receipt: privateRelayStorageReceiptSchema,
+        observedAt: positive,
+        attempt: positive,
+      })
+      .optional(),
     attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .refine(
@@ -65,6 +73,10 @@ export const browserOutboxEntrySchema = z
       (!e.resultEnvelope ||
         (e.resultReceivedAt! < e.resultEnvelope.header.expiresAt &&
           e.resultReceivedAt! >= e.resultEnvelope.header.issuedAt - 30000)) &&
+      (!e.relayDelivery ||
+        (!!e.envelope &&
+          e.relayDelivery.receipt.messageId === e.header.messageId &&
+          e.relayDelivery.attempt <= e.attempts)) &&
       e.id === e.header.operationId &&
       e.header.ownerId === e.context.binding.ownerId &&
       e.header.senderId === e.context.binding.deviceId &&
