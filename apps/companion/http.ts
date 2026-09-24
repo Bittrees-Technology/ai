@@ -1271,6 +1271,24 @@ export function localApi({
       throw new StoreError("CONFLICT");
     res.json({ items });
   });
+  app.get("/v1/messages/:id", async (req, res) => {
+    const taskToken = store.changeToken(),
+      memoryToken = memory?.changeToken();
+    const message = store.message(owner, req.params.id);
+    if (
+      message.input.requestId &&
+      unavailable(
+        finalProject(await project(store.get(owner, message.input.requestId))),
+      )
+    )
+      throw new ConnectorError("SOURCE_DENIED");
+    if (
+      taskToken !== store.changeToken() ||
+      memoryToken !== memory?.changeToken()
+    )
+      throw new StoreError("CONFLICT");
+    res.json(message);
+  });
   app.post("/v1/messages/:id/receipts", (req, res) => {
     const kind = req.body?.kind;
     if (!["delivered", "read", "acknowledged"].includes(kind))
