@@ -1056,3 +1056,156 @@ test("source-bound task questions and answers do not leak through inbox history 
     store.close();
   }
 });
+
+test("local question and answer HTTP rechecks source rights, including duplicate reconciliation", async () => {
+  const f = await fixture(),
+    store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as import("node:net").AddressInfo).port,
+    token = "synthetic-token".repeat(5);
+  server.on(
+    "request",
+    localApi({ store, owner, token, port, sources: f.adapter }),
+  );
+  try {
+    store.createInbox(owner, {
+      id: "personal",
+      tenantId: owner.tenantId,
+      ownerId: owner.userId,
+      ownerType: "user",
+      memberUserIds: [owner.userId],
+    });
+    const task = await f.adapter.create(
+        store,
+        input,
+        [f.record.id],
+        "answer-source",
+      ),
+      claim = store.claim(owner, "worker")!;
+    const q = store.waitForInput(
+      owner,
+      task.id,
+      "worker",
+      claim.generation,
+      {
+        inboxId: "personal",
+        question: "SOURCE_QUESTION_SENTINEL",
+        replyDueAt: new Date(Date.now() + 60000).toISOString(),
+      },
+      "question",
+    );
+    const body = {
+        questionId: q.question.id,
+        expectedRevision: q.task.revision,
+        content: "SOURCE_ANSWER_SENTINEL",
+        confirmed: true,
+      },
+      key = randomUUID();
+    const call = (save: boolean) =>
+      fetch(
+        `http://127.0.0.1:${port}/v1/messages/${q.question.id}/${save ? "task-answer" : "task-question"}`,
+        {
+          method: save ? "POST" : "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": key,
+          },
+          ...(save ? { body: JSON.stringify(body) } : {}),
+        },
+      );
+    assert.equal((await call(false)).status, 200);
+    assert.equal((await call(true)).status, 200);
+    f.deny();
+    for (const save of [false, true]) {
+      const denied = await call(save);
+      assert.notEqual(denied.status, 200);
+      assert.doesNotMatch(await denied.text(), /SENTINEL/);
+    }
+    assert.ok(store.inputWaitHistory(owner, task.id)[0]!.replyId);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
+
+test("source denial and task changes during asynchronous validation cannot save a new task answer", async () => {
+  for (const change of ["deny", "cancel"] as const) {
+    const f = await fixture(),
+      store = new Store(":memory:", new Vault(randomBytes(32))),
+      server = createServer();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as import("node:net").AddressInfo).port,
+      token = "synthetic-token".repeat(5);
+    server.on(
+      "request",
+      localApi({ store, owner, token, port, sources: f.adapter }),
+    );
+    try {
+      store.createInbox(owner, {
+        id: "personal",
+        tenantId: owner.tenantId,
+        ownerId: owner.userId,
+        ownerType: "user",
+        memberUserIds: [owner.userId],
+      });
+      const task = await f.adapter.create(
+          store,
+          input,
+          [f.record.id],
+          "answer-race",
+        ),
+        claim = store.claim(owner, "worker")!;
+      const q = store.waitForInput(
+        owner,
+        task.id,
+        "worker",
+        claim.generation,
+        {
+          inboxId: "personal",
+          question: "SOURCE_QUESTION_SENTINEL",
+          replyDueAt: new Date(Date.now() + 60000).toISOString(),
+        },
+        "question",
+      );
+      if (change === "deny") f.deny();
+      else {
+        const validate = f.adapter.validate.bind(f.adapter);
+        f.adapter.validate = async (...args) => {
+          const result = await validate(...args);
+          store.command(owner, task.id, {
+            command: "cancel",
+            expectedRevision: q.task.revision,
+          });
+          return result;
+        };
+      }
+      const response = await fetch(
+        `http://127.0.0.1:${port}/v1/messages/${q.question.id}/task-answer`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": randomUUID(),
+          },
+          body: JSON.stringify({
+            questionId: q.question.id,
+            expectedRevision: q.task.revision,
+            content: "SOURCE_ANSWER_SENTINEL",
+            confirmed: true,
+          }),
+        },
+      );
+      assert.notEqual(response.status, 200);
+      assert.doesNotMatch(await response.text(), /SENTINEL/);
+      assert.equal(store.inputWaitHistory(owner, task.id)[0]!.replyId, null);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+      store.close();
+    }
+  }
+});

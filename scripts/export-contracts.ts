@@ -1,4 +1,9 @@
 import {
+  taskQuestionViewSchema,
+  taskAnswerInputSchema,
+  taskAnswerReceiptSchema,
+} from "../modules/contracts/task-answer.js";
+import {
   remoteControlSchema,
   remoteTemplateSchema,
   remoteReceiptSchema,
@@ -11,6 +16,9 @@ mkdirSync("contracts", { recursive: true });
 const jsonSchemas = Object.fromEntries(
   Object.entries({
     ...schemas,
+    taskQuestion: taskQuestionViewSchema,
+    taskAnswer: taskAnswerInputSchema,
+    taskAnswerReceipt: taskAnswerReceiptSchema,
     remoteControl: remoteControlSchema,
     remoteTemplate: remoteTemplateSchema,
     remoteReceipt: remoteReceiptSchema,
@@ -60,6 +68,64 @@ writeFileSync(
           post: operation("command", "200"),
         },
         "/v1/messages": { post: operation("message", "201") },
+        "/v1/messages/{id}/task-question": {
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          get: {
+            security: [{ localBearer: [] }],
+            responses: {
+              "200": {
+                description: "Current owner-authorized question",
+                content: {
+                  "application/json": {
+                    schema: { $ref: "#/components/schemas/taskQuestion" },
+                  },
+                },
+              },
+              "401": { description: "Authentication required" },
+              "403": { description: "Source access denied" },
+              "404": { description: "Question or local reference unavailable" },
+              "409": { description: "Task changed during access validation" },
+            },
+          },
+        },
+        "/v1/messages/{id}/task-answer": {
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+            {
+              name: "Idempotency-Key",
+              in: "header",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          post: {
+            ...operation("taskAnswer", "200"),
+            responses: {
+              ...operation("taskAnswer", "200").responses,
+              "200": {
+                description: "Saved answer receipt or exact original duplicate",
+                content: {
+                  "application/json": {
+                    schema: { $ref: "#/components/schemas/taskAnswerReceipt" },
+                  },
+                },
+              },
+              "404": { description: "Question or local reference unavailable" },
+            },
+          },
+        },
       },
       components: {
         schemas: jsonSchemas,
