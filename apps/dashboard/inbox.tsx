@@ -1,3 +1,4 @@
+import { ConversationPermissions } from "./conversation-permissions.js";
 import { InboxMessageController } from "./inbox-message-state.js";
 import { InboxConversationController } from "./inbox-conversation-state.js";
 import { InboxTaskMessage } from "./inbox-task-message.js";
@@ -167,6 +168,14 @@ export function Inbox({
             <h2>Conversation</h2>
             {!messages.length && (
               <p className="hint">Write the first message below.</p>
+            )}
+            {conversation && messages.length > 0 && (
+              <ConversationPermissions
+                key={JSON.stringify([inbox, conversation])}
+                api={api}
+                inboxId={inbox}
+                conversationId={conversation}
+              />
             )}
             {messages.map((m) => (
               <article className="memory" key={m.id}>

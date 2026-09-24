@@ -663,3 +663,5 @@ Mac Connections includes [reviewed public-device invitations and local revocatio
 
 
 [Mac device-check controls](docs/mac-private-peer-checks.md) now mount manual challenge/reply exchange in Connections after public-key review. Each operation has an explicit action review and fresh acknowledgement; saved codes are revealed separately and cleared on focus loss or expiry. Interrupted preparation resumes its original identity, uncertain outcomes require a metadata refresh, and local stop binds the displayed revision. Historical completion is not shown as a live connection or task permission. Browser endpoint keys, automated transport, personal/native acceptance and independent review remain open; normal setup stays off and Acer is unchanged.
+
+[Private conversations](docs/private-conversations.md) adds separate, expiring Mac consent and selected-Inbox review controls. Saving choices does not deliver messages; browser consent and conversation transport remain in progress. Acer news processing remains independent and unchanged.

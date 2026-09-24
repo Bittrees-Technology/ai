@@ -1014,3 +1014,47 @@ select.model-profile-select {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.conversation-permissions {
+  margin: 1.5rem 0;
+  padding: 1rem 0;
+  border-block: 1px solid #c6d9dd;
+  overflow-wrap: anywhere;
+}
+.conversation-permissions fieldset {
+  min-width: 0;
+  margin-top: 1rem;
+  border: 0;
+  padding: 0;
+}
+.conversation-permissions label {
+  display: block;
+}
+.conversation-permissions select {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+}
+.conversation-permissions .conversation-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  min-height: 44px;
+  padding: 10px 0;
+  margin: 0;
+}
+.conversation-choice input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+.conversation-choice span {
+  min-width: 0;
+}
+.conversation-permission-review {
+  border-left: 3px solid #28685c;
+  padding: 0.5rem 1rem;
+  margin-top: 1rem;
+}

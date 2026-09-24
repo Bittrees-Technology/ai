@@ -4,9 +4,10 @@ The Mac companion owns the selected local thread. Acer's model, runtime and news
 briefings remain independent. This work does not install or activate any service.
 
 The current implementation provides strict encrypted message framing and a Mac
-consent boundary. It does not yet deliver conversations. The Mac/browser review
-controls, browser consent, offer exchange, durable transport, shared incoming
-replay coordination and end-to-end reconnect acceptance remain unfinished.
+consent boundary. It does not yet deliver conversations. The Mac review controls and authenticated local API are implemented; their
+browser acceptance is pending. Browser consent, offer exchange, durable transport,
+shared incoming replay coordination and end-to-end reconnect acceptance remain
+unfinished.
 
 ## Separate Mac consent
 
@@ -41,6 +42,28 @@ revision tombstone. Restoring a backup locks them. Reviewing one restored grant
 revokes the others rather than silently restoring their access. Corrupt storage
 denies access, preparation and export rather than silently resetting permission.
 
+## Mac review controls
+
+The existing Inbox shows conversation-sharing controls for the selected populated
+thread. Loading saved choices is explicit; all new directions start unchecked.
+Choose one paired browser and 15 minutes or one hour, inspect the exact thread,
+Inbox, browser fingerprint, directions and expiry, then acknowledge and save.
+The normal launcher keeps new private setup disabled. Saving does not send any
+messages or enable delivery.
+
+The authenticated local API provides `GET /v1/private-conversation-permissions`,
+`POST /v1/private-conversation-permissions/review` and
+`POST /v1/private-conversation-permissions/confirm`. Reviews share the existing
+key/peer operation lock and are invalidated by competing permission/key reviews,
+logout and local deletion. Confirmation checks fresh identity and the original
+scope again. Saved access can be explicitly revoked offline.
+
+Changing threads, leaving the window, hiding the page or pressing Escape clears
+pending UI review. Late responses cannot reinstate a discarded review. Expiry is
+bounded by wall and monotonic clocks; a lost confirmation requires refreshing the
+saved choices, without an automatic retry. Revoking future access does not erase
+messages or copies already shared.
+
 ## Content boundary
 
 Ordinary messages, questions and confirmed exact answers are distinct schemas.
@@ -67,6 +90,16 @@ authenticated encryption and receipt semantics. Existing task and source checks
 remain required. The compiled task27 engine is used by
 `check-conversation-upgrade.mjs` to verify real upgrade, old-writer refusal,
 wrong-key isolation and original-backup rollback. Synthetic test stores only.
+
+Five Mac controller/API tests verify proof requirements, exact review, competing
+reviews, changed Inbox definitions, rejected identity, offline revocation,
+authentication/origin restrictions, deletion exclusion, logout fencing and local
+export/deletion. Four UI-state tests exercise selected scope, acknowledgement,
+one-shot confirmation, late responses, expiry, lost-response reconciliation and
+offline revocation. All 748 engine tests and the production build pass locally.
+Six browser cases and twelve desktop/phone review previews are authored for
+Chromium, Firefox and WebKit acceptance on disposable GitHub runners; they are
+not yet accepted evidence.
 
 The overall private-content requirement remains open. Passing these module tests
 does not establish conversation delivery, browser consent, source authorization,

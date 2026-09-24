@@ -216,6 +216,8 @@ jobs:
         run: npm run test:browser-private -- tests/browser/mac-relay-queue-controls.spec.ts --max-failures=1
       - name: Check model question choices in local task forms
         run: npm run test:browser-private -- tests/browser/model-questions.spec.ts --max-failures=1
+      - name: Check selected conversation permission reviews
+        run: npm run test:browser-private -- tests/browser/conversation-permissions.spec.ts --max-failures=1
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - uses: actions/upload-artifact@v4
@@ -510,5 +512,14 @@ jobs:
         with:
           name: model-question-ui-preview
           path: test-results/model-question-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload conversation permission previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-permission-ui-preview
+          path: test-results/conversation-permission-ui/*.png
           if-no-files-found: error
           retention-days: 7
