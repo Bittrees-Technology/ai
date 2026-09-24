@@ -141,7 +141,9 @@ jobs:
     runs-on: ubuntu-latest
     # The prior 933-case suite took 21 minutes; allow added full-page task flows
     # and previews while keeping per-test timeouts, retries and failure caps fixed.
-    timeout-minutes: 35
+    # The full browser suite plus retained previews can exceed 35 minutes.
+    # Keep case timeouts/retries unchanged; allow artifact upload to finish.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17-alpine
