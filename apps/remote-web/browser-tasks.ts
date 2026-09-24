@@ -23,6 +23,15 @@ type Host = Pick<
 type History = Awaited<ReturnType<Host["taskAPI"]["status"]>>;
 type Row = History["entries"][number];
 type Prepared = Awaited<ReturnType<Host["taskAPI"]["prepare"]>>;
+type QueueItem = Awaited<ReturnType<Host["relayTaskAPI"]["inspect"]>>["item"];
+type Queue = {
+  scope: string;
+  binding: string;
+  after: NonNullable<QueueItem>["cursor"] | null;
+  item: QueueItem;
+  visited: number;
+  checked: boolean;
+};
 type Snapshot = {
   history: History;
   keys: Awaited<ReturnType<Host["keyAPI"]["status"]>>;
@@ -36,6 +45,9 @@ type Action =
   | "relayPrepare"
   | "relaySend"
   | "relayCheck"
+  | "relayInspect"
+  | "relayNext"
+  | "relaySelected"
   | "resume"
   | "envelope"
   | "receive"
@@ -49,6 +61,7 @@ type Review = Deadline & {
   before: Snapshot;
   row?: Row;
   prepared?: Prepared;
+  queue?: Queue;
   incoming?: {
     kind: "receipt" | "result";
     envelope: PrivateEnvelope;
@@ -77,6 +90,7 @@ export function mountBrowserTasks(
     review: Review | null = null,
     pending: Deadline | null = null;
   let visible: Deadline | null = null;
+  let queueState: Queue | null = null;
   const urls = new Set<string>(),
     timers = new Set<ReturnType<typeof setTimeout>>();
   const el = <K extends keyof HTMLElementTagNameMap>(
@@ -135,6 +149,38 @@ export function mountBrowserTasks(
   );
   actions.append(refresh, initialize, exportButton, clear);
   if (privateDelivery) actions.append(checkReplies);
+  const queueBox = el("section"),
+    queueInfo = el("p", "", "browser-keys-reference"),
+    queueActions = el("div", "", "browser-keys-actions"),
+    inspectQueue = button(
+      "Review inspecting the queue",
+      () => void openReview("relayInspect"),
+    ),
+    checkSelected = button(
+      "Review checking this message",
+      () => void openReview("relaySelected"),
+    ),
+    nextMessage = button(
+      "Review looking past this message",
+      () => void openReview("relayNext"),
+    ),
+    resetQueue = button("Return to queue start", () => {
+      if (!busy)
+        reset(
+          "Queue position cleared. Review inspecting the queue to start again.",
+        );
+    });
+  queueBox.setAttribute("aria-label", "Queued message recovery");
+  queueActions.append(inspectQueue, checkSelected, nextMessage, resetQueue);
+  queueBox.append(
+    el("h3", "Queued message recovery"),
+    el(
+      "p",
+      "Inspect one waiting reply, then review checking it or looking past it. Inspection shows delivery details only. It does not authenticate, acknowledge or delete a message.",
+    ),
+    queueInfo,
+    queueActions,
+  );
   const columns = el("div", "", "browser-keys-columns"),
     history = el("div"),
     list = el("ul"),
@@ -285,6 +331,7 @@ export function mountBrowserTasks(
     error,
     columns,
   );
+  if (privateDelivery) box.insertBefore(queueBox, columns);
   root.append(box);
   const scope = () => {
     const c = host.session();
@@ -328,6 +375,11 @@ export function mountBrowserTasks(
     return !!b && b.expiresAt > now();
   };
   const liveOutput = () => !!visible && timed(visible) && ready();
+  const queueCurrent = (q: Queue | null): q is Queue =>
+    !!q &&
+    q.scope === scope() &&
+    online() &&
+    q.binding === JSON.stringify(host.keyContext()?.binding);
   function controls() {
     const active = ready();
     refresh.disabled = busy || !scope() || !focused();
@@ -363,6 +415,22 @@ export function mountBrowserTasks(
       !active || !review || !timed(review) || !acknowledge.checked;
     cancel.disabled = busy;
     outputBox.hidden = !visible;
+    if (!queueCurrent(queueState)) queueState = null;
+    queueBox.hidden = !active || !!review || !!visible;
+    inspectQueue.disabled = checkReplies.disabled;
+    checkSelected.disabled =
+      checkReplies.disabled ||
+      !queueState?.item ||
+      queueState.checked ||
+      queueState.item.expiresAt <= now();
+    nextMessage.disabled =
+      checkReplies.disabled || !queueState?.item || queueState.visited >= 20;
+    resetQueue.disabled = busy || !queueState;
+    queueInfo.textContent = !queueState
+      ? "No queue position is selected. Positions stay in this view only."
+      : !queueState.item
+        ? "No queued message was found at this position. Return to the start to check again."
+        : `Position ${queueState.visited} of at most 20 per review session. Message ${queueState.item.selection.messageId}, version ${queueState.item.selection.revision}. Stored ${new Date(queueState.item.selection.storedAt).toLocaleString()}. Delivery deadline ${new Date(queueState.item.expiresAt).toLocaleString()}. ${queueState.checked ? "Authenticated reply saved locally. Open a saved result separately in task history." : "Delivery details only; this message has not been authenticated by this inspection."}${queueState.visited >= 20 ? " Return to the queue start before inspecting again." : ""}`;
   }
   function clearDownloads() {
     for (const t of timers) clearTimeout(t);
@@ -375,6 +443,7 @@ export function mountBrowserTasks(
     forget = false,
     cancelHost = true,
     closeReviews = true,
+    preserveQueue = false,
   ) {
     generation++;
     if (cancelHost) {
@@ -386,6 +455,7 @@ export function mountBrowserTasks(
     review = null;
     pending = null;
     visible = null;
+    if (!preserveQueue) queueState = null;
     acknowledge.checked = false;
     prompt.value = incoming.value = wire.value = "";
     exact.textContent = result.textContent = identity.textContent = "";
@@ -515,7 +585,7 @@ export function mountBrowserTasks(
   }
   async function load() {
     if (busy || !scope() || !focused()) return;
-    reset("Reading saved tasks…", true);
+    reset("Reading saved tasks…", true, true, true, true);
     const g = generation,
       captured = scope();
     busy = true;
@@ -554,6 +624,20 @@ export function mountBrowserTasks(
   async function openReview(action: Action, row?: Row) {
     if (!ready()) return;
     if (action.startsWith("relay") && !privateDelivery) return;
+    const selectedQueue =
+      action === "relayNext" || action === "relaySelected"
+        ? queueCurrent(queueState)
+          ? structuredClone(queueState)
+          : null
+        : null;
+    if (
+      (action === "relayNext" || action === "relaySelected") &&
+      (!selectedQueue?.item ||
+        (action === "relayNext"
+          ? selectedQueue.visited >= 20
+          : selectedQueue.checked || selectedQueue.item.expiresAt <= now()))
+    )
+      return;
     const before = structuredClone(state!),
       draft = {
         version: 1,
@@ -580,7 +664,13 @@ export function mountBrowserTasks(
           : "Choose a currently permitted Mac and provide valid task text before reviewing.";
       return;
     }
-    reset("Checking this exact task review…");
+    reset(
+      "Checking this exact task review…",
+      false,
+      true,
+      true,
+      !!selectedQueue,
+    );
     const g = generation,
       captured = loaded,
       start = deadline();
@@ -596,7 +686,14 @@ export function mountBrowserTasks(
         action,
         before,
         ...(row ? { row: structuredClone(row) } : {}),
+        ...(selectedQueue ? { queue: selectedQueue } : {}),
       };
+      if (selectedQueue && !queueCurrent(selectedQueue)) throw Error("DENIED");
+      if (action === "relaySelected")
+        next.expiresAt = Math.min(
+          next.expiresAt,
+          selectedQueue!.item!.expiresAt,
+        );
       if (action === "relaySend" && row)
         next.expiresAt = Math.min(next.expiresAt, row.header.expiresAt);
       if (action === "submit" || action === "relayPrepare") {
@@ -669,6 +766,24 @@ export function mountBrowserTasks(
         "Check and save one authenticated Mac reply on this browser.",
         "Check for Mac reply",
       ],
+      relayInspect: [
+        "Inspect one queued reply",
+        "Read delivery details for the first waiting reply. This does not authenticate its content, save a result or acknowledge delivery.",
+        "Inspect one queued reply for this browser.",
+        "Inspect reviewed queue",
+      ],
+      relayNext: [
+        "Look past this queued reply",
+        "Inspect one message after the identified reply. Looking past a message does not delete it or mark it accepted. This temporary position clears when you leave this view.",
+        "Look after this exact message without changing it.",
+        "Look past reviewed message",
+      ],
+      relaySelected: [
+        "Check this exact queued reply",
+        "Check that the waiting message still matches the reviewed delivery details, then authenticate and save it before acknowledging delivery. Result text stays hidden until separately opened.",
+        "Check and save this exact reply if its identity and permissions are valid.",
+        "Check reviewed message",
+      ],
       resume: [
         "Resume the saved task preparation",
         "Continue the original saved operation, input and deadline. A committed task keeps its original ciphertext. This does not create a replacement task or send automatically.",
@@ -721,6 +836,11 @@ export function mountBrowserTasks(
     const binding = host.keyContext()?.binding;
     identity.textContent = `Account ${host.session()!.ownerId}.${binding ? ` Browser ${binding.deviceId}.` : ""} History version ${r.before.history.meta?.revision ?? 0}.${r.row ? ` Task ${r.row.id}, task version ${r.row.revision}, Mac ${r.row.context.peerId}. Delivery deadline ${new Date(r.row.header.expiresAt).toLocaleString()}.` : ""}`;
     exact.textContent = "";
+    if (r.queue?.item) {
+      const q = r.queue,
+        s = q.item!.selection;
+      identity.textContent += ` ${r.action === "relayNext" ? "Look after" : "Check"} message ${s.messageId}, version ${s.revision}, stored ${new Date(s.storedAt).toLocaleString()}. Position ${q.visited}.`;
+    }
     if (r.prepared) {
       const p = r.prepared;
       identity.textContent += ` Mac ${p.context.peerId}, key version ${p.context.peerKeyEpoch}. Fingerprint ${p.context.peerFingerprint}. Permission ${p.context.permissionId}. Delivery deadline ${new Date(p.deliveryExpiresAt).toLocaleString()}.`;
@@ -759,6 +879,7 @@ export function mountBrowserTasks(
       let encrypted: PrivateEnvelope | undefined,
         plaintext: string | undefined,
         deliveryNotice: string | undefined;
+      let nextQueue: Queue | undefined;
       switch (selected.action) {
         case "initialize":
           await host.taskAPI.initialize({
@@ -783,12 +904,59 @@ export function mountBrowserTasks(
               : `Encrypted task ${sent.receipt.state === "received" ? "already delivered" : "stored for delivery"}${sent.duplicate ? " (the original message was already recorded)" : ""}. This does not confirm Mac acceptance or task completion. Check for a Mac reply separately.`;
           break;
         }
-        case "relayCheck": {
-          if (!privateDelivery) throw Error("DENIED");
-          const checked = await host.relayTaskAPI.check({
-            after: null,
+        case "relayInspect":
+        case "relayNext": {
+          if (!privateDelivery || !online()) throw Error("DENIED");
+          if (selected.queue && !queueCurrent(selected.queue))
+            throw Error("DENIED");
+          const after =
+            selected.action === "relayNext"
+              ? selected.queue!.item!.cursor
+              : null;
+          const binding = JSON.stringify(host.keyContext()?.binding);
+          const inspected = await host.relayTaskAPI.inspect({
+            after,
             confirmed: true,
           });
+          if (binding !== JSON.stringify(host.keyContext()?.binding))
+            throw Error("DENIED");
+          if (
+            inspected.item &&
+            after &&
+            (inspected.item.cursor.storedAt < after.storedAt ||
+              (inspected.item.cursor.storedAt === after.storedAt &&
+                inspected.item.cursor.messageId <= after.messageId))
+          )
+            throw Error("CONFLICT");
+          nextQueue = {
+            scope: captured!,
+            binding,
+            after,
+            item: inspected.item,
+            visited: (selected.queue?.visited ?? 0) + (inspected.item ? 1 : 0),
+            checked: false,
+          };
+          deliveryNotice = inspected.item
+            ? "Queued reply inspected. Review checking this message or looking past it. Nothing was acknowledged."
+            : "No queued reply was found at this position.";
+          break;
+        }
+        case "relayCheck":
+        case "relaySelected": {
+          if (!privateDelivery) throw Error("DENIED");
+          const q =
+            selected.action === "relaySelected" ? selected.queue : undefined;
+          if (q && !queueCurrent(q)) throw Error("DENIED");
+          const checked = await host.relayTaskAPI.check({
+            after: q?.after ?? null,
+            confirmed: true,
+            ...(q ? { selection: q.item!.selection } : {}),
+          });
+          if (q) {
+            if (checked.received?.messageId !== q.item!.selection.messageId)
+              throw Error("CONFLICT");
+            nextQueue = { ...q, checked: true };
+          }
           deliveryNotice = checked.received
             ? `Authenticated Mac ${checked.received.kind === "result" ? "result" : "acceptance"} saved for task ${checked.received.operationId}.${checked.received.kind === "result" ? " Review opening this result in task history to read its text." : " Acceptance does not mean the task is complete."}`
             : "No new Mac reply is waiting for this browser.";
@@ -848,6 +1016,10 @@ export function mountBrowserTasks(
       const after = await snapshot(g, captured);
       if (!alive(g, captured) || !timed(selected)) throw Error("DENIED");
       state = after;
+      if (nextQueue) {
+        if (!queueCurrent(nextQueue)) throw Error("DENIED");
+        queueState = nextQueue;
+      }
       render();
       if (encrypted || plaintext !== undefined) {
         visible = deadline(
