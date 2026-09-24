@@ -422,6 +422,13 @@ test("a lost final identity response leaves one inspectable saved message and do
     await panel(page)
       .getByRole("button", { name: "Review saving message", exact: true })
       .click();
+    // Finish the review's own verified list before counting confirmation calls.
+    await expect(
+      panel(page).getByRole("heading", {
+        name: "Save this message for your Mac",
+        exact: true,
+      }),
+    ).toBeFocused();
     identityServer.reject("/browser/registration/identity", 3);
     await confirm(page, "Save reviewed message");
     await expect(panel(page).getByRole("alert")).toContainText(
