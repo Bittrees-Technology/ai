@@ -40,11 +40,15 @@ existing locks and reauthorization rules.
 
 ## Current boundary
 
-This package provides the real store transition and worker consumption, with
-synthetic SQLite/worker/source-adapter tests and an actual compiled25→26 migration
-rehearsal. It does not yet provide a user-facing ask/answer screen, a model question
-decision policy, an HTTP answer route or encrypted conversation messaging. Those
-must use these operations under reviewed current owner/conversation authority.
-End-to-end remote replies and the full checklist requirement remain open. There
-is no installed application replacement, inference/model change, live deployment,
-personal data access or Acer news-processing change.
+The integrated package supplies the store transition, resumed worker consumption,
+current-access HTTP question/answer routes and the actual Inbox answer controls.
+The Inbox opens task-linked text under current source/dependency checks; exact
+answers have separate bounded review and uncertainty handling. See
+[local answer controls](local-task-answer-controls.md) and
+[Inbox privacy](inbox-task-message-review.md).
+
+Model question decision policy remains unimplemented: trusted worker callers can
+persist a question, but a model does not yet choose when to ask. Separately scoped
+encrypted conversation transport, remote replies and full end-to-end acceptance
+remain open. The integration changes no installed application, model/runtime,
+live service, personal data or Acer news processing.
