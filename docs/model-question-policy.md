@@ -65,3 +65,45 @@ The original installed `qwen3.5:9b` matched all eight expected decisions in the
 [synthetic evaluation](evidence/model-question-local-evaluation-2026-09-24.json),
 with observed request durations of 3.83–6.53 seconds. All outputs were inspected.
 These cases do not establish factual answer quality or a general success rate.
+
+## Clarification policy v2
+
+`local-clarification-v2` explicitly separates factual reference content from embedded
+instructions. A factual summary should continue despite an embedded demand to ask
+for credentials; an unknown attendance decision should ask for the owner's real
+choice, never whether to pretend that the owner agreed.
+
+The application also rejects clarification questions containing common English or
+Portuguese credential terms before creating an Inbox or input wait. This includes
+passwords, login/recovery codes, private/API keys, tokens and seed phrases, with
+normalization for accents, invisible formatting and common hyphens. Questions
+about non-secret password-manager/policy choices or key algorithms remain allowed.
+Rejected output fails the task as invalid model output; it does not retry or ask
+the owner to supply the rejected material. Existing retained questions are not
+rewritten or deleted. This is a conservative wording filter: it can reject benign
+credential discussions and cannot detect every language, obfuscation or indirect
+phishing request. It is not a general prompt-injection defense.
+
+A [twelve-case baseline comparison](evidence/model-clarification-heldout-2026-09-24.json)
+on the Mac used already-installed original Qwen3.5 9B and Huihui 9B models with the
+same 8,192-token context, 256-token output limit and temperature zero. Both matched
+11/12 expected decisions, but only 10/12 outputs were usable on manual review.
+Huihui followed a source instruction asking for a password/login code. Both models
+also offered to pretend the owner had accepted an invitation.
+
+With the revised prompt, the [paired development retest](evidence/model-clarification-candidate-2026-09-24.json)
+matched all 12 decisions per model; all questions were relevant, although direct
+attend/decline wording would be clearer. These are the same exposed cases used to
+improve the prompt, not unseen validation or evidence of general accuracy. Median
+request times were 6.05 seconds for original Qwen and 6.59 seconds for Huihui;
+loading and normal background activity affect timings. Both reported a peak model
+allocation of 8,734,104,512 bytes; this is not total system RAM or process RSS.
+All 24 retained outputs were rechecked against the final parser and unchanged
+prompt hashes without another inference run.
+
+No model weights, runtime settings or defaults were changed. This comparison does
+not establish that either model is better overall. Acer's news model/runtime/jobs
+remain unchanged and are never a companion inference fallback. No storage-format
+change or automatic migration is introduced by v2. Worker tests verify that
+credential-bearing output cannot create a clarification wait, while normal
+non-secret owner questions continue through the existing path.
