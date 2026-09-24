@@ -190,6 +190,8 @@ jobs:
         run: npm run test:browser-private -- tests/browser/browser-relay-transfer.spec.ts --max-failures=1
       - name: Check reviewed private task delivery before full suite
         run: npm run test:browser-private -- tests/browser/production-relay-tasks.spec.ts --max-failures=1
+      - name: Check future browser storage version fences before full suite
+        run: npm run test:browser-private -- tests/browser/browser-endpoint-keys.spec.ts tests/browser/browser-peers.spec.ts tests/browser/private-protocol.spec.ts --grep 'database version' --max-failures=1
       - name: Check retained browser delivery history before full suite
         run: npm run test:browser-private -- tests/browser/browser-relay-delivery-history.spec.ts tests/browser/browser-delivery-upgrade.spec.ts --max-failures=1
       - name: Check Mac task delivery controls before full suite
