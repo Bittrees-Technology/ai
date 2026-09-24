@@ -199,7 +199,7 @@ export class RemoteWebController {
                           ? "Open this page in a browser with an Ethereum wallet."
                           : e?.message === "CHAIN_MISMATCH"
                             ? "Switch your wallet to the network shown on this page, then sign in again."
-                            : "The action could not be completed. Refresh and review before trying again.",
+                            : "The action could not be confirmed. Refresh and review before trying again.",
           });
       } finally {
         this.activeAction = null;

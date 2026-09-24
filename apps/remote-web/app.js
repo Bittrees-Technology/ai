@@ -58,6 +58,7 @@ if (!settings || settings.origin !== location.origin) {
     commandJournal,
     () => controller?.sessionContext() ?? null,
     () => controller.state.busy,
+    () => controller.set({ commandReview: null }),
   );
   function render(s) {
     accountId = s.account?.ownerId ?? null;
@@ -143,7 +144,10 @@ if (!settings || settings.origin !== location.origin) {
           button.textContent =
             action === "pause" ? "Review pause" : "Review cancel";
           button.disabled = s.busy;
-          button.onclick = () => controller.reviewCommand(task.id, action);
+          button.onclick = () => {
+            commandUI?.hide();
+            controller.reviewCommand(task.id, action);
+          };
           li.append(button);
         }
       }

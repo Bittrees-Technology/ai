@@ -211,6 +211,10 @@ test("shipped command history retries only the exact original intent and clears 
   await expect(
     panel(page).getByRole("button", { name: "Retry reviewed command" }),
   ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Confirm this command", exact: true }),
+  ).toBeHidden();
+  await expect(page.locator("#error")).toContainText("could not be confirmed");
   await preview(page, info, "retry-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
   await preview(page, info, "retry-phone");
@@ -225,6 +229,24 @@ test("shipped command history retries only the exact original intent and clears 
   await panel(page)
     .getByRole("button", { name: "Review retrying original command" })
     .click();
+  // A new task review dismisses saved-command review without dispatching either.
+  await page.getByRole("button", { name: "Review pause", exact: true }).click();
+  await expect(
+    panel(page).getByRole("button", {
+      name: "Retry reviewed command",
+      exact: true,
+    }),
+  ).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Confirm this command", exact: true }),
+  ).toBeVisible();
+  await load(page);
+  await panel(page)
+    .getByRole("button", { name: "Review retrying original command" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Confirm this command", exact: true }),
+  ).toBeHidden();
   await panel(page).getByRole("checkbox").check();
   await panel(page)
     .getByRole("button", { name: "Retry reviewed command" })

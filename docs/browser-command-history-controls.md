@@ -43,3 +43,16 @@ status and acknowledgement through production stores; these tests do not claim
 actual execution on a personal Mac. Three browser engines and desktop/390px
 previews run in disposable CI. This does not deploy the relay or change the
 installed companion, models, Acer server or news briefings.
+
+## Integration review
+
+The foundation and controls are integrated on the private delivery/history/queue
+branch. Visual review found that the older original-command confirmation stayed
+visible beside a saved-command retry review. Opening either review now dismisses
+the other without dispatching either action. The generic uncertain-action message
+says the action could not be confirmed, preserving the possibility that the server
+already accepted it. The real-browser retry scenario verifies both switching
+directions and still asserts the original command identity and unchanged server
+record. All690 local engine tests and builds pass after integration; final combined
+CI and eighteen refreshed previews remain required. Corrupt-record recovery and
+full offline/live acceptance remain open.

@@ -16,6 +16,7 @@ export function mountCommandHistory(
   journal: BrowserCommandJournal,
   current: () => Scope | null,
   hostBusy: () => boolean,
+  clearCommandReview = () => {},
   now = Date.now,
   mono = () => performance.now(),
 ) {
@@ -283,6 +284,8 @@ export function mountCommandHistory(
       );
       if (!same(fresh, before)) throw Error("CONFLICT");
       guard(g, scope, next);
+      clearCommandReview();
+      guard(g, scope, next);
       review = next;
       ack.checked = false;
       title.textContent =
@@ -416,6 +419,7 @@ export function mountCommandHistory(
   render();
   return {
     sync,
+    hide,
     destroy() {
       disposed = true;
       generation++;
