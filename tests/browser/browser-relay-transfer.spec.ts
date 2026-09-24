@@ -5,8 +5,6 @@ import { Wallet } from "ethers";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { RemoteDeviceStore } from "../../modules/remote/devices.js";
-import { RemotePrivateRelayAccess } from "../../modules/remote/private-relay-access.js";
-import { RemotePrivateRelayStore } from "../../modules/remote/private-relay-store.js";
 const origin = "https://ai.bittrees.org";
 const payload = {
   version: 1,
@@ -15,7 +13,7 @@ const payload = {
   prompt: "SYNTHETIC_TASK_THROUGH_REAL_RELAY",
 };
 const confirmed = (id: string) => ({ id, confirmed: true });
-async function ready(page: Page, pool: Pool) {
+async function ready(page: Page, pool: Pool, nativeTransport: typeof fetch) {
   await page.goto(origin + "/?browser-peers");
   await page.waitForFunction(() => !!window.browserPeersTest);
   const wallet = Wallet.createRandom(),
@@ -183,36 +181,15 @@ async function ready(page: Page, pool: Pool) {
         credentialEpoch: device.epoch,
       },
     );
-    const native = await new RemotePrivateRelayAccess(
-      pool,
-      origin,
-      1,
-    ).acceptMac(device.credential, {
-      id: approval.id,
-      expectedRevision: approval.revision,
-      confirmed: true,
-    });
-    const store = new RemotePrivateRelayStore(
-      pool,
-      {
-        version: 1,
-        origin,
-        chainId: 1,
-        receivedContent: "until-deleted",
-        unreceivedContent: { mode: "until-deleted" },
-        operationalMetadataMs: 604800000,
-        maxMessagesPerOwner: 100,
-        maxBytesPerOwner: 1048576,
-      },
-      Date.now,
-      native.grant.id,
-    );
+    const native = await mac.connectRelay(device, nativeTransport, approval.id);
     const route = { peerId: pin.peerId, peerKeyEpoch: pin.keyEpoch };
     const prepared = await page.evaluate(
       (p) => window.browserPeersTest.relayPrepare(p),
       { ...route, payload },
     );
-    expect(prepared.deliveryExpiresAt).toBe(native.grant.expiresAt);
+    expect(prepared.deliveryExpiresAt).toBe(
+      native.record().permission!.expiresAt,
+    );
     const entry = await page.evaluate(
       (reviewId) =>
         window.browserPeersTest.composeConfirm({
@@ -222,8 +199,8 @@ async function ready(page: Page, pool: Pool) {
         }),
       prepared.reviewId,
     );
-    expect(entry.header.expiresAt).toBe(native.grant.expiresAt);
-    return { mac, native, store, route, entry, registration };
+    expect(entry.header.expiresAt).toBe(native.record().permission!.expiresAt);
+    return { mac, native, route, entry, registration };
   } catch (e) {
     mac.close();
     throw e;
@@ -246,20 +223,26 @@ test("verified browser host relays retained ciphertext and reopens without dupli
   identityServer,
 }) => {
   identityServer.enablePrivateRelay();
-  const f = await ready(page, identityServer.pool);
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
   try {
     const sent = await send(page, f);
     expect(sent.transportOnly).toBe(true);
     expect(sent.receipt.state).toBe("stored");
     expect(sent.duplicate).toBe(false);
-    const received = await f.store.pollMac(f.native.credential, {
-      after: null,
-      limit: 20,
-    });
-    expect(received.items).toHaveLength(1);
-    expect(received.items[0]!.envelope).toEqual(f.entry.envelope);
-    const admitted = await f.mac.executeTask(received.items[0]!.envelope);
-    expect(admitted.task!.input.prompt).toBe(payload.prompt);
+    const received = await f.native.check();
+    expect(received.received?.status).toBe("accepted-locally");
+    expect(received.transport?.receipt.state).toBe("received");
+    expect(f.native.task(received.received!.taskId).input.prompt).toBe(
+      payload.prompt,
+    );
+    expect(f.native.tasks()).toHaveLength(1);
+    // The retained receiver also reconciles this exact delivery during local work.
+    const admitted = await f.mac.executeTask(f.entry.envelope);
+    expect(admitted.receipt.taskId).toBe(received.received!.taskId);
     expect(
       (await page.evaluate(() => window.browserPeersTest.historyStatus()))
         .entries[0]!.state,
@@ -269,7 +252,12 @@ test("verified browser host relays retained ciphertext and reopens without dupli
     await page.evaluate(() => window.browserPeersTest.resume());
     const retry = await send(page, f);
     expect(retry.duplicate).toBe(true);
-    expect(retry.receipt).toEqual(sent.receipt);
+    expect(retry.receipt.messageId).toBe(sent.receipt.messageId);
+    expect(retry.receipt.state).toBe("received");
+    expect(await f.native.check()).toEqual({
+      received: null,
+      nextCursor: null,
+    });
     expect((await f.mac.executeTask(f.entry.envelope)).receipt.taskId).toBe(
       admitted.receipt.taskId,
     );
@@ -290,18 +278,22 @@ test("lost browser relay submission reply retries the same durable task and enve
   identityServer,
 }) => {
   identityServer.enablePrivateRelay();
-  const f = await ready(page, identityServer.pool);
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
   try {
     identityServer.loseResponse("/browser/relay/messages/submit");
     await expect(send(page, f)).rejects.toThrow();
     const retried = await send(page, f);
     expect(retried.duplicate).toBe(true);
-    const received = await f.store.pollMac(f.native.credential, {
-      after: null,
-      limit: 20,
-    });
-    expect(received.items).toHaveLength(1);
-    expect(received.items[0]!.envelope).toEqual(f.entry.envelope);
+    const received = await f.native.check();
+    expect(received.received?.status).toBe("accepted-locally");
+    expect(f.native.task(received.received!.taskId).input.prompt).toBe(
+      payload.prompt,
+    );
+    expect(f.native.tasks()).toHaveLength(1);
     const history = await page.evaluate(() =>
       window.browserPeersTest.historyStatus(),
     );
@@ -322,7 +314,11 @@ test("scope loss during recipient readiness prevents delivery of the saved brows
   identityServer,
 }) => {
   identityServer.enablePrivateRelay();
-  const f = await ready(page, identityServer.pool);
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
   try {
     identityServer.hold("/browser/relay/messages/recipient");
     const outcome = send(page, f).then(
@@ -338,11 +334,106 @@ test("scope loss during recipient readiness prevents delivery of the saved brows
         (p) => p === "/browser/relay/messages/submit",
       ),
     ).toHaveLength(0);
-    expect(
-      (await f.store.pollMac(f.native.credential, { after: null, limit: 20 }))
-        .items,
-    ).toHaveLength(0);
+    expect(await f.native.check()).toEqual({
+      received: null,
+      nextCursor: null,
+    });
+    expect(f.native.tasks()).toHaveLength(0);
   } finally {
+    f.mac.close();
+  }
+});
+
+test("native Mac receiver preserves one local task when the real relay saves acknowledgement but loses its reply", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    const sent = await send(page, f);
+    identityServer.drop("/device/relay/messages/acknowledge");
+    await expect(f.native.check()).rejects.toThrow();
+    expect(f.native.tasks()).toHaveLength(1);
+    const taskId = f.native.tasks()[0]!.id;
+    expect(f.native.task(taskId).input.prompt).toBe(payload.prompt);
+    expect(await f.native.check()).toEqual({
+      received: null,
+      nextCursor: null,
+    });
+    const retry = await send(page, f);
+    expect(retry.duplicate).toBe(true);
+    expect(retry.receipt.messageId).toBe(sent.receipt.messageId);
+    expect(retry.receipt.state).toBe("received");
+    expect(f.native.tasks()).toHaveLength(1);
+    expect(f.native.tasks()[0]!.id).toBe(taskId);
+    expect(f.native.controls.taskStatus().responses).toHaveLength(0);
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+        .entries[0]!.state,
+    ).toBe("pending");
+    expect(
+      identityServer.events.filter(
+        (p) => p === "/device/relay/messages/acknowledge",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("a native stop during a held real relay delivery admits and acknowledges nothing", async ({
+  page,
+  identityServer,
+}) => {
+  identityServer.enablePrivateRelay();
+  const f = await ready(
+    page,
+    identityServer.pool,
+    identityServer.nativeTransport,
+  );
+  try {
+    await send(page, f);
+    identityServer.hold("/device/relay/messages/poll");
+    const outcome = f.native.check().then(
+      () => "accepted",
+      () => "denied",
+    );
+    await expect.poll(() => identityServer.held()).toBe(true);
+    f.native.relay.invalidate();
+    identityServer.release();
+    expect(await outcome).toBe("denied");
+    expect(f.native.tasks()).toHaveLength(0);
+    expect(
+      identityServer.events.filter(
+        (p) => p === "/device/relay/messages/acknowledge",
+      ),
+    ).toHaveLength(0);
+    const record = f.native.record();
+    const review = await f.native.relay.prepare({
+      action: "stop",
+      id: record.id,
+      expectedRevision: record.revision,
+    });
+    await f.native.relay.confirm({
+      reviewId: review.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    const before = identityServer.events.length;
+    await expect(f.native.check()).rejects.toThrow();
+    expect(
+      identityServer.events
+        .slice(before)
+        .filter((p) => p.includes("/relay/messages/")),
+    ).toHaveLength(0);
+    expect(f.native.record().phase).toBe("stopped");
+  } finally {
+    identityServer.release();
     f.mac.close();
   }
 });

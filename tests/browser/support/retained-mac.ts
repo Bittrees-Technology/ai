@@ -1,3 +1,6 @@
+import { RemoteClient } from "../../../modules/remote/client.js";
+import { CompanionPrivateKeys } from "../../../apps/companion/private-keys.js";
+import { CompanionPrivateRelay } from "../../../apps/companion/private-relay.js";
 import { PrivateTaskConsent } from "../../../modules/remote/private-task-consent.js";
 import { PrivateTaskReceiver } from "../../../modules/remote/private-task-receiver.js";
 import { PrivateTaskResponses } from "../../../modules/remote/private-task-responses.js";
@@ -117,6 +120,108 @@ export async function retainedMac(
   return {
     binding,
     consent,
+    async connectRelay(
+      device: {
+        ownerId: string;
+        deviceId: string;
+        epoch: number;
+        credential: string;
+        expiresAt: number;
+        scope: string;
+      },
+      transport: typeof fetch,
+      permissionId: string,
+    ) {
+      if (
+        device.ownerId !== binding.ownerId ||
+        device.deviceId !== binding.deviceId ||
+        device.epoch !== binding.credentialEpoch ||
+        device.expiresAt !== binding.expiresAt
+      )
+        throw Error("Native registration must match retained endpoint");
+      let saved: Uint8Array | undefined = new TextEncoder().encode(
+        JSON.stringify({
+          localOwner: owner.userId,
+          grant: device,
+          mode: "active",
+          sequence: 1,
+        }),
+      );
+      const remote = new RemoteClient(
+        owner.userId,
+        {
+          async getSecret() {
+            return saved ? Uint8Array.from(saved) : undefined;
+          },
+          async setSecret(value) {
+            saved = Uint8Array.from(value);
+          },
+          async deleteCredential() {
+            saved = undefined;
+            return true;
+          },
+        },
+        transport,
+      );
+      const controls = new CompanionPrivateKeys(
+        store,
+        vault,
+        owner,
+        entries,
+        remote,
+        true,
+        Date.now,
+        true,
+      );
+      const relaySlots = new Map<string, PrivateKeyEntries>();
+      const relay = new CompanionPrivateRelay(
+        store,
+        vault,
+        owner,
+        {
+          forSlot(_owner, id) {
+            let value = relaySlots.get(id);
+            if (!value) {
+              value = {
+                key: new Slot(),
+                attempt: new Slot(),
+                deleted: new Slot(),
+              };
+              relaySlots.set(id, value);
+            }
+            return value;
+          },
+        },
+        remote,
+        true,
+        Date.now,
+        () => performance.now(),
+        transport,
+      );
+      const review = await relay.prepare({ action: "accept", permissionId });
+      await relay.confirm({
+        reviewId: review.id,
+        confirmed: true,
+        acknowledged: true,
+      });
+      const record = () => relay.status().state.items[0]!;
+      return {
+        controls,
+        relay,
+        record,
+        check() {
+          const r = record();
+          return controls.checkRelayedTask(relay, {
+            id: r.id,
+            expectedRevision: r.revision,
+            after: null,
+            confirmed: true,
+          });
+        },
+        tasks: () => store.export(owner),
+        task: (id: string) => store.get(owner, id),
+      };
+    },
     async allowTasks(peerId: string, peerKeyEpoch: number, results = true) {
       const review = await consent.prepare({
         expectedRevision: consent.list().revision,
