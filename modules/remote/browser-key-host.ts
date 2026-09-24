@@ -1,3 +1,4 @@
+import { BrowserConversationContent } from "./browser-conversation-content.js";
 import { BrowserConversationConsent } from "./browser-conversation-consent.js";
 import {
   privateRelaySelectionSchema,
@@ -48,6 +49,7 @@ export class BrowserKeyHost {
   private checks?: BrowserPeerChecks;
   private consents?: BrowserTaskConsent;
   private conversations?: BrowserConversationConsent;
+  private conversationContent?: BrowserConversationContent;
   private compositions?: BrowserTaskComposition;
   private taskHistory?: BrowserTaskHistory;
   private peerKey: BrowserKeyProof | null = null;
@@ -172,6 +174,7 @@ export class BrowserKeyHost {
     this.checks?.invalidate();
     this.consents?.invalidate();
     this.conversations?.invalidate();
+    this.conversationContent?.invalidate();
     this.compositions?.invalidate();
     this.taskHistory?.invalidate();
   }
@@ -192,6 +195,7 @@ export class BrowserKeyHost {
     this.checks?.close();
     this.consents?.close();
     this.conversations?.close();
+    this.conversationContent?.close();
     this.compositions?.close();
     this.taskHistory?.close();
   }
@@ -228,6 +232,7 @@ export class BrowserKeyHost {
           this.checks?.invalidate();
           this.consents?.invalidate();
           this.conversations?.invalidate();
+          this.conversationContent?.invalidate();
           this.compositions?.invalidate();
           this.taskHistory?.invalidate();
           this.freshUntil = 0;
@@ -425,6 +430,27 @@ export class BrowserKeyHost {
     } catch (e) {
       created.close();
       throw e;
+    }
+  }
+  private async conversationContentStore() {
+    if (this.conversationContent) return this.conversationContent;
+    const generation = this.generation;
+    const consent = await this.conversationStore();
+    this.check(generation);
+    const created = await BrowserConversationContent.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      consent,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(generation);
+      this.conversationContent = created;
+      return created;
+    } catch (error) {
+      created.close();
+      throw error;
     }
   }
   private async compositionStore() {
@@ -758,6 +784,41 @@ export class BrowserKeyHost {
           };
         });
       }),
+  };
+  /** Current online identity for every content operation. Explicit archive export
+   * needs matching owner/device identity but no active key or expired permission.
+   * Offline deletion is bounded to this signed-in local owner and locks consent.
+   * Neither operation imports authority, submits relay data or exposes a key. */
+  readonly conversationContentAPI = {
+    list: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationContentStore()).list(raw),
+      ),
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationContentStore()).prepare(raw),
+      ),
+    envelope: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationContentStore()).envelope(raw),
+      ),
+    accept: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationContentStore()).accept(raw),
+      ),
+    read: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.conversationContentStore()).read(raw),
+      ),
+    export: (raw: unknown) =>
+      this.verified(async () =>
+        (await this.conversationContentStore()).export(raw),
+      ),
+    clear: (raw: unknown) =>
+      this.operation(async () =>
+        (await this.conversationContentStore()).clear(raw),
+      ),
+    invalidate: () => this.cancelKeys(),
   };
   /** Independent conversation consent. Inspection authenticates an offer without
    * granting access; no keys, content-authority handle or sender leaves this API. */

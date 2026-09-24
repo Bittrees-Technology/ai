@@ -403,6 +403,46 @@ export class BrowserConversationContent {
       },
     );
   }
+  /** Metadata only, under the selected current permission. Local decryption does
+   * not publish plaintext; a separate explicit read revalidates the exact entry. */
+  list(raw: unknown): Promise<Summary[]> {
+    return this.operation(async (g) => {
+      const input = z.strictObject({ grantId: z.uuid() }).parse(raw);
+      const status = await this.consent.status();
+      const grant = status.grants.find((value) => value.id === input.grantId);
+      if (!grant) fail();
+      const desired = (
+        [
+          "messagesToMac",
+          "messagesToBrowser",
+          "questionsToBrowser",
+          "answersToMac",
+        ] as const
+      ).find((name) => grant.choices.permissions[name]);
+      if (!desired) fail();
+      const handle = await this.authorize(g, input.grantId, desired);
+      const rows = await this.tx<Row[]>(g, handle, "readonly", (io) =>
+        this.allRows(io, (values) => io.done(values)),
+      );
+      const entries = await Promise.all(rows.map(openBrowserConversationRow));
+      const items = entries
+        .filter((entry) =>
+          same(authority(entry.value.grant), authority(handle.grant)),
+        )
+        .sort(
+          (a, b) =>
+            a.value.header.issuedAt - b.value.header.issuedAt ||
+            a.value.content.id.localeCompare(b.value.content.id),
+        )
+        .map(summary);
+      return this.tx<Summary[]>(g, handle, "readonly", (io) =>
+        this.allRows(io, (current) => {
+          if (!same(current, rows)) fail("CONFLICT");
+          io.done(items);
+        }),
+      );
+    });
+  }
   prepare(raw: unknown): Promise<Summary> {
     return this.operation(async (g) => {
       const input = z
@@ -811,9 +851,7 @@ export class BrowserConversationContent {
   /** Owner archive only, never an authority import or a retained CryptoKey export.
    * Delivery TTL does not delete retained content. A currently verified matching
    * account and explicit export confirmation are required for plaintext export. */
-  export(
-    raw: unknown,
-  ): Promise<{
+  export(raw: unknown): Promise<{
     version: 1;
     restoreAuthority: false;
     items: (Summary & {
