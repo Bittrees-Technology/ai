@@ -88,6 +88,7 @@ export type ContentReview = {
   expiresAt: number;
   peerId: string;
   fingerprint: string;
+  connectionId?: string;
   entry?: ConversationDeliveryItem;
   request?: Prepare;
   message?: Message;
@@ -457,6 +458,7 @@ export class ConversationContentPanelState {
       this.accept(
         {
           action,
+          connectionId: action === "send" ? selected!.id : undefined,
           expiresAt: Math.min(server.expiresAt, started.wall + 120000),
           entry: retained,
           peerId: retained.peerId,

@@ -323,6 +323,20 @@ export function ConversationContent({
             </>
           )}
           <p className="prose">
+            {r.entry?.direction === "incoming"
+              ? "Storage receipt for copy"
+              : r.question || r.entry?.kind === "conversation.question"
+                ? "AI question copy"
+                : "Message copy"}
+            : {r.entry?.id ?? r.request!.id}
+            {r.connectionId && (
+              <>
+                <br />
+                Selected connection: {r.connectionId}
+              </>
+            )}
+          </p>
+          <p className="prose">
             Browser {r.peerId}
             <br />
             Verified fingerprint: {r.fingerprint}
