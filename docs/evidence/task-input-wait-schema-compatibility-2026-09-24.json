@@ -1,0 +1,17 @@
+{
+  "verifiedAt": "2026-09-24T09:22:22.460Z",
+  "legacyStoreSha256": "e9d5fd4f892d33531c20d62df1398459f8992c7e56b4d425e2c8c4f0156301c6",
+  "from": 25,
+  "to": 26,
+  "checks": [
+    "actual old-writer history preserved; empty wait table grants nothing",
+    "wrong-key migration rolls back",
+    "old writer rejects upgraded database",
+    "encrypted backup preserves unanswered question and exact restored answer association",
+    "untouched original backup remains usable with old writer"
+  ],
+  "boundaries": [
+    "synthetic temporary data only",
+    "no inference, credentials, app installation, live or Acer change"
+  ]
+}

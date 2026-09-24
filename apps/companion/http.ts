@@ -734,6 +734,16 @@ export function localApi({
   const unavailable = (task: ReturnType<typeof concealed>) =>
     ("dependencyAccess" in task && task.dependencyAccess === "unavailable") ||
     ("sourceAccess" in task && task.sourceAccess === "unavailable");
+  const concealMessage = (message: ReturnType<Store["message"]>) => ({
+    ...message,
+    input: { ...message.input, content: "Task reference unavailable" },
+    taskAccess: "unavailable" as const,
+  });
+  const exportedMessage = (message: ReturnType<Store["message"]>) =>
+    message.input.requestId &&
+    unavailable(concealed(store.get(owner, message.input.requestId)))
+      ? concealMessage(message)
+      : message;
   if (sources) {
     app.post("/v1/connections/crm/records", async (req, res) => {
       z.strictObject({}).parse(req.body);
@@ -1203,7 +1213,12 @@ export function localApi({
     if (req.query.cursor !== undefined && typeof req.query.cursor !== "string")
       throw new StoreError("INVALID_INPUT");
     res.json(
-      store.inboxConversationPage(owner, req.params.id, req.query.cursor),
+      store.inboxConversationPage(
+        owner,
+        req.params.id,
+        req.query.cursor,
+        (message) => exportedMessage(message).input.content.slice(0, 100),
+      ),
     );
   });
   app.post("/v1/inboxes", (req, res) =>
@@ -1220,7 +1235,7 @@ export function localApi({
         ),
       ),
   );
-  app.get("/v1/messages", (req, res) => {
+  app.get("/v1/messages", async (req, res) => {
     const after = Number(req.query.after ?? 0);
     if (
       !Number.isSafeInteger(after) ||
@@ -1229,14 +1244,32 @@ export function localApi({
       typeof req.query.conversationId !== "string"
     )
       throw new StoreError("INVALID_INPUT");
-    res.json({
-      items: store.messages(
-        owner,
-        req.query.inboxId,
-        req.query.conversationId,
-        after,
-      ),
-    });
+    const taskToken = store.changeToken(),
+      memoryToken = memory?.changeToken();
+    const messages = store.messages(
+      owner,
+      req.query.inboxId,
+      req.query.conversationId,
+      after,
+    );
+    const references = new Map<string, Awaited<ReturnType<typeof project>>>();
+    for (const message of messages) {
+      const id = message.input.requestId;
+      if (id && !references.has(id))
+        references.set(id, await project(store.get(owner, id)));
+    }
+    const items = messages.map((message) =>
+      message.input.requestId &&
+      unavailable(finalProject(references.get(message.input.requestId)!))
+        ? concealMessage(message)
+        : message,
+    );
+    if (
+      taskToken !== store.changeToken() ||
+      memoryToken !== memory?.changeToken()
+    )
+      throw new StoreError("CONFLICT");
+    res.json({ items });
   });
   app.post("/v1/messages/:id/receipts", (req, res) => {
     const kind = req.body?.kind;
@@ -1282,7 +1315,8 @@ export function localApi({
     const memories = memory ? await memory.export(owner) : [];
     const payload = {
       tasks: store.export(owner).map(concealed),
-      messages: store.exportMessages(owner),
+      messages: store.exportMessages(owner).map(exportedMessage),
+      inputWaits: store.exportInputWaits(owner),
       remoteControls: store.exportRemoteControls(owner),
       privateRelayCredentials: store.exportPrivateRelayCredentials(owner),
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
