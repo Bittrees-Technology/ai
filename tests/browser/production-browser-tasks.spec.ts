@@ -43,12 +43,24 @@ async function initialize(p: Page) {
   await panel(p)
     .getByRole("button", { name: "Review task storage setup", exact: true })
     .click();
-  await expect(
-    panel(p).getByRole("heading", {
-      name: "Set up this browser’s task storage",
-      exact: true,
-    }),
-  ).toBeFocused();
+  try {
+    await expect(
+      panel(p).getByRole("heading", {
+        name: "Set up this browser’s task storage",
+        exact: true,
+      }),
+    ).toBeFocused();
+  } catch (e) {
+    console.error(
+      "Task initialization review diagnostics",
+      await panel(p).innerText(),
+    );
+    await mkdir("test-results", { recursive: true });
+    await panel(p).screenshot({
+      path: `test-results/browser-task-controls-diagnostic-initialize-${test.info().project.name}.png`,
+    });
+    throw e;
+  }
   await confirm(p, "Confirm task storage setup");
   await expect(panel(p).getByRole("status")).toContainText("Task change saved");
 }
