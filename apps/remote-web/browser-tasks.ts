@@ -518,7 +518,10 @@ export function mountBrowserTasks(
       if (action === "submit") browserTaskBytes(draft).fill(0);
       if (action === "submit" || action === "receive") route = selectedRoute();
     } catch (e) {
-      failure(e);
+      error.textContent =
+        e instanceof Error && e.message === "CAPACITY"
+          ? "This task is too large. Shorten the supplied text and review again."
+          : "Choose a currently permitted Mac and provide valid task text before reviewing.";
       return;
     }
     reset("Checking this exact task review…");

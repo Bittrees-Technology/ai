@@ -534,7 +534,7 @@ test("oversized UTF-8 task input reaches no reservation or sender counter", asyn
       .getByRole("button", { name: "Review task content", exact: true })
       .click();
     await expect(panel(page).getByRole("alert")).toContainText(
-      "exceeded a limit",
+      "This task is too large",
     );
     await expect(
       panel(page).getByRole("heading", {
