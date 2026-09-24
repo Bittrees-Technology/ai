@@ -1,7 +1,7 @@
 import { test as base } from "@playwright/test";
 import { Pool } from "pg";
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:https";
+import { createServer, request as httpsRequest } from "node:https";
 import { createServer as createProxyServer } from "node:http";
 import { connect, type Socket } from "node:net";
 import { execFileSync } from "node:child_process";
@@ -269,7 +269,58 @@ async function startIdentityServer() {
       client.on("error", () => upstream.destroy());
     });
     await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
+    // Native test traffic uses actual TLS and the disposable certificate. Exact
+    // origin/path mapping never performs DNS or contacts the public website.
+    const nativeTransport: typeof fetch = async (raw, init) => {
+      const url = new URL(String(raw));
+      if (url.origin !== origin || !url.pathname.startsWith("/device/"))
+        throw Error("Unexpected native test destination");
+      return new Promise<Response>((resolve, reject) => {
+        const request = httpsRequest(
+          {
+            host: "127.0.0.1",
+            port: (server.address() as { port: number }).port,
+            servername: "ai.bittrees.org",
+            ca: cert,
+            path: url.pathname + url.search,
+            method: init?.method ?? "GET",
+            headers: {
+              ...Object.fromEntries(new Headers(init?.headers).entries()),
+              Host: "ai.bittrees.org",
+            },
+            signal: init?.signal ?? undefined,
+          },
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+            response.on("error", reject);
+            response.on("end", () => {
+              const headers = new Headers();
+              for (const [key, value] of Object.entries(response.headers))
+                if (value !== undefined)
+                  headers.set(
+                    key,
+                    Array.isArray(value) ? value.join(", ") : value,
+                  );
+              const status = response.statusCode!;
+              const result = new Response(
+                [204, 205, 304].includes(status) ? null : Buffer.concat(chunks),
+                { status, headers },
+              );
+              Object.defineProperty(result, "url", { value: String(raw) });
+              resolve(result);
+            });
+          },
+        );
+        request.on("error", reject);
+        request.setTimeout(10000, () =>
+          request.destroy(Error("Native test request timed out")),
+        );
+        request.end(init?.body);
+      });
+    };
     return {
+      nativeTransport,
       pool,
       proxyUrl: `http://127.0.0.1:${(proxy.address() as { port: number }).port}`,
       events,
