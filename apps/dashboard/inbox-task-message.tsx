@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { InboxMessage } from "./inbox-message-state.js";
+import { TaskAnswer } from "./task-answer.js";
 import { InboxTaskReview } from "./inbox-task-review-state.js";
 
 export function InboxTaskMessage({
@@ -7,7 +8,12 @@ export function InboxTaskMessage({
   api,
 }: {
   message: InboxMessage;
-  api: (path: string) => Promise<any>;
+  api: (
+    path: string,
+    method?: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+  ) => Promise<any>;
 }) {
   const [, redraw] = useState(0),
     [error, setError] = useState("");
@@ -71,6 +77,9 @@ export function InboxTaskMessage({
         <button onClick={() => review.clear()}>Hide task-linked message</button>
       )}
       {error && <p role="alert">{error}</p>}
+      {message.input.replyExpected && (
+        <TaskAnswer message={message} api={api} onOpen={() => review.clear()} />
+      )}
     </div>
   );
 }

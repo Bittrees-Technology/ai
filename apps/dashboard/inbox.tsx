@@ -85,8 +85,8 @@ export function Inbox({
       <section className="queue">
         <h2>Your personal inbox</h2>
         <p className="hint">
-          Messages are saved on this Mac. They do not send mail or start model
-          work.
+          Messages are saved on this Mac. Ordinary replies do not start work.
+          Use the separate task-answer review to answer a waiting task.
         </p>
         {!inboxes.length ? (
           <button
