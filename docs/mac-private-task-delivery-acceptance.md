@@ -1,0 +1,7 @@
+# Mac task delivery integrated acceptance
+
+The additional browser scenario renders the shipped Mac connection/delivery controls and calls the actual authenticated companion HTTP routes on a disposable loopback listener. A bounded test bridge holds its synthetic token in the Node process. The same real native controllers use isolated encrypted SQLite, simulated credential slots and the real HTTPS/PostgreSQL relay fixture. The browser endpoint uses its normal signed session, HttpOnly credentials, retained key/outbox stores and authenticated result handling.
+
+The scenario verifies that opening does not poll, checking admits exactly one original browser task without running it, preparation does not submit, each explicit send produces one encrypted relay message, and the browser separately authenticates acceptance and opens the result. The local worker runs only when the test explicitly invokes it with a deterministic synthetic model response. An unauthenticated local request is denied without task identifiers. The displayed Mac delivery history contains no result plaintext.
+
+This adds three cases across Chromium, Firefox and WebKit, for an expected full suite of 1,092. Typechecking and fixture compilation pass locally; actual browser execution remains pending disposable GitHub CI. This is integrated HTTP/UI/transport evidence, not a claim of native WebView interaction, personal Keychain acceptance, live deployment or model quality. No product runtime source changes are included. Acer news/model/runtime and the installed Mac app remain unchanged.
