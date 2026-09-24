@@ -490,7 +490,7 @@ export class BrowserKeyHost {
       }),
     send: (raw: unknown) =>
       this.verifiedPeer(async () =>
-        this.relay.withClient(async (client, sender) => {
+        this.relay.withClient(async (client, sender, check) => {
           const input = z
             .strictObject({
               peerId: z.uuid(),
@@ -519,10 +519,20 @@ export class BrowserKeyHost {
             Math.min(sender.expiresAt, recipient.expiresAt)
           )
             throw Error("DENIED");
-          return {
-            transportOnly: true as const,
-            ...(await client.submit({ version: 1, envelope })),
-          };
+          const result = await client.submit({ version: 1, envelope });
+          check();
+          await (
+            await this.historyStore()
+          ).recordRelayDelivery(
+            {
+              id: input.id,
+              expectedRevision: input.expectedRevision + 1,
+              envelope,
+              receipt: result.receipt,
+            },
+            check,
+          );
+          return { transportOnly: true as const, ...result };
         }),
       ),
   };

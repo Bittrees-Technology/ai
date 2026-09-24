@@ -32,7 +32,7 @@ const prepare = (
 async function inspect(page: Page) {
   return page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 6);
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 7);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });

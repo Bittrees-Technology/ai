@@ -1,3 +1,8 @@
+import { privateEnvelopeSchema } from "./private-envelope.js";
+import {
+  privateRelayEnvelopeHash,
+  privateRelayStorageReceiptSchema,
+} from "./private-relay-contracts.js";
 import { z } from "zod";
 import { openBrowserPrivateDatabase } from "./browser-outbox-migration.js";
 import {
@@ -191,12 +196,96 @@ export class BrowserTaskHistory {
           header: e.header,
           context: e.context,
           attempts: e.attempts,
+          relayDelivery: e.relayDelivery
+            ? {
+                state: e.relayDelivery.receipt.state,
+                observedAt: e.relayDelivery.observedAt,
+                attempt: e.relayDelivery.attempt,
+              }
+            : null,
           composed: !!e.composed,
           hasEnvelope: !!e.envelope,
           hasReceipt: !!e.receiptHash,
           hasResult: !!e.resultHash,
         })),
       };
+    });
+  }
+  /** Internal host callback after authenticated relay submission. No public API
+   * accepts supplied receipts. History grants no task or device authority. */
+  recordRelayDelivery(raw: unknown, transportCheck: () => void) {
+    return this.operation(async (g) => {
+      const input = z
+        .strictObject({
+          id: z.uuid(),
+          expectedRevision: revision.refine((v) => v > 0),
+          envelope: privateEnvelopeSchema,
+          receipt: privateRelayStorageReceiptSchema,
+        })
+        .parse(raw);
+      const check = () => {
+        this.check(g);
+        transportCheck();
+      };
+      check();
+      const hash = await privateRelayEnvelopeHash(input.envelope);
+      check();
+      if (
+        input.receipt.envelopeHash !== hash ||
+        input.receipt.messageId !== input.envelope.header.messageId ||
+        input.receipt.storedAt < input.envelope.header.issuedAt - 30000 ||
+        input.receipt.storedAt > this.now() + 30000
+      )
+        throw new BrowserOutboxError("DENIED");
+      return browserStorageTransaction(
+        this.db,
+        stores,
+        "readwrite",
+        check,
+        (io) => {
+          io.request(io.store("meta").get(this.scope), (raw) => {
+            const meta = this.meta(raw);
+            if (!meta || meta.locked) throw new BrowserOutboxError("DENIED");
+            io.request(io.store("entries").get(input.id), (raw) => {
+              const entry = this.entry(raw);
+              if (
+                entry.revision !== input.expectedRevision ||
+                entry.state !== "pending" ||
+                entry.attempts < 1 ||
+                !same(entry.envelope, input.envelope)
+              )
+                throw new BrowserOutboxError("CONFLICT");
+              const previous = entry.relayDelivery?.receipt,
+                rank = { stored: 0, received: 1, deleted: 2 };
+              if (
+                previous &&
+                (input.receipt.storedAt !== previous.storedAt ||
+                  input.receipt.envelopeHash !== previous.envelopeHash ||
+                  input.receipt.revision < previous.revision ||
+                  rank[input.receipt.state] < rank[previous.state] ||
+                  (input.receipt.revision === previous.revision &&
+                    !same(input.receipt, previous)))
+              )
+                throw new BrowserOutboxError("CONFLICT");
+              if (
+                entry.revision >= Number.MAX_SAFE_INTEGER ||
+                meta.revision >= Number.MAX_SAFE_INTEGER
+              )
+                throw new BrowserOutboxError("CAPACITY");
+              entry.relayDelivery = {
+                receipt: input.receipt,
+                observedAt: this.now(),
+                attempt: entry.attempts,
+              };
+              entry.revision++;
+              meta.revision++;
+              io.store("entries").put(browserOutboxEntrySchema.parse(entry));
+              io.store("meta").put(meta);
+              io.done(undefined);
+            });
+          });
+        },
+      );
     });
   }
   /** Explicit export of this browser's own reviewed input and encrypted wire

@@ -8,7 +8,10 @@ export const payload = {
   prompt: "SYNTHETIC_RETAINED_BROWSER_TASK",
 };
 const confirmed = (id: string) => ({ id, confirmed: true });
-export async function init(page: Page, previous: boolean | "task" = false) {
+export async function init(
+  page: Page,
+  previous: boolean | "task" | "delivery" = false,
+) {
   const f = {
     owner: "synthetic:" + randomUUID(),
     binding: {
@@ -26,7 +29,7 @@ export async function init(page: Page, previous: boolean | "task" = false) {
 export async function reopen(
   page: Page,
   f: { owner: string; binding: any; now: number },
-  previous: boolean | "task" = false,
+  previous: boolean | "task" | "delivery" = false,
 ) {
   await page.goto("/?browser-peers");
   await page.waitForFunction(() => !!window.browserPeersTest);
@@ -36,7 +39,10 @@ export async function reopen(
     { f, previous },
   );
 }
-export async function paired(page: Page, previous: boolean | "task" = false) {
+export async function paired(
+  page: Page,
+  previous: boolean | "task" | "delivery" = false,
+) {
   const f = await init(page, previous),
     mac = await retainedMac(f.binding, f.now);
   try {
@@ -165,7 +171,10 @@ export async function paired(page: Page, previous: boolean | "task" = false) {
     throw e;
   }
 }
-export async function ready(page: Page, previous: boolean | "task" = false) {
+export async function ready(
+  page: Page,
+  previous: boolean | "task" | "delivery" = false,
+) {
   const f = await paired(page, previous);
   try {
     await f.proveBrowser();
