@@ -247,6 +247,37 @@ export class BrowserTaskComposition {
       }
     });
   }
+  /** Trusted host receive path. The sender header is only a routing hint until
+   * authenticated decryption; the live transport fence also runs in the IDB commit. */
+  receiveMessage(raw: unknown, transportCheck: () => void) {
+    return this.exclusive(async (g) => {
+      const input = z
+        .strictObject({
+          envelope: privateEnvelopeSchema,
+          confirmed: z.literal(true),
+        })
+        .parse(raw);
+      const sender = await this.consents.authorize(
+        input.envelope.header.senderId,
+        input.envelope.header.senderKeyEpoch,
+        this.freshRegistration,
+        () => {
+          this.check(g);
+          transportCheck();
+        },
+      );
+      try {
+        const received = await sender.outbox.acceptMessage(input.envelope);
+        return {
+          kind: received.kind,
+          operationId: received.entry.id,
+          revision: received.entry.revision,
+        };
+      } finally {
+        sender.outbox.close();
+      }
+    });
+  }
   readResult(raw: unknown) {
     return this.exclusive(async (g) => {
       const input = z

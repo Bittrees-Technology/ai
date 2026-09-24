@@ -35,6 +35,7 @@ export class BrowserRelayTransport {
     action: (
       client: PrivateRelayClient,
       identity: PrivateRelayIdentity,
+      check: () => void,
     ) => Promise<T>,
   ): Promise<T> {
     if (this.busy) throw Error("BUSY");
@@ -105,9 +106,16 @@ export class BrowserRelayTransport {
         this.now,
         this.monotonic,
       ));
-      const value = await action(client, structuredClone(identity));
-      check();
-      if (identity.expiresAt <= this.now()) throw Error("DENIED");
+      const deliveryCheck = () => {
+        check();
+        if (identity.expiresAt <= this.now()) throw Error("DENIED");
+      };
+      const value = await action(
+        client,
+        structuredClone(identity),
+        deliveryCheck,
+      );
+      deliveryCheck();
       return value;
     } finally {
       open = false;
