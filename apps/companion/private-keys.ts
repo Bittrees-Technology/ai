@@ -2,7 +2,11 @@ import type { CompanionPrivateRelay } from "./private-relay.js";
 import { privateRelayPageSchema } from "../../modules/remote/private-relay-contracts.js";
 import { CompanionPeerChecks } from "./private-peer-checks.js";
 import { CompanionPrivateTaskPermissions } from "./private-task-permissions.js";
-import { CompanionPrivateTasks } from "./private-tasks.js";
+import {
+  CompanionPrivateTasks,
+  responsePrepareSchema,
+  responseDeliverySchema,
+} from "./private-tasks.js";
 import { CompanionPrivatePeers } from "./private-peers.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -15,6 +19,10 @@ import type { PrivateBinding } from "../../modules/remote/private-peer-contracts
 import type { RemoteClient } from "../../modules/remote/client.js";
 import type { Store, Owner } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
+const relayConnectionSchema = z.strictObject({
+  id: z.uuid(),
+  expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
 const request = z.strictObject({
   action: z.enum([
     "create",
@@ -219,6 +227,62 @@ export class CompanionPrivateKeys {
         },
       ),
     );
+  }
+  prepareRelayedResponse(relay: CompanionPrivateRelay, raw: unknown) {
+    if (!this.setupEnabled || !this.privateTasksEnabled || !this.remote)
+      return Promise.reject(new PrivateKeyLifecycleError("DENIED"));
+    const input = z
+      .strictObject({
+        connection: relayConnectionSchema,
+        response: responsePrepareSchema,
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    return this.protocolOperation(() =>
+      relay.withTransport(
+        input.connection,
+        async (client, current, expiresAt) => {
+          const recipient = await client.recipient({
+            endpointId: input.response.peerId,
+          });
+          return this.tasks.prepareResponseVerified(
+            input.response,
+            current,
+            Math.min(expiresAt, recipient.expiresAt),
+          );
+        },
+      ),
+    );
+  }
+  sendRelayedResponse(relay: CompanionPrivateRelay, raw: unknown) {
+    if (!this.setupEnabled || !this.privateTasksEnabled || !this.remote)
+      return Promise.reject(new PrivateKeyLifecycleError("DENIED"));
+    const input = z
+      .strictObject({
+        connection: relayConnectionSchema,
+        response: responseDeliverySchema,
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    return this.protocolOperation(async () => {
+      const target = this.tasks.responseTarget(input.response);
+      return relay.withTransport(
+        input.connection,
+        async (client, current, expiresAt) => {
+          const recipient = await client.recipient({
+            endpointId: target.peerId,
+          });
+          const envelope = await this.tasks.responseEnvelopeVerified(
+            input.response,
+            current,
+            Math.min(expiresAt, recipient.expiresAt),
+          );
+          const result = await client.submit({ version: 1, envelope });
+          // Server storage acknowledgement is not a browser application receipt.
+          return { transportOnly: true as const, ...result };
+        },
+      );
+    });
   }
   prepareTaskResponse(raw: unknown) {
     return this.protocolOperation(() => this.tasks.prepareResponse(raw));
