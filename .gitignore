@@ -50,3 +50,6 @@ tests/browser/fixture/public/legacy-offer-ack/
 
 .legacy-browser-key-boundary/
 tests/browser/fixture/public/legacy-key-boundary/
+
+.legacy-browser-content/
+tests/browser/fixture/public/legacy-content/

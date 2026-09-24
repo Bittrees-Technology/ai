@@ -1,3 +1,4 @@
+import { BrowserConversationContent } from "../../../modules/remote/browser-conversation-content.js";
 import { BrowserConversationConsent } from "../../../modules/remote/browser-conversation-consent.js";
 import { openBrowserPrivateDatabase } from "../../../modules/remote/browser-outbox-migration.js";
 import { browserStorageTransaction } from "../../../modules/remote/browser-storage.js";
@@ -29,6 +30,16 @@ let keys: BrowserKeyLifecycle,
   host: BrowserKeyHost | null = null;
 let checks: BrowserPeerChecks | undefined;
 let consents: BrowserTaskConsent | undefined;
+let contentStore: BrowserConversationContent | undefined;
+async function conversationContentStore() {
+  return (contentStore ??= await BrowserConversationContent.open(
+    owner,
+    () => binding,
+    await conversationStore(),
+    () => now,
+    () => mono,
+  ));
+}
 let conversations: BrowserConversationConsent | undefined;
 let conversationAccess:
   Awaited<ReturnType<BrowserConversationConsent["authorize"]>> | undefined;
@@ -155,12 +166,15 @@ const fixture = {
       | "conversation"
       | "replay"
       | "offer-replay"
-      | "offer-ack" = false,
+      | "offer-ack"
+      | "content" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
     consents?.close();
     consents = undefined;
+    contentStore?.close();
+    contentStore = undefined;
     conversations?.close();
     conversations = undefined;
     conversationAccess = undefined;
@@ -181,25 +195,29 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "offer-ack"
-        ? "/legacy-offer-ack/index.js"
-        : previous === "offer-replay"
-          ? "/legacy-offer-replay/index.js"
-          : previous === "replay"
-            ? "/legacy-replay/index.js"
-            : previous === "conversation"
-              ? "/legacy-conversation/index.js"
-              : previous === "delivery"
-                ? "/legacy-delivery/index.js"
-                : previous === "task"
-                  ? "/legacy-composition/index.js"
-                  : "/legacy-consent/index.js";
+      previous === "content"
+        ? "/legacy-content/index.js"
+        : previous === "offer-ack"
+          ? "/legacy-offer-ack/index.js"
+          : previous === "offer-replay"
+            ? "/legacy-offer-replay/index.js"
+            : previous === "replay"
+              ? "/legacy-replay/index.js"
+              : previous === "conversation"
+                ? "/legacy-conversation/index.js"
+                : previous === "delivery"
+                  ? "/legacy-delivery/index.js"
+                  : previous === "task"
+                    ? "/legacy-composition/index.js"
+                    : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
     conversationProvider =
-      previous === "offer-replay" || previous === "offer-ack"
+      previous === "offer-replay" ||
+      previous === "offer-ack" ||
+      previous === "content"
         ? providers.BrowserConversationConsent
         : BrowserConversationConsent;
     consentProvider =
@@ -208,7 +226,8 @@ const fixture = {
       previous === "conversation" ||
       previous === "replay" ||
       previous === "offer-replay" ||
-      previous === "offer-ack"
+      previous === "offer-ack" ||
+      previous === "content"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
@@ -216,7 +235,8 @@ const fixture = {
       previous === "conversation" ||
       previous === "replay" ||
       previous === "offer-replay" ||
-      previous === "offer-ack"
+      previous === "offer-ack" ||
+      previous === "content"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
@@ -224,7 +244,8 @@ const fixture = {
       previous === "conversation" ||
       previous === "replay" ||
       previous === "offer-replay" ||
-      previous === "offer-ack"
+      previous === "offer-ack" ||
+      previous === "content"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -290,6 +311,7 @@ const fixture = {
     checks?.invalidate();
     consents?.invalidate();
     conversations?.invalidate();
+    contentStore?.invalidate();
     keys.invalidate();
     peers.invalidate();
     current = null;
@@ -323,6 +345,7 @@ const fixture = {
     checks?.invalidate();
     consents?.invalidate();
     conversations?.invalidate();
+    contentStore?.invalidate();
     peers?.invalidate();
     host?.peerAPI.invalidate();
   },
@@ -552,6 +575,113 @@ const fixture = {
     } finally {
       db.close();
     }
+  },
+  contentPrepare: (raw: unknown) =>
+    withKey(async () => (await conversationContentStore()).prepare(raw)),
+  contentEnvelope: (raw: unknown) =>
+    withKey(async () => (await conversationContentStore()).envelope(raw)),
+  contentAccept: (raw: unknown) =>
+    withKey(async () => (await conversationContentStore()).accept(raw)),
+  contentRead: (raw: unknown) =>
+    withKey(async () => (await conversationContentStore()).read(raw)),
+  contentExport: (raw: unknown) =>
+    conversationContentStore().then((c) => c.export(raw)),
+  contentClear: (raw: unknown) =>
+    conversationContentStore().then((c) => c.clear(raw)),
+  async contentInspect(action?: "corrupt" | "remove" | "strip-coverage") {
+    // CI-only fault/inspection surface. Never included in the product bundle.
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const names = [...db.objectStoreNames];
+      const rows = await browserStorageTransaction<Record<string, any[]>>(
+        db,
+        names,
+        action ? "readwrite" : "readonly",
+        () => {},
+        (io) => {
+          const result: Record<string, any[]> = {};
+          const next = (i: number) => {
+            if (i === names.length) {
+              io.done(result);
+              return;
+            }
+            const name = names[i]!;
+            io.request(io.store(name).getAll(), (values) => {
+              result[name] = values;
+              if (name === "conversation_content" && action)
+                for (const value of values) {
+                  if (action === "remove")
+                    io.store(name).delete([value.scope, value.id]);
+                  if (action === "corrupt") {
+                    value.ciphertext =
+                      (value.ciphertext[0] === "A" ? "B" : "A") +
+                      value.ciphertext.slice(1);
+                    io.store(name).put(value);
+                  }
+                }
+              if (name === "slots" && action === "strip-coverage")
+                for (const value of values) {
+                  delete value.incomingReplayBoundary;
+                  io.store(name).put(value);
+                }
+              next(i + 1);
+            });
+          };
+          next(0);
+        },
+      );
+      let exportDenied = true;
+      for (const row of rows.conversation_content ?? [])
+        try {
+          await crypto.subtle.exportKey("raw", row.key);
+          exportDenied = false;
+        } catch {}
+      return {
+        version: db.version,
+        json: JSON.stringify(rows.conversation_content ?? []),
+        count: (rows.conversation_content ?? []).length,
+        exportDenied,
+        ledger: JSON.stringify(rows.incoming_replay ?? []),
+        channels: JSON.stringify(rows.channels ?? []),
+        all: JSON.stringify(rows),
+      };
+    } finally {
+      db.close();
+    }
+  },
+  contentHoldEncryption() {
+    const original = crypto.subtle.encrypt.bind(crypto.subtle);
+    crypto.subtle.encrypt = (async (
+      ...args: Parameters<SubtleCrypto["encrypt"]>
+    ) => {
+      const algorithm = args[0] as AesGcmParams;
+      if (
+        algorithm.name === "AES-GCM" &&
+        algorithm.additionalData &&
+        new TextDecoder()
+          .decode(algorithm.additionalData)
+          .includes("browser-conversation-content:v1")
+      ) {
+        crypto.subtle.encrypt = original;
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      return original(...args);
+    }) as SubtleCrypto["encrypt"];
+  },
+  contentFailWrite() {
+    const original = IDBObjectStore.prototype.add;
+    IDBObjectStore.prototype.add = function (...args) {
+      if (this.name === "conversation_content") {
+        IDBObjectStore.prototype.add = original;
+        throw new DOMException("synthetic", "QuotaExceededError");
+      }
+      return original.apply(this, args);
+    };
   },
   conversationStatus: () =>
     host

@@ -17,7 +17,8 @@ export async function init(
     | "conversation"
     | "replay"
     | "offer-replay"
-    | "offer-ack" = false,
+    | "offer-ack"
+    | "content" = false,
 ) {
   const f = {
     owner: "synthetic:" + randomUUID(),
@@ -43,7 +44,8 @@ export async function reopen(
     | "conversation"
     | "replay"
     | "offer-replay"
-    | "offer-ack" = false,
+    | "offer-ack"
+    | "content" = false,
 ) {
   await page.goto("/?browser-peers");
   await page.waitForFunction(() => !!window.browserPeersTest);
@@ -62,7 +64,8 @@ export async function paired(
     | "conversation"
     | "replay"
     | "offer-replay"
-    | "offer-ack" = false,
+    | "offer-ack"
+    | "content" = false,
 ) {
   const f = await init(page, previous),
     mac = await retainedMac(f.binding, f.now);
@@ -201,7 +204,8 @@ export async function ready(
     | "conversation"
     | "replay"
     | "offer-replay"
-    | "offer-ack" = false,
+    | "offer-ack"
+    | "content" = false,
 ) {
   const f = await paired(page, previous);
   try {
