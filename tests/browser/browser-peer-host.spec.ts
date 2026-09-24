@@ -7,7 +7,7 @@ async function open(page: Page) {
   await page.goto("https://ai.bittrees.org/?browser-peers");
   await page.waitForFunction(() => !!window.browserPeersTest);
 }
-async function active(page: Page) {
+async function registrationOnly(page: Page) {
   await open(page);
   const wallet = Wallet.createRandom();
   const challenge = await page.evaluate(
@@ -31,6 +31,10 @@ async function active(page: Page) {
       }),
     randomUUID(),
   );
+  return registration;
+}
+async function active(page: Page) {
+  const registration = await registrationOnly(page);
   const proof = await page.evaluate(() =>
     window.browserPeersTest.hostActivate(),
   );
@@ -521,7 +525,6 @@ const initializeTasks = (
   p: Awaited<ReturnType<typeof taskHostReady>>,
 ) =>
   page.evaluate((raw) => window.browserPeersTest.composeInitialize(raw), {
-    ...p.route,
     expectedRevision: 0,
     confirmed: true,
   });
@@ -799,4 +802,249 @@ test("task review before initialization fails closed and cannot reuse fresh regi
   } finally {
     p.mac.close();
   }
+});
+
+test("fresh verified registration explicitly initializes empty task storage before keys or permissions", async ({
+  page,
+}) => {
+  await registrationOnly(page);
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+  ).toBeNull();
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.keyStatus())).revision,
+  ).toBe(0);
+  const initialized = await page.evaluate(() =>
+    window.browserPeersTest.composeInitialize({
+      expectedRevision: 0,
+      confirmed: true,
+    }),
+  );
+  expect(initialized).toMatchObject({ revision: 1, locked: false });
+  const history = await page.evaluate(() =>
+    window.browserPeersTest.historyStatus(),
+  );
+  expect(history.meta).toEqual(initialized);
+  expect(history.entries).toEqual([]);
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.keyStatus())).revision,
+  ).toBe(0);
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.consentStatus())).grants,
+  ).toEqual([]);
+  await expect(
+    page.evaluate((raw) => window.browserPeersTest.composePrepare(raw), {
+      peerId: randomUUID(),
+      peerKeyEpoch: 1,
+      payload: composedPayload,
+    }),
+  ).rejects.toThrow("SETUP_REQUIRED");
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+      .entries,
+  ).toEqual([]);
+});
+
+for (const loss of ["reload", "deadline"] as const)
+  test(`task storage initialization refuses registration freshness lost through ${loss}`, async ({
+    page,
+  }) => {
+    if (loss === "deadline") await page.clock.install();
+    await registrationOnly(page);
+    if (loss === "reload") {
+      await open(page);
+      await page.evaluate(() => window.browserPeersTest.resume());
+    } else await page.clock.fastForward(120001);
+    await expect(
+      page.evaluate(() =>
+        window.browserPeersTest.composeInitialize({
+          expectedRevision: 0,
+          confirmed: true,
+        }),
+      ),
+    ).rejects.toThrow("DENIED");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+    ).toBeNull();
+  });
+
+test("initialization cannot reset the same device or silently replace an existing marker", async ({
+  page,
+}) => {
+  await registrationOnly(page);
+  const before = await page.evaluate(() =>
+    window.browserPeersTest.composeInitialize({
+      expectedRevision: 0,
+      confirmed: true,
+    }),
+  );
+  await expect(
+    page.evaluate(() =>
+      window.browserPeersTest.composeInitialize({
+        expectedRevision: 1,
+        confirmed: true,
+      }),
+    ),
+  ).rejects.toThrow("SETUP_REQUIRED");
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+  ).toEqual(before);
+});
+
+test("deleted task storage resets only for a different explicitly created fresh registration", async ({
+  page,
+}) => {
+  const first = await registrationOnly(page);
+  const original = await page.evaluate(() =>
+    window.browserPeersTest.composeInitialize({
+      expectedRevision: 0,
+      confirmed: true,
+    }),
+  );
+  const cleared = await page.evaluate(() =>
+    window.browserPeersTest.historyClear({
+      expectedRevision: 1,
+      confirmed: true,
+    }),
+  );
+  expect(cleared.locked).toBe(true);
+  await expect(
+    page.evaluate(
+      (r) =>
+        window.browserPeersTest.composeInitialize({
+          expectedRevision: r,
+          confirmed: true,
+        }),
+      cleared.revision,
+    ),
+  ).rejects.toThrow("SETUP_REQUIRED");
+  const next = await page.evaluate(
+    (raw) => window.browserPeersTest.register(raw),
+    {
+      operationId: randomUUID(),
+      expected: {
+        deviceId: first.binding.deviceId,
+        credentialEpoch: first.binding.credentialEpoch,
+      },
+      confirmed: true,
+    },
+  );
+  expect(next.binding.deviceId).not.toBe(first.binding.deviceId);
+  const reset = await page.evaluate(
+    (r) =>
+      window.browserPeersTest.composeInitialize({
+        expectedRevision: r,
+        confirmed: true,
+      }),
+    cleared.revision,
+  );
+  expect(reset).toMatchObject({
+    revision: cleared.revision + 1,
+    locked: false,
+  });
+  expect(reset.deviceHash).not.toBe(original.deviceHash);
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.historyStatus()))
+      .entries,
+  ).toEqual([]);
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.keyStatus())).revision,
+  ).toBe(0);
+});
+
+test("lost final initialization verification leaves an inspectable marker and refuses automatic replay", async ({
+  page,
+  identityServer,
+}) => {
+  await registrationOnly(page);
+  identityServer.reject("/browser/registration/identity", 1);
+  await expect(
+    page.evaluate(() =>
+      window.browserPeersTest.composeInitialize({
+        expectedRevision: 0,
+        confirmed: true,
+      }),
+    ),
+  ).rejects.toThrow();
+  const saved = await page.evaluate(() =>
+    window.browserPeersTest.historyStatus(),
+  );
+  expect(saved.meta).toMatchObject({ revision: 1, locked: false });
+  expect(saved.entries).toEqual([]);
+  await expect(
+    page.evaluate(() =>
+      window.browserPeersTest.composeInitialize({
+        expectedRevision: 0,
+        confirmed: true,
+      }),
+    ),
+  ).rejects.toThrow("DENIED");
+  expect(
+    await page.evaluate(() => window.browserPeersTest.historyStatus()),
+  ).toEqual(saved);
+});
+
+test("scope loss during initialization verification creates no task marker", async ({
+  page,
+  identityServer,
+}) => {
+  await registrationOnly(page);
+  identityServer.hold();
+  const pending = page
+    .evaluate(() =>
+      window.browserPeersTest.composeInitialize({
+        expectedRevision: 0,
+        confirmed: true,
+      }),
+    )
+    .then(
+      (value) => ({ value }),
+      (e) => ({ error: String(e) }),
+    );
+  await expect.poll(() => identityServer.held()).toBe(true);
+  await page.evaluate(() => window.browserPeersTest.scopeChange());
+  identityServer.release();
+  expect(await pending).toMatchObject({
+    error: expect.stringMatching(/DENIED/),
+  });
+  await open(page);
+  await page.evaluate(() => window.browserPeersTest.resume());
+  expect(
+    (await page.evaluate(() => window.browserPeersTest.historyStatus())).meta,
+  ).toBeNull();
+});
+
+test("initialization quota failure keeps the empty task marker absent", async ({
+  page,
+}) => {
+  await registrationOnly(page);
+  await page.evaluate(() => window.browserPeersTest.historyStatus());
+  await page.evaluate(() => {
+    const add = IDBObjectStore.prototype.add;
+    IDBObjectStore.prototype.add = function (
+      ...args: Parameters<IDBObjectStore["add"]>
+    ) {
+      if (this.name === "meta") {
+        IDBObjectStore.prototype.add = add;
+        throw new DOMException(
+          "synthetic initialization quota",
+          "QuotaExceededError",
+        );
+      }
+      return add.apply(this, args);
+    };
+  });
+  await expect(
+    page.evaluate(() =>
+      window.browserPeersTest.composeInitialize({
+        expectedRevision: 0,
+        confirmed: true,
+      }),
+    ),
+  ).rejects.toThrow("CAPACITY");
+  const status = await page.evaluate(() =>
+    window.browserPeersTest.historyStatus(),
+  );
+  expect(status.meta).toBeNull();
+  expect(status.entries).toEqual([]);
 });

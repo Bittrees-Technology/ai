@@ -1,3 +1,4 @@
+import { BrowserPrivateOutbox } from "./browser-outbox.js";
 import { BrowserTaskComposition } from "./browser-task-composition.js";
 import { BrowserTaskHistory } from "./browser-task-history.js";
 import { BrowserTaskConsent } from "./browser-task-consent.js";
@@ -438,9 +439,14 @@ export class BrowserKeyHost {
         (await this.compositionStore()).readResult(raw),
       ),
     initialize: (raw: unknown) =>
-      this.verifiedPeer(async () =>
-        (await this.compositionStore()).initialize(raw),
-      ),
+      this.verified(() => {
+        if (!this.active) throw Error("DENIED");
+        return BrowserPrivateOutbox.initializeVerified(
+          raw,
+          this.active,
+          this.now,
+        );
+      }),
     prepare: (raw: unknown) =>
       this.verifiedPeer(async () =>
         (await this.compositionStore()).prepare(raw),

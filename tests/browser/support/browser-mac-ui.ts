@@ -57,8 +57,8 @@ export async function incoming(
     }),
   ).toBeFocused();
 }
-export async function setup(p: Page) {
-  const binding = await setupRecovery(p),
+export async function setup(p: Page, afterRegistration?: () => Promise<void>) {
+  const binding = await setupRecovery(p, afterRegistration),
     mac = await retainedMac(binding, Date.now());
   try {
     await peers(p)

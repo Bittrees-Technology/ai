@@ -1,3 +1,4 @@
+import type { VerifiedBrowserDeviceScope } from "./browser-device-contracts.js";
 import {
   prepareBrowserTask,
   readBrowserTaskPreparation,
@@ -159,6 +160,34 @@ export class BrowserPrivateOutbox {
     } catch (e) {
       db.close();
       throw e;
+    }
+  }
+
+  /** Narrow setup operation over a trusted verified scope. No task/key/peer
+   * authority is needed or created; no outbox handle leaves this method. */
+  static async initializeVerified(
+    raw: unknown,
+    scope: VerifiedBrowserDeviceScope,
+    now = Date.now,
+  ) {
+    const current = () => scope.current(),
+      fresh = () => {
+        const binding = current();
+        return binding && scope.freshRegistration(binding) ? binding : null;
+      };
+    if (!fresh()) throw new BrowserOutboxError("DENIED");
+    const outbox = new BrowserPrivateOutbox(
+      await openBrowserPrivateDatabase(),
+      current,
+      () => null,
+      fresh,
+      now,
+      () => null,
+    );
+    try {
+      return await outbox.initialize(raw);
+    } finally {
+      outbox.close();
     }
   }
 
