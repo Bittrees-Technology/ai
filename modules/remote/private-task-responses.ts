@@ -313,8 +313,10 @@ export class PrivateTaskResponses {
       this.inflight--;
     }
   }
-  prepare(raw: unknown) {
+  prepare(raw: unknown, deliveryLimit = Number.MAX_SAFE_INTEGER) {
     return this.bounded(async () => {
+      if (!Number.isSafeInteger(deliveryLimit) || deliveryLimit <= this.now())
+        throw new PrivateResponseError("DENIED");
       const input = z
           .strictObject({
             operationId: z.uuid(),
@@ -342,6 +344,7 @@ export class PrivateTaskResponses {
         .transaction(() => {
           const current = this.permission(input.peerId);
           if (
+            deliveryLimit <= this.now() ||
             !same(current.value, p.value) ||
             current.key.privateKey !== p.key.privateKey ||
             current.key.publicKey !== p.key.publicKey ||
@@ -365,6 +368,8 @@ export class PrivateTaskResponses {
           if (previous) {
             const entry = this.get(previous.id);
             this.check(entry);
+            if (entry.value.header.expiresAt > deliveryLimit)
+              throw new PrivateResponseError("DENIED");
             return entry;
           }
           const count = this.store.db
@@ -401,7 +406,11 @@ export class PrivateTaskResponses {
             operationId: input.operationId,
             sequence,
             issuedAt,
-            expiresAt: Math.min(issuedAt + 86400000, b.expiresAt),
+            expiresAt: Math.min(
+              issuedAt + 86400000,
+              b.expiresAt,
+              deliveryLimit,
+            ),
           });
           if (header.expiresAt <= issuedAt)
             throw new PrivateResponseError("DENIED");
@@ -485,13 +494,26 @@ export class PrivateTaskResponses {
       })
       .immediate();
   }
-  delivery(id: string) {
+  delivery(
+    id: string,
+    expectedRevision?: number,
+    deliveryLimit = Number.MAX_SAFE_INTEGER,
+  ) {
     try {
+      if (!Number.isSafeInteger(deliveryLimit) || deliveryLimit <= this.now())
+        throw new PrivateResponseError("DENIED");
+      if (expectedRevision !== undefined) positive.parse(expectedRevision);
       return this.store.db
         .transaction(() => {
           const entry = this.get(id);
+          if (
+            expectedRevision !== undefined &&
+            entry.revision !== expectedRevision
+          )
+            throw new PrivateResponseError("CONFLICT");
           this.check(entry);
           if (
+            entry.value.header.expiresAt > deliveryLimit ||
             entry.value.state !== "pending" ||
             !entry.value.envelope ||
             entry.value.header.expiresAt <= this.now()
