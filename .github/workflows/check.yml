@@ -183,7 +183,7 @@ jobs:
       - name: Check reviewed Mac conversation offer downloads
         run: npm run test:browser-private -- tests/browser/conversation-offers.spec.ts --max-failures=1
       - name: Check independent retained browser conversation consent
-        run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts --max-failures=1
+        run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
       - name: Check selected conversation permission reviews
         run: npm run test:browser-private -- tests/browser/conversation-permissions.spec.ts --max-failures=1
       - name: Check reviewed local task answers before full suite

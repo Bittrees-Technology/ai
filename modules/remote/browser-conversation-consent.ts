@@ -41,6 +41,12 @@ const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   hex = z.string().regex(/^[a-f0-9]{64}$/),
   b64 = z.string().regex(/^[A-Za-z0-9_-]+$/);
+const offerInputSchema = z.strictObject({
+  expectedRevision: revision,
+  peerId: z.uuid(),
+  peerKeyEpoch: positive,
+  envelope: privateEnvelopeSchema,
+});
 const choicesSchema = z.strictObject({
   peerId: z.uuid(),
   peerKeyEpoch: positive,
@@ -492,57 +498,88 @@ export class BrowserConversationConsent {
       };
     });
   }
+  private async openOffer(g: Guard, input: z.infer<typeof offerInputSchema>) {
+    const { row, grants } = await this.read(g),
+      p = await this.proofs(g, input.peerId, input.peerKeyEpoch);
+    if ((row?.revision ?? 0) !== input.expectedRevision)
+      throw new BrowserConversationConsentError("CONFLICT");
+    this.active(row, p.proof.deviceHash);
+    const h = input.envelope.header,
+      b = p.proof.local.binding;
+    if (
+      h.ownerId !== b.ownerId ||
+      h.recipientId !== b.deviceId ||
+      h.recipientKeyEpoch !== p.proof.local.keyEpoch ||
+      h.senderId !== input.peerId ||
+      h.senderKeyEpoch !== input.peerKeyEpoch
+    )
+      throw new BrowserConversationConsentError("DENIED");
+    const opened = await openPrivateEnvelope(
+      input.envelope,
+      h,
+      { recipientKey: p.local.pair, senderPublicKey: p.peer.publicKey },
+      this.now,
+    );
+    let offer: z.infer<typeof conversationOfferSchema>;
+    try {
+      offer = this.input(
+        conversationOfferSchema,
+        JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
+        ),
+      );
+    } finally {
+      opened.plaintext.fill(0);
+    }
+    const n = this.now();
+    if (
+      offer.issuedAt > n + 30000 ||
+      offer.expiresAt <= n ||
+      h.expiresAt > offer.expiresAt
+    )
+      throw new BrowserConversationConsentError("DENIED");
+    await this.tx(
+      g,
+      "readonly",
+      p.proof,
+      (io, current) => {
+        if (!same(current, row))
+          throw new BrowserConversationConsentError("CONFLICT");
+        io.done(null);
+      },
+      h.expiresAt,
+    );
+    return { row, grants, p, offer, h, b };
+  }
+  /** Authenticate an offer before showing choices. No permission is selected,
+   * pending approval created, replay identity consumed or persistent row written. */
+  inspectOffer(raw: unknown) {
+    this.pending = undefined;
+    return this.exclusive(async (g) => {
+      const input = this.input(offerInputSchema, raw),
+        opened = await this.openOffer(g, input);
+      return structuredClone({
+        expectedRevision: input.expectedRevision,
+        offer: opened.offer,
+        local: opened.p.proof.local,
+        peer: opened.p.proof.peer,
+        openingExpiresAt: opened.h.expiresAt,
+      });
+    });
+  }
   prepare(raw: unknown) {
     this.pending = undefined;
     return this.exclusive(async (g) => {
       const input = this.input(
-          z.strictObject({
-            expectedRevision: revision,
-            peerId: z.uuid(),
-            peerKeyEpoch: positive,
-            envelope: privateEnvelopeSchema,
+          offerInputSchema.extend({
             permissions: conversationPermissionsSchema,
             expiresAt: positive,
           }),
           raw,
         ),
-        { row, grants } = await this.read(g),
-        p = await this.proofs(g, input.peerId, input.peerKeyEpoch);
-      if ((row?.revision ?? 0) !== input.expectedRevision)
-        throw new BrowserConversationConsentError("CONFLICT");
-      this.active(row, p.proof.deviceHash);
-      const h = input.envelope.header,
-        b = p.proof.local.binding;
+        { row, grants, p, offer, h, b } = await this.openOffer(g, input),
+        n = this.now();
       if (
-        h.ownerId !== b.ownerId ||
-        h.recipientId !== b.deviceId ||
-        h.recipientKeyEpoch !== p.proof.local.keyEpoch ||
-        h.senderId !== input.peerId ||
-        h.senderKeyEpoch !== input.peerKeyEpoch
-      )
-        throw new BrowserConversationConsentError("DENIED");
-      const opened = await openPrivateEnvelope(
-        input.envelope,
-        h,
-        { recipientKey: p.local.pair, senderPublicKey: p.peer.publicKey },
-        this.now,
-      );
-      let offer: z.infer<typeof conversationOfferSchema>;
-      try {
-        offer = this.input(
-          conversationOfferSchema,
-          JSON.parse(
-            new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
-          ),
-        );
-      } finally {
-        opened.plaintext.fill(0);
-      }
-      const n = this.now();
-      if (
-        offer.issuedAt > n + 30000 ||
-        offer.expiresAt <= n ||
-        h.expiresAt > offer.expiresAt ||
         input.expiresAt <= n ||
         input.expiresAt >
           Math.min(n + 86400000, b.expiresAt, offer.expiresAt) ||

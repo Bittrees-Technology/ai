@@ -524,17 +524,34 @@ const fixture = {
       db.close();
     }
   },
-  conversationStatus: () => conversationStore().then((c) => c.status()),
+  conversationStatus: () =>
+    host
+      ? host.conversationAPI.status()
+      : conversationStore().then((c) => c.status()),
+  conversationOpenOffer: (raw: unknown) =>
+    host
+      ? host.conversationAPI.inspectOffer(raw)
+      : withKey(async () => (await conversationStore()).inspectOffer(raw)),
   conversationPrepare: (raw: unknown) =>
-    withKey(async () => (await conversationStore()).prepare(raw)),
+    host
+      ? host.conversationAPI.prepare(raw)
+      : withKey(async () => (await conversationStore()).prepare(raw)),
   conversationApprove: (raw: unknown) =>
-    withKey(async () => (await conversationStore()).approve(raw)),
+    host
+      ? host.conversationAPI.approve(raw)
+      : withKey(async () => (await conversationStore()).approve(raw)),
   conversationRevoke: (raw: unknown) =>
-    conversationStore().then((c) => c.revoke(raw)),
+    host
+      ? host.conversationAPI.revoke(raw)
+      : conversationStore().then((c) => c.revoke(raw)),
   conversationClear: (raw: unknown) =>
-    conversationStore().then((c) => c.clear(raw)),
+    host
+      ? host.conversationAPI.clear(raw)
+      : conversationStore().then((c) => c.clear(raw)),
   conversationReset: (raw: unknown) =>
-    withKey(async () => (await conversationStore()).reset(raw)),
+    host
+      ? host.conversationAPI.reset(raw)
+      : withKey(async () => (await conversationStore()).reset(raw)),
   conversationAuthorize: (
     id: string,
     scope: unknown,

@@ -97,6 +97,29 @@ providers verifies preserved task consent/ciphertext, empty conversation consent
 and old-writer refusal. These checks are authored and build successfully; their
 GitHub browser execution remains pending.
 
+## Browser host and authenticated offer inspection
+
+`BrowserConversationConsent.inspectOffer` authenticates a selected Mac's encrypted
+offer and rechecks the current stored key/peer/possession proofs before returning
+public scope, supported directions and deadlines. Inspection selects no permission,
+creates no pending approval and writes no consent row. Opening another offer
+invalidates any previous consent review. Prepare independently reopens/authenticates
+the original envelope, and approval retains its existing one-use transactional checks.
+
+`BrowserKeyHost.conversationAPI` now lazily opens this separate store and exposes
+inspection, prepare/approve, owner-local history, offline revoke/clear and reset for
+a fresh device. Online operations obtain their own verified device/peer context.
+No private key or content-authority handle leaves the host. Logout, account/scope
+change, device change, key cancellation and host close invalidate conversation work.
+Task consent remains separate and cannot be widened by a conversation offer.
+
+One additional three-engine module scenario verifies authenticated inspection
+without grants or stored rows. Two host scenarios use an actual Mac offer and the
+real browser identity service with synthetic registrations: narrowed approval,
+reload retention, unchanged task consent, offline revocation and cancellation/account
+fences. These nine new browser cases are authored; GitHub execution and browser
+review UI remain pending. All765 engine tests, typecheck and builds pass locally.
+
 ## Retained Mac offers
 
 `PrivateConversationOffers` prepares an offer only for a current, explicitly

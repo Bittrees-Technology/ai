@@ -410,3 +410,67 @@ test("current identity and peer revocation deny both fresh and retained conversa
     f.mac.close();
   }
 });
+
+test("offer inspection authenticates Mac choices without selecting or persisting browser consent", async ({
+  page,
+}) => {
+  const f = await paired(page);
+  try {
+    const o = await offer(f);
+    const input = {
+      expectedRevision: 0,
+      peerId: f.pin.peerId,
+      peerKeyEpoch: f.pin.keyEpoch,
+      envelope: o.envelope,
+    };
+    await expect(
+      page.evaluate(
+        (raw) => window.browserPeersTest.conversationOpenOffer(raw),
+        input,
+      ),
+    ).rejects.toThrow("DENIED");
+    await f.proveBrowser();
+    const inspected = await page.evaluate(
+      (raw) => window.browserPeersTest.conversationOpenOffer(raw),
+      input,
+    );
+    expect(inspected.offer).toEqual(o.data);
+    expect(inspected.openingExpiresAt).toBe(o.envelope.header.expiresAt);
+    expect(inspected.peer.peerId).toBe(f.pin.peerId);
+    expect(
+      await page.evaluate(() => window.browserPeersTest.conversationStatus()),
+    ).toEqual({ revision: 0, needsFreshDevice: false, grants: [] });
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.conversationInspect()))
+        .rows,
+    ).toBe(0);
+    const r = await prepare(page, f, o);
+    await page.evaluate(
+      (raw) => window.browserPeersTest.conversationOpenOffer(raw),
+      input,
+    );
+    await expect(approve(page, r)).rejects.toThrow("CONFLICT");
+    const bad = structuredClone(input);
+    bad.envelope.ciphertext =
+      (bad.envelope.ciphertext[0] === "A" ? "B" : "A") +
+      bad.envelope.ciphertext.slice(1);
+    await expect(
+      page.evaluate(
+        (raw) => window.browserPeersTest.conversationOpenOffer(raw),
+        bad,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      page.evaluate(
+        (raw) => window.browserPeersTest.conversationOpenOffer(raw),
+        { ...input, expectedRevision: 1 },
+      ),
+    ).rejects.toThrow("CONFLICT");
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
+        .grants,
+    ).toHaveLength(0);
+  } finally {
+    f.mac.close();
+  }
+});
