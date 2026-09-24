@@ -223,6 +223,26 @@ test("browser queue UI clears a held inspection on blur and clears a selected po
       })
       .click();
     await page.keyboard.press("Escape");
+    await expect(panel(page).getByRole("status")).toContainText(
+      "Task review closed",
+    );
+    await refresh(page);
+    await expect(queue(page)).toContainText("No queue position is selected");
+    await inspect(page);
+    // Deterministic same-turn cancellation while async local-history reads are
+    // pending and the initiating control has already been hidden.
+    await queue(page)
+      .getByRole("button", {
+        name: "Review checking this message",
+        exact: true,
+      })
+      .evaluate((b: HTMLButtonElement) => {
+        b.click();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      });
+    await expect(panel(page).getByRole("status")).toContainText(
+      "Task review closed",
+    );
     await refresh(page);
     await expect(queue(page)).toContainText("No queue position is selected");
     expect(await stored(identityServer.pool, sent.receipt.messageId)).toEqual({

@@ -1109,13 +1109,18 @@ export function mountBrowserTasks(
       if (document.visibilityState === "hidden") blur();
     },
     keydown = (e: KeyboardEvent) => {
-      if (e.key === "Escape")
+      // A clicked queue button is hidden while its async review opens. Some
+      // browsers move focus to body, so Escape must also cancel that pending turn.
+      if (
+        e.key === "Escape" &&
+        (loaded || busy || review || visible || queueState)
+      )
         reset("Task review closed. Refresh tasks to continue.", true);
     };
   window.addEventListener("blur", blur);
   window.addEventListener("focus", focus);
   document.addEventListener("visibilitychange", visibility);
-  box.addEventListener("keydown", keydown);
+  window.addEventListener("keydown", keydown);
   const timer = setInterval(() => {
     if (disposed) return;
     if (
@@ -1155,7 +1160,7 @@ export function mountBrowserTasks(
       window.removeEventListener("blur", blur);
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
-      box.removeEventListener("keydown", keydown);
+      window.removeEventListener("keydown", keydown);
       prompt.value = incoming.value = wire.value = "";
       result.textContent = exact.textContent = "";
       box.remove();
