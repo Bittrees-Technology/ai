@@ -190,6 +190,16 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check built browser conversation controls and actual worker answer
+        run: npm run test:browser-private -- tests/browser/production-browser-conversation-content.spec.ts --max-failures=1
+      - name: Retain focused conversation content previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-conversation-content-focused-preview
+          path: test-results/browser-conversation-content-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Check authenticated browser conversation host
         run: npm run test:browser-private -- tests/browser/browser-conversation-content-host.spec.ts --max-failures=1
       - name: Check atomic browser conversation content and actual version12 upgrade
@@ -584,5 +594,14 @@ jobs:
         with:
           name: browser-conversation-ui-preview
           path: test-results/browser-conversation-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload browser conversation content previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-conversation-content-ui-preview
+          path: test-results/browser-conversation-content-ui/*.png
           if-no-files-found: error
           retention-days: 7

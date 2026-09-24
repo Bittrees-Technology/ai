@@ -1,3 +1,4 @@
+import { mountBrowserConversationContent } from "./browser-conversation-content.js";
 import { mountBrowserConversations } from "./browser-conversations.js";
 import { mountBrowserTasks } from "./browser-tasks.js";
 import type { z } from "zod";
@@ -30,6 +31,8 @@ export function mountBrowserSetup(
   monotonic = () => performance.now(),
   privateDelivery = false,
 ) {
+  let contentView:
+    ReturnType<typeof mountBrowserConversationContent> | undefined;
   let disposed = false,
     generation = 0,
     busy = false,
@@ -122,6 +125,7 @@ export function mountBrowserSetup(
     reset("Registration review closed while reviewing device identities.");
     keyView.invalidate();
     conversationView.invalidate();
+    contentView?.invalidate();
   });
   const checkRoot = el("div");
   root.append(checkRoot);
@@ -130,6 +134,7 @@ export function mountBrowserSetup(
     keyView.invalidate();
     peerView.invalidate();
     conversationView.invalidate();
+    contentView?.invalidate();
   });
   const permissionRoot = el("div");
   root.append(permissionRoot);
@@ -144,6 +149,7 @@ export function mountBrowserSetup(
       peerView.invalidate();
       checkView.invalidate();
       conversationView.invalidate();
+      contentView?.invalidate();
     },
   );
   const taskRoot = el("div");
@@ -160,6 +166,7 @@ export function mountBrowserSetup(
       checkView.invalidate();
       permissionView.invalidate();
       conversationView.invalidate();
+      contentView?.invalidate();
     },
     privateDelivery,
   );
@@ -177,6 +184,24 @@ export function mountBrowserSetup(
       checkView.invalidate();
       permissionView.invalidate();
       taskView.invalidate();
+      contentView?.invalidate();
+    },
+  );
+  const contentRoot = el("div");
+  root.append(contentRoot);
+  contentView = mountBrowserConversationContent(
+    contentRoot,
+    host,
+    now,
+    monotonic,
+    () => {
+      reset("Registration review closed while reviewing saved conversations.");
+      keyView.invalidate();
+      peerView.invalidate();
+      checkView.invalidate();
+      permissionView.invalidate();
+      taskView.invalidate();
+      conversationView.invalidate();
     },
   );
   const stamp = () => {
@@ -254,6 +279,7 @@ export function mountBrowserSetup(
     permissionView.invalidate();
     taskView.invalidate();
     conversationView.invalidate();
+    contentView?.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -476,6 +502,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      contentView?.destroy();
+      contentRoot.remove();
       conversationView.destroy();
       conversationRoot.remove();
       taskView.destroy();

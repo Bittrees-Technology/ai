@@ -47,7 +47,7 @@ interoperability, exact question answers, storage failure, revoked authority dur
 crypto, retention/export/deletion and actual version12 preservation. Local build
 success alone is not browser acceptance.
 
-Remaining work includes browser UI wiring, reviewed relay content transfer,
+Remaining work includes reviewed relay content transfer,
 receipt reconciliation, complete end-to-end historical replay acceptance and release
 acceptance. No personal data, native credential access, local browser automation,
 installed application replacement, live service activation or model changes are part
@@ -70,11 +70,41 @@ leaves task permission and hash-only replay fences intact. Logging out invalidat
 all these operations. The shared host operation lock, close, cancellation and
 account/registration-change paths include conversation content.
 
-The authenticated host adds no relay call or automatic send. Browser UI review,
-relay transport and end-to-end user acceptance remain separate work.
+The authenticated host adds no relay call or automatic send. Relay transport and
+end-to-end release acceptance remain separate work.
 
 A failed final identity response can occur after the short local transaction has
 committed. It is an unconfirmed outcome, not evidence that nothing was saved. The
 caller must explicitly inspect the metadata and retry the same operation identity;
 prepared content, sealed ciphertext and accepted outcomes are reused. These flows
 do not claim an atomic transaction between identity-server state and IndexedDB.
+
+
+## Reviewed browser controls
+
+The signed-in setup surface now mounts a saved-conversation panel using the trusted
+host. Refresh lists metadata only; opening a selected item reveals its literal text.
+Ordinary replies and exact question answers have distinct controls. An answer binds
+to the authenticated question and its task revision; a reply cannot resume the task.
+Drafts remain in memory and are cleared on cancellation, focus loss or access change.
+
+Saving a message and downloading its original encrypted envelope are separate,
+reviewed actions. Importing a bounded encrypted JSON file authenticates it before
+saving; a storage receipt does not assert reading or task completion. Transfer is
+manual in this first interface. There is no automatic relay call or fallback.
+Readable archive export and offline local deletion have separate exact-action
+reviews. Deletion locks browser conversation permission and preserves task history,
+Mac copies, already exported files and hash-only replay fences.
+
+Each review captures current permission/history, selected identity, exact content
+and a wall-clock plus monotonic deadline. Confirmation rechecks those inputs.
+Concurrent changes, expiry, account changes and focus loss invalidate the review.
+An unconfirmed operation tells the user to refresh and inspect retained state;
+no uncertain write or delivery is retried automatically.
+
+Disposable Chromium, Firefox and WebKit checks exercise the actual built interface,
+a real Mac worker question/answer, original-ciphertext retry, literal markup display,
+private draft cancellation, readable export, offline deletion and response loss
+after commit. Desktop and phone screenshots are retained for visual review.
+These source changes do not install or activate the Mac app, access personal data,
+change model selection, or modify the Acer news runtime.
