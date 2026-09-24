@@ -357,39 +357,67 @@ export class RemotePrivateRelayAccess {
       );
     });
   }
+  private async statusEndpoint(
+    db: PoolClient,
+    gate: Gate,
+    statusCredential: string,
+  ) {
+    if (!token.safeParse(statusCredential).success)
+      throw new RemoteStatusError("DENIED");
+    const identified = (
+      await db.query(
+        "SELECT id,owner_id FROM remote_devices WHERE credential_hash=$1",
+        [hash(statusCredential)],
+      )
+    ).rows[0];
+    if (!identified) throw new RemoteStatusError("DENIED");
+    await this.ownerLock(db, identified.owner_id);
+    const row = (
+      await db.query(
+        "SELECT id,owner_id,epoch FROM remote_devices WHERE credential_hash=$1 FOR SHARE",
+        [hash(statusCredential)],
+      )
+    ).rows[0];
+    if (
+      !row ||
+      row.id !== identified.id ||
+      row.owner_id !== identified.owner_id
+    )
+      throw new RemoteStatusError("DENIED");
+    return this.endpoint(
+      db,
+      gate,
+      "mac",
+      row.owner_id,
+      row.id,
+      Number(row.epoch),
+    );
+  }
+  /** Metadata-only native review/reconciliation. A status credential never reveals
+   * or reissues a relay secret, and does not authorize message transport. */
+  async inspectMacApproval(statusCredential: string, raw: unknown) {
+    const input = this.parse(z.strictObject({ id: uuid }), raw);
+    return this.tx(async (db, gate) => {
+      const endpoint = await this.statusEndpoint(db, gate, statusCredential);
+      const row = (
+        await db.query(
+          "SELECT * FROM remote_private_relay_grants WHERE id=$1 AND owner_id=$2 AND endpoint_id=$3 AND endpoint_kind='mac' AND credential_epoch=$4 FOR SHARE",
+          [
+            input.id,
+            endpoint.ownerId,
+            endpoint.endpointId,
+            endpoint.credentialEpoch,
+          ],
+        )
+      ).rows[0];
+      if (!row) throw new RemoteStatusError("DENIED");
+      return this.grant(row);
+    });
+  }
   async acceptMac(statusCredential: string, raw: unknown) {
     const input = this.parse(revisionRequest, raw);
     return this.tx(async (db, gate) => {
-      if (!token.safeParse(statusCredential).success)
-        throw new RemoteStatusError("DENIED");
-      const identified = (
-        await db.query(
-          "SELECT id,owner_id FROM remote_devices WHERE credential_hash=$1",
-          [hash(statusCredential)],
-        )
-      ).rows[0];
-      if (!identified) throw new RemoteStatusError("DENIED");
-      await this.ownerLock(db, identified.owner_id);
-      const row = (
-        await db.query(
-          "SELECT id,owner_id,epoch FROM remote_devices WHERE credential_hash=$1 FOR SHARE",
-          [hash(statusCredential)],
-        )
-      ).rows[0];
-      if (
-        !row ||
-        row.id !== identified.id ||
-        row.owner_id !== identified.owner_id
-      )
-        throw new RemoteStatusError("DENIED");
-      const endpoint = await this.endpoint(
-          db,
-          gate,
-          "mac",
-          row.owner_id,
-          row.id,
-          Number(row.epoch),
-        ),
+      const endpoint = await this.statusEndpoint(db, gate, statusCredential),
         saved = await this.current(db, endpoint);
       if (
         !saved ||

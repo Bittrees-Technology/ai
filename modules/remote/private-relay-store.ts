@@ -31,7 +31,13 @@ export class RemotePrivateRelayStore {
     private pool: Pool,
     rawPolicy: unknown,
     private now = Date.now,
+    private expectedPermissionId?: string,
   ) {
+    if (
+      expectedPermissionId !== undefined &&
+      !z.uuid().safeParse(expectedPermissionId).success
+    )
+      throw new RemoteStatusError("INVALID_INPUT");
     this.policy = this.parse(privateRelayPolicySchema, rawPolicy);
     this.access = new RemotePrivateRelayAccess(
       pool,
@@ -92,7 +98,16 @@ export class RemotePrivateRelayStore {
     if (!row) throw new RemoteStatusError("DENIED");
     return row;
   }
+  private checkPermission(c: PrivateRelayTransaction) {
+    if (
+      this.expectedPermissionId !== undefined &&
+      c.identity.permissionId !== this.expectedPermissionId
+    )
+      throw new RemoteStatusError("DENIED");
+    c.check();
+  }
   private route(row: any, c: PrivateRelayTransaction, recipientOnly = false) {
+    this.checkPermission(c);
     const i = c.identity;
     const isRecipient =
       row.recipient_id === i.endpointId &&
@@ -136,6 +151,7 @@ export class RemotePrivateRelayStore {
     }
   }
   private async submit(c: PrivateRelayTransaction, prepared: Prepared) {
+    this.checkPermission(c);
     const target = await c.recipient(
       prepared.input.envelope.header.recipientId,
     );
@@ -225,6 +241,7 @@ export class RemotePrivateRelayStore {
     return this.receipt(row);
   }
   private async poll(c: PrivateRelayTransaction, raw: unknown) {
+    this.checkPermission(c);
     const input = this.parse(privateRelayPageSchema, raw),
       time = this.now();
     const rows = (

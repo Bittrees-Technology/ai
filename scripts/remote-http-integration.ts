@@ -1,3 +1,4 @@
+import { checkPrivateRelayHttp } from "./private-relay-http-integration.js";
 import { checkBrowserDeviceHttp } from "./browser-device-http-integration.js";
 import { RemoteTemplateReceiver } from "../modules/remote/template-receiver.js";
 import { checkTemplateHttp } from "./remote-template-http-integration.js";
@@ -67,7 +68,31 @@ export async function checkRemoteHttp(pool: Pool) {
     { key, cert },
     createRemoteApp(pool, { ...config, requestsPerMinute: 2 }),
   );
-  const servers = [server, plain, limited];
+  const privateRelayPolicy = {
+    version: 1,
+    origin,
+    chainId: 1,
+    receivedContent: "until-deleted",
+    unreceivedContent: { mode: "until-deleted" },
+    operationalMetadataMs: 604800000,
+    maxMessagesPerOwner: 100,
+    maxBytesPerOwner: 1048576,
+  };
+  for (const invalid of [
+    null,
+    {},
+    { ...privateRelayPolicy, origin: "https://other.invalid" },
+    { ...privateRelayPolicy, chainId: 2 },
+  ])
+    assert.throws(
+      () => createRemoteApp(pool, { ...config, privateRelayPolicy: invalid }),
+      /INVALID_INPUT/,
+    );
+  const privateServer = createServer(
+    { key, cert },
+    createRemoteApp(pool, { ...config, privateRelayPolicy }),
+  );
+  const servers = [server, plain, limited, privateServer];
   try {
     for (const s of servers)
       await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
@@ -137,6 +162,10 @@ export async function checkRemoteHttp(pool: Pool) {
         req.end(payload);
       });
     }
+    await checkPrivateRelayHttp(
+      (path, body, headers) => call(path, body, headers, privateServer),
+      (path, body, headers) => call(path, body, headers),
+    );
     await checkBrowserDeviceHttp((path, body, headers) =>
       call(path, body, headers),
     );
