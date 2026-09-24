@@ -583,3 +583,99 @@ test("a local ordinary reply cannot shed a task-linked parent's source checks wh
     f.close();
   }
 });
+
+test("actual HTTP export hides source-bound journal text and ciphertext, while retaining available local content", async () => {
+  const f = await fixture();
+  const { createServer } = await import("node:http");
+  const { localApi } = await import("../apps/companion/http.js");
+  const server = createServer();
+  try {
+    const refs = [
+        {
+          app: "crm",
+          tenantId: "workspace",
+          resourceId: "synthetic-record",
+          revision: "1",
+        },
+      ],
+      binding = {
+        authority: {
+          userId: owner.userId,
+          subjectId: "synthetic-subject",
+          tenantId: "workspace",
+          deviceId: "synthetic-mac",
+          sourceApp: "crm",
+          grantId: "synthetic-grant",
+          policyRevision: "1",
+        },
+        refs,
+        expiresAt: new Date(f.clock() + 600000).toISOString(),
+        projectionHash: "a".repeat(64),
+      };
+    const task = f.store.create(
+      owner,
+      {
+        conversationId: f.choices.conversationId,
+        kind: "query",
+        prompt: "Summarize the synthetic CRM record",
+        modelProfileId: "synthetic",
+        sourceRefs: refs,
+      },
+      randomUUID(),
+      binding as any,
+    );
+    const sourceMessage = f.store.appendMessage(
+      owner,
+      {
+        conversationId: f.choices.conversationId,
+        recipientInboxId: f.inbox.id,
+        requestId: task.id,
+        type: "notification",
+        content: "SOURCE_JOURNAL_SENTINEL",
+      },
+      randomUUID(),
+    );
+    const shared = await f.prepareContent(sourceMessage.id);
+    await f.sealContent(shared);
+    const available = await f.accept(await f.envelope(f.message()));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as import("node:net").AddressInfo).port,
+      token = "synthetic-export-token".repeat(4);
+    server.on("request", localApi({ store: f.store, owner, token, port }));
+    const url = `http://127.0.0.1:${port}/v1/export`;
+    assert.equal((await fetch(url)).status, 401);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(response.status, 200);
+    const exported = (await response.json()) as any;
+    assert.doesNotMatch(JSON.stringify(exported), /SOURCE_JOURNAL_SENTINEL/);
+    const hidden = exported.privateConversationContent.find(
+      (e: any) => e.id === shared.id,
+    );
+    assert.equal(hidden.contentAccess, "unavailable");
+    assert.equal(hidden.value, undefined);
+    assert.equal(
+      exported.privateConversationContent.find(
+        (e: any) => e.id === available.entry.id,
+      ).value.content.content,
+      "SYNTHETIC_REMOTE_CONTENT",
+    );
+    f.store.db
+      .prepare("DELETE FROM messages WHERE id=?")
+      .run(available.entry.value.localMessageId);
+    const after = (await (
+      await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    ).json()) as any;
+    assert.equal(
+      after.privateConversationContent.find(
+        (e: any) => e.id === available.entry.id,
+      ).contentAccess,
+      "unavailable",
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    f.close();
+  }
+});

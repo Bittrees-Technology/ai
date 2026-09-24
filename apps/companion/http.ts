@@ -795,6 +795,28 @@ export function localApi({
     unavailable(concealed(store.get(owner, message.input.requestId)))
       ? concealMessage(message)
       : message;
+  const exportedConversationContent = (
+    entry: ReturnType<Store["exportPrivateConversationContent"]>[number],
+  ) => {
+    try {
+      const message = store.message(owner, entry.value.localMessageId);
+      if (
+        message.input.requestId &&
+        unavailable(concealed(store.get(owner, message.input.requestId)))
+      )
+        throw new StoreError("NOT_FOUND");
+      return entry;
+    } catch {
+      // The journal duplicates text and encrypted content. Hide the entire value
+      // when its linked Inbox/task is unavailable, using the existing export policy.
+      return {
+        id: entry.id,
+        revision: entry.revision,
+        locked: entry.locked,
+        contentAccess: "unavailable" as const,
+      };
+    }
+  };
   if (sources) {
     app.post("/v1/connections/crm/records", async (req, res) => {
       z.strictObject({}).parse(req.body);
@@ -1462,7 +1484,9 @@ export function localApi({
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
       privateConversationConsent: store.exportPrivateConversationConsent(owner),
       privateConversationOffers: store.exportPrivateConversationOffers(owner),
-      privateConversationContent: store.exportPrivateConversationContent(owner),
+      privateConversationContent: store
+        .exportPrivateConversationContent(owner)
+        .map(exportedConversationContent),
       privateIncomingReplay: store.exportPrivateIncomingReplay(owner),
       privatePeerChecks: store.exportPrivatePeerChecks(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),
