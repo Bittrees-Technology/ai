@@ -168,6 +168,7 @@ const fixture = {
       | "replay"
       | "offer-replay"
       | "offer-ack"
+      | "key-boundary"
       | "content"
       | "relay-content"
       | "receipts" = false,
@@ -198,25 +199,27 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "relay-content"
-        ? "/legacy-relay-content/index.js"
-        : previous === "receipts"
-          ? "/legacy-receipts/index.js"
-          : previous === "content"
-            ? "/legacy-content/index.js"
-            : previous === "offer-ack"
-              ? "/legacy-offer-ack/index.js"
-              : previous === "offer-replay"
-                ? "/legacy-offer-replay/index.js"
-                : previous === "replay"
-                  ? "/legacy-replay/index.js"
-                  : previous === "conversation"
-                    ? "/legacy-conversation/index.js"
-                    : previous === "delivery"
-                      ? "/legacy-delivery/index.js"
-                      : previous === "task"
-                        ? "/legacy-composition/index.js"
-                        : "/legacy-consent/index.js";
+      previous === "key-boundary"
+        ? "/legacy-key-boundary/index.js"
+        : previous === "relay-content"
+          ? "/legacy-relay-content/index.js"
+          : previous === "receipts"
+            ? "/legacy-receipts/index.js"
+            : previous === "content"
+              ? "/legacy-content/index.js"
+              : previous === "offer-ack"
+                ? "/legacy-offer-ack/index.js"
+                : previous === "offer-replay"
+                  ? "/legacy-offer-replay/index.js"
+                  : previous === "replay"
+                    ? "/legacy-replay/index.js"
+                    : previous === "conversation"
+                      ? "/legacy-conversation/index.js"
+                      : previous === "delivery"
+                        ? "/legacy-delivery/index.js"
+                        : previous === "task"
+                          ? "/legacy-composition/index.js"
+                          : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
@@ -228,6 +231,7 @@ const fixture = {
     conversationProvider =
       previous === "offer-replay" ||
       previous === "offer-ack" ||
+      previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content"
@@ -240,6 +244,7 @@ const fixture = {
       previous === "replay" ||
       previous === "offer-replay" ||
       previous === "offer-ack" ||
+      previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content"
@@ -251,6 +256,7 @@ const fixture = {
       previous === "replay" ||
       previous === "offer-replay" ||
       previous === "offer-ack" ||
+      previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content"
@@ -262,6 +268,7 @@ const fixture = {
       previous === "replay" ||
       previous === "offer-replay" ||
       previous === "offer-ack" ||
+      previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content"

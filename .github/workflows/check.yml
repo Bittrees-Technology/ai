@@ -195,6 +195,8 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Check upgraded historical browser keys against actual conversation content
+        run: npm run test:browser-private -- tests/browser/browser-conversation-content.spec.ts --grep "actual version11 historical key" --max-failures=1
       - name: Check reviewed Mac incoming conversations and browser receipts
         run: npm run test:browser-private -- tests/browser/mac-conversation-receive-controls.spec.ts --max-failures=1
       - name: Retain focused Mac incoming conversation previews
