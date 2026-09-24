@@ -1,3 +1,5 @@
+import { CompanionPrivateRelay } from "./private-relay.js";
+import { macPrivateRelayEntries } from "./private-relay-entry.js";
 import {
   MailSendConnector,
   mailSendKeychainEntry,
@@ -207,6 +209,17 @@ const privateKeys =
         process.env.BITTREES_PRIVATE_TASKS === "1",
       )
     : undefined;
+const privateRelay =
+  process.platform === "darwin" && (await exists(privateKeyHelper))
+    ? new CompanionPrivateRelay(
+        store,
+        new Vault(key),
+        owner,
+        macPrivateRelayEntries(privateKeyHelper, "personal"),
+        remote,
+        process.env.BITTREES_PRIVATE_RELAY === "1",
+      )
+    : undefined;
 const templateReceiver = remote
   ? new RemoteTemplateReceiver(remote)
   : undefined;
@@ -217,6 +230,7 @@ server.on(
   "request",
   dashboardServer({
     privateKeys,
+    privateRelay,
     retainedCopies: retainedContent(directory, content.directory),
     backupDownload: localBackupDownload(store, memory, new Vault(key)),
     deviceStatus: () =>
