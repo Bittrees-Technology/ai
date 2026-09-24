@@ -17,7 +17,10 @@ const permissions = {
   answersToMac: true,
 };
 type Fixture = Awaited<ReturnType<typeof paired>>;
+const offerSequences = new WeakMap<Fixture, number>();
 async function offer(f: Fixture, patch: any = {}, headerPatch: any = {}) {
+  const sequence = (offerSequences.get(f) ?? 100) + 1;
+  offerSequences.set(f, sequence);
   const data = {
     version: 1,
     type: "conversation.offer",
@@ -40,7 +43,7 @@ async function offer(f: Fixture, patch: any = {}, headerPatch: any = {}) {
       recipientKeyEpoch: f.local.keyEpoch,
       messageId: randomUUID(),
       operationId: randomUUID(),
-      sequence: 100,
+      sequence,
       issuedAt: f.f.now,
       expiresAt: f.f.now + 300000,
       ...headerPatch,
@@ -364,7 +367,7 @@ test("actual version7 browser storage upgrades without granting conversation acc
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationInspect()))
         .version,
-    ).toBe(9);
+    ).toBe(10);
     await expect(reopen(page, f.f, "conversation")).rejects.toThrow(
       "STORAGE_UNAVAILABLE",
     );
@@ -470,6 +473,294 @@ test("offer inspection authenticates Mac choices without selecting or persisting
       (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
         .grants,
     ).toHaveLength(0);
+  } finally {
+    f.mac.close();
+  }
+});
+
+async function replaySnapshot(page: Page) {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      return await new Promise<{
+        version: number;
+        ledger: any[];
+        consent: any[];
+      }>((resolve, reject) => {
+        const tx = db.transaction(["incoming_replay", "conversation_consents"]),
+          value = {
+            version: db.version,
+            ledger: [] as any[],
+            consent: [] as any[],
+          };
+        const ledger = tx.objectStore("incoming_replay").getAll(),
+          consent = tx.objectStore("conversation_consents").getAll();
+        ledger.onsuccess = () => {
+          value.ledger = ledger.result;
+        };
+        consent.onsuccess = () => {
+          value.consent = consent.result.map(({ key, ...row }) => ({
+            ...row,
+            keyExtractable: key?.extractable ?? null,
+          }));
+        };
+        tx.oncomplete = () => resolve(value);
+        tx.onabort = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  });
+}
+
+test("offer replay records commit only on approval and exact original offers support fresh narrowed review", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      before = await replaySnapshot(page);
+    await page.evaluate(
+      (input) => window.browserPeersTest.conversationOpenOffer(input),
+      {
+        expectedRevision: 0,
+        peerId: f.pin.peerId,
+        peerKeyEpoch: f.pin.keyEpoch,
+        envelope: o.envelope,
+      },
+    );
+    expect(await replaySnapshot(page)).toEqual(before);
+    const review = await prepare(page, f, o);
+    expect(await replaySnapshot(page)).toEqual(before);
+    const first = await approve(page, review),
+      accepted = await replaySnapshot(page);
+    expect(accepted.ledger).toHaveLength(before.ledger.length + 1);
+    expect(first.offerReplay?.type).toBe("conversation.offer");
+    const narrowed = await approve(
+      page,
+      await prepare(page, f, o, {
+        permissions: { ...permissions, messagesToBrowser: false },
+      }),
+    );
+    expect(narrowed.id).not.toBe(first.id);
+    expect(narrowed.offerReplay).toEqual(first.offerReplay);
+    expect((await replaySnapshot(page)).ledger).toEqual(accepted.ledger);
+    await expect(authorize(page, first)).rejects.toThrow("DENIED");
+    await authorize(page, narrowed);
+    await expect(
+      authorize(page, narrowed, "messagesToBrowser"),
+    ).rejects.toThrow("DENIED");
+    const resealed = await offer(f, o.data, o.envelope.header);
+    await expect(
+      approve(page, await prepare(page, f, resealed)),
+    ).rejects.toThrow("CONFLICT");
+    await reopen(page, f.f);
+    const renewed = await offer(f, {
+      scope: { ...o.data.scope, permissionId: randomUUID() },
+    });
+    const current = await approve(page, await prepare(page, f, renewed)),
+      saved = await replaySnapshot(page);
+    await expect(approve(page, await prepare(page, f, o))).rejects.toThrow(
+      "CONFLICT",
+    );
+    expect(await replaySnapshot(page)).toEqual(saved);
+    await authorize(page, current);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("conversation offers and task receipts reject reused message and sequence identities in both directions", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const first = await page.evaluate(
+        (p) => window.browserPeersTest.taskCreate(p),
+        payload,
+      ),
+      t = await f.mac.executeTask(first.envelope);
+    await page.evaluate(
+      (w) => window.browserPeersTest.taskReceipt(w),
+      t.acceptance,
+    );
+    const before = await replaySnapshot(page);
+    for (const field of ["messageId", "sequence"] as const) {
+      const collision = await offer(
+        f,
+        {},
+        { [field]: t.acceptance.header[field] },
+      );
+      await expect(
+        approve(page, await prepare(page, f, collision)),
+      ).rejects.toThrow("CONFLICT");
+      expect(await replaySnapshot(page)).toEqual(before);
+    }
+    const o = await offer(f);
+    await approve(page, await prepare(page, f, o));
+    const next = await page.evaluate(
+        (p) => window.browserPeersTest.taskCreate(p),
+        payload,
+      ),
+      task = await f.mac.executeTask(next.envelope);
+    const k = await f.mac.keys.resolve(),
+      p = await f.mac.peers.resolve(f.f.binding.deviceId, f.local.keyEpoch);
+    const entries = await page.evaluate(() =>
+        window.browserPeersTest.taskExport(),
+      ),
+      saved = await replaySnapshot(page);
+    for (const field of ["messageId", "sequence"] as const) {
+      const wire = await sealPrivateEnvelope(
+        { ...task.acceptance.header, [field]: o.envelope.header[field] },
+        new TextEncoder().encode(
+          JSON.stringify({
+            version: 1,
+            type: "task.accepted",
+            receipt: task.receipt,
+          }),
+        ),
+        { senderKey: k.pair, recipientPublicKey: p.publicKey },
+        () => f.f.now,
+      );
+      await expect(
+        page.evaluate((w) => window.browserPeersTest.taskReceipt(w), wire),
+      ).rejects.toThrow("CONFLICT");
+      expect(
+        await page.evaluate(() => window.browserPeersTest.taskExport()),
+      ).toEqual(entries);
+      expect(await replaySnapshot(page)).toEqual(saved);
+    }
+    await page.evaluate(
+      (w) => window.browserPeersTest.taskReceipt(w),
+      task.acceptance,
+    );
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("offer approval rolls back consent and replay together on failed writes, expiry or changed identity", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      before = await replaySnapshot(page);
+    for (const mode of [
+      "replay-write",
+      "consent-write",
+      "expiry",
+      "identity",
+    ] as const) {
+      const review = await prepare(page, f, o);
+      await page.evaluate(
+        ({ mode, expiry }) => {
+          const method = mode === "consent-write" ? "put" : "add",
+            store =
+              mode === "consent-write"
+                ? "conversation_consents"
+                : "incoming_replay";
+          const original = IDBObjectStore.prototype[method];
+          IDBObjectStore.prototype[method] = function (
+            ...args: Parameters<typeof original>
+          ) {
+            if (this.name === store) {
+              IDBObjectStore.prototype[method] = original;
+              if (mode === "expiry") window.browserPeersTest.time(expiry, 0);
+              else if (mode === "identity") window.browserPeersTest.set(null);
+              else
+                throw new DOMException(
+                  "synthetic failure",
+                  "QuotaExceededError",
+                );
+            }
+            return original.apply(this, args);
+          };
+        },
+        { mode, expiry: review.expiresAt },
+      );
+      await expect(approve(page, review)).rejects.toThrow(
+        mode.endsWith("write") ? "CAPACITY" : "DENIED",
+      );
+      expect(await replaySnapshot(page)).toEqual(before);
+      await reopen(page, f.f);
+    }
+    await approve(page, await prepare(page, f, o));
+    expect((await replaySnapshot(page)).ledger).toHaveLength(
+      before.ledger.length + 1,
+    );
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("two browser reviews of one offer commit only one consent and replay identity", async ({
+  page,
+  context,
+}) => {
+  const f = await ready(page),
+    other = await context.newPage();
+  try {
+    const o = await offer(f),
+      before = await replaySnapshot(page);
+    await reopen(other, f.f);
+    const a = await prepare(page, f, o),
+      b = await prepare(other, f, o);
+    const results = await Promise.allSettled([
+      approve(page, a),
+      approve(other, b),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const denied = results.find((r) => r.status === "rejected");
+    expect(
+      String(denied?.status === "rejected" ? denied.reason : ""),
+    ).toContain("CONFLICT");
+    const state = await page.evaluate(() =>
+      window.browserPeersTest.conversationStatus(),
+    );
+    expect(state.grants).toHaveLength(1);
+    expect((await replaySnapshot(page)).ledger).toHaveLength(
+      before.ledger.length + 1,
+    );
+  } finally {
+    await other.close();
+    f.mac.close();
+  }
+});
+
+test("actual version9 upgrade preserves prior grant and shared ledger without inventing offer history", async ({
+  page,
+}) => {
+  const f = await ready(page, "offer-replay");
+  try {
+    const o = await offer(f),
+      original = await approve(page, await prepare(page, f, o));
+    const before = await replaySnapshot(page),
+      key = await page.evaluate(() => window.browserPeersTest.key());
+    expect(before.version).toBe(9);
+    expect(original.offerReplay).toBeUndefined();
+    await reopen(page, f.f);
+    expect(await replaySnapshot(page)).toEqual({ ...before, version: 10 });
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
+        .grants,
+    ).toEqual([original]);
+    expect(await page.evaluate(() => window.browserPeersTest.key())).toEqual(
+      key,
+    );
+    await authorize(page, original);
+    const reviewed = await approve(page, await prepare(page, f, o)),
+      after = await replaySnapshot(page);
+    expect(reviewed.offerReplay?.type).toBe("conversation.offer");
+    expect(after.ledger).toHaveLength(before.ledger.length + 1);
+    expect(after.ledger).toEqual(expect.arrayContaining(before.ledger));
+    await expect(reopen(page, f.f, "offer-replay")).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
   } finally {
     f.mac.close();
   }

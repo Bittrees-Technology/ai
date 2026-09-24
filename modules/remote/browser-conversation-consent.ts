@@ -1,3 +1,12 @@
+import {
+  consumeBrowserIncomingReplay,
+  browserIncomingReplayStore,
+} from "./browser-incoming-replay.js";
+import {
+  privateReplayIdentity,
+  privateReplayIdentitySchema,
+  type PrivateReplayIdentity,
+} from "./private-replay.js";
 import { z } from "zod";
 import {
   BrowserKeyLifecycle,
@@ -72,6 +81,11 @@ const grantSchema = z
     revoked: z.boolean(),
     choices: choicesSchema,
     offer: conversationOfferSchema,
+    // Optional only for genuine pre-version10 records. Never infer historical
+    // message/sequence identities from their retained plaintext offer content.
+    offerReplay: privateReplayIdentitySchema
+      .extend({ type: z.literal("conversation.offer") })
+      .optional(),
     local: browserKeyProofSchema,
     peer: browserPeerProofSchema,
   })
@@ -127,6 +141,7 @@ type Prepared = {
   grants: Grant[];
   choices: Choices;
   offer: z.infer<typeof conversationOfferSchema>;
+  replay: PrivateReplayIdentity;
   proof: Proof;
   guard: Guard;
   expiresAt: number;
@@ -137,6 +152,7 @@ const stores = [
   "peers",
   "peer_checks",
   "conversation_consents",
+  browserIncomingReplayStore,
 ];
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -583,6 +599,7 @@ export class BrowserConversationConsent {
           raw,
         ),
         { row, grants, p, offer, h, b } = await this.openOffer(g, input),
+        replay = await privateReplayIdentity(input.envelope, offer.type),
         n = this.now();
       if (
         input.expiresAt <= n ||
@@ -621,6 +638,7 @@ export class BrowserConversationConsent {
         expectedRevision: input.expectedRevision,
         choices,
         offer,
+        replay,
         row,
         grants,
         proof: p.proof,
@@ -661,7 +679,13 @@ export class BrowserConversationConsent {
       const p = await this.proofs(g, r.choices.peerId, r.choices.peerKeyEpoch);
       if (!same(p.proof, r.proof))
         throw new BrowserConversationConsentError("CONFLICT");
-      const next = this.next(r.row),
+      const identity = await browserPrivateIdentity(p.local.proof.binding),
+        prior = r.grants.find((v) => channel(v.choices) === channel(r.choices)),
+        retained =
+          !!prior &&
+          same(prior.offerReplay, r.replay) &&
+          same(prior.offer, r.offer),
+        next = this.next(r.row),
         grant = grantSchema.parse({
           id: crypto.randomUUID(),
           revision: next,
@@ -669,6 +693,7 @@ export class BrowserConversationConsent {
           revoked: false,
           choices: r.choices,
           offer: r.offer,
+          offerReplay: r.replay,
           local: p.proof.local,
           peer: p.proof.peer,
         });
@@ -699,10 +724,25 @@ export class BrowserConversationConsent {
           if (!same(current, r.row))
             throw new BrowserConversationConsentError("CONFLICT");
           this.active(current, p.proof.deviceHash);
-          const write = () => {
-            io.store("conversation_consents").put(row);
-            io.done(structuredClone(grant));
-          };
+          const write = () =>
+            consumeBrowserIncomingReplay(
+              io,
+              identity.scope,
+              r.replay,
+              // The durable outcome is this original authenticated offer, retained
+              // inside the encrypted grant. Explicit new reviews may change consent
+              // IDs/choices while preserving that offer identity. Superseded offers
+              // cannot recreate a missing original outcome or renew old authority.
+              {
+                store: "conversation_consents",
+                key: [this.scope, r.replay.operation],
+              },
+              retained,
+              () => {
+                io.store("conversation_consents").put(row);
+                io.done(structuredClone(grant));
+              },
+            );
           if (current) write();
           else
             io.request(io.store("conversation_consents").count(), (count) => {

@@ -9,8 +9,8 @@ built-browser consent checks passed in Chromium, Firefox and WebKit at commit
 0514a768; full current-head browser and visual acceptance remain pending. Relay
 offer exchange, durable conversation transport and reconnect acceptance are not
 implemented. Shared incoming replay storage now participates in all current Mac receivers;
-browser task/check integration is implemented and pending CI, while offer/content
-receivers and historical coverage remain unfinished.
+browser task/check and reviewed-offer integration are implemented with current-head
+CI acceptance pending. Content receivers and historical coverage remain unfinished.
 
 ## Separate Mac consent
 
@@ -77,7 +77,7 @@ are fixed by the offer. Separate local browser grant IDs cannot expand Mac acces
 Task consent does not grant conversation access.
 
 Choices are encrypted under a nonextractable browser key in the common private
-database's separate `conversation_consents` store (introduced in version8, retained in version9). The upgrade adds
+database's separate `conversation_consents` store (introduced in version8, retained in version10). The upgrade adds
 no grants and fences older writers. Each owner can retain at most64 grants;
 renewing one peer/thread tuple replaces that grant and leaves other threads
 unchanged. Explicit offline revocation preserves the record. Clearing choices
@@ -299,7 +299,7 @@ one shared record without new work. Actual compiled legacy challenge, response a
 encrypted backup/restore and original schema29 rollback are verified in
 `evidence/incoming-replay-schema-compatibility-2026-09-24.json`.
 
-Before conversation activation, verify the matching browser IndexedDB transaction and complete offer/content integration and legacy coverage. Older peer-check records retain incoming envelope hashes but lack incoming IDs and sequence headers; older Mac outboxes retain the acceptance payload without its incoming envelope.
+Before conversation activation, verify the matching browser IndexedDB transaction and complete content integration and legacy coverage. Older peer-check records retain incoming envelope hashes but lack incoming IDs and sequence headers; older Mac outboxes retain the acceptance payload without its incoming envelope.
 An empty new ledger cannot prove those identities were unused. Preserve that
 history and establish explicit reconciliation or a fresh-key epoch boundary before
 a broader cross-family replay guarantee. Offer inspection still neither consumes
@@ -345,3 +345,41 @@ across the three engines) exercise current receivers, cross-family collisions,
 concurrent/reloaded retries, transaction rollback, expiry, corruption, capacity,
 targeted deletion and actual previous-provider migration. Run those on disposable
 GitHub runners; local compilation is not browser acceptance.
+
+
+## Reviewed offer replay (version10; current-head CI pending)
+
+Offer inspection and preparation remain read-only: neither consumes replay state,
+accepts relay delivery nor saves consent. Only explicit approval admits the
+original authenticated offer into the shared ledger and writes its encrypted
+consent record, in one transaction. The encrypted grant retains the authenticated
+offer identity; the ledger links to its local consent row and offer-operation
+hash. This stable offer reference is separate from the browser consent ID.
+
+A fresh explicit review of the same original offer may narrow or change choices
+within its offered directions and expiry. It replaces the browser consent ID,
+invalidates prior access and retains the one original offer replay record. This
+is a reviewed consent change, never automatic approval on duplicate delivery.
+Changed ciphertext under the original operation, message or sequence conflicts.
+After a replacement offer supersedes the original grant, retrying the older
+consumed offer cannot recreate its missing outcome or restore old consent.
+Task receipts/results and device checks share the same identity namespace.
+
+All hashing/encryption finishes before the write transaction. Current account,
+key/peer proofs, possession, exact consent revision and review deadline are
+checked again inside it. A quota error, changed identity or expiry during replay
+insertion aborts consent and replay together. Targeted consent deletion preserves
+the shared replay fence; it does not erase other protocol families' history.
+
+Version10 adds no grants or replay records on upgrade. The optional `offerReplay`
+field is absent from genuine old grants, and no historical IDs are inferred from
+their plaintext offer. A fresh authenticated original-offer review can record
+known evidence; complete historical coverage still requires reconciliation or a
+fresh-key boundary before message transport. Older writers are fenced before
+new grant metadata is written. The actual version9 provider module archive at
+`ae3fa90eba1ea2b08febe21dae221ea51b63c0c1` is pinned with SHA256
+`ae6439697861e6f83cbacf23ae18b7ffa9095658308d9cfb37a3b15cbbee26b6`.
+Five new scenarios (15 cases across three browser engines) cover fresh narrowed
+reviews and superseded offers, bidirectional task/offer conflicts, rollback and
+late authority loss, competing reviews and actual version9→10 preservation.
+Those new cases and the refreshed complete suite require CI acceptance.

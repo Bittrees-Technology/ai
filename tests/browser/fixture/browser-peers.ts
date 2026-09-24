@@ -32,8 +32,9 @@ let consents: BrowserTaskConsent | undefined;
 let conversations: BrowserConversationConsent | undefined;
 let conversationAccess:
   Awaited<ReturnType<BrowserConversationConsent["authorize"]>> | undefined;
+let conversationProvider = BrowserConversationConsent;
 async function conversationStore() {
-  return (conversations ??= await BrowserConversationConsent.open(
+  return (conversations ??= await conversationProvider.open(
     owner,
     () => binding,
     keys,
@@ -147,7 +148,13 @@ const fixture = {
     o: string,
     b: PrivateBinding,
     time: number,
-    previous: boolean | "task" | "delivery" | "conversation" | "replay" = false,
+    previous:
+      | boolean
+      | "task"
+      | "delivery"
+      | "conversation"
+      | "replay"
+      | "offer-replay" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
@@ -173,36 +180,45 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "replay"
-        ? "/legacy-replay/index.js"
-        : previous === "conversation"
-          ? "/legacy-conversation/index.js"
-          : previous === "delivery"
-            ? "/legacy-delivery/index.js"
-            : previous === "task"
-              ? "/legacy-composition/index.js"
-              : "/legacy-consent/index.js";
+      previous === "offer-replay"
+        ? "/legacy-offer-replay/index.js"
+        : previous === "replay"
+          ? "/legacy-replay/index.js"
+          : previous === "conversation"
+            ? "/legacy-conversation/index.js"
+            : previous === "delivery"
+              ? "/legacy-delivery/index.js"
+              : previous === "task"
+                ? "/legacy-composition/index.js"
+                : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
+    conversationProvider =
+      previous === "offer-replay"
+        ? providers.BrowserConversationConsent
+        : BrowserConversationConsent;
     consentProvider =
       previous === "task" ||
       previous === "delivery" ||
       previous === "conversation" ||
-      previous === "replay"
+      previous === "replay" ||
+      previous === "offer-replay"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
       previous === "delivery" ||
       previous === "conversation" ||
-      previous === "replay"
+      previous === "replay" ||
+      previous === "offer-replay"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
       previous === "delivery" ||
       previous === "conversation" ||
-      previous === "replay"
+      previous === "replay" ||
+      previous === "offer-replay"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(

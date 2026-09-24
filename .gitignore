@@ -41,3 +41,6 @@ tests/browser/fixture/public/legacy-conversation/
 
 .legacy-browser-replay/
 tests/browser/fixture/public/legacy-replay/
+
+.legacy-browser-offer-replay/
+tests/browser/fixture/public/legacy-offer-replay/

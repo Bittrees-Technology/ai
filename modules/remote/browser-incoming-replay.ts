@@ -16,6 +16,11 @@ const outcomeSchema = z.discriminatedUnion("store", [
     store: z.literal("peer_checks"),
     key: z.tuple([hex, z.uuid()]),
   }),
+  z.strictObject({
+    store: z.literal("conversation_consents"),
+    // Local consent row and authenticated offer-operation digest within it.
+    key: z.tuple([hex, hex]),
+  }),
 ]);
 export const browserIncomingReplaySchema = z.strictObject({
   scope: hex,

@@ -464,7 +464,7 @@ test("Slot capacity includes deleted attempts and database version change closes
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 10);
+        const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys", 11);
         r.onsuccess = () => {
           r.result.close();
           resolve();
