@@ -1,3 +1,8 @@
+import { mountPrivateRelayRoutes } from "./private-relay-http.js";
+import {
+  privateRelayPolicySchema,
+  privateRelayBodyLimit,
+} from "./private-relay-contracts.js";
 import { RemoteBrowserDeviceStore } from "./browser-devices.js";
 import { RemoteTemplateStore } from "./templates.js";
 import { resolve } from "node:path";
@@ -53,10 +58,22 @@ export function createRemoteApp(
       commandsPerDevice: number;
       pendingPerDevice: number;
     };
+    /** Absent by default; complete policy and matching origin/chain are required. */
+    privateRelayPolicy?: unknown;
     now?: () => number;
   },
 ) {
   const now = config.now ?? Date.now;
+  const privatePolicy =
+    config.privateRelayPolicy === undefined
+      ? undefined
+      : parse(privateRelayPolicySchema, config.privateRelayPolicy);
+  if (
+    privatePolicy &&
+    (privatePolicy.origin !== config.origin ||
+      privatePolicy.chainId !== config.chainId)
+  )
+    throw new RemoteStatusError("INVALID_INPUT");
   const sessions = new RemoteSessionStore(
     pool,
     config.origin,
@@ -180,7 +197,25 @@ export function createRemoteApp(
     } else return res.status(404).json({ error: "NOT_FOUND" });
     next();
   });
-  app.use(express.json({ limit: "32kb", strict: true, inflate: false }));
+  const ordinaryJson = express.json({
+    limit: "32kb",
+    strict: true,
+    inflate: false,
+  });
+  const privateJson = express.json({
+    limit: privateRelayBodyLimit,
+    strict: true,
+    inflate: false,
+  });
+  app.use((req, res, next) => {
+    const isPrivateSubmit =
+      privatePolicy &&
+      [
+        "/browser/relay/messages/submit",
+        "/device/relay/messages/submit",
+      ].includes(req.path);
+    return (isPrivateSubmit ? privateJson : ordinaryJson)(req, res, next);
+  });
   const cookieOptions = {
     secure: true,
     httpOnly: true,
@@ -257,6 +292,12 @@ export function createRemoteApp(
     if (typeof account !== "string") throw new RemoteStatusError("DENIED");
     return { session: cookie(req, sessionCookie), account };
   };
+  if (privatePolicy)
+    mountPrivateRelayRoutes(app, pool, privatePolicy, now, {
+      browserAuthority,
+      browserCredential,
+      token,
+    });
   app.post("/browser/registration/inspect", async (req, res) => {
     parse(z.strictObject({}), req.body);
     const { session, account } = browserAuthority(req);
