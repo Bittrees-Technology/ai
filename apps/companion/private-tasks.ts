@@ -85,45 +85,72 @@ export class CompanionPrivateTasks {
     ) => Promise<T> | T,
   ): Promise<T> {
     if (!this.enabled || !this.remote) throw new PrivateTaskError("DENIED");
-    return this.remote.withVerifiedDevice(async (scope) => {
-      const consent = new PrivateTaskConsent(
-        this.store,
-        this.vault,
-        this.owner,
-        scope.current,
-        this.keys(scope.current),
-        new PrivatePeerEnrollment(
-          this.store,
-          this.vault,
-          this.owner,
-          scope.current,
-          this.now,
-        ),
-        this.now,
-      );
-      const providers = await consent.resolve(peerId);
-      // Pass live callbacks through every cryptographic/final transaction check.
-      // Never retain a scope or key provider across calls or across model execution.
-      return action(scope.current, providers);
-    });
+    return this.remote.withVerifiedDevice((scope) =>
+      this.withCurrent(peerId, scope.current, action),
+    );
   }
-  async receive(raw: unknown) {
-    const envelope = privateEnvelopeSchema.parse(raw);
-    return this.scope(envelope.header.senderId, async (current, providers) => {
-      const receipt = await new PrivateTaskReceiver(
+  private async withCurrent<T>(
+    peerId: string,
+    current: () => PrivateBinding | null,
+    action: (
+      current: () => PrivateBinding | null,
+      providers: Awaited<ReturnType<PrivateTaskConsent["resolve"]>>,
+    ) => Promise<T> | T,
+  ): Promise<T> {
+    if (!this.enabled || !this.remote || !current())
+      throw new PrivateTaskError("DENIED");
+    const consent = new PrivateTaskConsent(
+      this.store,
+      this.vault,
+      this.owner,
+      current,
+      this.keys(current),
+      new PrivatePeerEnrollment(
         this.store,
         this.vault,
         this.owner,
         current,
-        providers.receive,
         this.now,
-      ).accept(envelope);
-      return {
-        status: "accepted-locally" as const,
-        taskId: receipt.taskId,
-        operationId: receipt.header.operationId,
-      };
-    });
+      ),
+      this.now,
+    );
+    const providers = await consent.resolve(peerId);
+    return action(current, providers);
+  }
+  async receive(raw: unknown) {
+    const envelope = privateEnvelopeSchema.parse(raw);
+    return this.scope(envelope.header.senderId, (current, providers) =>
+      this.admit(envelope, current, providers),
+    );
+  }
+  /** Internal native callback only, supplied by active relay custody. Never JSON
+   * authority: the parent holds key/peer/consent exclusion before opening custody. */
+  async receiveVerified(raw: unknown, current: () => PrivateBinding | null) {
+    const envelope = privateEnvelopeSchema.parse(raw);
+    return this.withCurrent(
+      envelope.header.senderId,
+      current,
+      (live, providers) => this.admit(envelope, live, providers),
+    );
+  }
+  private async admit(
+    envelope: z.infer<typeof privateEnvelopeSchema>,
+    current: () => PrivateBinding | null,
+    providers: Awaited<ReturnType<PrivateTaskConsent["resolve"]>>,
+  ) {
+    const receipt = await new PrivateTaskReceiver(
+      this.store,
+      this.vault,
+      this.owner,
+      current,
+      providers.receive,
+      this.now,
+    ).accept(envelope);
+    return {
+      status: "accepted-locally" as const,
+      taskId: receipt.taskId,
+      operationId: receipt.header.operationId,
+    };
   }
   async prepareResponse(raw: unknown) {
     const input = z

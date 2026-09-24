@@ -1,3 +1,5 @@
+import type { PrivateRelayClient } from "../../modules/remote/private-relay-client.js";
+import type { PrivateBinding } from "../../modules/remote/private-peer-contracts.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -56,6 +58,7 @@ export class CompanionPrivateRelay {
     private setupEnabled = false,
     private now = Date.now,
     private monotonic = () => performance.now(),
+    transport: typeof fetch = fetch,
   ) {
     this.custody = new PrivateRelayCustody(
       store,
@@ -67,7 +70,7 @@ export class CompanionPrivateRelay {
           throw new CompanionRelayError("PAIRING_REQUIRED");
         },
       },
-      undefined,
+      transport,
       now,
       monotonic,
     );
@@ -103,6 +106,21 @@ export class CompanionPrivateRelay {
     } finally {
       this.running = false;
     }
+  }
+  /** Native coordinator only. The parent must already hold key/peer exclusion.
+   * No client, credential or live authority callback crosses a local HTTP route. */
+  withTransport<T>(
+    raw: unknown,
+    action: (
+      client: PrivateRelayClient,
+      current: () => PrivateBinding | null,
+    ) => Promise<T>,
+  ) {
+    return this.exclusive(async () => {
+      if (!this.setupEnabled || !this.remote) throw Error("DENIED");
+      this.invalidate();
+      return this.custody.withClient(raw, action);
+    });
   }
   async prepare(raw: unknown) {
     return this.exclusive(async () => {

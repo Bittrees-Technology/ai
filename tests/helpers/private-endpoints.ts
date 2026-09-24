@@ -64,6 +64,7 @@ export async function privateEndpoints(verifyKeys = true) {
       denied = false,
       identities = 0,
       credentialReads = 0;
+    let relayTransport: typeof fetch | undefined;
     let onCredentialRead: (() => void) | undefined;
     store.addProfile(owner, profile);
     const remote = new RemoteClient(
@@ -82,8 +83,10 @@ export async function privateEndpoints(verifyKeys = true) {
           return true;
         },
       },
-      async (url) => {
+      async (url, init) => {
         const route = new URL(String(url)).pathname;
+        if (route.includes("/device/relay/") && relayTransport)
+          return relayTransport(url, init);
         if (route.endsWith("/pairings"))
           return Response.json({
             id: randomUUID(),
@@ -172,6 +175,9 @@ export async function privateEndpoints(verifyKeys = true) {
       owner,
       remote,
       grant,
+      relayTransport: (transport: typeof fetch) => {
+        relayTransport = transport;
+      },
       slots,
       entries,
       build,
