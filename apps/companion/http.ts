@@ -1237,6 +1237,7 @@ export function localApi({
       tasks: store.export(owner).map(concealed),
       messages: store.exportMessages(owner),
       remoteControls: store.exportRemoteControls(owner),
+      privateRelayCredentials: store.exportPrivateRelayCredentials(owner),
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
       privatePeerChecks: store.exportPrivatePeerChecks(owner),
       privatePeerTrust: store.exportPrivatePeerTrust(owner),

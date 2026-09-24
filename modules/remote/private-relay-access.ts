@@ -1,3 +1,4 @@
+import { privateRelayGrantSchema as grantSchema } from "./private-relay-enrollment.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
@@ -25,20 +26,6 @@ const revisionRequest = z.strictObject({
   id: uuid,
   expectedRevision: positive,
   confirmed: z.literal(true),
-});
-const grantSchema = z.strictObject({
-  id: uuid,
-  ownerId: uuid,
-  endpointKind: z.enum(["browser", "mac"]),
-  endpointId: uuid,
-  credentialEpoch: positive,
-  operationId: uuid,
-  revision: positive,
-  state: z.enum(["pending", "active", "revoked"]),
-  createdAt: positive,
-  expiresAt: positive,
-  approvalExpiresAt: positive.nullable(),
-  revokedAt: positive.nullable(),
 });
 type Grant = z.infer<typeof grantSchema>;
 type Kind = "browser" | "mac";

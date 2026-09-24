@@ -1,3 +1,7 @@
+import { RemoteClient } from "../modules/remote/client.js";
+import { PrivateRelayCustody } from "../modules/remote/private-relay-custody.js";
+import { Store } from "../modules/storage/store.js";
+import { Vault } from "../modules/storage/vault.js";
 import {
   PrivateRelayClient,
   PrivateRelayOwnerClient,
@@ -537,6 +541,144 @@ export async function checkPrivateRelayHttp(call: Call, disabled: Call) {
   assert.equal(
     (await call("/browser/relay/history/export", page, f.owner)).status,
     403,
+  );
+  // Actual native identity/enrollment and durable journal against the TLS host.
+  // Synthetic in-memory secret slots exercise the OS-provider contract without Keychain access.
+  const local = await fixture(),
+    localOwner = { userId: "synthetic-native", tenantId: "personal" };
+  const localApproval = await call(
+    "/browser/relay/mac/approve",
+    {
+      ...request(),
+      deviceId: local.mac.deviceId,
+      credentialEpoch: local.mac.epoch,
+    },
+    local.owner,
+  );
+  assert.equal(localApproval.status, 200);
+  let saved = Buffer.from(
+    JSON.stringify({
+      localOwner: localOwner.userId,
+      grant: local.mac,
+      sequence: 1,
+      mode: "active",
+    }),
+  );
+  const statusSecret = {
+    async getSecret() {
+      return Uint8Array.from(saved);
+    },
+    async setSecret(value: Uint8Array) {
+      saved = Buffer.from(value);
+    },
+    async deleteCredential() {
+      return true;
+    },
+  };
+  const slot = () => {
+    let value: Uint8Array | undefined;
+    return {
+      async getSecret() {
+        return value ? Uint8Array.from(value) : undefined;
+      },
+      async addSecretIfAbsent(input: Uint8Array) {
+        if (value) return false;
+        value = Uint8Array.from(input);
+        return true;
+      },
+      async deleteCredential() {
+        const found = !!value;
+        value = undefined;
+        return found;
+      },
+    };
+  };
+  const entries = new Map<
+    string,
+    {
+      key: ReturnType<typeof slot>;
+      attempt: ReturnType<typeof slot>;
+      deleted: ReturnType<typeof slot>;
+    }
+  >();
+  const provider = {
+    forSlot(_owner: unknown, id: string) {
+      let current = entries.get(id);
+      if (!current) {
+        current = { key: slot(), attempt: slot(), deleted: slot() };
+        entries.set(id, current);
+      }
+      return current;
+    },
+  };
+  const vault = new Vault(randomBytes(32)),
+    store = new Store(":memory:", vault);
+  try {
+    const remote = new RemoteClient(
+      localOwner.userId,
+      statusSecret,
+      actualTransport,
+    );
+    const custody = new PrivateRelayCustody(
+      store,
+      vault,
+      localOwner,
+      provider,
+      remote,
+      actualTransport,
+    );
+    const review = await custody.review({ id: localApproval.body.id });
+    const active = await custody.confirm({
+      reviewId: review.reviewId,
+      confirmed: true,
+    });
+    const reopened = new PrivateRelayCustody(
+      store,
+      vault,
+      localOwner,
+      provider,
+      remote,
+      actualTransport,
+    );
+    assert.deepEqual(
+      await reopened.withClient(
+        { id: active.id, expectedRevision: active.revision },
+        (client) => client.poll(page),
+      ),
+      { items: [], nextCursor: null },
+    );
+    const revoked = await reopened.revoke({
+      id: active.id,
+      expectedRevision: active.revision,
+      confirmed: true,
+    });
+    assert.equal(revoked.remoteRevocationConfirmed, true);
+    assert.equal(
+      (await call("/device/identity", {}, local.status)).status,
+      200,
+    );
+    await assert.rejects(
+      reopened.withClient(
+        { id: active.id, expectedRevision: revoked.revision },
+        (client) => client.poll(page),
+      ),
+      /DENIED/,
+    );
+    await reopened.remove({
+      id: active.id,
+      expectedRevision: revoked.revision,
+      confirmed: true,
+    });
+    assert.equal(
+      await provider.forSlot(localOwner, active.id).key.getSecret(),
+      undefined,
+    );
+    assert.equal(reopened.list().items[0]!.phase, "deleted");
+  } finally {
+    store.close();
+  }
+  console.log(
+    "Private relay native custody: actual TLS identity, one-use acceptance, separate synthetic OS slots, journal reopen, polling, revoke and cleanup passed.",
   );
   console.log(
     "Private relay HTTPS: default-disabled routes, real SIWE/cookies and native opt-in, credential/CSRF separation, maximum encrypted payload, exact receipts, owner history/deletion and revocation passed.",
