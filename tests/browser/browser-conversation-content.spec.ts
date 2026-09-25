@@ -10,7 +10,12 @@ import {
 async function setup(
   page: Page,
   previous:
-    false | "content" | "receipts" | "relay-content" | "key-boundary" = false,
+    | false
+    | "content"
+    | "receipts"
+    | "relay-content"
+    | "key-boundary"
+    | "resume" = false,
   questions = false,
 ) {
   const f = await ready(page, previous);
@@ -494,10 +499,12 @@ test("actual version12 upgrade preserves keys, grants, shared replay and channel
     expect(before.version).toBe(12);
     await reopen(page, f.f);
     const after = await inspect(page);
-    expect(after.version).toBe(15);
+    expect(after.version).toBe(16);
     expect(after.count).toBe(0);
     const oldRows = JSON.parse(before.all),
       newRows = JSON.parse(after.all);
+    expect(newRows.resume_consents).toEqual([]);
+    delete newRows.resume_consents;
     delete newRows.conversation_content;
     expect(newRows).toEqual(oldRows);
     expect(
@@ -919,8 +926,11 @@ test("actual version13 upgrade preserves encrypted originals and receipts fence 
     const receipt = await f.offer.receipt(envelope);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(15);
-    expect(upgraded.all).toBe(before.all);
+    expect(upgraded.version).toBe(16);
+    expect(JSON.parse(upgraded.all)).toEqual({
+      ...JSON.parse(before.all),
+      resume_consents: [],
+    });
     expect(await wire(page, { ...prepared, revision: 2 })).toEqual(envelope);
     const result = await reconcile(page, await read(page, prepared), receipt);
     await expect(reopen(page, f.f, "receipts")).rejects.toThrow(
@@ -1087,8 +1097,11 @@ test("actual version14 content upgrades without invented relay history and the o
     expect(before.version).toBe(14);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(15);
-    expect(upgraded.all).toBe(before.all);
+    expect(upgraded.version).toBe(16);
+    expect(JSON.parse(upgraded.all)).toEqual({
+      ...JSON.parse(before.all),
+      resume_consents: [],
+    });
     const entry = await read(page, prepared);
     expect(entry.relayAttempts).toBe(0);
     expect(entry.relayObservation).toBeNull();
@@ -1154,7 +1167,7 @@ for (const kind of ["message", "question"] as const)
         await page.evaluate(() => window.browserPeersTest.conversationStatus()),
       ).toEqual(before.grants);
       const upgraded = await inspect(page);
-      expect(upgraded.version).toBe(15);
+      expect(upgraded.version).toBe(16);
       expect(upgraded.ledger).toBe(old.ledger);
       expect(upgraded.channels).toBe(old.channels);
       expect(JSON.parse(upgraded.all).slots).toEqual(oldSlots);
@@ -1467,3 +1480,40 @@ for (const kind of ["message", "question"] as const)
       f.mac.close();
     }
   });
+
+test("actual version15 browser storage preserves encrypted content and replay while adding empty resume consent", async ({
+  page,
+}) => {
+  const f = await setup(page, "resume");
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared),
+      before = await inspect(page);
+    expect(before.version).toBe(15);
+    const grants = await page.evaluate(() =>
+      window.browserPeersTest.conversationStatus(),
+    );
+    await reopen(page, f.f);
+    const upgraded = await inspect(page);
+    expect(upgraded.version).toBe(16);
+    expect(JSON.parse(upgraded.all)).toEqual({
+      ...JSON.parse(before.all),
+      resume_consents: [],
+    });
+    expect(
+      await page.evaluate(() => window.browserPeersTest.conversationStatus()),
+    ).toEqual(grants);
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.resumeStatus()))
+        .grants,
+    ).toEqual([]);
+    expect(await wire(page, await read(page, prepared))).toEqual(envelope);
+    await expect(reopen(page, f.f, "resume")).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
+    await reopen(page, f.f);
+    expect(await wire(page, await read(page, prepared))).toEqual(envelope);
+  } finally {
+    f.mac.close();
+  }
+});

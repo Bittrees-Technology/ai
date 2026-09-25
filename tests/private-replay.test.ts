@@ -169,3 +169,28 @@ test("ambiguous or damaged retained matches fail closed instead of treating an i
     privateReplayIdentity(await f.wire(), "untrusted.route" as "task.submit"),
   );
 });
+
+test("resume offers share message and sequence replay protection with other authenticated families", async () => {
+  const f = await fixture();
+  const wire = await f.wire();
+  const offer = await privateReplayIdentity(wire, "task.resume.offer");
+  assert.equal(classifyPrivateReplay(offer, [offer]), "duplicate");
+  for (const type of [
+    "conversation.offer",
+    "task.resume",
+    "task.resumed",
+  ] as const) {
+    const other = await privateReplayIdentity(wire, type);
+    assert.equal(other.message, offer.message);
+    assert.equal(other.sequence, offer.sequence);
+    assert.throws(() => classifyPrivateReplay(other, [offer]), /CONFLICT/);
+  }
+  const newMessageSameSequence = await privateReplayIdentity(
+    await f.wire({ messageId: randomUUID(), operationId: randomUUID() }),
+    "task.resume.offer",
+  );
+  assert.throws(
+    () => classifyPrivateReplay(newMessageSameSequence, [offer]),
+    /CONFLICT/,
+  );
+});

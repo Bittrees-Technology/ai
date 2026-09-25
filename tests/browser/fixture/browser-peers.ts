@@ -1,7 +1,14 @@
+import {
+  BrowserResumeConsent,
+  BrowserResumeConsentError,
+} from "../../../modules/remote/browser-resume-consent.js";
 import { BrowserConversationContent } from "../../../modules/remote/browser-conversation-content.js";
 import { BrowserConversationConsent } from "../../../modules/remote/browser-conversation-consent.js";
 import { openBrowserPrivateDatabase } from "../../../modules/remote/browser-outbox-migration.js";
-import { browserStorageTransaction } from "../../../modules/remote/browser-storage.js";
+import {
+  browserStorageTransaction,
+  browserStorageError,
+} from "../../../modules/remote/browser-storage.js";
 import { BrowserRelayPermissionsClient } from "../../../modules/remote/private-relay-client.js";
 import { BrowserTaskComposition } from "../../../modules/remote/browser-task-composition.js";
 import { BrowserTaskHistory } from "../../../modules/remote/browser-task-history.js";
@@ -49,6 +56,19 @@ let conversationAccess:
 let conversationProvider = BrowserConversationConsent;
 async function conversationStore() {
   return (conversations ??= await conversationProvider.open(
+    owner,
+    () => binding,
+    keys,
+    peers,
+    () => now,
+    () => mono,
+  ));
+}
+let resumes: BrowserResumeConsent | undefined;
+let resumeAccess:
+  Awaited<ReturnType<BrowserResumeConsent["authorize"]>> | undefined;
+async function resumeStore() {
+  return (resumes ??= await BrowserResumeConsent.open(
     owner,
     () => binding,
     keys,
@@ -173,7 +193,8 @@ const fixture = {
       | "key-boundary"
       | "content"
       | "relay-content"
-      | "receipts" = false,
+      | "receipts"
+      | "resume" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
@@ -181,6 +202,9 @@ const fixture = {
     consents = undefined;
     contentStore?.close();
     contentStore = undefined;
+    resumes?.close();
+    resumes = undefined;
+    resumeAccess = undefined;
     conversations?.close();
     conversations = undefined;
     conversationAccess = undefined;
@@ -202,33 +226,37 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "key-boundary"
-        ? "/legacy-key-boundary/index.js"
-        : previous === "relay-content"
-          ? "/legacy-relay-content/index.js"
-          : previous === "receipts"
-            ? "/legacy-receipts/index.js"
-            : previous === "content"
-              ? "/legacy-content/index.js"
-              : previous === "offer-ack"
-                ? "/legacy-offer-ack/index.js"
-                : previous === "offer-replay"
-                  ? "/legacy-offer-replay/index.js"
-                  : previous === "replay"
-                    ? "/legacy-replay/index.js"
-                    : previous === "conversation"
-                      ? "/legacy-conversation/index.js"
-                      : previous === "delivery"
-                        ? "/legacy-delivery/index.js"
-                        : previous === "task"
-                          ? "/legacy-composition/index.js"
-                          : "/legacy-consent/index.js";
+      previous === "resume"
+        ? "/legacy-resume/index.js"
+        : previous === "key-boundary"
+          ? "/legacy-key-boundary/index.js"
+          : previous === "relay-content"
+            ? "/legacy-relay-content/index.js"
+            : previous === "receipts"
+              ? "/legacy-receipts/index.js"
+              : previous === "content"
+                ? "/legacy-content/index.js"
+                : previous === "offer-ack"
+                  ? "/legacy-offer-ack/index.js"
+                  : previous === "offer-replay"
+                    ? "/legacy-offer-replay/index.js"
+                    : previous === "replay"
+                      ? "/legacy-replay/index.js"
+                      : previous === "conversation"
+                        ? "/legacy-conversation/index.js"
+                        : previous === "delivery"
+                          ? "/legacy-delivery/index.js"
+                          : previous === "task"
+                            ? "/legacy-composition/index.js"
+                            : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
     contentProvider =
-      previous === "receipts" || previous === "relay-content"
+      previous === "receipts" ||
+      previous === "relay-content" ||
+      previous === "resume"
         ? providers.BrowserConversationContent
         : BrowserConversationContent;
     conversationProvider =
@@ -237,7 +265,8 @@ const fixture = {
       previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
-      previous === "relay-content"
+      previous === "relay-content" ||
+      previous === "resume"
         ? providers.BrowserConversationConsent
         : BrowserConversationConsent;
     consentProvider =
@@ -250,7 +279,8 @@ const fixture = {
       previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
-      previous === "relay-content"
+      previous === "relay-content" ||
+      previous === "resume"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
@@ -262,7 +292,8 @@ const fixture = {
       previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
-      previous === "relay-content"
+      previous === "relay-content" ||
+      previous === "resume"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
@@ -274,7 +305,8 @@ const fixture = {
       previous === "key-boundary" ||
       previous === "content" ||
       previous === "receipts" ||
-      previous === "relay-content"
+      previous === "relay-content" ||
+      previous === "resume"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -344,6 +376,7 @@ const fixture = {
     binding = b;
     checks?.invalidate();
     consents?.invalidate();
+    resumes?.invalidate();
     conversations?.invalidate();
     contentStore?.invalidate();
     keys.invalidate();
@@ -378,6 +411,7 @@ const fixture = {
   invalidate() {
     checks?.invalidate();
     consents?.invalidate();
+    resumes?.invalidate();
     conversations?.invalidate();
     contentStore?.invalidate();
     peers?.invalidate();
@@ -789,6 +823,85 @@ const fixture = {
     IDBObjectStore.prototype.add = function (...args) {
       if (this.name === "conversation_content") {
         IDBObjectStore.prototype.add = original;
+        throw new DOMException("synthetic", "QuotaExceededError");
+      }
+      return original.apply(this, args);
+    };
+  },
+  resumeStatus: () =>
+    host ? host.resumeAPI.status() : resumeStore().then((c) => c.status()),
+  resumeInspect: (raw: unknown) =>
+    host
+      ? host.resumeAPI.inspectOffer(raw)
+      : withKey(async () => (await resumeStore()).inspectOffer(raw)),
+  resumePrepare: (raw: unknown) =>
+    host
+      ? host.resumeAPI.prepare(raw)
+      : withKey(async () => (await resumeStore()).prepare(raw)),
+  resumeApprove: (raw: unknown) =>
+    host
+      ? host.resumeAPI.approve(raw)
+      : withKey(async () => (await resumeStore()).approve(raw)),
+  resumeRevoke: (raw: unknown) =>
+    host
+      ? host.resumeAPI.revoke(raw)
+      : resumeStore().then((c) => c.revoke(raw)),
+  resumeClear: (raw: unknown) =>
+    host ? host.resumeAPI.clear(raw) : resumeStore().then((c) => c.clear(raw)),
+  resumeReset: (raw: unknown) =>
+    host
+      ? host.resumeAPI.reset(raw)
+      : withKey(async () => (await resumeStore()).reset(raw)),
+  resumeAuthorize: (id: string, task: unknown) =>
+    withKey(async () => {
+      resumeAccess = await (await resumeStore()).authorize(id, task);
+      return resumeAccess.grant;
+    }),
+  resumeUse: () =>
+    withKey(async () => {
+      const a = resumeAccess!,
+        db = await openBrowserPrivateDatabase();
+      try {
+        return await browserStorageTransaction(
+          db,
+          a.stores,
+          "readonly",
+          a.check,
+          (io) => a.validate(io, () => io.done(true)),
+          (error) =>
+            error instanceof BrowserResumeConsentError
+              ? error
+              : browserStorageError(error),
+        );
+      } finally {
+        db.close();
+      }
+    }),
+  async resumeRows() {
+    const db = await openBrowserPrivateDatabase();
+    try {
+      return await browserStorageTransaction<{ rows: string; replay: any[] }>(
+        db,
+        ["resume_consents", "incoming_replay"],
+        "readonly",
+        () => {},
+        (io) => {
+          io.request(io.store("resume_consents").getAll(), (rows) =>
+            io.request(io.store("incoming_replay").getAll(), (replay) =>
+              io.done({ rows: JSON.stringify(rows), replay }),
+            ),
+          );
+        },
+      );
+    } finally {
+      db.close();
+    }
+  },
+  resumeFailWrite() {
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (this.name === "resume_consents") {
+        IDBObjectStore.prototype.put = original;
         throw new DOMException("synthetic", "QuotaExceededError");
       }
       return original.apply(this, args);

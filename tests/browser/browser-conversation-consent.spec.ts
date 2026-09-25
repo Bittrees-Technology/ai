@@ -367,7 +367,7 @@ test("actual version7 browser storage upgrades without granting conversation acc
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationInspect()))
         .version,
-    ).toBe(15);
+    ).toBe(16);
     await expect(reopen(page, f.f, "conversation")).rejects.toThrow(
       "STORAGE_UNAVAILABLE",
     );
@@ -748,7 +748,7 @@ test("actual version9 upgrade preserves prior grant and shared ledger without in
     expect(before.version).toBe(9);
     expect(original.offerReplay).toBeUndefined();
     await reopen(page, f.f);
-    expect(await replaySnapshot(page)).toEqual({ ...before, version: 15 });
+    expect(await replaySnapshot(page)).toEqual({ ...before, version: 16 });
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
         .grants,
@@ -1045,7 +1045,7 @@ test("actual version10 upgrade preserves consent and replay without inventing re
     expect(grant.offerReplay).toBeDefined();
     expect(grant.relayAcknowledgement).toBeUndefined();
     await reopen(page, f.f);
-    expect(await replaySnapshot(page)).toEqual({ ...before, version: 15 });
+    expect(await replaySnapshot(page)).toEqual({ ...before, version: 16 });
     expect(
       (await page.evaluate(() => window.browserPeersTest.conversationStatus()))
         .grants,
