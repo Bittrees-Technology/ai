@@ -617,8 +617,8 @@ export function mountBrowserResumes(
         prepared,
       };
       heading.textContent = "Review browser resume permission";
-      details.textContent = `${describeTask(choices)} Access ends ${new Date(choices.expiresAt).toLocaleString()}. The Mac keeps its own permission checks. Saving this permission sends no resume request and does not run the task.`;
-      identity.textContent = `Browser ${k.binding.deviceId}. Mac ${selected.peerId}. Verified Mac fingerprint ${selected.fingerprint}.`;
+      details.textContent = `Access ends ${new Date(choices.expiresAt).toLocaleString()}. The Mac keeps its own permission checks. Saving this permission sends no resume request and does not run the task.`;
+      identity.textContent = `${describeTask(choices)} Browser ${k.binding.deviceId}. Mac ${selected.peerId}. Verified Mac fingerprint ${selected.fingerprint}.`;
       ack.input.checked = false;
       confirm.textContent = "Save resume permission";
       notice.textContent =
