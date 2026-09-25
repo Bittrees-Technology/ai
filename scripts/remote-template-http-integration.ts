@@ -18,6 +18,7 @@ export async function checkTemplateHttp(
   device: Headers,
   controls: Headers,
   deviceId: string,
+  mcp?: { call: Call; clientCredential: string },
 ) {
   const localOwner = { userId: "template-http", tenantId: "personal" };
   const store = new Store(":memory:", new Vault(randomBytes(32)));
@@ -426,14 +427,14 @@ export async function checkTemplateHttp(
       403,
     );
     // Leave an active scoped key for the surrounding status-key rotation test.
-    const rotationSecret = randomBytes(32).toString("base64url");
+    const rotationSecret = randomBytes(32).toString("base64url"), rotationPermission = randomUUID();
     assert.equal(
       (
         await call(
           "/device/templates/publish",
           {
             ...publication,
-            permissionId: randomUUID(),
+            permissionId: rotationPermission,
             credentialHash: hash(rotationSecret),
           },
           device,
@@ -441,6 +442,51 @@ export async function checkTemplateHttp(
       ).status,
       200,
     );
+    if (mcp) {
+      // Reuse the real TLS/browser-owner/device fixture for the complete consent
+      // and atomic target-admission journey; no second test matrix.
+      const client = { "X-Bittrees-Mcp-Client": mcp.clientCredential };
+      const verifier = randomBytes(32).toString("base64url"), approvalCode = randomBytes(32).toString("base64url");
+      const actor = { tenant: "integration", subject: "operator", actorId: "a".repeat(64) };
+      const id = randomUUID(), begin = { id, actor, approvalHash: hash(approvalCode),
+        challenge: createHash("sha256").update(verifier).digest("base64url") };
+      assert.equal((await call("/mcp/delegations/begin", begin, client)).status, 404);
+      assert.equal((await mcp.call("/mcp/delegations/begin", begin, {})).status, 403);
+      assert.equal((await mcp.call("/mcp/delegations/begin", begin, client)).status, 200);
+      assert.equal((await mcp.call("/browser/mcp/review", { id, approvalCode }, owner)).status, 200);
+      const approvedMcp = await mcp.call("/browser/mcp/approve", { id, approvalCode,
+        permissionId: rotationPermission, expectedTemplateRevision: 1, maxRuns: 1,
+        expiresAt: now + 300000, confirmed: true }, owner);
+      assert.equal(approvedMcp.status, 200, JSON.stringify(approvedMcp.body));
+      const redeem = { id, verifier, actor, expectedOwnerId: owner["X-Bittrees-Account"], confirmed: true };
+      assert.equal((await mcp.call("/mcp/delegations/redeem", { ...redeem, expectedOwnerId: otherOwner["X-Bittrees-Account"] }, client)).status, 403);
+      const exchanged = await mcp.call("/mcp/delegations/redeem", redeem, client);
+      assert.equal(exchanged.status, 200, JSON.stringify(exchanged.body));
+      const scoped = { ...client, Authorization: "Bearer " + exchanged.body.credential };
+      const intent = { runId: "one-run", automationId: "one-automation", ...actor, grantId: id, permissionId: rotationPermission,
+        command: { id: randomUUID(), deviceId, templateId: template.id, templateRevision: 1,
+          issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() } };
+      assert.equal((await mcp.call("/mcp/templates/dispatch", intent, client)).status, 403);
+      const accepted = await mcp.call("/mcp/templates/dispatch", intent, scoped);
+      assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.equal(accepted.body.state, "accepted");
+      assert.deepEqual((await mcp.call("/mcp/templates/dispatch", intent, scoped)).body, accepted.body);
+      assert.deepEqual((await mcp.call("/mcp/templates/receipt", intent, scoped)).body, accepted.body);
+      assert.equal((await mcp.call("/mcp/templates/dispatch", { ...intent, command: { ...intent.command, id: randomUUID() } }, scoped)).status, 409);
+      const grants = await mcp.call("/browser/mcp/grants", {}, owner);
+      assert.equal(grants.body.items.find((g: any) => g.id === id).submittedRuns, 1);
+      const listed = await call("/browser/templates", { deviceId }, owner);
+      assert.equal(listed.body.items.find((t: any) => t.permissionId === rotationPermission).submittedRuns, 1);
+      assert.equal(JSON.stringify(grants.body).includes(exchanged.body.credential), false);
+      const revoked = await mcp.call("/mcp/delegations/disconnect", { id, actor }, scoped);
+      assert.equal(revoked.status, 200);
+      assert.equal((await mcp.call("/mcp/delegations/disconnect", { id, actor }, scoped)).status, 200);
+      assert.equal((await mcp.call("/mcp/templates/dispatch", intent, scoped)).status, 403);
+      assert.equal((await mcp.call("/browser/mcp/forget", { id, confirmed: true }, owner)).status, 200);
+      // Removing the delegation must not remove an already accepted command.
+      const retained = await call("/browser/templates/receipt", { permissionId: rotationPermission, id: intent.command.id }, owner);
+      assert.equal(retained.status, 200);
+    }
     return { Authorization: "Bearer " + rotationSecret };
   } finally {
     store.close();

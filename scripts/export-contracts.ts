@@ -1,3 +1,4 @@
+import { mcpActorSchema, mcpDelegationRequestSchema, mcpDelegationApprovalSchema, mcpDelegationRedeemSchema, mcpDispatchSchema } from "../modules/remote/mcp-delegation-contracts.js";
 import {
   taskQuestionViewSchema,
   taskAnswerInputSchema,
@@ -136,3 +137,25 @@ writeFileSync(
     2,
   ) + "\n",
 );
+
+// The remote MCP contract has separate credentials from the local companion API.
+writeFileSync("contracts/mcp-delegation-v1.json", JSON.stringify({
+  contractVersion: 1,
+  origin: "https://ai.bittrees.org",
+  clientId: "bittrees-mcp",
+  authentication: {
+    clientHeader: "X-Bittrees-Mcp-Client",
+    dispatch: "Confidential client header plus independently approved delegation bearer",
+    browser: "Verified owner session, same Origin and displayed-account binding; never service or device credentials",
+  },
+  routes: {
+    "/mcp/delegations/begin": { request: "request", authority: "client" },
+    "/mcp/delegations/redeem": { request: "redeem", authority: "client" },
+    "/mcp/templates/dispatch": { request: "dispatch", authority: "client-and-delegation" },
+    "/mcp/templates/receipt": { request: "dispatch", authority: "client-and-delegation" },
+    "/browser/mcp/approve": { request: "approval", authority: "verified-owner" },
+  },
+  schemas: Object.fromEntries(Object.entries({ actor: mcpActorSchema, request: mcpDelegationRequestSchema,
+    approval: mcpDelegationApprovalSchema, redeem: mcpDelegationRedeemSchema, dispatch: mcpDispatchSchema,
+  }).map(([name, schema]) => [name, z.toJSONSchema(schema)])),
+}, null, 2) + "\n");

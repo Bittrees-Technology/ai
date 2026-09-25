@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import { RemoteMcpDelegationStore } from "./mcp-delegations.js";
 import { mountPrivateRelayRoutes } from "./private-relay-http.js";
 import {
   privateRelayPolicySchema,
@@ -60,10 +62,19 @@ export function createRemoteApp(
     };
     /** Absent by default; complete policy and matching origin/chain are required. */
     privateRelayPolicy?: unknown;
+    /** Optional dedicated confidential MCP-client credential hash; absent disables routes. */
+    mcpClientCredentialHash?: string;
     now?: () => number;
   },
 ) {
   const now = config.now ?? Date.now;
+  const mcpClientHash = config.mcpClientCredentialHash;
+  if (mcpClientHash !== undefined && !/^[a-f0-9]{64}$/.test(mcpClientHash))
+    throw new RemoteStatusError("INVALID_INPUT");
+  const mcpDelegations =
+    mcpClientHash === undefined
+      ? undefined
+      : new RemoteMcpDelegationStore(pool, now);
   const privatePolicy =
     config.privateRelayPolicy === undefined
       ? undefined
@@ -152,6 +163,7 @@ export function createRemoteApp(
           origin: config.origin,
           chainId: config.chainId,
           ...(privatePolicy ? { privateRelay: true } : {}),
+          ...(mcpDelegations ? { mcpDelegation: true } : {}),
         });
       const files: Record<string, string> = {
         "/": "index.html",
@@ -187,13 +199,30 @@ export function createRemoteApp(
         req.headers.origin !== config.origin ||
         req.headers["x-bittrees-request"] !== "1" ||
         req.headers.authorization ||
+        req.headers["x-bittrees-mcp-client"] ||
         (req.headers["sec-fetch-site"] &&
           req.headers["sec-fetch-site"] !== "same-origin")
+      )
+        return res.status(403).json({ error: "DENIED" });
+    } else if (req.path.startsWith("/mcp/")) {
+      if (!mcpDelegations) return res.status(404).json({ error: "NOT_FOUND" });
+      const credential = req.headers["x-bittrees-mcp-client"];
+      if (
+        req.headers.origin ||
+        req.headers.cookie ||
+        req.headers["sec-fetch-site"] ||
+        typeof credential !== "string" ||
+        !opaque.test(credential) ||
+        !timingSafeEqual(
+          createHash("sha256").update(credential).digest(),
+          Buffer.from(mcpClientHash!, "hex"),
+        )
       )
         return res.status(403).json({ error: "DENIED" });
     } else if (req.path.startsWith("/device/")) {
       if (
         req.headers.origin ||
+        req.headers["x-bittrees-mcp-client"] ||
         req.headers.cookie ||
         req.headers["sec-fetch-site"]
       )
@@ -418,6 +447,83 @@ export function createRemoteApp(
     const input = parse(z.strictObject({ id: z.uuid() }), req.body);
     res.json(await commands.inspect((await owner(req)).ownerId, input.id));
   });
+  if (mcpDelegations) {
+    app.post("/mcp/delegations/begin", async (req, res) => {
+      if (req.headers.authorization) throw new RemoteStatusError("DENIED");
+      res.json(await mcpDelegations.begin("bittrees-mcp", req.body));
+    });
+    app.post("/mcp/delegations/redeem", async (req, res) => {
+      if (req.headers.authorization) throw new RemoteStatusError("DENIED");
+      res.json(await mcpDelegations.redeem("bittrees-mcp", req.body));
+    });
+    app.post("/mcp/delegations/disconnect", async (req, res) => {
+      res.json(
+        await mcpDelegations.disconnect("bittrees-mcp", token(req), req.body),
+      );
+    });
+    app.post("/mcp/templates/dispatch", async (req, res) => {
+      res.json(
+        await mcpDelegations.dispatch(
+          "bittrees-mcp",
+          token(req),
+          req.body,
+          templates,
+        ),
+      );
+    });
+    app.post("/mcp/templates/receipt", async (req, res) => {
+      res.json(
+        await mcpDelegations.inspectDispatch(
+          "bittrees-mcp",
+          token(req),
+          req.body,
+        ),
+      );
+    });
+    app.post("/browser/mcp/review", async (req, res) => {
+      const input = parse(
+        z.strictObject({
+          id: z.uuid(),
+          approvalCode: z.string().regex(opaque),
+        }),
+        req.body,
+      );
+      res.json(
+        await mcpDelegations.review(
+          (await owner(req)).ownerId,
+          input.id,
+          input.approvalCode,
+        ),
+      );
+    });
+    app.post("/browser/mcp/approve", async (req, res) => {
+      res.json(
+        await mcpDelegations.approve((await owner(req)).ownerId, req.body),
+      );
+    });
+    app.post("/browser/mcp/grants", async (req, res) => {
+      parse(z.strictObject({}), req.body);
+      res.json(await mcpDelegations.list((await owner(req)).ownerId));
+    });
+    app.post("/browser/mcp/revoke", async (req, res) => {
+      const input = parse(
+        z.strictObject({ id: z.uuid(), confirmed: z.literal(true) }),
+        req.body,
+      );
+      res.json(
+        await mcpDelegations.revoke((await owner(req)).ownerId, input.id),
+      );
+    });
+    app.post("/browser/mcp/forget", async (req, res) => {
+      const input = parse(
+        z.strictObject({ id: z.uuid(), confirmed: z.literal(true) }),
+        req.body,
+      );
+      res.json(
+        await mcpDelegations.forget((await owner(req)).ownerId, input.id),
+      );
+    });
+  }
   app.post("/browser/templates", async (req, res) => {
     const input = parse(
       z.strictObject({ deviceId: z.uuid(), after: z.uuid().optional() }),

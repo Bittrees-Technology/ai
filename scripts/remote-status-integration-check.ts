@@ -361,6 +361,7 @@ try {
       "utf8",
     ),
   );
+  await pool.query(await readFile(new URL("../modules/remote/migrations/011-mcp-delegation.sql", import.meta.url), "utf8"));
   await checkBrowserDevices(pool);
   await checkRemoteHttp(pool);
   await checkRemoteCommands(pool);

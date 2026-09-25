@@ -92,7 +92,11 @@ export async function checkRemoteHttp(pool: Pool) {
     { key, cert },
     createRemoteApp(pool, { ...config, privateRelayPolicy }),
   );
-  const servers = [server, plain, limited, privateServer];
+  const mcpClientCredential = randomBytes(32).toString("base64url");
+  const mcpServer = createServer({ key, cert }, createRemoteApp(pool, {
+    ...config, mcpClientCredentialHash: createHash("sha256").update(mcpClientCredential).digest("hex"),
+  }));
+  const servers = [server, plain, limited, privateServer, mcpServer];
   try {
     for (const s of servers)
       await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
@@ -832,6 +836,7 @@ export async function checkRemoteHttp(pool: Pool) {
       device,
       controls,
       item.deviceId,
+      { call: (path, body, headers) => call(path, body, headers, mcpServer), clientCredential: mcpClientCredential },
     );
     const overCapacity = await call(
       "/device/status",
