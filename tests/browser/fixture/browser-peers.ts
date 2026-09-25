@@ -1,3 +1,4 @@
+import { privateRelayEnvelopeHash } from "../../../modules/remote/private-relay-contracts.js";
 import { BrowserAutoNoteApprovalInbox } from "../../../modules/remote/browser-autonote-approval-inbox.js";
 import { BrowserResumeDelivery } from "../../../modules/remote/browser-resume-delivery.js";
 import {
@@ -985,7 +986,51 @@ const fixture = {
   approvalHostStatus: () => host!.autoNoteApprovalAPI.status(),
   approvalHostInspect: (raw: unknown) => host!.autoNoteApprovalAPI.inspect(raw),
   approvalHostReceive: (raw: unknown) => host!.autoNoteApprovalAPI.receive(raw),
+  approvalHostDecisionPrepare: (raw: unknown) =>
+    host!.autoNoteApprovalAPI.prepareDecision(raw),
+  approvalHostDecisionConfirm: (raw: unknown) =>
+    host!.autoNoteApprovalAPI.confirmDecision(raw),
+  approvalHostDecisionSend: (raw: unknown) =>
+    host!.autoNoteApprovalAPI.sendDecision(raw),
   approvalHostReveal: (raw: unknown) => host!.autoNoteApprovalAPI.reveal(raw),
+  approvalDecisionPrepare: (raw: unknown) =>
+    withKey(async () => (await approvalInboxStore()).prepareDecision(raw)),
+  approvalDecisionConfirm: (raw: unknown) =>
+    withKey(async () => (await approvalInboxStore()).confirmDecision(raw)),
+  approvalDecisionStatus: (raw: unknown) =>
+    approvalInboxStore().then((c) => c.decisionStatus(raw)),
+  approvalDecisionDispatch: (offerId: string, lose: boolean) =>
+    withKey(async () => {
+      let envelope: unknown;
+      let lost = false;
+      try {
+        const result = await (
+          await approvalInboxStore()
+        ).dispatchDecision(
+          { offerId, confirmed: true },
+          async (value, check) => {
+            await check();
+            envelope = value;
+            if (lose) {
+              lost = true;
+              throw Error("Synthetic lost relay reply");
+            }
+            return {
+              version: 1,
+              messageId: value.header.messageId,
+              envelopeHash: await privateRelayEnvelopeHash(value),
+              revision: 1,
+              storedAt: now,
+              state: "stored",
+            };
+          },
+        );
+        return { envelope, result, lost };
+      } catch (error) {
+        if (!lost) throw error;
+        return { envelope, result: null, lost };
+      }
+    }),
   approvalStatus: () => approvalInboxStore().then((c) => c.status()),
   approvalReceive: (raw: unknown) =>
     withKey(async () => (await approvalInboxStore()).receive(raw)),

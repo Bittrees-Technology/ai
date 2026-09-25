@@ -7,7 +7,18 @@ type Entry = Awaited<ReturnType<Host["autoNoteApprovalAPI"]["status"]>>[number];
 type Queue = Awaited<ReturnType<Host["autoNoteApprovalAPI"]["inspect"]>>;
 type Cursor = NonNullable<Queue["item"]>["cursor"] | null;
 type Review = {
-  action: "receive" | "reveal" | "export" | "remove";
+  action:
+    | "receive"
+    | "reveal"
+    | "export"
+    | "remove"
+    | "approve"
+    | "reject"
+    | "send"
+    | "decision-export";
+  decisionReview?: Awaited<
+    ReturnType<Host["autoNoteApprovalAPI"]["prepareDecision"]>
+  >;
   id?: string;
   queue?: Queue;
   after: Cursor;
@@ -33,6 +44,9 @@ export function mountBrowserAutoNoteApprovals(
     shownMono = 0,
     shownContext = "",
     shownVersion = 0;
+  let decisions: Awaited<
+    ReturnType<Host["autoNoteApprovalAPI"]["decisionHistory"]>
+  > = [];
   let entries: Entry[] = [],
     queue: Queue | null = null,
     after: Cursor = null;
@@ -67,7 +81,8 @@ export function mountBrowserAutoNoteApprovals(
   const context = () =>
     JSON.stringify([host.session(), host.keyContext()?.binding]);
   function clear(cancelHost = true) {
-    const hadWork = busy || !!review || !!queue || shownUntil > 0 || urls.size > 0;
+    const hadWork =
+      busy || !!review || !!queue || shownUntil > 0 || urls.size > 0;
     epoch++;
     review = null;
     queue = null;
@@ -111,8 +126,10 @@ export function mountBrowserAutoNoteApprovals(
     clear();
     void run(async (valid) => {
       const saved = await host.autoNoteApprovalAPI.status();
+      const history = await host.autoNoteApprovalAPI.decisionHistory();
       if (valid()) {
         entries = saved;
+        decisions = history;
         render();
         notice.textContent = `${saved.length} retained offers.`;
       }
@@ -146,7 +163,7 @@ export function mountBrowserAutoNoteApprovals(
     el("h2", "AutoNote notes on this browser"),
     el(
       "p",
-      "Receive encrypted parts from your paired Mac, then reveal the complete meeting notes. Approve/reject return controls are still being built; nothing is saved to AutoNote here.",
+      "Review complete notes, retain an approve or reject decision, then send it to your paired Mac. The Mac checks permission again and requires a separate save confirmation.",
     ),
     actions,
     notice,
@@ -180,9 +197,96 @@ export function mountBrowserAutoNoteApprovals(
         if (expired && action === "reveal") b.hidden = true;
         row.append(b);
       }
+      const saved = decisions.find((d) => d.offerId === entry.offerId);
+      if (saved) {
+        row.append(
+          el(
+            "p",
+            `Decision: ${saved.decision}. ${saved.transport ? "Stored at relay; source save is not confirmed here." : saved.attempts ? "Delivery outcome uncertain. Retry sends the same encrypted decision." : "Retained on this browser; not sent."}`,
+          ),
+        );
+        if (!expired)
+          row.append(
+            button("Review sending retained decision", () => {
+              beforeWork();
+              clear();
+              prepare("send", entry.offerId);
+            }),
+          );
+        row.append(
+          button("Review encrypted decision export", () => {
+            beforeWork();
+            clear();
+            prepare("decision-export", entry.offerId);
+          }),
+        );
+      } else if (!expired) {
+        for (const decision of ["approve", "reject"] as const)
+          row.append(
+            button(
+              decision === "approve"
+                ? "Review approving these notes"
+                : "Review rejecting these notes",
+              () => {
+                beforeWork();
+                clear();
+                void run(async (valid) => {
+                  const prepared =
+                    await host.autoNoteApprovalAPI.prepareDecision({
+                      offerId: entry.offerId,
+                      decision,
+                      confirmed: true,
+                    });
+                  if (!valid()) return;
+                  showNotes(prepared);
+                  prepare(decision, entry.offerId, prepared);
+                });
+              },
+            ),
+          );
+      }
       list.append(row);
     }
     controls();
+  }
+  function showNotes(
+    opened: Awaited<ReturnType<Host["autoNoteApprovalAPI"]["reveal"]>>,
+  ) {
+    notes.replaceChildren();
+    shownAt = now();
+    shownMono = mono();
+    shownUntil = Math.min(now() + 60000, opened.manifest.expiresAt);
+    shownContext = context();
+    shownVersion = host.reviewVersion();
+    notes.append(
+      el("h3", opened.detail.title),
+      el(
+        "p",
+        "Audience: " +
+          (opened.detail.visibility === "workspace" ? "Workspace" : "Private"),
+      ),
+      el("h4", "Resulting notes"),
+      el("p", opened.detail.notes.summary),
+    );
+    for (const group of [
+      "topics",
+      "decisions",
+      "actions",
+      "questions",
+      "recommendations",
+    ] as const) {
+      notes.append(el("h4", group[0]!.toUpperCase() + group.slice(1)));
+      for (const item of opened.detail.notes[group])
+        notes.append(
+          el("p", item.text),
+          el(
+            "p",
+            `Evidence: ${item.evidence.join(", ")}. Status: ${item.status}.${item.owner ? " Owner: " + item.owner : ""}${item.dueDate ? " Due: " + item.dueDate : ""}`,
+          ),
+        );
+      if (!opened.detail.notes[group].length) notes.append(el("p", "None"));
+    }
+    notes.append(button("Hide meeting notes", () => clear()));
   }
   const validReview = (r: Review) =>
     focused() &&
@@ -192,7 +296,11 @@ export function mountBrowserAutoNoteApprovals(
     mono() - r.mono < r.expires - r.at &&
     r.version === host.reviewVersion() &&
     r.context === context();
-  function prepare(action: Review["action"], id?: string) {
+  function prepare(
+    action: Review["action"],
+    id?: string,
+    decisionReview?: Review["decisionReview"],
+  ) {
     if (!focused()) return;
     const expires = Math.min(
       now() + 60000,
@@ -203,11 +311,14 @@ export function mountBrowserAutoNoteApprovals(
     review = {
       action,
       id,
+      decisionReview,
       queue: queue ?? undefined,
       after,
       at: now(),
       mono: mono(),
-      expires: ["export", "remove"].includes(action) ? now() + 60000 : expires,
+      expires: ["export", "remove", "decision-export"].includes(action)
+        ? now() + 60000
+        : Math.min(expires, decisionReview?.expiresAt ?? Infinity),
       version: host.reviewVersion(),
       context: context(),
     };
@@ -219,7 +330,11 @@ export function mountBrowserAutoNoteApprovals(
           receive: "Receive this encrypted part",
           reveal: "Reveal complete meeting notes",
           export: "Export encrypted parts",
-          remove: "Delete this local offer",
+          remove: "Delete this local offer and decision",
+          approve: "Approve the exact notes shown below",
+          reject: "Reject the exact notes shown below",
+          send: "Send the retained decision to your Mac",
+          "decision-export": "Export the encrypted decision",
         }[action],
       ),
       el(
@@ -227,8 +342,12 @@ export function mountBrowserAutoNoteApprovals(
         action === "receive"
           ? "Only a valid AutoNote part from your paired Mac is retained. Other encrypted content is left for its own controls."
           : action === "remove"
-            ? "Deletes the retained encrypted parts here. The source notes are unchanged. This offer cannot be silently reimported."
-            : "This action does not approve notes or save them at the source.",
+            ? "Deletes this offer and its local decision history. Already delivered decisions cannot be recalled. Source notes are unchanged, and the offer cannot be silently reimported."
+            : action === "approve" || action === "reject"
+              ? "Confirm this exact decision after reviewing all notes and their audience. It is retained locally until you choose to send it."
+              : action === "send"
+                ? "Send the original encrypted decision. Relay storage is not confirmation that AutoNote saved the notes."
+                : "This action does not approve notes or save them at the source.",
       ),
     );
     const label = el("label", "", "browser-keys-check"),
@@ -246,7 +365,32 @@ export function mountBrowserAutoNoteApprovals(
       void run(async (valid) => {
         review = null;
         stage.replaceChildren();
-        if (r.action === "receive") {
+        if (r.action === "approve" || r.action === "reject") {
+          await host.autoNoteApprovalAPI.confirmDecision({
+            reviewId: r.decisionReview!.id,
+            confirmed: true,
+            acknowledged: true,
+          });
+          if (!valid()) return;
+          notes.replaceChildren();
+          shownUntil = 0;
+          decisions = await host.autoNoteApprovalAPI.decisionHistory();
+          if (!valid()) return;
+          render();
+          notice.textContent =
+            "Decision retained locally. Review sending it when ready.";
+        } else if (r.action === "send") {
+          await host.autoNoteApprovalAPI.sendDecision({
+            offerId: r.id,
+            confirmed: true,
+          });
+          if (!valid()) return;
+          decisions = await host.autoNoteApprovalAPI.decisionHistory();
+          if (!valid()) return;
+          render();
+          notice.textContent =
+            "Encrypted decision stored at relay. Source saving is not confirmed here.";
+        } else if (r.action === "receive") {
           const result = await host.autoNoteApprovalAPI.receive({
             after: r.after,
             selection: r.queue!.item!.selection,
@@ -261,45 +405,11 @@ export function mountBrowserAutoNoteApprovals(
             confirmed: true,
           });
           if (!valid()) return;
-          shownAt = now();
-          shownMono = mono();
-          shownUntil = Math.min(now() + 60000, opened.manifest.expiresAt);
-          shownContext = context();
-          shownVersion = host.reviewVersion();
-          notes.append(
-            el("h3", opened.detail.title),
-            el(
-              "p",
-              "Audience: " +
-                (opened.detail.visibility === "workspace"
-                  ? "Workspace"
-                  : "Private"),
-            ),
-            el("h4", "Resulting notes"),
-            el("p", opened.detail.notes.summary),
-          );
-          for (const group of [
-            "topics",
-            "decisions",
-            "actions",
-            "questions",
-            "recommendations",
-          ] as const) {
-            notes.append(el("h4", group[0]!.toUpperCase() + group.slice(1)));
-            for (const item of opened.detail.notes[group])
-              notes.append(
-                el("p", item.text),
-                el(
-                  "p",
-                  `Evidence: ${item.evidence.join(", ")}. Status: ${item.status}.${item.owner ? " Owner: " + item.owner : ""}${item.dueDate ? " Due: " + item.dueDate : ""}`,
-                ),
-              );
-            if (!opened.detail.notes[group].length)
-              notes.append(el("p", "None"));
-          }
-          notes.append(button("Hide meeting notes", () => clear()));
-        } else if (r.action === "export") {
-          const value = await host.autoNoteApprovalAPI.export({
+          showNotes(opened);
+        } else if (r.action === "export" || r.action === "decision-export") {
+          const value = await host.autoNoteApprovalAPI[
+            r.action === "export" ? "export" : "exportDecision"
+          ]({
             offerId: r.id,
             confirmed: true,
           });
@@ -308,9 +418,17 @@ export function mountBrowserAutoNoteApprovals(
             new Blob([JSON.stringify(value)], { type: "application/json" }),
           );
           urls.add(url);
-          const link = el("a", "Download encrypted AutoNote offer");
+          const link = el(
+            "a",
+            r.action === "export"
+              ? "Download encrypted AutoNote offer"
+              : "Download encrypted AutoNote decision",
+          );
           link.href = url;
-          link.download = "autonote-encrypted-offer.json";
+          link.download =
+            r.action === "export"
+              ? "autonote-encrypted-offer.json"
+              : "autonote-encrypted-decision.json";
           notes.append(link);
         } else {
           await host.autoNoteApprovalAPI.remove({
