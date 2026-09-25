@@ -239,6 +239,8 @@ jobs:
           node scripts/prepare-legacy-browser-receipts.mjs
           git fetch --no-tags --depth=1 origin 6cc6ceb20befbfff95902beae9f9467ae15ea96c
           node scripts/prepare-legacy-browser-relay-content.mjs
+          git fetch --no-tags --depth=1 origin f4db1175fb2ebd0cfb34e2c280b0f7750a262989
+          node scripts/prepare-legacy-browser-resume.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
@@ -284,6 +286,28 @@ jobs:
             test-results/resume-permission-ui/*.png
             test-results/resume-offer-ui/*.png
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify browser resume consent and actual version15 upgrade
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config scripts/private-browser.config.ts browser-resume-consent.spec.ts browser-conversation-content.spec.ts --grep 'resume|version15' --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-consent.json
+      - name: Retain browser resume consent report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-consent-regression
+          path: regression-reports/browser-resume-consent.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain browser resume consent failure details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-consent-failure-details
+          path: |
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Verify browser and companion private-protocol interoperability
