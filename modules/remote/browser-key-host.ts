@@ -1,3 +1,4 @@
+import { BrowserResumeConsent } from "./browser-resume-consent.js";
 import { BrowserConversationContent } from "./browser-conversation-content.js";
 import { BrowserConversationConsent } from "./browser-conversation-consent.js";
 import {
@@ -49,6 +50,7 @@ export class BrowserKeyHost {
   private checks?: BrowserPeerChecks;
   private consents?: BrowserTaskConsent;
   private conversations?: BrowserConversationConsent;
+  private resumes?: BrowserResumeConsent;
   private conversationContent?: BrowserConversationContent;
   private compositions?: BrowserTaskComposition;
   private taskHistory?: BrowserTaskHistory;
@@ -174,6 +176,7 @@ export class BrowserKeyHost {
     this.checks?.invalidate();
     this.consents?.invalidate();
     this.conversations?.invalidate();
+    this.resumes?.invalidate();
     this.conversationContent?.invalidate();
     this.compositions?.invalidate();
     this.taskHistory?.invalidate();
@@ -195,6 +198,7 @@ export class BrowserKeyHost {
     this.checks?.close();
     this.consents?.close();
     this.conversations?.close();
+    this.resumes?.close();
     this.conversationContent?.close();
     this.compositions?.close();
     this.taskHistory?.close();
@@ -232,6 +236,7 @@ export class BrowserKeyHost {
           this.checks?.invalidate();
           this.consents?.invalidate();
           this.conversations?.invalidate();
+          this.resumes?.invalidate();
           this.conversationContent?.invalidate();
           this.compositions?.invalidate();
           this.taskHistory?.invalidate();
@@ -426,6 +431,26 @@ export class BrowserKeyHost {
     try {
       this.check(g);
       this.conversations = created;
+      return created;
+    } catch (e) {
+      created.close();
+      throw e;
+    }
+  }
+  private async resumeStore() {
+    if (this.resumes) return this.resumes;
+    const g = this.generation;
+    const created = await BrowserResumeConsent.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      this.keys,
+      this.peers,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(g);
+      this.resumes = created;
       return created;
     } catch (e) {
       created.close();
@@ -977,6 +1002,27 @@ export class BrowserKeyHost {
       this.operation(async () => (await this.conversationStore()).clear(raw)),
     reset: (raw: unknown) =>
       this.verified(async () => (await this.conversationStore()).reset(raw)),
+    invalidate: () => this.cancelKeys(),
+  };
+  /** Separate resume consent for a specific paused Mac task and model.
+   * Public callers receive metadata only; execution authority stays internal. */
+  readonly resumeAPI = {
+    status: () =>
+      this.operation(async () => (await this.resumeStore()).status()),
+    inspectOffer: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.resumeStore()).inspectOffer(raw),
+      ),
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.resumeStore()).prepare(raw)),
+    approve: (raw: unknown) =>
+      this.verifiedPeer(async () => (await this.resumeStore()).approve(raw)),
+    revoke: (raw: unknown) =>
+      this.operation(async () => (await this.resumeStore()).revoke(raw)),
+    clear: (raw: unknown) =>
+      this.operation(async () => (await this.resumeStore()).clear(raw)),
+    reset: (raw: unknown) =>
+      this.verified(async () => (await this.resumeStore()).reset(raw)),
     invalidate: () => this.cancelKeys(),
   };
   /** Explicit manual device checks only. Public callers receive metadata and the

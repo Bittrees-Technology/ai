@@ -828,15 +828,30 @@ const fixture = {
       return original.apply(this, args);
     };
   },
-  resumeStatus: () => resumeStore().then((c) => c.status()),
+  resumeStatus: () =>
+    host ? host.resumeAPI.status() : resumeStore().then((c) => c.status()),
   resumeInspect: (raw: unknown) =>
-    withKey(async () => (await resumeStore()).inspectOffer(raw)),
+    host
+      ? host.resumeAPI.inspectOffer(raw)
+      : withKey(async () => (await resumeStore()).inspectOffer(raw)),
   resumePrepare: (raw: unknown) =>
-    withKey(async () => (await resumeStore()).prepare(raw)),
+    host
+      ? host.resumeAPI.prepare(raw)
+      : withKey(async () => (await resumeStore()).prepare(raw)),
   resumeApprove: (raw: unknown) =>
-    withKey(async () => (await resumeStore()).approve(raw)),
-  resumeRevoke: (raw: unknown) => resumeStore().then((c) => c.revoke(raw)),
-  resumeClear: (raw: unknown) => resumeStore().then((c) => c.clear(raw)),
+    host
+      ? host.resumeAPI.approve(raw)
+      : withKey(async () => (await resumeStore()).approve(raw)),
+  resumeRevoke: (raw: unknown) =>
+    host
+      ? host.resumeAPI.revoke(raw)
+      : resumeStore().then((c) => c.revoke(raw)),
+  resumeClear: (raw: unknown) =>
+    host ? host.resumeAPI.clear(raw) : resumeStore().then((c) => c.clear(raw)),
+  resumeReset: (raw: unknown) =>
+    host
+      ? host.resumeAPI.reset(raw)
+      : withKey(async () => (await resumeStore()).reset(raw)),
   resumeAuthorize: (id: string, task: unknown) =>
     withKey(async () => {
       resumeAccess = await (await resumeStore()).authorize(id, task);

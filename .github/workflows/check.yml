@@ -290,7 +290,7 @@ jobs:
 
       - name: Verify browser resume consent and actual version15 upgrade
         if: ${{ !cancelled() }}
-        run: npx playwright test --config scripts/private-browser.config.ts browser-resume-consent.spec.ts browser-conversation-content.spec.ts --grep 'resume|version15' --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-consent.json
+        run: npx playwright test --config scripts/private-browser.config.ts browser-resume-consent.spec.ts browser-resume-host.spec.ts browser-conversation-content.spec.ts --grep 'resume|version15' --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-consent.json
       - name: Retain browser resume consent report
         if: always()
         uses: actions/upload-artifact@v4
