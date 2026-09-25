@@ -24,7 +24,9 @@ Omitting `privateRelay` keeps private-relay routes disabled. To enable them in a
 
 Omitting `mcpClientCredentialHash` disables confidential MCP routes. Enabling them requires the separately provisioned client's SHA256 credential hash plus the existing owner/device delegation flow. Never place the plaintext credential in this JSON, page content or logs.
 
-Schedule the existing `remote-cleanup` command separately with bounded batches and `--history-retention-days 90`, as described in `approved-remote-retention.md`. Provision host-log and backup expiry under the approved90-day policy. Starting this server alone does not establish scheduled cleanup or those retention guarantees. The launcher emits readiness/failure notices only, without request bodies, credentials or configuration values; infrastructure logging must preserve that boundary.
+Schedule the existing `remote-cleanup` command separately with bounded batches and `--history-retention-days 90`, as described in `approved-remote-retention.md`. Provision host-log and backup expiry under the approved90-day policy. Starting this server alone does not establish scheduled cleanup or those retention guarantees. Local and remote HTTP responses include a fresh server-generated `X-Correlation-ID` header, including rejection responses. Caller-provided IDs are ignored. The local error body retains its existing matching correlation ID; remote JSON bodies stay unchanged for strict clients. These IDs identify individual responses and grant no authority. They do not create a request log: correlation with host diagnostics requires explicitly configured, content-free operational logging under the90-day policy.
+
+The launcher emits readiness/failure notices only, without request bodies, credentials or configuration values; infrastructure logging must preserve that boundary.
 
 ## Validation and remaining acceptance
 
