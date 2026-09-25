@@ -508,6 +508,8 @@ test("actual version12 upgrade preserves keys, grants, shared replay and channel
     delete newRows.resume_consents;
     expect(newRows.resume_delivery).toEqual([]);
     delete newRows.resume_delivery;
+    expect(newRows.autonote_approval_inbox).toEqual([]);
+    delete newRows.autonote_approval_inbox;
     delete newRows.conversation_content;
     expect(newRows).toEqual(oldRows);
     expect(
@@ -934,6 +936,7 @@ test("actual version13 upgrade preserves encrypted originals and receipts fence 
       ...JSON.parse(before.all),
       resume_consents: [],
       resume_delivery: [],
+      autonote_approval_inbox: [],
     });
     expect(await wire(page, { ...prepared, revision: 2 })).toEqual(envelope);
     const result = await reconcile(page, await read(page, prepared), receipt);
@@ -1106,6 +1109,7 @@ test("actual version14 content upgrades without invented relay history and the o
       ...JSON.parse(before.all),
       resume_consents: [],
       resume_delivery: [],
+      autonote_approval_inbox: [],
     });
     const entry = await read(page, prepared);
     expect(entry.relayAttempts).toBe(0);
@@ -1505,6 +1509,7 @@ test("actual version15 browser storage preserves encrypted content and replay wh
       ...JSON.parse(before.all),
       resume_consents: [],
       resume_delivery: [],
+      autonote_approval_inbox: [],
     });
     expect(
       await page.evaluate(() => window.browserPeersTest.conversationStatus()),
@@ -1568,6 +1573,7 @@ test("actual version16 storage preserves resume consent, encrypted content and r
     expect(JSON.parse(after.all)).toEqual({
       ...JSON.parse(before.all),
       resume_delivery: [],
+      autonote_approval_inbox: [],
     });
     expect(
       await page.evaluate(() => window.browserPeersTest.resumeStatus()),
