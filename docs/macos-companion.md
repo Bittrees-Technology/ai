@@ -38,3 +38,8 @@ This is an ad-hoc-signed local development build, not a notarized public install
 New packages include `Contents/Resources/build-info.json` inside the signed bundle. It records the exact source revision, whether the source tree had local changes, build time, architecture, bundled Node version and dependency-lock checksum. **Bittrees AI → About Bittrees AI** displays the source revision and local-change label. Packaging verifies the manifest against the bundled runtime and lockfile before reporting success. No user data, machine paths, environment values or credentials are recorded.
 
 For a reviewable clean development archive, build from a clean merged checkout, archive with `ditto -c -k --sequesterRsrc --keepParent`, and record its SHA-256 alongside the source revision. A checksum identifies that archive; it is not an authenticated update channel or a substitute for Developer ID/notarization. Build metadata is provenance, not proof that the application passed native interaction acceptance. The currently installed app must be checked separately from newly prepared archives.
+
+
+## Download provenance
+
+The manual [verified development download workflow](mac-download-provenance.md) adds GitHub attestations and a source-bound download manifest after successful checks for an exact main revision. It does not change the ad-hoc development signature, install an updater, publish a release or complete the remaining native/signing acceptance.
