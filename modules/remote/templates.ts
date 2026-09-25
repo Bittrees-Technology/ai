@@ -67,7 +67,11 @@ export class RemoteTemplateStore {
       pendingPerDevice: 20,
     },
   ) {
-    if (![86400000, 7 * 86400000, 30 * 86400000].includes(retentionMs))
+    if (
+      ![86400000, 7 * 86400000, 30 * 86400000, 90 * 86400000].includes(
+        retentionMs,
+      )
+    )
       throw new RemoteStatusError("INVALID_INPUT");
     if (
       [
