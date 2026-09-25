@@ -33,6 +33,45 @@ async function openBuilt(page: Page, f: Fixture, reload = false) {
   await refresh(page);
 }
 async function setup(page: Page, f: Fixture, questions = false) {
+  await page.addInitScript(() => {
+    const events: unknown[] = [];
+    (
+      window as unknown as { deliveryDiagnosticEvents: unknown[] }
+    ).deliveryDiagnosticEvents = events;
+    const record = (kind: string, detail: string) => {
+      events.push({
+        at: performance.now(),
+        kind,
+        detail,
+        focused: document.hasFocus(),
+        visibility: document.visibilityState,
+      });
+      if (events.length > 200) events.shift();
+    };
+    for (const kind of ["focus", "blur", "error", "unhandledrejection"])
+      window.addEventListener(kind, () => record(kind, ""));
+    document.addEventListener("visibilitychange", () =>
+      record("visibility", ""),
+    );
+    document.addEventListener("DOMContentLoaded", () => {
+      let last = "";
+      new MutationObserver(() => {
+        const current = [
+          ...document.querySelectorAll('[role="status"], [role="alert"]'),
+        ]
+          .map((node) => node.textContent?.slice(0, 200))
+          .join(" | ");
+        if (current !== last) {
+          last = current;
+          record("notices", current);
+        }
+      }).observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    });
+  });
   const offer = await f.mac.conversationOffer(
     f.native.record().permission!.expiresAt,
     { questions },
@@ -89,6 +128,11 @@ async function reviewSend(page: Page) {
       body: Buffer.from(
         JSON.stringify({
           panel: await panel(page).innerText(),
+          events: await page.evaluate(
+            () =>
+              (window as unknown as { deliveryDiagnosticEvents: unknown[] })
+                .deliveryDiagnosticEvents,
+          ),
           focus: await page.evaluate(() => ({
             focused: document.hasFocus(),
             visibility: document.visibilityState,
@@ -465,6 +509,11 @@ test("built conversation delivery closes reviews across focus and panel changes 
       body: Buffer.from(
         JSON.stringify({
           panel: await panel(page).innerText(),
+          events: await page.evaluate(
+            () =>
+              (window as unknown as { deliveryDiagnosticEvents: unknown[] })
+                .deliveryDiagnosticEvents,
+          ),
           focus: await page.evaluate(() => ({
             focused: document.hasFocus(),
             visibility: document.visibilityState,
