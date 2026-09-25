@@ -459,6 +459,24 @@ test("built conversation delivery closes reviews across focus and panel changes 
     await refresh(page);
     await expect(panel(page)).toContainText("1 upload attempt");
     await preview(page, info, "cancelled-upload-history");
+  } catch (error) {
+    await test.info().attach("delivery-flow-diagnostic", {
+      contentType: "application/json",
+      body: Buffer.from(
+        JSON.stringify({
+          panel: await panel(page).innerText(),
+          focus: await page.evaluate(() => ({
+            focused: document.hasFocus(),
+            visibility: document.visibilityState,
+          })),
+          notices: await page.getByRole("status").allTextContents(),
+          alerts: await page.getByRole("alert").allTextContents(),
+          networkPaths: identityServer.events,
+          held: identityServer.held(),
+        }),
+      ),
+    });
+    throw error;
   } finally {
     identityServer.release();
     f.mac.close();
