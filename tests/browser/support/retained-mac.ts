@@ -148,7 +148,7 @@ export async function retainedMac(
     binding,
     consent,
     work,
-    async resumeOffer() {
+    async resumeOffer(expiresAt = clock() + 300000) {
       let task = store.create(
         owner,
         {
@@ -183,7 +183,7 @@ export async function retainedMac(
           taskId: task.id,
           taskRevision: task.revision,
           modelDigest: "a".repeat(64),
-          expiresAt: clock() + 300000,
+          expiresAt,
         },
       });
       const saved = resumeConsent.approve({

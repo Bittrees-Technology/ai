@@ -1,3 +1,4 @@
+import { mountBrowserResumeDelivery } from "./browser-resume-delivery.js";
 import { mountBrowserResumes } from "./browser-resumes.js";
 import { mountBrowserConversationContent } from "./browser-conversation-content.js";
 import { mountBrowserConversations } from "./browser-conversations.js";
@@ -32,6 +33,8 @@ export function mountBrowserSetup(
   monotonic = () => performance.now(),
   privateDelivery = false,
 ) {
+  let resumeDeliveryView:
+    ReturnType<typeof mountBrowserResumeDelivery> | undefined;
   let resumeView: ReturnType<typeof mountBrowserResumes> | undefined;
   let contentView:
     ReturnType<typeof mountBrowserConversationContent> | undefined;
@@ -129,6 +132,7 @@ export function mountBrowserSetup(
     conversationView.invalidate();
     contentView?.invalidate();
     resumeView?.invalidate();
+    resumeDeliveryView?.invalidate();
   });
   const checkRoot = el("div");
   root.append(checkRoot);
@@ -139,6 +143,7 @@ export function mountBrowserSetup(
     conversationView.invalidate();
     contentView?.invalidate();
     resumeView?.invalidate();
+    resumeDeliveryView?.invalidate();
   });
   const permissionRoot = el("div");
   root.append(permissionRoot);
@@ -155,6 +160,7 @@ export function mountBrowserSetup(
       conversationView.invalidate();
       contentView?.invalidate();
       resumeView?.invalidate();
+      resumeDeliveryView?.invalidate();
     },
   );
   const taskRoot = el("div");
@@ -173,6 +179,7 @@ export function mountBrowserSetup(
       conversationView.invalidate();
       contentView?.invalidate();
       resumeView?.invalidate();
+      resumeDeliveryView?.invalidate();
     },
     privateDelivery,
   );
@@ -192,6 +199,7 @@ export function mountBrowserSetup(
       taskView.invalidate();
       contentView?.invalidate();
       resumeView?.invalidate();
+      resumeDeliveryView?.invalidate();
     },
   );
   const contentRoot = el("div");
@@ -210,6 +218,7 @@ export function mountBrowserSetup(
       taskView.invalidate();
       conversationView.invalidate();
       resumeView?.invalidate();
+      resumeDeliveryView?.invalidate();
     },
   );
   const resumeRoot = el("div");
@@ -223,7 +232,29 @@ export function mountBrowserSetup(
     taskView.invalidate();
     conversationView.invalidate();
     contentView?.invalidate();
+    resumeDeliveryView?.invalidate();
   });
+  const resumeDeliveryRoot = el("div");
+  if (privateDelivery) {
+    root.append(resumeDeliveryRoot);
+    resumeDeliveryView = mountBrowserResumeDelivery(
+      resumeDeliveryRoot,
+      host,
+      now,
+      monotonic,
+      () => {
+        reset("Registration review closed while reviewing a resume request.");
+        keyView.invalidate();
+        peerView.invalidate();
+        checkView.invalidate();
+        permissionView.invalidate();
+        taskView.invalidate();
+        conversationView.invalidate();
+        contentView?.invalidate();
+        resumeView?.invalidate();
+      },
+    );
+  }
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;
@@ -301,6 +332,7 @@ export function mountBrowserSetup(
     conversationView.invalidate();
     contentView?.invalidate();
     resumeView?.invalidate();
+    resumeDeliveryView?.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -523,6 +555,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      resumeDeliveryView?.destroy();
+      resumeDeliveryRoot.remove();
       resumeView?.destroy();
       resumeRoot.remove();
       contentView?.destroy();

@@ -1,3 +1,4 @@
+import { BrowserResumeDelivery } from "./browser-resume-delivery.js";
 import { BrowserResumeConsent } from "./browser-resume-consent.js";
 import { BrowserConversationContent } from "./browser-conversation-content.js";
 import { BrowserConversationConsent } from "./browser-conversation-consent.js";
@@ -51,6 +52,7 @@ export class BrowserKeyHost {
   private consents?: BrowserTaskConsent;
   private conversations?: BrowserConversationConsent;
   private resumes?: BrowserResumeConsent;
+  private resumeDelivery?: BrowserResumeDelivery;
   private conversationContent?: BrowserConversationContent;
   private compositions?: BrowserTaskComposition;
   private taskHistory?: BrowserTaskHistory;
@@ -177,6 +179,7 @@ export class BrowserKeyHost {
     this.consents?.invalidate();
     this.conversations?.invalidate();
     this.resumes?.invalidate();
+    this.resumeDelivery?.invalidate();
     this.conversationContent?.invalidate();
     this.compositions?.invalidate();
     this.taskHistory?.invalidate();
@@ -199,6 +202,7 @@ export class BrowserKeyHost {
     this.consents?.close();
     this.conversations?.close();
     this.resumes?.close();
+    this.resumeDelivery?.close();
     this.conversationContent?.close();
     this.compositions?.close();
     this.taskHistory?.close();
@@ -237,6 +241,7 @@ export class BrowserKeyHost {
           this.consents?.invalidate();
           this.conversations?.invalidate();
           this.resumes?.invalidate();
+          this.resumeDelivery?.invalidate();
           this.conversationContent?.invalidate();
           this.compositions?.invalidate();
           this.taskHistory?.invalidate();
@@ -455,6 +460,27 @@ export class BrowserKeyHost {
     } catch (e) {
       created.close();
       throw e;
+    }
+  }
+  private async resumeDeliveryStore() {
+    if (this.resumeDelivery) return this.resumeDelivery;
+    const generation = this.generation;
+    const consent = await this.resumeStore();
+    this.check(generation);
+    const created = await BrowserResumeDelivery.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      consent,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(generation);
+      this.resumeDelivery = created;
+      return created;
+    } catch (error) {
+      created.close();
+      throw error;
     }
   }
   private async conversationContentStore() {
@@ -1002,6 +1028,141 @@ export class BrowserKeyHost {
       this.operation(async () => (await this.conversationStore()).clear(raw)),
     reset: (raw: unknown) =>
       this.verified(async () => (await this.conversationStore()).reset(raw)),
+    invalidate: () => this.cancelKeys(),
+  };
+  /** Retained resume requests. Offline maintenance cannot restore authority;
+   * every envelope and receipt operation obtains fresh verified peer scope. */
+  readonly resumeDeliveryAPI = {
+    history: () =>
+      this.operation(async () => (await this.resumeDeliveryStore()).history()),
+    export: (raw: unknown) =>
+      this.operation(async () =>
+        (await this.resumeDeliveryStore()).export(raw),
+      ),
+    stop: (raw: unknown) =>
+      this.operation(async () => (await this.resumeDeliveryStore()).stop(raw)),
+    clear: (raw: unknown) =>
+      this.operation(async () => (await this.resumeDeliveryStore()).clear(raw)),
+    prepare: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.resumeDeliveryStore()).prepare(raw),
+      ),
+    read: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.resumeDeliveryStore()).read(raw),
+      ),
+    envelope: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.resumeDeliveryStore()).envelope(raw),
+      ),
+    reconcile: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.resumeDeliveryStore()).reconcile(raw),
+      ),
+    invalidate: () => this.cancelKeys(),
+  };
+  /** Transport storage is not Mac acceptance. Originals are retained before any
+   * upload; uncertain uploads reuse that exact envelope on an explicit retry. */
+  readonly relayResumeAPI = {
+    inspect: (raw: unknown) => this.relayTaskAPI.inspect(raw),
+    send: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = z
+          .strictObject({
+            grantId: z.uuid(),
+            id: z.uuid(),
+            expectedRevision: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER),
+            confirmed: z.literal(true),
+          })
+          .parse(raw);
+        return this.relay.withClient(async (client, sender, check) => {
+          const store = await this.resumeDeliveryStore();
+          const original = await store.envelope(input);
+          check();
+          const recipient = await client.recipient({
+            endpointId: original.header.recipientId,
+          });
+          check();
+          if (
+            original.header.expiresAt >
+            Math.min(sender.expiresAt, recipient.expiresAt)
+          )
+            throw Error("DENIED");
+          const entry = await store.read({
+            grantId: input.grantId,
+            id: input.id,
+          });
+          check();
+          const result = await client.submit(
+            { version: 1, envelope: original },
+            async () => {
+              check();
+              const current = await store.envelope({
+                ...input,
+                expectedRevision: entry.revision,
+              });
+              check();
+              if (!same(current, original)) throw Error("CONFLICT");
+            },
+          );
+          check();
+          return {
+            entry,
+            transport: { transportOnly: true as const, ...result },
+          };
+        });
+      }),
+    receive: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = privateRelayQueueQuerySchema
+          .extend({
+            selection: privateRelaySelectionSchema,
+            grantId: z.uuid(),
+            id: z.uuid(),
+            expectedRevision: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER),
+          })
+          .parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          const page = await client.poll({ after: input.after, limit: 1 }),
+            item = page.items[0];
+          check();
+          if (!item || !relaySelectionMatches(item, input.selection))
+            throw Error("CONFLICT");
+          const received = await (
+            await this.resumeDeliveryStore()
+          ).reconcile(
+            {
+              grantId: input.grantId,
+              id: input.id,
+              expectedRevision: input.expectedRevision,
+              envelope: item.envelope,
+              confirmed: true,
+            },
+            check,
+          );
+          check();
+          const transport = await client.acknowledge({
+            messageId: item.receipt.messageId,
+            envelopeHash: item.receipt.envelopeHash,
+            expectedRevision: item.receipt.revision,
+            confirmed: true,
+          });
+          check();
+          return {
+            received,
+            transport: { transportOnly: true as const, ...transport },
+            nextCursor: page.nextCursor,
+          };
+        });
+      }),
     invalidate: () => this.cancelKeys(),
   };
   /** Separate resume consent for a specific paused Mac task and model.

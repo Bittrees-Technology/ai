@@ -250,6 +250,20 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Verify built Mac resume request flow
+        run: npx playwright test --config scripts/private-browser.config.ts production-browser-resume-delivery.spec.ts --trace=retain-on-failure --reporter=json > regression-reports/resume-flow.json
+      - name: Retain Mac resume flow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-flow
+          path: |
+            regression-reports/resume-flow.json
+            test-results/browser-resume-delivery-ui/*.png
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: error
+          retention-days: 7
       - name: Verify conversation delivery review readiness
         run: |
           mkdir -p regression-reports
