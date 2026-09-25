@@ -1148,3 +1148,38 @@ select.model-profile-select {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.resume-permissions {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #aabec5;
+  max-width: 72ch;
+}
+.resume-permissions fieldset {
+  margin-top: 16px;
+}
+.resume-choices dd,
+.resume-identity {
+  overflow-wrap: anywhere;
+}
+.resume-choices dd {
+  margin: 0 0 10px;
+}
+.resume-choices dt {
+  font-weight: 600;
+}
+.resume-review {
+  border-left: 3px solid #28685c;
+  padding-left: 16px;
+}
+
+.resume-review .resume-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.resume-review .resume-ack input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 5px 0 0;
+}

@@ -64,3 +64,5 @@ tests/browser/fixture/public/legacy-relay-content/
 .legacy-resume-authority/
 
 .legacy-private-resume/
+
+.legacy-resume-offers/

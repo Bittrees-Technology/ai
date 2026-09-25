@@ -1577,6 +1577,7 @@ export function localApi({
       privateConversationConsent: store.exportPrivateConversationConsent(owner),
       privateResumeConsent: store.exportPrivateResumeConsent(owner),
       privateResumeDelivery: store.exportPrivateResumeDelivery(owner),
+      privateResumeOffers: store.exportPrivateResumeOffers(owner),
       privateConversationOffers: store.exportPrivateConversationOffers(owner),
       privateConversationContent: store
         .exportPrivateConversationContent(owner)

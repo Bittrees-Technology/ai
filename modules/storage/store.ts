@@ -1,3 +1,4 @@
+import { exportPrivateResumeOffers } from "../remote/private-resume-offers.js";
 import { exportPrivateResumeDelivery } from "../remote/private-resume-delivery.js";
 import { exportPrivateResumeConsent } from "../remote/private-resume-consent.js";
 import { RemoteResumes } from "./remote-resumes.js";
@@ -172,7 +173,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 37) {
+    if (version > 38) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -312,7 +313,10 @@ CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_i
           "CREATE TABLE IF NOT EXISTS private_resume_delivery(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id))",
         );
         // Older writers must not bypass retained single-use resume authority.
-        this.db.pragma("user_version = 37");
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_resume_offers(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,client_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id),UNIQUE(user_id,tenant_id,client_hash))",
+        );
+        this.db.pragma("user_version = 38");
       })();
     } catch (error) {
       this.db.close();
@@ -1807,6 +1811,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateIncomingReplay(owner: Owner) {
     return exportPrivateIncomingReplay(this, this.vault, owner);
   }
+  exportPrivateResumeOffers(owner: Owner) {
+    return exportPrivateResumeOffers(this, this.vault, owner);
+  }
   exportPrivateResumeDelivery(owner: Owner) {
     return exportPrivateResumeDelivery(this, this.vault, owner);
   }
@@ -2150,6 +2157,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           "private_task_receipts",
           "remote_resume_receipts",
           "private_resume_delivery",
+          "private_resume_offers",
           "remote_resume_permissions",
           "remote_template_receipts",
           "remote_template_permissions",

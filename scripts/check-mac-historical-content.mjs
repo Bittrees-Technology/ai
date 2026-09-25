@@ -243,7 +243,7 @@ try {
   f.e.store.close();
   const sender = upgrade(f.a, join(f.dir, "sender.db"));
   endpoint = upgrade(f.e, join(f.dir, "mac.db"));
-  assert.equal(endpoint.store.db.pragma("user_version", { simple: true }), 37);
+  assert.equal(endpoint.store.db.pragma("user_version", { simple: true }), 38);
   assert.deepEqual(snapshot().messages, messages);
   const preserved = await key(endpoint);
   assert.deepEqual(preserved.proof, oldKey.proof);
@@ -424,7 +424,7 @@ try {
     verifiedAt: new Date().toISOString(),
     legacySourceHead: "d3ee4a9e5f82533509fde131e2e284906ed2d9fe",
     from: 31,
-    to: 37,
+    to: 38,
     compiledHashes: hashes,
     checks: [
       "actual historical ciphertext decrypts with preserved native material but current authenticated API denies without Inbox, replay or journal changes",

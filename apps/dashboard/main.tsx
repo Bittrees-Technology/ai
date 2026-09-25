@@ -1,3 +1,4 @@
+import { ResumePermissions } from "./resume-permissions.js";
 import { QuestionChoice } from "./question-choice.js";
 import { ModelProfileFields } from "./model-profile-fields.js";
 import {
@@ -566,6 +567,13 @@ function App() {
                           </button>
                         )}
                       </div>
+                      <ResumePermissions
+                        key={`${task.id}:${task.revision}:${task.status}`}
+                        api={api}
+                        taskId={task.id}
+                        taskRevision={task.revision}
+                        status={task.status}
+                      />
                       {task.dependencyAccess === "unavailable" && (
                         <p role="status">
                           A local reference used by this task is no longer
