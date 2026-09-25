@@ -104,7 +104,7 @@ async function startIdentityServer() {
       { stdio: "ignore" },
     );
     cert = await readFile(join(folder, "cert.pem"));
-    let privateRelayEnabled = false;
+    let privateRelayEnabled = false, mcpClientCredentialHash: string | undefined;
     const newApp = () =>
       createRemoteApp(pool, {
         origin,
@@ -113,6 +113,7 @@ async function startIdentityServer() {
         deviceMs: 7200000,
         retentionMs: 86400000,
         requestsPerMinute: 1000,
+        mcpClientCredentialHash,
         ...(privateRelayEnabled
           ? {
               privateRelayPolicy: {
@@ -331,6 +332,7 @@ async function startIdentityServer() {
         // real limiter still applies within that test, including all its tabs.
         // Retained server authority remains in the same disposable PostgreSQL.
         privateRelayEnabled = false;
+        mcpClientCredentialHash = undefined;
         app = newApp();
         holdPath = "";
         dropPath = "";
@@ -342,6 +344,7 @@ async function startIdentityServer() {
         offline = false;
         events.length = 0;
       },
+      enableMcp(hash: string) { mcpClientCredentialHash = hash; app = newApp(); },
       enablePrivateRelay() {
         privateRelayEnabled = true;
         app = newApp();

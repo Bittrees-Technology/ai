@@ -420,6 +420,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Verify MCP owner connection controls
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config scripts/private-browser.config.ts production-mcp-connections.spec.ts --trace=retain-on-failure --reporter=json > regression-reports/mcp-connections.json
+      - name: Retain MCP connection review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-connection-review
+          path: |
+            regression-reports/mcp-connections.json
+            test-results/mcp-connections/*.png
+            test-results/**/error-context.md
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify browser and companion private-protocol interoperability
         if: github.event_name != 'pull_request'
         run: npm run test:browser-private -- --max-failures=3
