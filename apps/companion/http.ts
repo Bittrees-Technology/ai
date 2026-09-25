@@ -1,3 +1,4 @@
+import { AutoNoteDecisionError } from "../../modules/remote/private-autonote-decisions.js";
 import { ApprovalOutboxError } from "../../modules/remote/private-autonote-approval-outbox.js";
 import { AutoNotePeerApprovalError } from "../../modules/remote/private-autonote-approval-consent.js";
 import type { AutoNoteApprovalConnector } from "../../modules/connectors/autonote-approval.js";
@@ -1806,6 +1807,7 @@ export function localApi({
             err instanceof ResumeOfferError ||
             err instanceof ApprovalOutboxError ||
             err instanceof AutoNotePeerApprovalError ||
+            err instanceof AutoNoteDecisionError ||
             err instanceof ConversationContentError ||
             err instanceof PrivateKeyError ||
             err instanceof PrivateKeyLifecycleError ||
@@ -1830,6 +1832,7 @@ export function localApi({
               err instanceof ResumeOfferError ||
               err instanceof ApprovalOutboxError ||
               err instanceof AutoNotePeerApprovalError ||
+              err instanceof AutoNoteDecisionError ||
               err instanceof ConversationContentError ||
               err instanceof PrivateResumeConsentError ||
               err instanceof PrivateResumeDeliveryError) &&

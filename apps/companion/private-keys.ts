@@ -1,3 +1,4 @@
+import type { AutoNoteConnector } from "../../modules/connectors/autonote.js";
 import { CompanionAutoNoteApprovals } from "./private-autonote-approvals.js";
 import type { AutoNoteApprovalConnector } from "../../modules/connectors/autonote-approval.js";
 import type { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
@@ -93,6 +94,7 @@ export class CompanionPrivateKeys {
       enabled: boolean;
       approval: AutoNoteApprovalConnector;
       sources: AutoNoteTasks;
+      source: AutoNoteConnector;
     },
   ) {
     this.owner = { ...owner };
@@ -107,6 +109,8 @@ export class CompanionPrivateKeys {
         remote,
         setupEnabled && autoNoteOptions.enabled,
         now,
+        undefined,
+        autoNoteOptions.source,
       );
     this.peerChecks = new CompanionPeerChecks(
       store,

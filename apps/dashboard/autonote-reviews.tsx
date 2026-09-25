@@ -212,7 +212,7 @@ export function AutoNoteReviewControls({
             />
           )}
           {item.approvalAvailable &&
-            item.state === "prepared" &&
+            ["prepared", "uncertain", "saved"].includes(item.state) &&
             item.review && (
               <AutoNoteBrowserApproval
                 key={item.id + ":browser:" + item.state}

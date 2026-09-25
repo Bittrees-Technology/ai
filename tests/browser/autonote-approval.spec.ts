@@ -263,12 +263,25 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
     connection = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   let sends = 0,
     cancels = 0,
-    action = "";
+    action = "",
+    decisionState = "";
   const expiry = Date.now() + 300000;
   const state = () => ({
     available: true,
     canSetup: true,
     revision: sends + 1,
+    decisions: decisionState
+      ? [
+          {
+            decisionId: id,
+            offerId: id,
+            decision: "approve",
+            state: decisionState,
+            result:
+              decisionState === "saved" ? { receipt: { version: 2 } } : null,
+          },
+        ]
+      : [],
     permissions: [
       {
         id,
@@ -343,18 +356,29 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
               detailHash: "cd".repeat(32),
             },
             messageIds: [id, peerId, connection],
+            item: {
+              selection: { messageId: id },
+              cursor: { storedAt: Date.now(), messageId: id },
+            },
           },
         },
       });
     }
     if (path.endsWith("/confirm")) {
-      expect(action).toBe("send");
+      expect(["send", "receive", "execute", "reconcile"]).toContain(action);
       expect(request.postDataJSON()).toEqual({
         reviewId: id,
         confirmed: true,
         acknowledged: true,
       });
-      sends++;
+      if (action === "send") sends++;
+      else
+        decisionState =
+          action === "receive"
+            ? "accepted"
+            : action === "execute"
+              ? "uncertain"
+              : "saved";
       return route.fulfill({ json: state() });
     }
     if (path === "/v1/private-autonote-approvals/" + id)
@@ -413,6 +437,36 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
   await confirm.click();
   await expect(
     region.getByText("3 of 3 parts stored at the relay.", { exact: false }),
+  ).toBeVisible();
+  for (const label of [
+    "Review receiving a browser decision",
+    "Review saving browser-approved notes",
+    "Review checking save receipt",
+  ]) {
+    await region.getByRole("button", { name: label, exact: true }).click();
+    await expect(confirm).toBeDisabled();
+    if (label === "Review saving browser-approved notes") {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await region.screenshot({
+        path: `test-results/autonote-approval/${info.project.name}-decision-phone.png`,
+      });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+      await page.setViewportSize({ width: 1280, height: 1000 });
+      await region.screenshot({
+        path: `test-results/autonote-approval/${info.project.name}-decision-desktop.png`,
+      });
+    }
+    await region
+      .getByLabel("I understand and want to perform this action.")
+      .check();
+    await confirm.click();
+  }
+  await expect(
+    region.getByText("Saved meeting version 2.", { exact: false }),
   ).toBeVisible();
   expect(sends).toBe(1);
   expect(cancels).toBeGreaterThanOrEqual(1);

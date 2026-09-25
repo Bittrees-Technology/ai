@@ -67,7 +67,7 @@ export class PrivateAutoNoteApprovalConsent {
       ),
     };
   }
-  private valid(g: AutoNotePeerApprovalGrant) {
+  private valid(g: AutoNotePeerApprovalGrant, requireSource = true) {
     try {
       const item = this.store.autoNoteReview(this.owner, g.operationId),
         task = this.store.get(this.owner, g.taskId);
@@ -75,7 +75,7 @@ export class PrivateAutoNoteApprovalConsent {
         !g.revoked &&
         g.approvedAt <= this.now() &&
         g.expiresAt > this.now() &&
-        item.state === "prepared" &&
+        (!requireSource || item.state === "prepared") &&
         task.revision === g.taskRevision &&
         item.grantId === g.grantId &&
         item.response?.reviewId === g.reviewId &&
@@ -309,6 +309,37 @@ export class PrivateAutoNoteApprovalConsent {
     if (transfer.manifest.detailHash !== grant.detailHash)
       throw new AutoNotePeerApprovalError("DENIED");
     return { grant, ...transfer };
+  }
+  /** Peer authentication for retained decisions/results only; never source-write authority. */
+  async resolvePeer(operationId: string, permissionId: string) {
+    const grant = this.list(operationId).grants.find(
+        (g) => g.id === permissionId,
+      ),
+      generation = this.generation;
+    if (!grant || !this.valid(grant, false))
+      throw new AutoNotePeerApprovalError("DENIED");
+    const local = await this.keys.resolve(),
+      peer = await this.peers.resolve(grant.peer.peerId, grant.peer.keyEpoch);
+    const check = () => {
+      const retained = this.list(operationId).grants.find(
+        (g) => g.id === permissionId,
+      );
+      if (
+        generation !== this.generation ||
+        !same(retained, grant) ||
+        !this.valid(grant, false) ||
+        !same(local.proof, grant.local) ||
+        !same(peer.proof, grant.peer)
+      )
+        throw new AutoNotePeerApprovalError("DENIED");
+    };
+    check();
+    return {
+      grant: structuredClone(grant),
+      localKey: { ...local.pair },
+      peerPublicKey: peer.publicKey,
+      check,
+    };
   }
   async resolve(operationId: string, permissionId: string) {
     const grant = this.list(operationId).grants.find(
