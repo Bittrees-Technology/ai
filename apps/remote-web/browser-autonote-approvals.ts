@@ -9,6 +9,7 @@ type Cursor = NonNullable<Queue["item"]>["cursor"] | null;
 type Review = {
   action:
     | "receive"
+    | "receive-result"
     | "reveal"
     | "export"
     | "remove"
@@ -202,15 +203,35 @@ export function mountBrowserAutoNoteApprovals(
         row.append(
           el(
             "p",
-            `Decision: ${saved.decision}. ${saved.transport ? "Stored at relay; source save is not confirmed here." : saved.attempts ? "Delivery outcome uncertain. Retry sends the same encrypted decision." : "Retained on this browser; not sent."}`,
+            `Decision: ${saved.decision}. ${saved.result ? (saved.result.status === "saved" ? "Saved in AutoNote, meeting version " + saved.result.receipt!.version + "." : saved.result.status === "rejected" ? "Rejected; no source save was requested." : "Source save outcome uncertain. Check the Mac receipt; do not send another save.") : saved.transport ? "Stored at relay; source save is not confirmed here." : saved.attempts ? "Delivery outcome uncertain. Retry sends the same encrypted decision." : "Retained on this browser; not sent."}`,
           ),
         );
-        if (!expired)
+        if (!expired && !saved.result)
           row.append(
             button("Review sending retained decision", () => {
               beforeWork();
               clear();
               prepare("send", entry.offerId);
+            }),
+          );
+        if (!expired)
+          row.append(
+            button("Inspect next result for this decision", () => {
+              beforeWork();
+              clear();
+              void run(async (valid) => {
+                const found = await host.autoNoteApprovalAPI.inspect({
+                  after,
+                  confirmed: true,
+                });
+                if (!valid()) return;
+                queue = found;
+                if (!found.item) {
+                  notice.textContent = "No queued result found.";
+                  return;
+                }
+                prepare("receive-result", entry.offerId);
+              });
             }),
           );
         row.append(
@@ -304,7 +325,7 @@ export function mountBrowserAutoNoteApprovals(
     if (!focused()) return;
     const expires = Math.min(
       now() + 60000,
-      action === "receive"
+      action === "receive" || action === "receive-result"
         ? (queue?.item?.expiresAt ?? 0)
         : (entries.find((e) => e.offerId === id)?.expiresAt ?? Infinity),
     );
@@ -328,6 +349,7 @@ export function mountBrowserAutoNoteApprovals(
         "h3",
         {
           receive: "Receive this encrypted part",
+          "receive-result": "Receive the result for this decision",
           reveal: "Reveal complete meeting notes",
           export: "Export encrypted parts",
           remove: "Delete this local offer and decision",
@@ -341,15 +363,26 @@ export function mountBrowserAutoNoteApprovals(
         "p",
         action === "receive"
           ? "Only a valid AutoNote part from your paired Mac is retained. Other encrypted content is left for its own controls."
-          : action === "remove"
-            ? "Deletes this offer and its local decision history. Already delivered decisions cannot be recalled. Source notes are unchanged, and the offer cannot be silently reimported."
-            : action === "approve" || action === "reject"
-              ? "Confirm this exact decision after reviewing all notes and their audience. It is retained locally until you choose to send it."
-              : action === "send"
-                ? "Send the original encrypted decision. Relay storage is not confirmation that AutoNote saved the notes."
-                : "This action does not approve notes or save them at the source.",
+          : action === "receive-result"
+            ? "Authenticate the selected result from your paired Mac and retain its source outcome. Other queued messages are not accepted."
+            : action === "remove"
+              ? "Deletes this offer and its local decision history. Already delivered decisions cannot be recalled. Source notes are unchanged, and the offer cannot be silently reimported."
+              : action === "approve" || action === "reject"
+                ? "Confirm this exact decision after reviewing all notes and their audience. It is retained locally until you choose to send it."
+                : action === "send"
+                  ? "Send the original encrypted decision. Relay storage is not confirmation that AutoNote saved the notes."
+                  : "This action does not approve notes or save them at the source.",
       ),
     );
+    if (action === "receive-result")
+      stage.append(
+        button("Skip queued item without receiving", () => {
+          const cursor = r.queue!.item!.cursor;
+          clear();
+          after = cursor;
+          notice.textContent = "Skipped this queued item without receiving it.";
+        }),
+      );
     const label = el("label", "", "browser-keys-check"),
       ack = el("input");
     ack.type = "checkbox";
@@ -390,6 +423,22 @@ export function mountBrowserAutoNoteApprovals(
           render();
           notice.textContent =
             "Encrypted decision stored at relay. Source saving is not confirmed here.";
+        } else if (r.action === "receive-result") {
+          const result = await host.autoNoteApprovalAPI.receiveResult({
+            offerId: r.id,
+            after: r.after,
+            selection: r.queue!.item!.selection,
+            confirmed: true,
+          });
+          if (!valid()) return;
+          after = r.queue!.item!.cursor;
+          decisions = await host.autoNoteApprovalAPI.decisionHistory();
+          if (!valid()) return;
+          render();
+          notice.textContent =
+            "Authenticated result retained: " +
+            result.received.result.status +
+            ".";
         } else if (r.action === "receive") {
           const result = await host.autoNoteApprovalAPI.receive({
             after: r.after,

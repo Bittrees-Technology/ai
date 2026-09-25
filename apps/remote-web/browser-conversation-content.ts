@@ -346,10 +346,12 @@ export function mountBrowserConversationContent(
       !!opened?.relayStopped ||
       opened.expiresAt <= now() ||
       !!review;
-    send.textContent =
+    const sendLabel =
       opened?.direction === "incoming"
         ? "Review sending storage receipt"
         : "Review sending to Mac";
+    // Keep the pointer target intact when the periodic readiness check changes nothing.
+    if (send.textContent !== sendLabel) send.textContent = sendLabel;
     inspectQueueButton.disabled = !ready || !usable() || !!review;
     nextQueue.disabled = inspectQueueButton.disabled || !queue?.value.item;
     receiveQueue.disabled = inspectQueueButton.disabled || !queue?.value.item;

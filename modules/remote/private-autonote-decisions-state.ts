@@ -5,7 +5,28 @@ import {
   autoNoteApprovalManifestSchema,
   autoNoteApprovalReceiptSchema,
 } from "./private-autonote-approval-contracts.js";
-import { privateEnvelopeSchema } from "./private-envelope.js";
+import { privateRelayStorageReceiptSchema } from "./private-relay-contracts.js";
+import {
+  privateHeaderSchema,
+  privateEnvelopeSchema,
+} from "./private-envelope.js";
+const resultDeliverySchema = z
+  .strictObject({
+    result: autoNoteApprovalReceiptSchema,
+    header: privateHeaderSchema,
+    envelope: privateEnvelopeSchema.nullable(),
+    attempts: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    transport: privateRelayStorageReceiptSchema.nullable(),
+  })
+  .refine(
+    (v) =>
+      (!v.envelope ||
+        JSON.stringify(v.envelope.header) === JSON.stringify(v.header)) &&
+      (!v.transport ||
+        (v.attempts > 0 &&
+          v.transport.messageId === v.header.messageId &&
+          v.transport.storedAt >= v.header.issuedAt)),
+  );
 export const autoNoteRetainedDecisionSchema = z
   .strictObject({
     command: autoNoteApprovalDecisionSchema,
@@ -14,6 +35,7 @@ export const autoNoteRetainedDecisionSchema = z
     envelope: privateEnvelopeSchema,
     state: z.enum(["accepted", "rejected", "uncertain", "saved"]),
     result: autoNoteApprovalReceiptSchema.nullable(),
+    resultDeliveries: z.array(resultDeliverySchema).max(2).optional(),
   })
   .refine((v) => {
     const c = v.command,
@@ -21,6 +43,34 @@ export const autoNoteRetainedDecisionSchema = z
       g = v.grant,
       h = v.envelope.header;
     return (
+      (v.resultDeliveries ?? []).every((d) => {
+        const r = d.result,
+          rh = d.header;
+        return (
+          r.decisionId === c.id &&
+          r.offerId === c.offerId &&
+          r.detailHash === c.detailHash &&
+          (c.decision === "reject"
+            ? r.status === "rejected"
+            : r.status !== "rejected") &&
+          (r.status === v.state ||
+            (v.state === "saved" && r.status === "uncertain")) &&
+          (!r.receipt ||
+            (r.receipt.operationId === m.operationId &&
+              r.receipt.meetingId === m.meetingId)) &&
+          rh.operationId === rh.messageId &&
+          rh.ownerId === h.ownerId &&
+          rh.senderId === h.recipientId &&
+          rh.recipientId === h.senderId &&
+          rh.senderKeyEpoch === h.recipientKeyEpoch &&
+          rh.recipientKeyEpoch === h.senderKeyEpoch &&
+          rh.issuedAt >= h.issuedAt &&
+          rh.expiresAt > rh.issuedAt &&
+          rh.expiresAt <= m.expiresAt
+        );
+      }) &&
+      new Set((v.resultDeliveries ?? []).map((d) => d.result.status)).size ===
+        (v.resultDeliveries ?? []).length &&
       c.id === h.operationId &&
       c.offerId === m.offerId &&
       c.permissionId === g.id &&

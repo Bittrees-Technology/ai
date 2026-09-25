@@ -992,7 +992,11 @@ const fixture = {
     host!.autoNoteApprovalAPI.confirmDecision(raw),
   approvalHostDecisionSend: (raw: unknown) =>
     host!.autoNoteApprovalAPI.sendDecision(raw),
+  approvalHostResultReceive: (raw: unknown) =>
+    host!.autoNoteApprovalAPI.receiveResult(raw),
   approvalHostReveal: (raw: unknown) => host!.autoNoteApprovalAPI.reveal(raw),
+  approvalResultReceive: (raw: unknown) =>
+    withKey(async () => (await approvalInboxStore()).receiveResult(raw)),
   approvalDecisionPrepare: (raw: unknown) =>
     withKey(async () => (await approvalInboxStore()).prepareDecision(raw)),
   approvalDecisionConfirm: (raw: unknown) =>

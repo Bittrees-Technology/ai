@@ -264,7 +264,9 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
   let sends = 0,
     cancels = 0,
     action = "",
-    decisionState = "";
+    decisionState = "",
+    resultPrepared = false,
+    resultSent = false;
   const expiry = Date.now() + 300000;
   const state = () => ({
     available: true,
@@ -277,8 +279,21 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
             offerId: id,
             decision: "approve",
             state: decisionState,
+            resultDeliveries: resultPrepared
+              ? [
+                  {
+                    messageId: id,
+                    status: "saved",
+                    encrypted: true,
+                    attempts: resultSent ? 1 : 0,
+                    transport: resultSent ? { state: "stored" } : null,
+                  },
+                ]
+              : [],
             result:
-              decisionState === "saved" ? { receipt: { version: 2 } } : null,
+              decisionState === "saved"
+                ? { status: "saved", receipt: { version: 2 } }
+                : null,
           },
         ]
       : [],
@@ -355,6 +370,7 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
               peer: { fingerprint: "ab".repeat(32) },
               detailHash: "cd".repeat(32),
             },
+            result: { status: "saved", receipt: { version: 2 } },
             messageIds: [id, peerId, connection],
             item: {
               selection: { messageId: id },
@@ -365,13 +381,22 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
       });
     }
     if (path.endsWith("/confirm")) {
-      expect(["send", "receive", "execute", "reconcile"]).toContain(action);
+      expect([
+        "send",
+        "receive",
+        "execute",
+        "reconcile",
+        "prepare-result",
+        "send-result",
+      ]).toContain(action);
       expect(request.postDataJSON()).toEqual({
         reviewId: id,
         confirmed: true,
         acknowledged: true,
       });
       if (action === "send") sends++;
+      else if (action === "prepare-result") resultPrepared = true;
+      else if (action === "send-result") resultSent = true;
       else
         decisionState =
           action === "receive"
@@ -442,13 +467,18 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
     "Review receiving a browser decision",
     "Review saving browser-approved notes",
     "Review checking save receipt",
+    "Review preparing browser result",
+    "Review sending browser result",
   ]) {
     await region.getByRole("button", { name: label, exact: true }).click();
     await expect(confirm).toBeDisabled();
-    if (label === "Review saving browser-approved notes") {
+    if (
+      label === "Review saving browser-approved notes" ||
+      label === "Review sending browser result"
+    ) {
       await page.setViewportSize({ width: 390, height: 844 });
       await region.screenshot({
-        path: `test-results/autonote-approval/${info.project.name}-decision-phone.png`,
+        path: `test-results/autonote-approval/${info.project.name}-${label === "Review sending browser result" ? "result" : "decision"}-phone.png`,
       });
       expect(
         await page.evaluate(
@@ -457,7 +487,7 @@ test("browser approval delivery reviews remaining parts and cancels on focus los
       ).toBe(false);
       await page.setViewportSize({ width: 1280, height: 1000 });
       await region.screenshot({
-        path: `test-results/autonote-approval/${info.project.name}-decision-desktop.png`,
+        path: `test-results/autonote-approval/${info.project.name}-${label === "Review sending browser result" ? "result" : "decision"}-desktop.png`,
       });
     }
     await region

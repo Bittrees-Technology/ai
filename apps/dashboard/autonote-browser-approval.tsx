@@ -11,6 +11,8 @@ const labels: Record<string, string> = {
   receive: "Receive this browser decision",
   execute: "Save the browser-approved notes",
   reconcile: "Check the existing save receipt",
+  "prepare-result": "Prepare the encrypted result",
+  "send-result": "Send this result to the browser",
 };
 export function AutoNoteBrowserApproval({
   id,
@@ -162,8 +164,8 @@ export function AutoNoteBrowserApproval({
       <h4>Review on a paired browser</h4>
       <p>
         Prepare and send these exact notes with a separate browser permission.
-        The browser decision return is still being built; received decisions
-        appear below.
+        Receive the browser decision here, confirm saving in AutoNote, then send
+        the recorded result back to the browser.
       </p>
       <button disabled={busy} onClick={() => void refresh()}>
         Refresh browser approval progress
@@ -369,6 +371,47 @@ export function AutoNoteBrowserApproval({
               Review saving browser-approved notes
             </button>
           )}
+          {d.result && (
+            <button
+              disabled={busy || !!review || !data.canSetup}
+              onClick={() =>
+                void prepare("prepare-result", { decisionId: d.decisionId })
+              }
+            >
+              Review preparing browser result
+            </button>
+          )}
+          {(d.resultDeliveries ?? []).map((r: any) => (
+            <div key={r.messageId}>
+              <p>
+                {r.status} result:{" "}
+                {r.transport
+                  ? "Stored at relay."
+                  : r.attempts
+                    ? "Upload outcome uncertain; retry preserves the original encrypted result."
+                    : "Prepared locally."}
+              </p>
+              {r.status === d.result?.status && (
+                <button
+                  disabled={
+                    busy || !!review || !data.canSetup || !relay || !r.encrypted
+                  }
+                  onClick={() =>
+                    void prepare("send-result", {
+                      decisionId: d.decisionId,
+                      messageId: r.messageId,
+                      connection: {
+                        id: relay.id,
+                        expectedRevision: relay.revision,
+                      },
+                    })
+                  }
+                >
+                  Review sending browser result
+                </button>
+              )}
+            </div>
+          ))}
           {d.state === "uncertain" && (
             <button
               disabled={busy || !!review}
@@ -401,7 +444,12 @@ export function AutoNoteBrowserApproval({
           {grant?.detailHash && (
             <p>
               Exact notes reference:{" "}
-              <span className="approval-fingerprint">{grant.detailHash}</span>
+              <span
+                className="approval-fingerprint"
+                style={{ overflowWrap: "anywhere" }}
+              >
+                {grant.detailHash}
+              </span>
             </p>
           )}
           {review.action === "send" && (
@@ -434,6 +482,13 @@ export function AutoNoteBrowserApproval({
             <p>
               Save the exact notes approved by this browser. Current source
               permission and notes are checked again before saving.
+            </p>
+          )}
+          {(review.action === "prepare-result" ||
+            review.action === "send-result") && (
+            <p>
+              Result: {review.summary.result.status}. This shares the recorded
+              outcome; it does not save notes again.
             </p>
           )}
           {review.action === "reconcile" && (

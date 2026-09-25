@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 19;
+export const browserKeyDatabaseVersion = 20;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -184,6 +184,7 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         content.createIndex("scope", "scope");
       }
     };
+    // Version20 fences older writers before decision receipt replay records.
     // Version19 adds encrypted browser decision storage and fences previous writers.
     // Version18 adds an empty encrypted AutoNote approval inbox and fences previous writers.
     // Version16 adds separate resume consent and fences older replay writers.

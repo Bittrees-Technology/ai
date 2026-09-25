@@ -48,6 +48,7 @@ import {
 } from "./private-envelope.js";
 import type { PrivateBinding } from "./private-peer-contracts.js";
 import {
+  autoNoteApprovalReceiptSchema,
   autoNoteApprovalDecisionSchema,
   autoNoteApprovalManifestSchema,
   autoNoteApprovalChunkSchema,
@@ -921,6 +922,140 @@ export class BrowserAutoNoteApprovalInbox {
           ),
       );
       return this.decisionSummary({ row: receiptRow, value: settled });
+    });
+  }
+  async receiveResult(raw: unknown, deliveryCheck: () => void = () => {}) {
+    const input = z
+      .strictObject({
+        offerId: z.uuid(),
+        envelope: privateEnvelopeSchema,
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    return this.exclusive(async (operationCheck) => {
+      const check = () => {
+        operationCheck();
+        deliveryCheck();
+      };
+      const inspected = await this.inspectOffer(input.offerId, check),
+        { p } = inspected;
+      const entry = await this.savedDecision(input.offerId, check),
+        original = entry.value;
+      if (
+        !same(original.local, p.local.proof) ||
+        !same(original.peer, p.peer.proof) ||
+        !same(original.manifest, inspected.manifest) ||
+        entry.row.deviceHash !== p.identity.deviceHash
+      )
+        throw fail();
+      const h = input.envelope.header,
+        sent = original.envelope.header;
+      if (
+        h.operationId !== h.messageId ||
+        h.ownerId !== sent.ownerId ||
+        h.senderId !== sent.recipientId ||
+        h.recipientId !== sent.senderId ||
+        h.senderKeyEpoch !== sent.recipientKeyEpoch ||
+        h.recipientKeyEpoch !== sent.senderKeyEpoch ||
+        h.issuedAt < sent.issuedAt ||
+        h.expiresAt > original.manifest.expiresAt
+      )
+        throw fail();
+      const opened = await openPrivateEnvelope(
+        input.envelope,
+        h,
+        { recipientKey: p.local.pair, senderPublicKey: p.peer.publicKey },
+        this.now,
+      );
+      let result: z.infer<typeof autoNoteApprovalReceiptSchema>;
+      try {
+        result = autoNoteApprovalReceiptSchema.parse(
+          JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(opened.plaintext),
+          ),
+        );
+      } finally {
+        opened.plaintext.fill(0);
+      }
+      if (
+        result.decisionId !== original.command.id ||
+        result.offerId !== original.command.offerId ||
+        result.detailHash !== original.command.detailHash ||
+        (result.receipt &&
+          (result.receipt.operationId !== original.manifest.operationId ||
+            result.receipt.meetingId !== original.manifest.meetingId ||
+            result.receipt.version !== inspected.detail.proposal.version + 1))
+      )
+        throw fail();
+      if (
+        (original.command.decision === "reject") !==
+        (result.status === "rejected")
+      )
+        throw fail();
+      const previous = original.result;
+      if (
+        previous &&
+        previous.status !== "uncertain" &&
+        result.status !== "uncertain" &&
+        !same(previous, result)
+      )
+        throw new BrowserOutboxError("CONFLICT");
+      const keep = previous && previous.status !== "uncertain";
+      const value = keep
+        ? original
+        : { ...original, result, resultEnvelope: input.envelope };
+      const row = keep
+        ? entry.row
+        : await sealBrowserAutoNoteDecisionRow(
+            { ...entry.row, revision: entry.row.revision + 1 },
+            value,
+            entry.row.key,
+          );
+      const replay = await privateReplayIdentity(input.envelope, result.type);
+      return browserStorageTransaction<{
+        duplicate: boolean;
+        result: typeof result;
+      }>(
+        this.db,
+        [...stores, decisionStore],
+        "readwrite",
+        () => {
+          check();
+          if (this.now() < h.issuedAt || this.now() >= h.expiresAt)
+            throw fail();
+        },
+        (io) =>
+          this.validate(io, p, () =>
+            this.retained(io, inspected.retained, () =>
+              this.rows(io, inspected.offer, (rows) => {
+                if (!same(rows, inspected.rows)) throw fail();
+                io.request(
+                  io.store(decisionStore).get([this.scope, entry.row.id]),
+                  (saved) => {
+                    if (!same(readBrowserAutoNoteDecisionRow(saved), entry.row))
+                      throw new BrowserOutboxError("CONFLICT");
+                    consumeBrowserIncomingReplay(
+                      io,
+                      p.identity.scope,
+                      replay,
+                      { store: decisionStore, key: [this.scope, entry.row.id] },
+                      !!previous,
+                      (state) => {
+                        if (state === "new" && !keep)
+                          io.store(decisionStore).put(row);
+                        io.done({
+                          duplicate: state === "duplicate",
+                          result:
+                            state === "duplicate" ? previous! : value.result!,
+                        });
+                      },
+                    );
+                  },
+                );
+              }),
+            ),
+          ),
+      );
     });
   }
   status() {
