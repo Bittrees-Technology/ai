@@ -33,45 +33,6 @@ async function openBuilt(page: Page, f: Fixture, reload = false) {
   await refresh(page);
 }
 async function setup(page: Page, f: Fixture, questions = false) {
-  await page.addInitScript(() => {
-    const events: unknown[] = [];
-    (
-      window as unknown as { deliveryDiagnosticEvents: unknown[] }
-    ).deliveryDiagnosticEvents = events;
-    const record = (kind: string, detail: string) => {
-      events.push({
-        at: performance.now(),
-        kind,
-        detail,
-        focused: document.hasFocus(),
-        visibility: document.visibilityState,
-      });
-      if (events.length > 200) events.shift();
-    };
-    for (const kind of ["focus", "blur", "error", "unhandledrejection"])
-      window.addEventListener(kind, () => record(kind, ""));
-    document.addEventListener("visibilitychange", () =>
-      record("visibility", ""),
-    );
-    document.addEventListener("DOMContentLoaded", () => {
-      let last = "";
-      new MutationObserver(() => {
-        const current = [
-          ...document.querySelectorAll('[role="status"], [role="alert"]'),
-        ]
-          .map((node) => node.textContent?.slice(0, 200))
-          .join(" | ");
-        if (current !== last) {
-          last = current;
-          record("notices", current);
-        }
-      }).observe(document.body, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-    });
-  });
   const offer = await f.mac.conversationOffer(
     f.native.record().permission!.expiresAt,
     { questions },
@@ -117,33 +78,8 @@ async function confirm(page: Page, name: string) {
 // previews must wait for the actual review, not cancel its preparation by accident.
 async function reviewSend(page: Page) {
   await button(page, "Review sending to Mac").click();
-  try {
-    await expect(button(page, "Send reviewed message")).toBeDisabled();
-    await expect(
-      panel(page).getByLabel(ack, { exact: true }),
-    ).not.toBeChecked();
-  } catch (error) {
-    await test.info().attach("delivery-review-diagnostic", {
-      contentType: "application/json",
-      body: Buffer.from(
-        JSON.stringify({
-          panel: await panel(page).innerText(),
-          events: await page.evaluate(
-            () =>
-              (window as unknown as { deliveryDiagnosticEvents: unknown[] })
-                .deliveryDiagnosticEvents,
-          ),
-          focus: await page.evaluate(() => ({
-            focused: document.hasFocus(),
-            visibility: document.visibilityState,
-          })),
-          notices: await page.getByRole("status").allTextContents(),
-          alerts: await page.getByRole("alert").allTextContents(),
-        }),
-      ),
-    });
-    throw error;
-  }
+  await expect(button(page, "Send reviewed message")).toBeDisabled();
+  await expect(panel(page).getByLabel(ack, { exact: true })).not.toBeChecked();
 }
 async function openMessage(page: Page, name = "Open message to mac 1") {
   await button(page, name).click();
@@ -503,29 +439,6 @@ test("built conversation delivery closes reviews across focus and panel changes 
     await refresh(page);
     await expect(panel(page)).toContainText("1 upload attempt");
     await preview(page, info, "cancelled-upload-history");
-  } catch (error) {
-    await test.info().attach("delivery-flow-diagnostic", {
-      contentType: "application/json",
-      body: Buffer.from(
-        JSON.stringify({
-          panel: await panel(page).innerText(),
-          events: await page.evaluate(
-            () =>
-              (window as unknown as { deliveryDiagnosticEvents: unknown[] })
-                .deliveryDiagnosticEvents,
-          ),
-          focus: await page.evaluate(() => ({
-            focused: document.hasFocus(),
-            visibility: document.visibilityState,
-          })),
-          notices: await page.getByRole("status").allTextContents(),
-          alerts: await page.getByRole("alert").allTextContents(),
-          networkPaths: identityServer.events,
-          held: identityServer.held(),
-        }),
-      ),
-    });
-    throw error;
   } finally {
     identityServer.release();
     f.mac.close();

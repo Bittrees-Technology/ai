@@ -209,7 +209,7 @@ jobs:
       - name: Verify conversation delivery review readiness
         run: |
           mkdir -p regression-reports
-          npx playwright test --config scripts/private-browser.config.ts production-browser-conversation-delivery.spec.ts --repeat-each=10 --reporter=json > regression-reports/conversation-delivery.json
+          npx playwright test --config scripts/private-browser.config.ts production-browser-conversation-delivery.spec.ts --project=webkit --grep "closes reviews across focus and panel changes" --repeat-each=50 --reporter=json > regression-reports/conversation-delivery.json
       - name: Retain conversation delivery regression report
         if: always()
         uses: actions/upload-artifact@v4
@@ -217,4 +217,12 @@ jobs:
           name: conversation-delivery-regression
           path: regression-reports/conversation-delivery.json
           if-no-files-found: error
+          retention-days: 7
+      - name: Retain diagnostic failure traces and browser state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-delivery-failure-state
+          path: test-results/
+          if-no-files-found: ignore
           retention-days: 7
