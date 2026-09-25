@@ -236,9 +236,12 @@ export async function autoNoteSource(
     const operationId = randomUUID();
     await ledger.reserve(task.id, { operationId });
     const prepared = await ledger.prepare(operationId);
-    const detail = await reviews.reviewDetail(
-      user,
-      prepared.response!.reviewId,
+    // Compare the source's JSON wire representation, including its ISO expiry.
+    // PostgreSQL returns a Date in-process; the actual route serializes that date.
+    const detail = JSON.parse(
+      JSON.stringify(
+        await reviews.reviewDetail(user, prepared.response!.reviewId),
+      ),
     );
     return {
       approval,
