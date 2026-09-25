@@ -242,6 +242,25 @@ jobs:
           path: regression-reports/conversation-delivery.json
           if-no-files-found: error
           retention-days: 7
+      - name: Verify Mac resume permission controls
+        run: npx playwright test --config scripts/private-browser.config.ts resume-permissions.spec.ts --reporter=json > regression-reports/resume-permissions.json
+      - name: Retain Mac resume permission report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-permissions-regression
+          path: regression-reports/resume-permissions.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Mac resume permission previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-permission-ui-preview
+          path: test-results/resume-permission-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - name: Retain Mac incoming conversation previews
