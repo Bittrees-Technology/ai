@@ -555,6 +555,30 @@ export async function retainedMac(
             clock,
           ),
         },
+        {
+          enabled: true,
+          runtime: {
+            pin: async (p) => {
+              if (JSON.stringify(p) !== JSON.stringify(profile))
+                throw Error("MODEL_CHANGED");
+              return { profile, digest: "a".repeat(64) };
+            },
+          },
+          taskAccess: resumeTaskAccess(
+            store,
+            owner,
+            new SourceTasks(),
+            {
+              pin: async (p) => {
+                if (JSON.stringify(p) !== JSON.stringify(profile))
+                  throw Error("MODEL_CHANGED");
+                return { profile, digest: "a".repeat(64) };
+              },
+            },
+            undefined,
+            Date.now,
+          ),
+        },
       );
       const relaySlots = new Map<string, PrivateKeyEntries>();
       const relay = new CompanionPrivateRelay(
@@ -664,6 +688,10 @@ export async function retainedMac(
           const allowed = new Set([
             "GET /v1/private-relay",
             "GET /v1/private-tasks",
+            "GET /v1/private-resume",
+            "POST /v1/private-relay/inspect-resume",
+            "POST /v1/private-relay/check-resume",
+            "POST /v1/private-relay/send-resume-receipt",
             "POST /v1/private-relay/cancel-review",
             "POST /v1/private-relay/check-task",
             "POST /v1/private-relay/inspect-conversation",

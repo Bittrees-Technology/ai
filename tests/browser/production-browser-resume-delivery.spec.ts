@@ -31,6 +31,7 @@ async function confirm(page: Page) {
 }
 test("built resume flow retains an uncertain upload and records exact Mac acceptance", async ({
   page,
+  context,
   identityServer,
 }, info) => {
   identityServer.enablePrivateRelay();
@@ -117,12 +118,95 @@ test("built resume flow retains an uncertain upload and records exact Mac accept
       { id: record.id, expectedRevision: record.revision },
       (c) => c.submit({ version: 1, envelope: offer.envelope }),
     );
-    const result = await offer.receive(original);
-    expect(offer.task().status).toBe("queued");
-    await f.native.relay.withTransport(
-      { id: record.id, expectedRevision: record.revision },
-      (c) => c.submit({ version: 1, envelope: result.envelope }),
-    );
+    const local = await f.native.openLocalApi(),
+      mac = await context.newPage();
+    try {
+      await mac.exposeFunction(
+        "nativeTaskApi",
+        (path: string, method?: string, body?: unknown) =>
+          local.call(path, method, body),
+      );
+      await mac.goto("https://ai.bittrees.org/?mac-task-delivery-native");
+      await mac
+        .getByRole("button", { name: "Open Mac resume delivery", exact: true })
+        .click();
+      const panel = mac.getByRole("region", {
+        name: "Mac resume delivery",
+        exact: true,
+      });
+      await panel
+        .getByRole("button", {
+          name: "Refresh Mac resume delivery",
+          exact: true,
+        })
+        .click();
+      await expect(panel.getByRole("status")).toContainText(
+        "Resume permissions and saved receipts loaded",
+      );
+      await panel
+        .getByLabel("Connection for resume delivery", { exact: true })
+        .selectOption(record.id);
+      await panel
+        .getByLabel("Permission for this resume", { exact: true })
+        .selectOption(offer.data.permissionId);
+      await panel
+        .getByRole("button", {
+          name: "Inspect queued resume request",
+          exact: true,
+        })
+        .click();
+      await expect(panel.getByRole("status")).toContainText(
+        "Queued item inspected",
+      );
+      await panel
+        .getByRole("button", {
+          name: "Review accepting resume request",
+          exact: true,
+        })
+        .click();
+      const ack = panel.getByLabel(
+        "I reviewed this task, permission and exact action.",
+        { exact: true },
+      );
+      await expect(ack).toBeVisible();
+      await expect(ack).not.toBeChecked();
+      await panel.screenshot({
+        path: `test-results/browser-resume-delivery-ui/${info.project.name}-mac-accept-review.png`,
+      });
+      await ack.check();
+      await panel
+        .getByRole("button", { name: "Confirm Mac resume action", exact: true })
+        .click();
+      await expect(panel.getByRole("status")).toContainText(
+        "Mac accepted the resume request",
+      );
+      expect(offer.task().status).toBe("queued");
+      await panel
+        .getByRole("button", {
+          name: "Review sending resume receipt",
+          exact: true,
+        })
+        .click();
+      await expect(ack).not.toBeChecked();
+      await ack.check();
+      await panel
+        .getByRole("button", { name: "Confirm Mac resume action", exact: true })
+        .click();
+      await expect(panel.getByRole("status")).toContainText(
+        "Relay stored the saved receipt",
+      );
+      await mac.setViewportSize({ width: 390, height: 844 });
+      await panel.screenshot({
+        path: `test-results/browser-resume-delivery-ui/${info.project.name}-mac-receipt-phone.png`,
+      });
+      expect(
+        local.calls.every((c) => c.status === 200 || c.status === 204),
+      ).toBe(true);
+    } finally {
+      await mac.close();
+      await local.close();
+    }
+    await page.bringToFront();
     await button(page, "Check for Mac resume receipt").click();
     await expect(button(page, "Inspect next relay item")).toBeVisible();
     await button(page, "Inspect next relay item").click();

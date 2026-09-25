@@ -355,6 +355,20 @@ export function localApi({
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.confirmResumeOffer(req.body));
   });
+  app.post("/v1/private-relay/inspect-resume", async (req, res) => {
+    if (!privateKeys || !privateRelay) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.inspectRelayedResume(privateRelay, req.body));
+  });
+  app.post("/v1/private-relay/check-resume", async (req, res) => {
+    if (!privateKeys || !privateRelay) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.receiveRelayedResume(privateRelay, req.body));
+  });
+  app.post("/v1/private-relay/send-resume-receipt", async (req, res) => {
+    if (!privateKeys || !privateRelay) throw new StoreError("CONFLICT");
+    res.json(
+      await privateKeys.sendRelayedResumeReceipt(privateRelay, req.body),
+    );
+  });
   app.post("/v1/private-resume/receive", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.receivePrivateResume(req.body));

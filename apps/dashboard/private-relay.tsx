@@ -1,3 +1,4 @@
+import { ResumeDelivery } from "./resume-delivery.js";
 import { PrivateTaskDeliveryPanel } from "./private-task-delivery.js";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -51,6 +52,7 @@ export function PrivateRelayPanel({
   const [state, setState] = useState(controller.state),
     [approval, setApproval] = useState(""),
     [ack, setAck] = useState(false),
+    [resumeOpen, setResumeOpen] = useState(false),
     [deliveryOpen, setDeliveryOpen] = useState(false);
   useEffect(() => {
     mounted.current = true;
@@ -290,10 +292,27 @@ export function PrivateRelayPanel({
       {status?.available && !deliveryOpen && (
         <button
           disabled={state.busy || !!state.review}
-          onClick={() => setDeliveryOpen(true)}
+          onClick={() => {
+            setResumeOpen(false);
+            setDeliveryOpen(true);
+          }}
         >
           Open private task delivery
         </button>
+      )}
+      {status?.available && !resumeOpen && (
+        <button
+          disabled={state.busy || !!state.review}
+          onClick={() => {
+            setDeliveryOpen(false);
+            setResumeOpen(true);
+          }}
+        >
+          Open Mac resume delivery
+        </button>
+      )}
+      {resumeOpen && !state.review && (
+        <ResumeDelivery api={api} onClose={() => setResumeOpen(false)} />
       )}
       {deliveryOpen && (
         <PrivateTaskDeliveryPanel

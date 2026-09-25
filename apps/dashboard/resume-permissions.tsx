@@ -98,8 +98,9 @@ export function ResumePermissions({
         reviewed local model.
       </p>
       <p className="hint">
-        Saving stays on this Mac. Sending this permission and resuming from the
-        browser are not available yet.
+        Saving stays on this Mac. Share its encrypted offer with your paired
+        browser. Use Mac resume delivery in the private connection panel to
+        review a request and send its receipt.
       </p>
       <button
         disabled={c.busy}
