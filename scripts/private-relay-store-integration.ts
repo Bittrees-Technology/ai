@@ -461,6 +461,7 @@ export async function checkPrivateRelayStore(pool: Pool) {
     removalPolicy = {
       ...policy,
       receivedContent: "delete-after-receipt",
+      operationalMetadataMs: 90 * day,
       unreceivedContent: { mode: "bounded", retentionMs: 60000 },
     };
   const removal = new RemotePrivateRelayStore(pool, removalPolicy, clock),
@@ -573,6 +574,24 @@ export async function checkPrivateRelayStore(pool: Pool) {
     ),
     beforeCleanup,
   );
+  // The approved 90-day interval survives cleanup of older seven-day rows.
+  const tombstone = async () =>
+    (
+      await pool.query(
+        "SELECT envelope,metadata_purge_at FROM remote_private_messages WHERE message_id=$1",
+        [rr.messageId],
+      )
+    ).rows[0];
+  const retainedReceipt = await tombstone();
+  assert.equal(retainedReceipt.envelope, null);
+  const deadline = Number(retainedReceipt.metadata_purge_at);
+  assert.equal(deadline, rm.envelope.header.expiresAt + 90 * day);
+  now = deadline - 1;
+  while ((await removal.cleanup(1000)).metadataDeleted > 0) {}
+  assert.ok(await tombstone());
+  now = deadline;
+  while ((await removal.cleanup(1000)).metadataDeleted > 0) {}
+  assert.equal(await tombstone(), undefined);
   console.log(
     "Private relay ciphertext store: authenticated maximum payload/reopen, exact/concurrent retry, conflict, endpoint isolation, bidirectional pages, receipt/deletion reconciliation, grant replacement, corruption, atomic quotas and explicit retention/cleanup passed. Synthetic PostgreSQL only.",
   );

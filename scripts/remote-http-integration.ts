@@ -59,7 +59,7 @@ export async function checkRemoteHttp(pool: Pool) {
       statusesPerDevice: 2,
     },
     deviceMs: 3600000,
-    retentionMs: 86400000,
+    retentionMs: 90 * 86400000,
   };
   const app = createRemoteApp(pool, config);
   const server = createServer({ key, cert }, app),
