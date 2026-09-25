@@ -1,6 +1,6 @@
 import type { BrowserKeyHost } from "../../modules/remote/browser-key-host.js";
-import { expect } from "@playwright/test";
-import { test } from "./support/browser-identity-server.js";
+import { test, expect } from "@playwright/test";
+import { test as identityTest } from "./support/browser-identity-server.js";
 import { ready as relayReady } from "./support/relay-endpoints.js";
 import { randomUUID, createHash } from "node:crypto";
 import { paired } from "./support/retained-browser-task.js";
@@ -262,7 +262,7 @@ test("browser AutoNote panel reveals complete notes only on confirmation and cle
   expect(receives).toBe(1);
 });
 
-test("verified browser host receives exact AutoNote notes through real relay custody", async ({
+identityTest("verified browser host receives exact AutoNote notes through real relay custody", async ({
   page,
   identityServer,
 }) => {
