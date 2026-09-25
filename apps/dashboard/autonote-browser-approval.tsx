@@ -164,8 +164,8 @@ export function AutoNoteBrowserApproval({
       <h4>Review on a paired browser</h4>
       <p>
         Prepare and send these exact notes with a separate browser permission.
-        The browser decision return is still being built; received decisions
-        appear below.
+        Receive the browser decision here, confirm saving in AutoNote, then send
+        the recorded result back to the browser.
       </p>
       <button disabled={busy} onClick={() => void refresh()}>
         Refresh browser approval progress
@@ -444,7 +444,12 @@ export function AutoNoteBrowserApproval({
           {grant?.detailHash && (
             <p>
               Exact notes reference:{" "}
-              <span className="approval-fingerprint">{grant.detailHash}</span>
+              <span
+                className="approval-fingerprint"
+                style={{ overflowWrap: "anywhere" }}
+              >
+                {grant.detailHash}
+              </span>
             </p>
           )}
           {review.action === "send" && (

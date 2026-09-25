@@ -145,6 +145,10 @@ export async function retainedMac(
     await worker.runOnce();
   };
   return {
+    store,
+    vault,
+    owner,
+    clock,
     binding,
     consent,
     work,
