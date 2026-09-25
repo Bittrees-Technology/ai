@@ -36,6 +36,11 @@ export interface Runtime {
   pin: Ollama["pin"];
   generate: Ollama["generate"];
 }
+export type ResumeExecutionBoundary = <T>(
+  taskId: string,
+  model: PinnedModel,
+  action: (privateAuthority: (permissionId: string) => void) => T,
+) => Promise<T>;
 export class LocalWorker {
   private active = new Map<string, AbortController>();
   private stopped = false;
@@ -52,6 +57,7 @@ export class LocalWorker {
     private sources?: SourceValidator,
     private controls?: ExecutionControls,
     private resumePrivateAuthority?: (permissionId: string) => void,
+    private resumeExecution?: ResumeExecutionBoundary,
   ) {}
   stop() {
     this.stopped = true;
@@ -169,20 +175,39 @@ export class LocalWorker {
         this.resolveProfile(claim.task.input.modelProfileId),
         abort.signal,
       );
-      const checkResumeModel = () =>
-        this.store.remoteResumes.checkExecutionModel(
-          this.owner,
-          claim.task.id,
-          pinned,
-          this.resumePrivateAuthority,
-        );
-      const generate: Runtime["generate"] = async (...args) => {
-        checkResumeModel();
-        const result = await this.runtime.generate(...args);
-        checkResumeModel();
-        return result;
+      const fence = async <T>(action: () => T): Promise<T> => {
+        const apply = (privateAuthority = this.resumePrivateAuthority) => {
+          checkDeadline();
+          checkDependencies();
+          this.store.remoteResumes.checkExecutionModel(
+            this.owner,
+            claim.task.id,
+            pinned,
+            privateAuthority,
+          );
+          return action();
+        };
+        return this.resumeExecution
+          ? this.resumeExecution(claim.task.id, pinned, apply)
+          : apply();
       };
-      checkResumeModel();
+      const generate: Runtime["generate"] = async (...args) => {
+        try {
+          const started = await fence(() => {
+            const pending = this.runtime.generate(...args);
+            // Device revalidation can reject after generation starts. Observe
+            // the pending rejection even when that boundary fails first.
+            void pending.catch(() => {});
+            return { pending };
+          });
+          const result = await started.pending;
+          return await fence(() => result);
+        } catch (error) {
+          abort.abort();
+          throw error;
+        }
+      };
+      await fence(() => undefined);
       const memories = [];
       for (const id of claim.task.input.memoryIds ?? []) {
         if (!this.memory) throw new Error("Memory unavailable");
@@ -201,39 +226,41 @@ export class LocalWorker {
         "message" in source &&
         source.message.mode === "plain" &&
         claim.task.input.kind === "draft";
-      this.store.recordModel(
-        this.owner,
-        claim.task.id,
-        this.workerId,
-        claim.generation,
-        {
-          ...pinned,
-          executionLimits: limits,
-          ...(claim.task.input.allowQuestions === true
-            ? { questionPolicy: questionPolicyVersion }
-            : {}),
-          ...(inputContext.length
-            ? {
-                inputReplies: inputContext.map(({ questionId, replyId }) => ({
-                  questionId,
-                  replyId,
-                })),
-              }
-            : {}),
-          ...(separateMail ? { mailDraftPipeline: "separated-v1" } : {}),
-          memories: memoryVersions,
-          ...(binding ? { source: binding } : {}),
-          ...(extraction
-            ? {
-                extraction: {
-                  parentId: extraction.parentId,
-                  parentRevision: extraction.parentRevision,
-                  sourceHash: extraction.sourceHash,
-                  promptVersion: extraction.promptVersion,
-                },
-              }
-            : {}),
-        },
+      await fence(() =>
+        this.store.recordModel(
+          this.owner,
+          claim.task.id,
+          this.workerId,
+          claim.generation,
+          {
+            ...pinned,
+            executionLimits: limits,
+            ...(claim.task.input.allowQuestions === true
+              ? { questionPolicy: questionPolicyVersion }
+              : {}),
+            ...(inputContext.length
+              ? {
+                  inputReplies: inputContext.map(({ questionId, replyId }) => ({
+                    questionId,
+                    replyId,
+                  })),
+                }
+              : {}),
+            ...(separateMail ? { mailDraftPipeline: "separated-v1" } : {}),
+            memories: memoryVersions,
+            ...(binding ? { source: binding } : {}),
+            ...(extraction
+              ? {
+                  extraction: {
+                    parentId: extraction.parentId,
+                    parentRevision: extraction.parentRevision,
+                    sourceHash: extraction.sourceHash,
+                    promptVersion: extraction.promptVersion,
+                  },
+                }
+              : {}),
+          },
+        ),
       );
       checkDependencies();
       if (claim.task.input.allowQuestions === true) {
@@ -266,12 +293,14 @@ export class LocalWorker {
         if (decision.decision === "ask") {
           if (inputContext.length >= maxModelQuestions)
             throw new ClarificationLimitError();
-          this.store.waitForOwnerInput(
-            this.owner,
-            claim.task.id,
-            this.workerId,
-            claim.generation,
-            decision.question,
+          await fence(() =>
+            this.store.waitForOwnerInput(
+              this.owner,
+              claim.task.id,
+              this.workerId,
+              claim.generation,
+              decision.question,
+            ),
           );
           return true;
         }
@@ -345,29 +374,30 @@ export class LocalWorker {
         : null;
       checkDeadline();
       checkDependencies();
-      checkResumeModel();
-      this.store.complete(
-        this.owner,
-        claim.task.id,
-        this.workerId,
-        claim.generation,
-        {
-          ...generated,
-          model: pinned,
-          memories: memoryVersions,
-          kind: "unreviewed_draft",
-          ...(candidates
-            ? {
-                ...candidates,
-                text: undefined,
-                kind: "memory_candidates",
-                sourceTaskId: extraction!.parentId,
-                sourceRevision: extraction!.parentRevision,
-                promptVersion: extraction!.promptVersion,
-              }
-            : {}),
-          ...(binding ? { source: binding } : {}),
-        },
+      await fence(() =>
+        this.store.complete(
+          this.owner,
+          claim.task.id,
+          this.workerId,
+          claim.generation,
+          {
+            ...generated,
+            model: pinned,
+            memories: memoryVersions,
+            kind: "unreviewed_draft",
+            ...(candidates
+              ? {
+                  ...candidates,
+                  text: undefined,
+                  kind: "memory_candidates",
+                  sourceTaskId: extraction!.parentId,
+                  sourceRevision: extraction!.parentRevision,
+                  promptVersion: extraction!.promptVersion,
+                }
+              : {}),
+            ...(binding ? { source: binding } : {}),
+          },
+        ),
       );
     } catch (error) {
       try {

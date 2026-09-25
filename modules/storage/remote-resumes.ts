@@ -394,6 +394,25 @@ export class RemoteResumes {
       })
       .immediate();
   }
+  /** Local classification only, never an authority grant. Missing retained
+   * permission fails closed even when deciding whether network verification is needed. */
+  requiresPrivateAuthority(owner: Owner, taskId: string) {
+    const rows = this.store.db
+      .prepare(
+        "SELECT id,payload FROM remote_resume_receipts WHERE user_id=? AND tenant_id=? ORDER BY rowid DESC",
+      )
+      .all(owner.userId, owner.tenantId) as { id: string; payload: Buffer }[];
+    for (const row of rows) {
+      const { receipt } = savedReceiptSchema.parse(
+        this.vault.open(row.payload, this.purpose(owner, "receipt", row.id)),
+      );
+      if (receipt.taskId !== taskId) continue;
+      const permission = this.permission(owner, receipt.permissionId);
+      if (!permission) throw new StoreError("NOT_FOUND");
+      return permission.approval.privatePeerBound === true;
+    }
+    return false;
+  }
   /** A remotely resumed task retains its execution constraint across worker
    * claims, clarification waits and restart. Revoked/restored grants fail closed.
    * Local tasks with no resume receipt retain their existing execution policy. */

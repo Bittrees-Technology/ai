@@ -1,6 +1,6 @@
 import { CompanionPrivateResumes } from "./private-resumes.js";
 import type { ResumeAccess } from "../../modules/storage/remote-resumes.js";
-import type { Ollama } from "../../modules/models/ollama.js";
+import type { PinnedModel, Ollama } from "../../modules/models/ollama.js";
 import { CompanionConversationContent } from "./private-conversation-content.js";
 import type { ConversationTaskAccess } from "../../modules/remote/private-conversation-content.js";
 import { CompanionConversationOffers } from "./private-conversation-offers.js";
@@ -427,6 +427,21 @@ export class CompanionPrivateKeys {
   }
   confirmPermission(raw: unknown) {
     return this.exclusive(async () => this.permissions.confirm(raw));
+  }
+  withResumeExecution<T>(
+    taskId: string,
+    model: PinnedModel,
+    action: (privateAuthority: (permissionId: string) => void) => T,
+  ): Promise<T> {
+    if (!this.store.remoteResumes.requiresPrivateAuthority(this.owner, taskId))
+      return Promise.resolve(
+        action(() => {
+          throw new PrivateKeyLifecycleError("DENIED");
+        }),
+      );
+    return this.exclusive(() =>
+      this.resumes.withExecution(taskId, model, action),
+    );
   }
   resumePermissionStatus() {
     return this.resumes.status();

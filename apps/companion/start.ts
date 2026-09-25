@@ -1,3 +1,4 @@
+import { resumeTaskAccess } from "./resume-access.js";
 import { conversationTaskAccess } from "./conversation-access.js";
 import { CompanionPrivateRelay } from "./private-relay.js";
 import { macPrivateRelayEntries } from "./private-relay-entry.js";
@@ -155,6 +156,14 @@ const crm = new CrmConnector(
     memory,
     new SourceTasks(sources, autonoteSources, mailSources),
     executionControls,
+    undefined,
+    async (taskId, model, action) => {
+      if (privateKeys)
+        return privateKeys.withResumeExecution(taskId, model, action);
+      return action(() => {
+        throw new Error("Private resume authority unavailable");
+      });
+    },
   );
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
@@ -214,6 +223,17 @@ const privateKeys =
             store,
             owner,
             new SourceTasks(sources, autonoteSources, mailSources),
+            memory,
+          ),
+        },
+        {
+          enabled: process.env.BITTREES_PRIVATE_RESUME === "1",
+          runtime,
+          taskAccess: resumeTaskAccess(
+            store,
+            owner,
+            new SourceTasks(sources, autonoteSources, mailSources),
+            runtime,
             memory,
           ),
         },

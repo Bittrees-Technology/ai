@@ -1,3 +1,4 @@
+import type { PinnedModel } from "../../modules/models/ollama.js";
 import { PrivateResumeDelivery } from "../../modules/remote/private-resume-delivery.js";
 import type { ResumeAccess } from "../../modules/storage/remote-resumes.js";
 import type { Ollama } from "../../modules/models/ollama.js";
@@ -181,6 +182,29 @@ export class CompanionPrivateResumes {
   receipt(raw: unknown) {
     this.invalidate();
     return this.delivery((receiver) => receiver.receipt(raw));
+  }
+  async withExecution<T>(
+    taskId: string,
+    model: PinnedModel,
+    action: (privateAuthority: (permissionId: string) => void) => T,
+  ): Promise<T> {
+    const generation = this.generation;
+    return this.live().withVerifiedDevice(async (scope) => {
+      const current = () =>
+        generation === this.generation ? scope.current() : null;
+      const consent = this.consent(current);
+      const check = (permissionId: string) => {
+        if (!current()) throw new PrivateResumeConsentError("DENIED");
+        consent.check(permissionId);
+      };
+      this.store.remoteResumes.checkExecutionModel(
+        this.owner,
+        taskId,
+        model,
+        check,
+      );
+      return action(check);
+    });
   }
   private live() {
     if (!this.enabled || !this.remote)
