@@ -381,3 +381,6 @@ if (new URLSearchParams(location.search).has("autonote-exact-approval"))
 
 if (new URLSearchParams(location.search).has("autonote-browser-approval"))
   void import("./autonote-browser-approval.js");
+
+if (new URLSearchParams(location.search).has("autonote-browser-review"))
+  void import("./autonote-browser-review.js");

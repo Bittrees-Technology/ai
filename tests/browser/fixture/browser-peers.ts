@@ -982,6 +982,10 @@ const fixture = {
     withKey(async () => (await resumeDeliveryStore()).read(raw)),
   resumeDeliveryReconcile: (raw: unknown) =>
     withKey(async () => (await resumeDeliveryStore()).reconcile(raw)),
+  approvalHostStatus: () => host!.autoNoteApprovalAPI.status(),
+  approvalHostInspect: (raw: unknown) => host!.autoNoteApprovalAPI.inspect(raw),
+  approvalHostReceive: (raw: unknown) => host!.autoNoteApprovalAPI.receive(raw),
+  approvalHostReveal: (raw: unknown) => host!.autoNoteApprovalAPI.reveal(raw),
   approvalStatus: () => approvalInboxStore().then((c) => c.status()),
   approvalReceive: (raw: unknown) =>
     withKey(async () => (await approvalInboxStore()).receive(raw)),

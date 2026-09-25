@@ -119,7 +119,10 @@ export class BrowserAutoNoteApprovalInbox {
     this.invalidate();
     this.db.close();
   }
-  private async exclusive<T>(fn: (check: () => void) => Promise<T>) {
+  private async exclusive<T>(
+    fn: (check: () => void) => Promise<T>,
+    requireIdentity = true,
+  ) {
     if (this.busy) throw new BrowserOutboxError("CONFLICT");
     this.busy = true;
     const generation = this.generation,
@@ -130,12 +133,17 @@ export class BrowserAutoNoteApprovalInbox {
       if (
         this.closed ||
         generation !== this.generation ||
-        !binding ||
-        !same(binding, this.current()) ||
+        (requireIdentity &&
+          (!binding ||
+            !same(binding, this.current()) ||
+            this.now() >= binding.expiresAt)) ||
         this.now() < at ||
-        this.now() >= binding.expiresAt ||
         this.mono() < mono ||
-        this.mono() - mono >= Math.min(120000, binding.expiresAt - at)
+        this.mono() - mono >=
+          Math.min(
+            120000,
+            requireIdentity && binding ? binding.expiresAt - at : 120000,
+          )
       )
         throw fail();
     };
@@ -145,6 +153,9 @@ export class BrowserAutoNoteApprovalInbox {
     } finally {
       this.busy = false;
     }
+  }
+  private maintenance<T>(fn: (check: () => void) => Promise<T>) {
+    return this.exclusive(fn, false);
   }
   private async proof(peerId: string, epoch: number, check: () => void) {
     const local = await this.keys.resolve(),
@@ -291,14 +302,19 @@ export class BrowserAutoNoteApprovalInbox {
       opened.plaintext.fill(0);
     }
   }
-  async receive(raw: unknown) {
+  async receive(raw: unknown, deliveryCheck: () => void = () => {}) {
     const input = z
       .strictObject({
         envelope: privateEnvelopeSchema,
         confirmed: z.literal(true),
       })
       .parse(raw);
-    return this.exclusive(async (check) => {
+    return this.exclusive(async (localCheck) => {
+      const check = () => {
+        localCheck();
+        deliveryCheck();
+      };
+      check();
       const h = input.envelope.header,
         p = await this.proof(h.senderId, h.senderKeyEpoch, check);
       const packet = await this.openPacket(input.envelope, p, check),
@@ -469,7 +485,7 @@ export class BrowserAutoNoteApprovalInbox {
     });
   }
   status() {
-    return this.exclusive(async (check) =>
+    return this.maintenance(async (check) =>
       browserStorageTransaction<
         { offerId: string; received: number; expiresAt: number }[]
       >(this.db, [name], "readonly", check, (io) => {
@@ -497,7 +513,7 @@ export class BrowserAutoNoteApprovalInbox {
     const input = z
       .strictObject({ offerId: z.uuid(), confirmed: z.literal(true) })
       .parse(raw);
-    return this.exclusive(async (check) => {
+    return this.maintenance(async (check) => {
       const offer = await browserPrivateDigest([
         "autonote-offer:v1",
         input.offerId,
@@ -521,7 +537,7 @@ export class BrowserAutoNoteApprovalInbox {
     const input = z
       .strictObject({ offerId: z.uuid(), confirmed: z.literal(true) })
       .parse(raw);
-    return this.exclusive(async (check) => {
+    return this.maintenance(async (check) => {
       const offer = await browserPrivateDigest([
         "autonote-offer:v1",
         input.offerId,

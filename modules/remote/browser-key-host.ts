@@ -1,3 +1,4 @@
+import { BrowserAutoNoteApprovalInbox } from "./browser-autonote-approval-inbox.js";
 import { BrowserResumeDelivery } from "./browser-resume-delivery.js";
 import { BrowserResumeConsent } from "./browser-resume-consent.js";
 import { BrowserConversationContent } from "./browser-conversation-content.js";
@@ -53,6 +54,7 @@ export class BrowserKeyHost {
   private conversations?: BrowserConversationConsent;
   private resumes?: BrowserResumeConsent;
   private resumeDelivery?: BrowserResumeDelivery;
+  private approvalInbox?: BrowserAutoNoteApprovalInbox;
   private conversationContent?: BrowserConversationContent;
   private compositions?: BrowserTaskComposition;
   private taskHistory?: BrowserTaskHistory;
@@ -180,6 +182,7 @@ export class BrowserKeyHost {
     this.conversations?.invalidate();
     this.resumes?.invalidate();
     this.resumeDelivery?.invalidate();
+    this.approvalInbox?.invalidate();
     this.conversationContent?.invalidate();
     this.compositions?.invalidate();
     this.taskHistory?.invalidate();
@@ -203,6 +206,7 @@ export class BrowserKeyHost {
     this.conversations?.close();
     this.resumes?.close();
     this.resumeDelivery?.close();
+    this.approvalInbox?.close();
     this.conversationContent?.close();
     this.compositions?.close();
     this.taskHistory?.close();
@@ -242,6 +246,7 @@ export class BrowserKeyHost {
           this.conversations?.invalidate();
           this.resumes?.invalidate();
           this.resumeDelivery?.invalidate();
+          this.approvalInbox?.invalidate();
           this.conversationContent?.invalidate();
           this.compositions?.invalidate();
           this.taskHistory?.invalidate();
@@ -460,6 +465,26 @@ export class BrowserKeyHost {
     } catch (e) {
       created.close();
       throw e;
+    }
+  }
+  private async approvalInboxStore() {
+    if (this.approvalInbox) return this.approvalInbox;
+    const generation = this.generation;
+    const created = await BrowserAutoNoteApprovalInbox.open(
+      this.localOwner,
+      () => this.active?.current() ?? null,
+      this.keys,
+      this.peers,
+      this.now,
+      this.monotonic,
+    );
+    try {
+      this.check(generation);
+      this.approvalInbox = created;
+      return created;
+    } catch (error) {
+      created.close();
+      throw error;
     }
   }
   private async resumeDeliveryStore() {
@@ -1063,6 +1088,49 @@ export class BrowserKeyHost {
   };
   /** Transport storage is not Mac acceptance. Originals are retained before any
    * upload; uncertain uploads reuse that exact envelope on an explicit retry. */
+  readonly autoNoteApprovalAPI = {
+    status: () =>
+      this.operation(async () => (await this.approvalInboxStore()).status()),
+    reveal: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.approvalInboxStore()).reveal(raw),
+      ),
+    export: (raw: unknown) =>
+      this.operation(async () => (await this.approvalInboxStore()).export(raw)),
+    remove: (raw: unknown) =>
+      this.operation(async () => (await this.approvalInboxStore()).remove(raw)),
+    inspect: (raw: unknown) => this.relayTaskAPI.inspect(raw),
+    receive: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = privateRelayQueueQuerySchema
+          .extend({ selection: privateRelaySelectionSchema })
+          .parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          const page = await client.poll({ after: input.after, limit: 1 }),
+            item = page.items[0];
+          check();
+          if (!item || !relaySelectionMatches(item, input.selection))
+            throw Error("CONFLICT");
+          const received = await (
+            await this.approvalInboxStore()
+          ).receive({ envelope: item.envelope, confirmed: true }, check);
+          check();
+          const transport = await client.acknowledge({
+            messageId: item.receipt.messageId,
+            envelopeHash: item.receipt.envelopeHash,
+            expectedRevision: item.receipt.revision,
+            confirmed: true,
+          });
+          check();
+          return {
+            received,
+            transport: { transportOnly: true as const, ...transport },
+            nextCursor: page.nextCursor,
+          };
+        });
+      }),
+    invalidate: () => this.cancelKeys(),
+  };
   readonly relayResumeAPI = {
     inspect: (raw: unknown) => this.relayTaskAPI.inspect(raw),
     send: (raw: unknown) =>
