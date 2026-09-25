@@ -1,3 +1,4 @@
+import { taskDependencyGuard } from "../apps/companion/memory.js";
 import { sourceMemoryAccess } from "../apps/companion/source-memory.js";
 import { MemoryStore } from "../modules/memory/store.js";
 import { conversationTaskAccess } from "../apps/companion/conversation-access.js";
@@ -281,6 +282,18 @@ test("AutoNote local generation verifies citations, derives source timestamps an
       );
       await reuse.runOnce();
       assert.equal(store.get(owner, followup.id).status, "completed");
+      let nearExpiry = Date.parse(f.grant.expiresAt) - 1;
+      const expiring = await taskDependencyGuard(
+        store,
+        owner,
+        followup.id,
+        memory,
+        f.sources,
+        () => nearExpiry,
+      );
+      expiring();
+      nearExpiry += 2;
+      assert.throws(expiring, /NOT_FOUND/);
       const access = conversationTaskAccess(store, owner, f.sources, memory);
       (await access(followup.id))();
       // Retaining another memory from a derived result keeps the original source dependency.

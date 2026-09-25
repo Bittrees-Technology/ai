@@ -174,6 +174,15 @@ export async function taskDependencyGuard(
   };
   if (!localTaskDependencies(store, owner, taskId, memory, collect))
     throw new StoreError("NOT_FOUND");
+  const deadline = Math.min(
+    started + 10000,
+    destination ? Date.parse(destination.expiresAt) : Infinity,
+    ...Array.from(required.values(), (binding) =>
+      Date.parse(binding.expiresAt),
+    ),
+  );
+  if (!Number.isFinite(deadline) || deadline <= started)
+    throw new StoreError("NOT_FOUND");
   const checks = new Map<string, () => void>();
   for (const [id, binding] of required) {
     if (!sources?.commitGuard) throw new StoreError("NOT_FOUND");
@@ -196,7 +205,7 @@ export async function taskDependencyGuard(
       elapsed = mono() - monotonic;
     if (
       wall < started ||
-      wall - started >= 10000 ||
+      wall >= deadline ||
       elapsed < 0 ||
       elapsed >= 10000 ||
       JSON.stringify(store.get(owner, taskId).input) !== input ||
