@@ -1,3 +1,4 @@
+import { mountMcpConnections } from "./mcp-connections.js";
 import "./browser-runtime.ts";
 import { mountBrowserRelay } from "./browser-relay.ts";
 import { BrowserSessionCoordinator } from "./browser-session.ts";
@@ -21,7 +22,7 @@ if (!settings || settings.origin !== location.origin) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
 } else {
   el("network").textContent = `Wallet network: ${settings.chainId}.`;
-  let controller, commandUI;
+  let controller, commandUI, mcpUI;
   const commandJournal = new BrowserCommandJournal(
     new BrowserCommandHistory(),
     api,
@@ -60,11 +61,14 @@ if (!settings || settings.origin !== location.origin) {
     () => controller.state.busy,
     () => controller.set({ commandReview: null }),
   );
+  mcpUI = settings.mcpDelegation === true ? mountMcpConnections(el("mcp-connections"), () => controller?.sessionContext() ?? null, () => controller?.state.templates ?? [], api) : null;
+  mcpUI?.sync();
   function render(s) {
     accountId = s.account?.ownerId ?? null;
     setup.sync();
     relay?.sync();
     commandUI?.sync();
+    mcpUI?.sync();
     el("error").textContent = s.error;
     el("notice").textContent = s.notice;
     el("account").textContent = s.account
