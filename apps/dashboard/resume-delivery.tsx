@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import type { CompanionPrivateResumes } from "../companion/private-resumes.js";
 import type { CompanionPrivateRelay } from "../companion/private-relay.js";
 import type { relayQueueReview } from "../../modules/remote/private-relay-queue.js";
@@ -24,6 +24,8 @@ export function ResumeDelivery({
   api: Api;
   onClose: () => void;
 }) {
+  const connectionId = useId(),
+    permissionId = useId();
   const [data, setData] = useState<Data | null>(null),
     [connection, setConnection] = useState(""),
     [permission, setPermission] = useState("");
@@ -290,9 +292,10 @@ export function ResumeDelivery({
       </div>
       <p role="status">{notice}</p>
       {error && <p role="alert">{error}</p>}
-      <label>
-        Connection for resume delivery
+      <div>
+        <label htmlFor={connectionId}>Connection for resume delivery</label>
         <select
+          id={connectionId}
           value={connection}
           disabled={busy || !!review}
           onChange={(e) => {
@@ -307,10 +310,11 @@ export function ResumeDelivery({
             </option>
           ))}
         </select>
-      </label>
-      <label>
-        Permission for this resume
+      </div>
+      <div>
+        <label htmlFor={permissionId}>Permission for this resume</label>
         <select
+          id={permissionId}
           value={permission}
           disabled={busy || !!review}
           onChange={(e) => {
@@ -325,7 +329,7 @@ export function ResumeDelivery({
             </option>
           ))}
         </select>
-      </label>
+      </div>
       <div className="actions">
         <button
           disabled={busy || !!review || !selected}
