@@ -1,3 +1,4 @@
+import type { AutoNoteApprovalConnector } from "../../modules/connectors/autonote-approval.js";
 import { ResumeOfferError } from "../../modules/remote/private-resume-offers.js";
 import { PrivateResumeConsentError } from "../../modules/remote/private-resume-consent.js";
 import { PrivateResumeDeliveryError } from "../../modules/remote/private-resume-delivery.js";
@@ -76,6 +77,7 @@ export interface LocalApiOptions {
   crm?: CrmConnector;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
+  autonoteApproval?: AutoNoteApprovalConnector;
   autonoteSources?: AutoNoteTasks;
   cancelSourceRun?: (app?: "crm" | "autonote" | "mail") => void;
   store: Store;
@@ -110,6 +112,7 @@ export function localApi({
   mailSources,
   sources,
   autonote,
+  autonoteApproval,
   autonoteSources,
   cancelSourceRun,
   deviceStatus,
@@ -1019,6 +1022,40 @@ export function localApi({
         req.header("Idempotency-Key") ?? "",
       );
       res.status(202).json(concealed(task));
+    });
+  }
+  app.get("/v1/connections/autonote-approval", async (_req, res) =>
+    res.json({
+      available: !!autonoteApproval,
+      connection: autonoteApproval ? await autonoteApproval.status() : null,
+    }),
+  );
+  if (autonoteApproval) {
+    for (const action of ["begin", "cancel"] as const) {
+      app.post(
+        `/v1/connections/autonote-approval/${action}`,
+        async (req, res) => {
+          z.strictObject({}).parse(req.body);
+          res.json((await autonoteApproval[action]()) ?? { ok: true });
+        },
+      );
+    }
+    app.post("/v1/connections/autonote-approval/finish", async (req, res) => {
+      const body = z
+        .strictObject({
+          id: z.uuid(),
+          code: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .parse(req.body);
+      res.json(await autonoteApproval.finish(body.id, body.code));
+    });
+    app.delete("/v1/connections/autonote-approval/local", async (req, res) => {
+      if (
+        req.header("X-Confirm-Delete") !== "local-autonote-approval-credential"
+      )
+        throw new StoreError("INVALID_INPUT");
+      await autonoteApproval.forgetLocal();
+      res.status(204).end();
     });
   }
   if (autonoteSources) {
