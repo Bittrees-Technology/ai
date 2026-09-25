@@ -1875,13 +1875,14 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
     worker: string,
     generation: number,
     result: unknown,
+    checkAccess?: () => void,
   ): Task {
     if (Buffer.byteLength(JSON.stringify(result) ?? "") > 256_000)
       throw new StoreError("INVALID_INPUT");
     return this.db
       .transaction(() => {
         this.validClaim(owner, id, worker, generation);
-        this.memoryExtractions.context(owner, id);
+        this.memoryExtractions.context(owner, id, checkAccess);
         this.db
           .prepare(
             "UPDATE tasks SET status='completed',revision=revision+1,result=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE id=?",

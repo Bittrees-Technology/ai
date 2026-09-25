@@ -167,6 +167,7 @@ export class LocalWorker {
       const extraction = this.store.memoryExtractions.context(
         this.owner,
         claim.task.id,
+        () => checkDependencies(),
       );
       const binding = this.store.sourceBinding(this.owner, claim.task.id);
       if (claim.task.input.sourceRefs.length && (!binding || !this.sources))
@@ -381,7 +382,9 @@ export class LocalWorker {
       if (binding) await this.sources!.validate(binding);
       checkDeadline();
       const currentExtraction = extraction
-        ? this.store.memoryExtractions.context(this.owner, claim.task.id)!
+        ? this.store.memoryExtractions.context(this.owner, claim.task.id, () =>
+            checkDependencies(),
+          )!
         : null;
       const candidates = currentExtraction
         ? parseMemoryCandidates(
@@ -415,6 +418,7 @@ export class LocalWorker {
               : {}),
             ...(binding ? { source: binding } : {}),
           },
+          () => checkDependencies(),
         ),
       );
     } catch (error) {

@@ -909,7 +909,16 @@ export function localApi({
         },
         result: null,
         dependencyAccess: "unavailable" as const,
-        ...(inspectSource ? { sourceBound: true, sourceApp: "memory" } : {}),
+        ...(inspectSource
+          ? {
+              sourceBound: true,
+              sourceApp: "memory",
+              memoryExtraction: !!store.memoryExtractions.dependency(
+                owner,
+                task.id,
+              ),
+            }
+          : {}),
       };
     }
     return task.input.sourceRefs.length
@@ -1352,7 +1361,7 @@ export function localApi({
   app.get("/v1/requests/:id", async (req, res) =>
     res.json(finalProject(await project(store.get(owner, req.params.id)))),
   );
-  const checkFeedbackAccess = async (id: string) => {
+  const checkFeedbackAccess = async (id: string, destination?: string) => {
     const initial = store.get(owner, id),
       binding = store.sourceBinding(owner, id);
     const dependencies = await taskDependencyGuard(
@@ -1361,6 +1370,9 @@ export function localApi({
       id,
       memory,
       sourceRouter,
+      undefined,
+      undefined,
+      destination,
     );
     if (initial.input.sourceRefs.length && !binding)
       throw new ConnectorError("SOURCE_DENIED");
@@ -1497,18 +1509,21 @@ export function localApi({
     res.status(204).end();
   });
   if (memory) {
-    app.post("/v1/requests/:id/memory-suggestions", (req, res) => {
-      requireDependencies(req.params.id);
+    app.post("/v1/requests/:id/memory-suggestions", async (req, res) => {
+      // Extraction runs as a local task, so inherited memories must permit local use.
+      const check = await checkFeedbackAccess(req.params.id, "local");
       res
         .status(201)
-        .json(store.memoryExtractions.create(owner, req.params.id, req.body));
+        .json(
+          store.memoryExtractions.create(owner, req.params.id, req.body, check),
+        );
     });
-    app.get("/v1/requests/:id/memory-suggestions", (req, res) => {
-      requireDependencies(req.params.id);
-      res.json(store.memoryExtractions.review(owner, req.params.id));
+    app.get("/v1/requests/:id/memory-suggestions", async (req, res) => {
+      const check = await checkFeedbackAccess(req.params.id);
+      res.json(store.memoryExtractions.review(owner, req.params.id, check));
     });
     app.post("/v1/requests/:id/memory-suggestions/save", async (req, res) => {
-      requireDependencies(req.params.id);
+      const check = await checkFeedbackAccess(req.params.id);
       const body = z
         .strictObject({
           expectedRevision: z.number().int().positive(),
@@ -1516,7 +1531,11 @@ export function localApi({
           confirmed: z.literal(true),
         })
         .parse(req.body);
-      const review = store.memoryExtractions.review(owner, req.params.id);
+      const review = store.memoryExtractions.review(
+        owner,
+        req.params.id,
+        check,
+      );
       const selected = review.candidates[body.index];
       if (review.revision !== body.expectedRevision || !selected)
         throw new StoreError("CONFLICT");
@@ -1536,8 +1555,12 @@ export function localApi({
           ],
         },
         () => {
-          requireDependencies(req.params.id);
-          const current = store.memoryExtractions.review(owner, req.params.id);
+          check();
+          const current = store.memoryExtractions.review(
+            owner,
+            req.params.id,
+            check,
+          );
           if (JSON.stringify(current) !== JSON.stringify(review))
             throw new StoreError("CONFLICT");
         },

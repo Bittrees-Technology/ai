@@ -29,6 +29,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 type Task = {
   sourceBound?: boolean;
+  memoryExtraction?: boolean;
   dependencyAccess?: "unavailable";
   sourceApp?: string;
   id: string;
@@ -609,7 +610,7 @@ function App() {
                           continue.
                         </p>
                       )}
-                      {task.sourceBound && (
+                      {task.sourceBound && !task.memoryExtraction && (
                         <SourceDraftDetail
                           key={task.id}
                           id={task.id}
@@ -618,25 +619,29 @@ function App() {
                           onError={fail}
                         />
                       )}
-                      {task.status === "completed" && task.sourceBound && (
-                        <SourceMemoryCapture
-                          key={task.id + ":" + task.revision}
-                          taskId={task.id}
-                          sourceApp={task.sourceApp}
-                          api={api}
-                        />
-                      )}
                       {task.status === "completed" &&
-                        !task.sourceBound &&
-                        !task.dependencyAccess &&
-                        (task.result?.text ||
+                        task.sourceBound &&
+                        !task.memoryExtraction && (
+                          <SourceMemoryCapture
+                            key={task.id + ":" + task.revision}
+                            taskId={task.id}
+                            sourceApp={task.sourceApp}
+                            api={api}
+                          />
+                        )}
+                      {task.status === "completed" &&
+                        (!task.dependencyAccess || task.sourceBound) &&
+                        (task.sourceBound ||
+                          task.result?.text ||
                           task.result?.kind === "memory_candidates") && (
                           <MemorySuggestions
                             key={task.id + ":" + task.revision}
                             taskId={task.id}
                             revision={task.revision}
                             profileId={profile}
+                            sourceLinked={!!task.sourceBound}
                             extraction={
+                              !!task.memoryExtraction ||
                               task.result?.kind === "memory_candidates"
                             }
                             api={api}

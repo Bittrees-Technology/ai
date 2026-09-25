@@ -63,3 +63,12 @@ The recorded run completed in 20,432 ms, including local model loading and reque
 ## Exported extraction history
 
 The authenticated local JSON export includes a `memoryExtractions` collection for every retained extraction request, including pending and failed work. Each entry carries its task ID, recorded parent task/revision, source hash, prompt version and run history (including pinned model snapshots and outcomes). This complements the task prompts/results and saved memory records already exported. Historical provenance remains exportable when a source snapshot no longer passes execution validation; it is not permission to rerun or approve anything. Owner/tenant isolation applies, and deleting local task history removes the extraction bindings and runs. Encrypted backup already preserves these records; JSON export is not a backup-import format.
+
+
+## Reviewed source-backed suggestions
+
+Completed CRM, AutoNote, Mail and source-linked local drafts can explicitly request suggestions. Preparing the request opens the current request and result through the guarded individual export; the selected Mac model and exact task revision are confirmed before queuing. Focus loss, cancellation or a two-minute review expiry hides source content. No background extraction is enabled.
+
+The existing encrypted extraction binding retains the parent task/revision and prompt hash. Fresh source/dependency checks protect creation, worker execution and completion, suggestion review and selected-candidate saving. The final storage commit checks the same current access proof. Bulk lists expose only extraction metadata and conceal copied prompts/results; source-dependent extraction history is omitted from bulk JSON export. Individual authorized reads remain available. No storage format changes are needed; earlier engines reject source-backed extraction context.
+
+Saved suggestions remain model-origin, unverified candidates with the parent source link and local-only app permissions. Approval and any connected-app scope grant are separate actions. Exact quote matching checks structure and excerpt presence, not factual correctness. Source revocation denies subsequent review/save and memory access. The existing AutoNote HTTP/worker scenario covers this complete journey; the existing browser scenario covers source review, focus-loss cancellation and explicit queuing in disposable CI.

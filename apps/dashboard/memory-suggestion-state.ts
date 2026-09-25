@@ -14,6 +14,7 @@ export class MemorySuggestionController {
   busy = false;
   prepared = false;
   queuedId = "";
+  source: { request: string; result: string } | null = null;
   review: SuggestionReview | null = null;
   saved = new Set<number>();
   private epoch = 0;
@@ -42,9 +43,40 @@ export class MemorySuggestionController {
     this.prepared = true;
     this.changed();
   }
+  async prepareSource(profileId: string) {
+    if (this.busy || !profileId) return;
+    this.hide();
+    await this.run(
+      () => this.api(`/v1/requests/${this.taskId}/export`, "GET"),
+      (data) => {
+        const task = data.task;
+        if (
+          task?.id !== this.taskId ||
+          task.revision !== this.revision ||
+          task.status !== "completed" ||
+          typeof task.input?.prompt !== "string" ||
+          typeof task.result?.text !== "string" ||
+          !task.result.text
+        )
+          throw Error(
+            "The source changed. Open the current draft and try again.",
+          );
+        this.source = { request: task.input.prompt, result: task.result.text };
+        if (!this.intent || this.intent.modelProfileId !== profileId)
+          this.intent = {
+            expectedRevision: this.revision,
+            modelProfileId: profileId,
+            invocationId: this.uuid(),
+            confirmed: true,
+          };
+        this.prepared = true;
+      },
+    );
+  }
   hide() {
     this.epoch++;
     this.prepared = false;
+    this.source = null;
     this.review = null;
     this.saved.clear();
     this.changed();
@@ -75,6 +107,7 @@ export class MemorySuggestionController {
           intent,
         ),
       (task) => {
+        this.source = null;
         this.queuedId = task.id;
         this.prepared = false;
       },
