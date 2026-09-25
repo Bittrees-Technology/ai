@@ -1,3 +1,7 @@
+import {
+  autoNotePeerApprovalGrantsSchema,
+  type AutoNotePeerApprovalGrant,
+} from "../remote/private-autonote-approval-consent-contracts.js";
 import { exportPrivateResumeOffers } from "../remote/private-resume-offers.js";
 import { exportPrivateResumeDelivery } from "../remote/private-resume-delivery.js";
 import { exportPrivateResumeConsent } from "../remote/private-resume-consent.js";
@@ -140,6 +144,7 @@ export interface AutoNoteReview {
     reviewedHash: string;
     requestedAt: string;
   };
+  approvalDelegations?: AutoNotePeerApprovalGrant[];
   revision: number;
 }
 export interface Claim {
@@ -826,6 +831,42 @@ CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_i
             this.vault.seal(value, "autonote-review:" + value.id),
           );
         return this.autoNoteReview(owner, value.id);
+      })
+      .immediate();
+  }
+  setAutoNoteApprovalDelegations(
+    owner: Owner,
+    id: string,
+    expectedRevision: number,
+    raw: unknown,
+  ): AutoNoteReview {
+    const grants = autoNotePeerApprovalGrantsSchema.parse(raw);
+    return this.db
+      .transaction(() => {
+        const item = this.autoNoteReview(owner, id);
+        if (
+          item.revision !== expectedRevision ||
+          !item.response ||
+          grants.some(
+            (g) =>
+              g.operationId !== item.id ||
+              g.taskId !== item.taskId ||
+              g.taskRevision !== item.taskRevision ||
+              g.grantId !== item.grantId ||
+              g.reviewId !== item.response!.reviewId ||
+              g.proposalDigest !== item.response!.digest ||
+              g.expiresAt > Date.parse(item.response!.expiresAt),
+          )
+        )
+          throw new StoreError("CONFLICT");
+        const { revision: _revision, ...value } = item;
+        value.approvalDelegations = grants;
+        this.db
+          .prepare(
+            "UPDATE autonote_reviews SET payload=?,revision=revision+1 WHERE id=?",
+          )
+          .run(this.vault.seal(value, "autonote-review:" + id), id);
+        return this.autoNoteReview(owner, id);
       })
       .immediate();
   }
