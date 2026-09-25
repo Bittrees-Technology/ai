@@ -1,3 +1,5 @@
+import { PrivateResumeDelivery } from "../../../modules/remote/private-resume-delivery.js";
+import { resumeTaskAccess } from "../../../apps/companion/resume-access.js";
 import { PrivateResumeConsent } from "../../../modules/remote/private-resume-consent.js";
 import { PrivateResumeOffers } from "../../../modules/remote/private-resume-offers.js";
 import { conversationTaskAccess } from "../../../apps/companion/conversation-access.js";
@@ -209,6 +211,42 @@ export async function retainedMac(
         confirmed: true,
       });
       return {
+        async receive(envelope: unknown) {
+          const delivery = new PrivateResumeDelivery(
+            store,
+            vault,
+            owner,
+            resumeConsent,
+            resumeTaskAccess(
+              store,
+              owner,
+              new SourceTasks(),
+              {
+                pin: async (p) => {
+                  if (JSON.stringify(p) !== JSON.stringify(profile))
+                    throw Error("MODEL_CHANGED");
+                  return { profile, digest: "a".repeat(64) };
+                },
+              },
+              undefined,
+              clock,
+            ),
+            clock,
+          );
+          const result = await delivery.receive({
+            permissionId: saved.grant.id,
+            envelope,
+            confirmed: true,
+          });
+          return {
+            result,
+            envelope: await delivery.receipt({
+              permissionId: saved.grant.id,
+              commandId: result.receipt.id,
+              confirmed: true,
+            }),
+          };
+        },
         data: ready.value.offer,
         envelope: await offers.delivery({
           id: ready.id,

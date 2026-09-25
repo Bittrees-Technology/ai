@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 16;
+export const browserKeyDatabaseVersion = 17;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -152,6 +152,12 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         for (const field of ["operation", "message", "sequence"])
           replay.createIndex(field, ["scope", field], { unique: true });
       }
+      if (event.oldVersion < 17) {
+        const delivery = r.result.createObjectStore("resume_delivery", {
+          keyPath: ["scope", "id"],
+        });
+        delivery.createIndex("scope", "scope");
+      }
       if (event.oldVersion < 16)
         r.result.createObjectStore("resume_consents", { keyPath: "scope" });
       if (event.oldVersion < 13) {
@@ -161,6 +167,7 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         content.createIndex("scope", "scope");
       }
     };
+    // Version17 adds empty retained resume delivery and fences previous writers.
     // Version16 adds separate resume consent and fences older replay writers.
     // Version14 fences older writers before outgoing recipient receipts are retained.
     // Existing encrypted content, keys, channels and replay rows are preserved.

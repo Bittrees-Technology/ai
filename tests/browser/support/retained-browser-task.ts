@@ -22,7 +22,8 @@ export async function init(
     | "content"
     | "relay-content"
     | "receipts"
-    | "resume" = false,
+    | "resume"
+    | "resume-delivery" = false,
 ) {
   const f = {
     owner: "synthetic:" + randomUUID(),
@@ -53,7 +54,8 @@ export async function reopen(
     | "content"
     | "relay-content"
     | "receipts"
-    | "resume" = false,
+    | "resume"
+    | "resume-delivery" = false,
 ) {
   await page.goto("/?browser-peers");
   await page.waitForFunction(() => !!window.browserPeersTest);
@@ -77,7 +79,8 @@ export async function paired(
     | "content"
     | "relay-content"
     | "receipts"
-    | "resume" = false,
+    | "resume"
+    | "resume-delivery" = false,
 ) {
   const f = await init(page, previous),
     mac = await retainedMac(f.binding, f.now);
@@ -221,7 +224,8 @@ export async function ready(
     | "content"
     | "relay-content"
     | "receipts"
-    | "resume" = false,
+    | "resume"
+    | "resume-delivery" = false,
 ) {
   const f = await paired(page, previous);
   try {
