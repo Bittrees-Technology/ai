@@ -72,6 +72,7 @@ async function startIdentityServer() {
       "010-private-relay-messages",
       "011-mcp-delegation",
       "012-retention-90-days",
+      "013-history-retention-indexes",
     ])
       await pool.query(
         await readFile(

@@ -1,12 +1,14 @@
 import type { Pool, PoolClient } from "pg";
 import { RemoteStatusError } from "./status-store.js";
-/** One bounded transaction. Uses stored deadlines; never chooses or extends a retention policy. */
+/** One bounded transaction. Uses stored deadlines and an optional explicitly selected history policy; no default history deletion. */
 export async function cleanupRemote(
   pool: Pool,
   batchSize: number,
   cutoff = Date.now(),
+  historyRetentionDays?: 90,
 ) {
   if (
+    (historyRetentionDays !== undefined && historyRetentionDays !== 90) ||
     !Number.isSafeInteger(batchSize) ||
     batchSize < 1 ||
     batchSize > 1000 ||
@@ -40,10 +42,45 @@ export async function cleanupRemote(
       );
       counts[name] = result.rowCount ?? 0;
     }
+    // Optional, explicitly selected policy for history that previously had no purge deadline.
+    // Preserve live authority and retained dependencies; deletion must not cascade over a batch limit.
+    if (historyRetentionDays === 90) {
+      const threshold = cutoff - 90 * 86400000;
+      for (const [name, table, deadline, dependencies] of [
+        [
+          "mcpDelegations",
+          "remote_mcp_delegations",
+          "GREATEST(COALESCE(t.expires_at,t.request_expires_at),COALESCE(t.revoked_at,t.request_expires_at))",
+          "NOT EXISTS(SELECT 1 FROM remote_mcp_dispatches d WHERE d.delegation_id=t.id)",
+        ],
+        [
+          "relayGrants",
+          "remote_private_relay_grants",
+          "GREATEST(t.expires_at,COALESCE(t.revoked_at,t.expires_at))",
+          "true",
+        ],
+        [
+          "browserDevices",
+          "remote_browser_devices",
+          "GREATEST(t.expires_at,COALESCE(t.revoked_at,t.expires_at))",
+          "NOT EXISTS(SELECT 1 FROM remote_private_relay_grants g WHERE g.endpoint_kind='browser' AND g.endpoint_id=t.id)",
+        ],
+      ] as const) {
+        const result = await db.query(
+          `WITH expired AS (SELECT t.id FROM ${table} t
+           WHERE ${deadline}<=$1 AND ${dependencies}
+           ORDER BY ${deadline},t.id LIMIT $2 FOR UPDATE OF t SKIP LOCKED)
+           DELETE FROM ${table} target USING expired WHERE target.id=expired.id`,
+          [threshold, batchSize],
+        );
+        counts[name] = result.rowCount ?? 0;
+      }
+    }
     const templates = await db.query(
       `WITH expired AS (
       SELECT permission_id FROM remote_templates t WHERE purge_at<=$1
       AND NOT EXISTS(SELECT 1 FROM remote_template_commands c WHERE c.permission_id=t.permission_id)
+      AND NOT EXISTS(SELECT 1 FROM remote_mcp_delegations d WHERE d.permission_id=t.permission_id)
       ORDER BY purge_at,permission_id LIMIT $2 FOR UPDATE SKIP LOCKED
     ) DELETE FROM remote_templates t USING expired WHERE t.permission_id=expired.permission_id`,
       [cutoff, batchSize],
@@ -77,6 +114,21 @@ export async function cleanupRemote(
       [cutoff, batchSize],
     );
     counts.controlApprovals = approvals.rowCount ?? 0;
+    if (historyRetentionDays === 90) {
+      const devices = await db.query(
+        `WITH expired AS (SELECT d.id FROM remote_devices d
+         WHERE GREATEST(d.expires_at,COALESCE(d.revoked_at,d.expires_at))<=$1
+         AND NOT EXISTS(SELECT 1 FROM remote_status s WHERE s.device_id=d.id)
+         AND NOT EXISTS(SELECT 1 FROM remote_commands c WHERE c.device_id=d.id)
+         AND NOT EXISTS(SELECT 1 FROM remote_templates t WHERE t.device_id=d.id)
+         AND NOT EXISTS(SELECT 1 FROM remote_private_relay_grants g WHERE g.endpoint_kind='mac' AND g.endpoint_id=d.id)
+         ORDER BY GREATEST(d.expires_at,COALESCE(d.revoked_at,d.expires_at)),d.id
+         LIMIT $2 FOR UPDATE OF d SKIP LOCKED)
+         DELETE FROM remote_devices target USING expired WHERE target.id=expired.id`,
+        [cutoff - 90 * 86400000, batchSize],
+      );
+      counts.deviceHistory = devices.rowCount ?? 0;
+    }
     await db.query("COMMIT");
     return { cutoff, batchSize, counts };
   } catch (error) {

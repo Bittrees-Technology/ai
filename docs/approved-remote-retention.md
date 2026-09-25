@@ -10,4 +10,12 @@ An authenticated destination acknowledgement clears stored ciphertext atomically
 
 The existing PostgreSQL journey checks immediate ciphertext removal, continued receipt retention immediately before the 90-day deadline, and cleanup at the deadline. The existing HTTPS journey uses the 90-day setting across status, commands and templates. No separate test matrix is added.
 
-Deployment remains incomplete: configure and verify scheduled cleanup, permission/device history retention, host logs and backup expiry under the same 90-day operational policy. The message tombstone policy alone does not establish those lifecycle guarantees. Independent cryptographic review and hands-on client acceptance remain open. The public static site does not mount the remote service.
+Permission/device history cleanup is available through the existing maintenance command after applying migration013:
+
+```sh
+REMOTE_DATABASE_URL=... npx tsx scripts/remote-cleanup.ts --apply --batch-size 100 --history-retention-days 90
+```
+
+Without the explicit history flag, the command keeps its previous scope. With it, history is eligible 90 days after the later of expiry and revocation (or request expiry for unapproved MCP requests). Active and more recent records remain. Records with retained dependencies remain until those dependencies are removed: no parent deletion cascades through an unbounded child collection. Each pass locks and deletes at most the batch size in each category, skips busy rows and rolls back all categories if any phase fails. Accounts and relay ciphertext are outside this history sweep; the separate relay cleanup still owns ciphertext/tombstone deadlines. Historical message deadlines are unchanged.
+
+Deployment remains incomplete: configure and verify scheduled cleanup, host logs and backup expiry under the same 90-day operational policy. The message tombstone policy alone does not establish those lifecycle guarantees. Independent cryptographic review and hands-on client acceptance remain open. The public static site does not mount the remote service.
