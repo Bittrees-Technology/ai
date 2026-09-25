@@ -29,6 +29,8 @@ let keys: BrowserKeyLifecycle,
   peers: BrowserPeerEnrollment,
   host: BrowserKeyHost | null = null;
 let checks: BrowserPeerChecks | undefined;
+// Synthetic fixture-only recovery secret; never persisted or sent to the relay.
+let lastRecoveryCode: string | undefined;
 let consents: BrowserTaskConsent | undefined;
 let contentProvider = BrowserConversationContent;
 let contentStore: BrowserConversationContent | undefined;
@@ -193,6 +195,7 @@ const fixture = {
     peers?.close();
     host?.close();
     host = null;
+    lastRecoveryCode = undefined;
     owner = o;
     binding = b;
     now = time;
@@ -311,7 +314,12 @@ const fixture = {
       },
       code,
     );
+    lastRecoveryCode = code;
     return proof;
+  },
+  recoveryCode: () => {
+    if (!lastRecoveryCode) throw Error("No synthetic recovery code retained");
+    return lastRecoveryCode;
   },
   keyStatus: () => (host ? host.keyAPI.status() : keys.status()),
   recovery: (keyId: string) => keys.recovery({ keyId, confirmed: true }),
