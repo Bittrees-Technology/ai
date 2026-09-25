@@ -1,3 +1,4 @@
+import { ResumeOffers } from "./resume-offers.js";
 import React, { useEffect, useId, useMemo, useState } from "react";
 import {
   ResumePermissionPanelState,
@@ -192,6 +193,15 @@ export function ResumePermissions({
               </article>
             ))}
         </>
+      )}
+      {s && !c.busy && !review && (
+        <ResumeOffers
+          api={api}
+          taskId={taskId}
+          taskRevision={taskRevision}
+          status={taskStatus}
+          permissions={s}
+        />
       )}
       {review && (
         <article

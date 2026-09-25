@@ -354,3 +354,280 @@ test("Mac resume confirmation lost response requires refresh and does not retry"
   ).toBeVisible();
   expect(f.confirmations).toHaveLength(1);
 });
+
+async function offerFixture(page: Page) {
+  const peerId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    offerId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    permissionId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const choices = {
+    taskId: first,
+    taskRevision: 1,
+    peerId,
+    peerKeyEpoch: 1,
+    modelDigest: "a".repeat(64),
+    expiresAt: Date.now() + 900000,
+  };
+  const permissions = {
+    available: true,
+    canSetup: true,
+    revision: 1,
+    keyRevision: 1,
+    peerRevision: 1,
+    needsFreshPairing: false,
+    hasSelectedKey: true,
+    peers: [],
+    grants: [{ id: permissionId, choices, state: "saved" }],
+  };
+  const entry = {
+    id: offerId,
+    revision: 1,
+    permissionId,
+    choices,
+    fingerprint: "b".repeat(64),
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 300000,
+    state: "ready",
+  };
+  const offers = { available: true, canSetup: true, offers: [] as any[] };
+  const binding = { ownerId: first, deviceId: second };
+  const wire = {
+    header: {
+      version: 1,
+      suite: "HPKE-Auth-P256-SHA256-AES256GCM",
+      ownerId: first,
+      senderId: second,
+      recipientId: peerId,
+      senderKeyEpoch: 1,
+      recipientKeyEpoch: 1,
+      messageId: permissionId,
+      operationId: offerId,
+      sequence: 1,
+      issuedAt: entry.createdAt,
+      expiresAt: entry.expiresAt,
+    },
+    enc: "synthetic",
+    ciphertext: "synthetic",
+  };
+  let review: any,
+    held: Route | undefined,
+    hold = false,
+    lose = false;
+  const confirmations: any[] = [];
+  const workspace = await fixture(page, async (route, path) => {
+    if (path === "/v1/private-resume") {
+      await route.fulfill({ json: permissions });
+      return true;
+    }
+    if (!path.startsWith("/v1/private-resume/offers")) return false;
+    let json: unknown = offers;
+    if (path.endsWith("/prepare")) {
+      const body = route.request().postDataJSON();
+      review = {
+        id: permissionId,
+        action: body.action,
+        expiresAt: Date.now() + 120000,
+        offerId: body.action === "create" ? null : offerId,
+        offerExpiresAt: entry.expiresAt,
+        permissionId,
+        choices,
+        fingerprint: entry.fingerprint,
+        binding,
+      };
+      json = review;
+    } else if (path.endsWith("/confirm")) {
+      confirmations.push(route.request().postDataJSON());
+      if (review.action === "stop") entry.state = "stopped";
+      offers.offers = [entry];
+      json = { offer: entry, envelope: review.action === "stop" ? null : wire };
+      if (hold) {
+        hold = false;
+        held = route;
+        return true;
+      }
+      if (lose) {
+        lose = false;
+        await route.abort("failed");
+        return true;
+      }
+    }
+    await route.fulfill({ json });
+    return true;
+  });
+  await select(page, "First");
+  await page.getByRole("button", { name: "Refresh resume choices" }).click();
+  const panel = page.getByRole("region", {
+    name: "Encrypted resume offers",
+    exact: true,
+  });
+  const refresh = async () => {
+    // Escape/blur clear the parent permission status and unmount this panel.
+    // Reload that authority snapshot before reopening its child offers.
+    await page
+      .getByRole("button", { name: "Refresh resume choices", exact: true })
+      .click();
+    await panel
+      .getByRole("button", { name: "Refresh resume offers", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("button", {
+        name: "Review new resume offer",
+        exact: true,
+      }),
+    ).toBeVisible();
+  };
+  await refresh();
+  return {
+    ...workspace,
+    panel,
+    wire,
+    offerId,
+    offers,
+    confirmations,
+    refresh,
+    hold: () => {
+      hold = true;
+    },
+    lose: () => {
+      lose = true;
+    },
+    held: () => !!held,
+    release: async () => {
+      const route = held!;
+      held = undefined;
+      await deliver(page, route, { offer: entry, envelope: wire });
+    },
+  };
+}
+
+test("Mac resume offer downloads the exact reviewed envelope and stops further downloads", async ({
+  page,
+}, info) => {
+  const f = await offerFixture(page);
+  await f.panel
+    .getByRole("button", { name: "Review new resume offer", exact: true })
+    .click();
+  const downloadButton = f.panel.getByRole("button", {
+    name: "Download reviewed resume offer",
+    exact: true,
+  });
+  await expect(downloadButton).toBeDisabled();
+  await expect(f.panel.getByRole("checkbox")).not.toBeChecked();
+  await expect(
+    f.panel.getByText("a".repeat(64), { exact: true }),
+  ).toBeVisible();
+  await mkdir("test-results/resume-offer-ui", { recursive: true });
+  await f.panel.screenshot({
+    path: `test-results/resume-offer-ui/${info.project.name}-review.png`,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await f.panel.screenshot({
+    path: `test-results/resume-offer-ui/${info.project.name}-narrow-review.png`,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await f.panel.getByRole("checkbox").check();
+  const pendingDownload = page.waitForEvent("download");
+  await downloadButton.click();
+  const download = await pendingDownload;
+  expect(download.suggestedFilename()).toBe(
+    `bittrees-resume-offer-${f.offerId}.json`,
+  );
+  const stream = await download.createReadStream();
+  expect(stream).not.toBeNull();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+  expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(f.wire);
+  expect(f.confirmations).toHaveLength(1);
+  await f.panel
+    .getByRole("button", {
+      name: "Review stopping offer downloads",
+      exact: true,
+    })
+    .click();
+  const stop = f.panel.getByRole("button", {
+    name: "Stop reviewed offer downloads",
+    exact: true,
+  });
+  await expect(stop).toBeDisabled();
+  await f.panel.getByRole("checkbox").check();
+  await stop.click();
+  await expect(f.panel.getByRole("status")).toContainText(
+    "revoke resume permission",
+  );
+  await expect(
+    f.panel.getByRole("button", {
+      name: "Review resume offer download",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await f.panel.screenshot({
+    path: `test-results/resume-offer-ui/${info.project.name}-stopped.png`,
+  });
+  expect(f.confirmations).toHaveLength(2);
+});
+
+test("Mac resume offer clears reviews on Escape and blur and drops a confirmed download after task selection changes", async ({
+  page,
+}) => {
+  const f = await offerFixture(page);
+  let downloads = 0;
+  page.on("download", () => downloads++);
+  for (const action of ["escape", "blur"]) {
+    await f.panel
+      .getByRole("button", { name: "Review new resume offer", exact: true })
+      .click();
+    await expect(f.panel.getByRole("checkbox")).toBeVisible();
+    if (action === "escape") await page.keyboard.press("Escape");
+    else await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(f.panel.getByRole("checkbox")).toHaveCount(0);
+    await f.refresh();
+  }
+  await f.panel
+    .getByRole("button", { name: "Review new resume offer", exact: true })
+    .click();
+  await f.panel.getByRole("checkbox").check();
+  f.hold();
+  await f.panel
+    .getByRole("button", {
+      name: "Download reviewed resume offer",
+      exact: true,
+    })
+    .click();
+  await expect.poll(f.held).toBe(true);
+  await select(page, "Second");
+  await f.release();
+  expect(downloads).toBe(0);
+  expect(f.confirmations).toHaveLength(1);
+});
+
+test("Mac resume offer lost confirmation requires refresh without automatic retry or download", async ({
+  page,
+}) => {
+  const f = await offerFixture(page);
+  let downloads = 0;
+  page.on("download", () => downloads++);
+  await f.panel
+    .getByRole("button", { name: "Review new resume offer", exact: true })
+    .click();
+  await f.panel.getByRole("checkbox").check();
+  f.lose();
+  await f.panel
+    .getByRole("button", {
+      name: "Download reviewed resume offer",
+      exact: true,
+    })
+    .click();
+  await expect(f.panel.getByRole("alert")).toContainText("No automatic retry");
+  await f.refresh();
+  await expect(
+    f.panel.getByRole("button", {
+      name: "Review resume offer download",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(f.confirmations).toHaveLength(1);
+  expect(downloads).toBe(0);
+});
