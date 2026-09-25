@@ -1,3 +1,4 @@
+import { BrowserResumeDelivery } from "../../../modules/remote/browser-resume-delivery.js";
 import {
   BrowserResumeConsent,
   BrowserResumeConsentError,
@@ -64,11 +65,22 @@ async function conversationStore() {
     () => mono,
   ));
 }
+let resumeDelivery: BrowserResumeDelivery | undefined;
+async function resumeDeliveryStore() {
+  return (resumeDelivery ??= await BrowserResumeDelivery.open(
+    owner,
+    () => binding,
+    await resumeStore(),
+    () => now,
+    () => mono,
+  ));
+}
 let resumes: BrowserResumeConsent | undefined;
+let resumeProvider = BrowserResumeConsent;
 let resumeAccess:
   Awaited<ReturnType<BrowserResumeConsent["authorize"]>> | undefined;
 async function resumeStore() {
-  return (resumes ??= await BrowserResumeConsent.open(
+  return (resumes ??= await resumeProvider.open(
     owner,
     () => binding,
     keys,
@@ -194,7 +206,8 @@ const fixture = {
       | "content"
       | "relay-content"
       | "receipts"
-      | "resume" = false,
+      | "resume"
+      | "resume-delivery" = false,
   ) {
     sender?.outbox.close();
     sender = undefined;
@@ -202,6 +215,8 @@ const fixture = {
     consents = undefined;
     contentStore?.close();
     contentStore = undefined;
+    resumeDelivery?.close();
+    resumeDelivery = undefined;
     resumes?.close();
     resumes = undefined;
     resumeAccess = undefined;
@@ -226,37 +241,44 @@ const fixture = {
     mono = 0;
     current = null;
     const previousUrl =
-      previous === "resume"
-        ? "/legacy-resume/index.js"
-        : previous === "key-boundary"
-          ? "/legacy-key-boundary/index.js"
-          : previous === "relay-content"
-            ? "/legacy-relay-content/index.js"
-            : previous === "receipts"
-              ? "/legacy-receipts/index.js"
-              : previous === "content"
-                ? "/legacy-content/index.js"
-                : previous === "offer-ack"
-                  ? "/legacy-offer-ack/index.js"
-                  : previous === "offer-replay"
-                    ? "/legacy-offer-replay/index.js"
-                    : previous === "replay"
-                      ? "/legacy-replay/index.js"
-                      : previous === "conversation"
-                        ? "/legacy-conversation/index.js"
-                        : previous === "delivery"
-                          ? "/legacy-delivery/index.js"
-                          : previous === "task"
-                            ? "/legacy-composition/index.js"
-                            : "/legacy-consent/index.js";
+      previous === "resume-delivery"
+        ? "/legacy-resume-delivery/index.js"
+        : previous === "resume"
+          ? "/legacy-resume/index.js"
+          : previous === "key-boundary"
+            ? "/legacy-key-boundary/index.js"
+            : previous === "relay-content"
+              ? "/legacy-relay-content/index.js"
+              : previous === "receipts"
+                ? "/legacy-receipts/index.js"
+                : previous === "content"
+                  ? "/legacy-content/index.js"
+                  : previous === "offer-ack"
+                    ? "/legacy-offer-ack/index.js"
+                    : previous === "offer-replay"
+                      ? "/legacy-offer-replay/index.js"
+                      : previous === "replay"
+                        ? "/legacy-replay/index.js"
+                        : previous === "conversation"
+                          ? "/legacy-conversation/index.js"
+                          : previous === "delivery"
+                            ? "/legacy-delivery/index.js"
+                            : previous === "task"
+                              ? "/legacy-composition/index.js"
+                              : "/legacy-consent/index.js";
     const providers = previous
       ? await import(/* @vite-ignore */ previousUrl)
       : { BrowserKeyLifecycle, BrowserPeerEnrollment, BrowserPeerChecks };
+    resumeProvider =
+      previous === "resume-delivery"
+        ? providers.BrowserResumeConsent
+        : BrowserResumeConsent;
     previousOutbox = previous ? providers.BrowserPrivateOutbox : undefined;
     contentProvider =
       previous === "receipts" ||
       previous === "relay-content" ||
-      previous === "resume"
+      previous === "resume" ||
+      previous === "resume-delivery"
         ? providers.BrowserConversationContent
         : BrowserConversationContent;
     conversationProvider =
@@ -266,7 +288,8 @@ const fixture = {
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content" ||
-      previous === "resume"
+      previous === "resume" ||
+      previous === "resume-delivery"
         ? providers.BrowserConversationConsent
         : BrowserConversationConsent;
     consentProvider =
@@ -280,7 +303,8 @@ const fixture = {
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content" ||
-      previous === "resume"
+      previous === "resume" ||
+      previous === "resume-delivery"
         ? providers.BrowserTaskConsent
         : BrowserTaskConsent;
     compositionProvider =
@@ -293,7 +317,8 @@ const fixture = {
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content" ||
-      previous === "resume"
+      previous === "resume" ||
+      previous === "resume-delivery"
         ? providers.BrowserTaskComposition
         : BrowserTaskComposition;
     historyProvider =
@@ -306,7 +331,8 @@ const fixture = {
       previous === "content" ||
       previous === "receipts" ||
       previous === "relay-content" ||
-      previous === "resume"
+      previous === "resume" ||
+      previous === "resume-delivery"
         ? providers.BrowserTaskHistory
         : BrowserTaskHistory;
     keys = await providers.BrowserKeyLifecycle.open(
@@ -376,6 +402,7 @@ const fixture = {
     binding = b;
     checks?.invalidate();
     consents?.invalidate();
+    resumeDelivery?.invalidate();
     resumes?.invalidate();
     conversations?.invalidate();
     contentStore?.invalidate();
@@ -411,6 +438,7 @@ const fixture = {
   invalidate() {
     checks?.invalidate();
     consents?.invalidate();
+    resumeDelivery?.invalidate();
     resumes?.invalidate();
     conversations?.invalidate();
     contentStore?.invalidate();
@@ -723,6 +751,103 @@ const fixture = {
     host
       ? host.conversationContentAPI.clear(raw)
       : conversationContentStore().then((c) => c.clear(raw)),
+  async resumeDeliveryInspect(
+    action?: "corrupt" | "remove" | "strip-coverage",
+  ) {
+    // CI-only fault/inspection surface. Never included in the product bundle.
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const names = [...db.objectStoreNames];
+      const rows = await browserStorageTransaction<Record<string, any[]>>(
+        db,
+        names,
+        action ? "readwrite" : "readonly",
+        () => {},
+        (io) => {
+          const result: Record<string, any[]> = {};
+          const next = (i: number) => {
+            if (i === names.length) {
+              io.done(result);
+              return;
+            }
+            const name = names[i]!;
+            io.request(io.store(name).getAll(), (values) => {
+              result[name] = values;
+              if (name === "resume_delivery" && action)
+                for (const value of values) {
+                  if (action === "remove")
+                    io.store(name).delete([value.scope, value.id]);
+                  if (action === "corrupt") {
+                    value.ciphertext =
+                      (value.ciphertext[0] === "A" ? "B" : "A") +
+                      value.ciphertext.slice(1);
+                    io.store(name).put(value);
+                  }
+                }
+              if (name === "slots" && action === "strip-coverage")
+                for (const value of values) {
+                  delete value.incomingReplayBoundary;
+                  io.store(name).put(value);
+                }
+              next(i + 1);
+            });
+          };
+          next(0);
+        },
+      );
+      let exportDenied = true;
+      for (const row of rows.resume_delivery ?? [])
+        try {
+          await crypto.subtle.exportKey("raw", row.key);
+          exportDenied = false;
+        } catch {}
+      return {
+        version: db.version,
+        json: JSON.stringify(rows.resume_delivery ?? []),
+        count: (rows.resume_delivery ?? []).length,
+        exportDenied,
+        ledger: JSON.stringify(rows.incoming_replay ?? []),
+        channels: JSON.stringify(rows.channels ?? []),
+        all: JSON.stringify(rows),
+      };
+    } finally {
+      db.close();
+    }
+  },
+  resumeDeliveryHoldEncryption() {
+    const original = crypto.subtle.encrypt.bind(crypto.subtle);
+    crypto.subtle.encrypt = (async (
+      ...args: Parameters<SubtleCrypto["encrypt"]>
+    ) => {
+      const algorithm = args[0] as AesGcmParams;
+      if (
+        algorithm.name === "AES-GCM" &&
+        algorithm.additionalData &&
+        new TextDecoder()
+          .decode(algorithm.additionalData)
+          .includes("browser-resume-delivery:v1")
+      ) {
+        crypto.subtle.encrypt = original;
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      return original(...args);
+    }) as SubtleCrypto["encrypt"];
+  },
+  resumeDeliveryFailWrite(method: "add" | "put" | "delete") {
+    const original = IDBObjectStore.prototype[method];
+    (IDBObjectStore.prototype as any)[method] = function (...args: any[]) {
+      if (this.name === "resume_delivery") {
+        (IDBObjectStore.prototype as any)[method] = original;
+        throw new DOMException("synthetic", "QuotaExceededError");
+      }
+      return (original as Function).apply(this, args);
+    };
+  },
   async contentInspect(action?: "corrupt" | "remove" | "strip-coverage") {
     // CI-only fault/inspection surface. Never included in the product bundle.
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -828,6 +953,21 @@ const fixture = {
       return original.apply(this, args);
     };
   },
+  resumeDeliveryHistory: () => resumeDeliveryStore().then((c) => c.history()),
+  resumeDeliveryExport: (raw: unknown) =>
+    resumeDeliveryStore().then((c) => c.export(raw)),
+  resumeDeliveryStop: (raw: unknown) =>
+    resumeDeliveryStore().then((c) => c.stop(raw)),
+  resumeDeliveryClear: (raw: unknown) =>
+    resumeDeliveryStore().then((c) => c.clear(raw)),
+  resumeDeliveryPrepare: (raw: unknown) =>
+    withKey(async () => (await resumeDeliveryStore()).prepare(raw)),
+  resumeDeliveryEnvelope: (raw: unknown) =>
+    withKey(async () => (await resumeDeliveryStore()).envelope(raw)),
+  resumeDeliveryRead: (raw: unknown) =>
+    withKey(async () => (await resumeDeliveryStore()).read(raw)),
+  resumeDeliveryReconcile: (raw: unknown) =>
+    withKey(async () => (await resumeDeliveryStore()).reconcile(raw)),
   resumeStatus: () =>
     host ? host.resumeAPI.status() : resumeStore().then((c) => c.status()),
   resumeInspect: (raw: unknown) =>

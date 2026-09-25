@@ -69,3 +69,6 @@ tests/browser/fixture/public/legacy-relay-content/
 
 .legacy-browser-resume/
 tests/browser/fixture/public/legacy-resume/
+
+.legacy-browser-resume-delivery/
+tests/browser/fixture/public/legacy-resume-delivery/

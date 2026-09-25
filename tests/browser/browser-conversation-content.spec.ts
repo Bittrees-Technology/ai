@@ -15,7 +15,8 @@ async function setup(
     | "receipts"
     | "relay-content"
     | "key-boundary"
-    | "resume" = false,
+    | "resume"
+    | "resume-delivery" = false,
   questions = false,
 ) {
   const f = await ready(page, previous);
@@ -499,12 +500,14 @@ test("actual version12 upgrade preserves keys, grants, shared replay and channel
     expect(before.version).toBe(12);
     await reopen(page, f.f);
     const after = await inspect(page);
-    expect(after.version).toBe(16);
+    expect(after.version).toBe(17);
     expect(after.count).toBe(0);
     const oldRows = JSON.parse(before.all),
       newRows = JSON.parse(after.all);
     expect(newRows.resume_consents).toEqual([]);
     delete newRows.resume_consents;
+    expect(newRows.resume_delivery).toEqual([]);
+    delete newRows.resume_delivery;
     delete newRows.conversation_content;
     expect(newRows).toEqual(oldRows);
     expect(
@@ -926,10 +929,11 @@ test("actual version13 upgrade preserves encrypted originals and receipts fence 
     const receipt = await f.offer.receipt(envelope);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(16);
+    expect(upgraded.version).toBe(17);
     expect(JSON.parse(upgraded.all)).toEqual({
       ...JSON.parse(before.all),
       resume_consents: [],
+      resume_delivery: [],
     });
     expect(await wire(page, { ...prepared, revision: 2 })).toEqual(envelope);
     const result = await reconcile(page, await read(page, prepared), receipt);
@@ -1097,10 +1101,11 @@ test("actual version14 content upgrades without invented relay history and the o
     expect(before.version).toBe(14);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(16);
+    expect(upgraded.version).toBe(17);
     expect(JSON.parse(upgraded.all)).toEqual({
       ...JSON.parse(before.all),
       resume_consents: [],
+      resume_delivery: [],
     });
     const entry = await read(page, prepared);
     expect(entry.relayAttempts).toBe(0);
@@ -1167,7 +1172,7 @@ for (const kind of ["message", "question"] as const)
         await page.evaluate(() => window.browserPeersTest.conversationStatus()),
       ).toEqual(before.grants);
       const upgraded = await inspect(page);
-      expect(upgraded.version).toBe(16);
+      expect(upgraded.version).toBe(17);
       expect(upgraded.ledger).toBe(old.ledger);
       expect(upgraded.channels).toBe(old.channels);
       expect(JSON.parse(upgraded.all).slots).toEqual(oldSlots);
@@ -1495,10 +1500,11 @@ test("actual version15 browser storage preserves encrypted content and replay wh
     );
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(16);
+    expect(upgraded.version).toBe(17);
     expect(JSON.parse(upgraded.all)).toEqual({
       ...JSON.parse(before.all),
       resume_consents: [],
+      resume_delivery: [],
     });
     expect(
       await page.evaluate(() => window.browserPeersTest.conversationStatus()),
@@ -1513,6 +1519,69 @@ test("actual version15 browser storage preserves encrypted content and replay wh
     );
     await reopen(page, f.f);
     expect(await wire(page, await read(page, prepared))).toEqual(envelope);
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("actual version16 storage preserves resume consent, encrypted content and replay while adding empty resume delivery", async ({
+  page,
+}) => {
+  const f = await setup(page, "resume-delivery");
+  try {
+    const prepared = await prepare(page, f),
+      envelope = await wire(page, prepared);
+    const offer = await f.mac.resumeOffer();
+    const grant = await page.evaluate(
+      async ({ envelope, peerId, peerKeyEpoch, expiresAt }) => {
+        const api = window.browserPeersTest;
+        const r = await api.resumePrepare({
+          expectedRevision: 0,
+          envelope,
+          peerId,
+          peerKeyEpoch,
+          expiresAt,
+        });
+        return api.resumeApprove({
+          reviewId: r.reviewId,
+          expectedRevision: r.expectedRevision,
+          confirmed: true,
+          acknowledged: true,
+        });
+      },
+      {
+        envelope: offer.envelope,
+        peerId: f.pin.peerId,
+        peerKeyEpoch: f.pin.keyEpoch,
+        expiresAt: f.f.now + 120000,
+      },
+    );
+    const before = await inspect(page);
+    expect(before.version).toBe(16);
+    const permissions = await page.evaluate(() =>
+      window.browserPeersTest.resumeStatus(),
+    );
+    expect(permissions.grants).toEqual([grant]);
+    await reopen(page, f.f);
+    const after = await inspect(page);
+    expect(after.version).toBe(17);
+    expect(JSON.parse(after.all)).toEqual({
+      ...JSON.parse(before.all),
+      resume_delivery: [],
+    });
+    expect(
+      await page.evaluate(() => window.browserPeersTest.resumeStatus()),
+    ).toEqual(permissions);
+    expect(await wire(page, await read(page, prepared))).toEqual(envelope);
+    await expect(reopen(page, f.f, "resume-delivery")).rejects.toThrow(
+      "STORAGE_UNAVAILABLE",
+    );
+    await reopen(page, f.f);
+    expect(
+      await page.evaluate(() => window.browserPeersTest.resumeStatus()),
+    ).toEqual(permissions);
+    expect(await wire(page, await read(page, prepared))).toEqual(envelope);
+    expect(offer.task().status).toBe("paused");
   } finally {
     f.mac.close();
   }

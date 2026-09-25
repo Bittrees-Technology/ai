@@ -1,5 +1,9 @@
 name: Checks
-on: [push, pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -241,6 +245,8 @@ jobs:
           node scripts/prepare-legacy-browser-relay-content.mjs
           git fetch --no-tags --depth=1 origin f4db1175fb2ebd0cfb34e2c280b0f7750a262989
           node scripts/prepare-legacy-browser-resume.mjs
+          git fetch --no-tags --depth=1 origin c48effcac986247618e3440d02457f1fefa0ab95
+          node scripts/prepare-legacy-browser-resume-delivery.mjs
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
@@ -286,6 +292,28 @@ jobs:
             test-results/resume-permission-ui/*.png
             test-results/resume-offer-ui/*.png
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify retained browser resume delivery
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config scripts/private-browser.config.ts browser-resume-delivery.spec.ts --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-delivery.json
+      - name: Retain browser resume delivery report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-delivery-regression
+          path: regression-reports/browser-resume-delivery.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain browser resume delivery failure details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-delivery-failure-details
+          path: |
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Verify browser resume consent and actual version15 upgrade
