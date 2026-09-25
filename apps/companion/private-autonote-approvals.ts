@@ -1,3 +1,10 @@
+import { PrivateAutoNoteDecisions } from "../../modules/remote/private-autonote-decisions.js";
+import { AutoNoteReviews } from "../../modules/connectors/autonote-reviews.js";
+import { privateRelayPageSchema } from "../../modules/remote/private-relay-contracts.js";
+import {
+  relayQueueReview,
+  relaySelectionMatches,
+} from "../../modules/remote/private-relay-queue.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PrivateAutoNoteApprovalConsent } from "../../modules/remote/private-autonote-approval-consent.js";
@@ -12,6 +19,7 @@ import type { RemoteClient } from "../../modules/remote/client.js";
 import type { Store, Owner } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
 import type { AutoNoteApprovalConnector } from "../../modules/connectors/autonote-approval.js";
+import type { AutoNoteConnector } from "../../modules/connectors/autonote.js";
 import type { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
 import type { CompanionPrivateRelay } from "./private-relay.js";
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -40,6 +48,23 @@ const request = z.discriminatedUnion("action", [
     offerId: z.uuid(),
     index: z.number().int().nonnegative().optional(),
     connection: z.strictObject({ id: z.uuid(), expectedRevision: revision }),
+  }),
+  z.strictObject({
+    ...base,
+    action: z.literal("receive"),
+    permissionId: z.uuid(),
+    connection: z.strictObject({ id: z.uuid(), expectedRevision: revision }),
+    after: privateRelayPageSchema.shape.after,
+  }),
+  z.strictObject({
+    ...base,
+    action: z.literal("execute"),
+    decisionId: z.uuid(),
+  }),
+  z.strictObject({
+    ...base,
+    action: z.literal("reconcile"),
+    decisionId: z.uuid(),
   }),
   z.strictObject({ ...base, action: z.literal("stop"), offerId: z.uuid() }),
   z.strictObject({ ...base, action: z.literal("remove"), offerId: z.uuid() }),
@@ -76,6 +101,7 @@ export class CompanionAutoNoteApprovals {
     private enabled = false,
     private now = Date.now,
     private mono = () => performance.now(),
+    private source?: AutoNoteConnector,
   ) {
     this.owner = { ...owner };
   }
@@ -112,6 +138,16 @@ export class CompanionAutoNoteApprovals {
       this.now,
     );
   }
+  private decisions(consent = this.consent()) {
+    return new PrivateAutoNoteDecisions(
+      this.store,
+      this.vault,
+      this.owner,
+      consent,
+      this.approval,
+      this.now,
+    );
+  }
   status(operationId: string) {
     const saved = this.consent().list(operationId);
     return {
@@ -127,6 +163,7 @@ export class CompanionAutoNoteApprovals {
         detailHash: g.detailHash,
       })),
       offers: this.outbox().status(operationId),
+      decisions: this.decisions().status(operationId),
     };
   }
   private live() {
@@ -196,6 +233,46 @@ export class CompanionAutoNoteApprovals {
         handle.check();
         return handle.grant;
       });
+    } else if (input.action === "receive") {
+      this.live();
+      if (!relay) throw denied();
+      snapshot = await relay.withTransport(
+        input.connection,
+        async (client, binding) => {
+          const handle = await this.consent(() =>
+            generation === this.generation ? binding() : null,
+          ).resolvePeer(input.operationId, input.permissionId);
+          const page = await client.poll({ after: input.after, limit: 1 });
+          handle.check();
+          const item = relayQueueReview(page.items[0]);
+          if (!item) throw denied();
+          return { grant: handle.grant, item, nextCursor: page.nextCursor };
+        },
+      );
+    } else if (input.action === "execute") {
+      snapshot = await this.live().withVerifiedDevice(async (scope) => {
+        const consent = this.consent(() =>
+          generation === this.generation ? scope.current() : null,
+        );
+        const decision = this.decisions(consent)
+          .status(input.operationId)
+          .find((d) => d.decisionId === input.decisionId);
+        const entry = this.store
+          .autoNoteReview(this.owner, input.operationId)
+          .approvalDecisions?.find((d) => d.command.id === input.decisionId);
+        if (!decision || !entry || decision.state !== "accepted")
+          throw denied();
+        const handle = await consent.resolve(input.operationId, entry.grant.id);
+        handle.check();
+        return { decision, grant: handle.grant };
+      });
+    } else if (input.action === "reconcile") {
+      snapshot = this.decisions()
+        .status(input.operationId)
+        .find(
+          (d) => d.decisionId === input.decisionId && d.state === "uncertain",
+        );
+      if (!snapshot) throw denied();
     } else if (input.action === "send") {
       this.live();
       if (!relay) throw denied();
@@ -289,7 +366,76 @@ export class CompanionAutoNoteApprovals {
       this.outbox().stop(action.operationId, action.offerId);
     else if (action.action === "remove")
       this.outbox().remove(action.operationId, action.offerId);
-    else if (action.action === "send") {
+    else if (action.action === "reconcile") {
+      if (
+        !same(
+          r.snapshot,
+          this.decisions()
+            .status(action.operationId)
+            .find((d) => d.decisionId === action.decisionId),
+        )
+      )
+        throw denied();
+      if (!this.source) throw denied();
+      const ledger = new AutoNoteReviews(
+        this.store,
+        this.owner,
+        this.source,
+        this.sources,
+        this.approval,
+      );
+      await ledger.reconcile(action.operationId);
+      this.decisions().recordReconciled(action.operationId, action.decisionId);
+    } else if (action.action === "execute") {
+      await this.live().withVerifiedDevice(async (scope) => {
+        const consent = this.consent(() =>
+          this.valid(r) ? scope.current() : null,
+        );
+        const decision = this.decisions(consent)
+          .status(action.operationId)
+          .find((d) => d.decisionId === action.decisionId);
+        if (!same(decision, (r.snapshot as any).decision)) throw denied();
+        await this.decisions(consent).execute({
+          operationId: action.operationId,
+          decisionId: action.decisionId,
+          confirmed: true,
+        });
+      });
+    } else if (action.action === "receive") {
+      this.live();
+      if (!relay) throw denied();
+      await relay.withTransport(action.connection, async (client, binding) => {
+        const current = () => (this.valid(r) ? binding() : null);
+        const page = await client.poll({ after: action.after, limit: 1 });
+        const item = page.items[0],
+          snapshot = r.snapshot as any;
+        this.checkRevision(action);
+        if (
+          !current() ||
+          !item ||
+          !relaySelectionMatches(item, snapshot.item.selection)
+        )
+          throw denied();
+        await this.decisions(this.consent(current)).receive(
+          {
+            operationId: action.operationId,
+            permissionId: action.permissionId,
+            envelope: item.envelope,
+            confirmed: true,
+          },
+          () => {
+            if (!current()) throw denied();
+          },
+        );
+        if (!current()) throw denied();
+        await client.acknowledge({
+          messageId: item.receipt.messageId,
+          envelopeHash: item.receipt.envelopeHash,
+          expectedRevision: item.receipt.revision,
+          confirmed: true,
+        });
+      });
+    } else if (action.action === "send") {
       this.live();
       if (!relay) throw denied();
       await relay.withTransport(

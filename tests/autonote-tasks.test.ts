@@ -1535,6 +1535,8 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       } as any,
       true,
       peer.clock,
+      undefined,
+      f.connector,
     );
     const grantInput = () => ({
       action: "grant",
@@ -1585,10 +1587,20 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       }),
     );
     let uploads = 0;
+    let incoming: any;
+    let acknowledgements = 0;
     const relay = {
       withTransport: async (_: unknown, fn: any) =>
         fn(
           {
+            poll: async () => ({
+              items: incoming ? [incoming] : [],
+              nextCursor: null,
+            }),
+            acknowledge: async () => {
+              acknowledgements++;
+              assert.equal(decisions.status(operationId)[0]!.state, "accepted");
+            },
             recipient: async () => ({
               endpointId: peer.peerId,
               expiresAt: peer.clock() + 300000,
@@ -1702,25 +1714,69 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       envelope,
       confirmed: true,
     };
-    assert.deepEqual(await decisions.receive(decisionInput), {
-      duplicate: false,
-      state: "accepted",
-    });
+    incoming = {
+      envelope,
+      receipt: {
+        version: 1,
+        messageId: envelope.header.messageId,
+        envelopeHash: await privateRelayEnvelopeHash(envelope),
+        revision: 1,
+        storedAt: peer.clock(),
+        state: "stored",
+      },
+    };
+    const receiving = await host.prepare(
+      {
+        action: "receive",
+        operationId,
+        expectedRevision: host.status(operationId).revision,
+        permissionId: g.id,
+        connection: { id: randomUUID(), expectedRevision: 1 },
+        after: null,
+      },
+      relay,
+    );
+    assert.equal(saves, 0);
+    await host.confirm(
+      { reviewId: receiving.id, confirmed: true, acknowledged: true },
+      relay,
+    );
+    assert.equal(acknowledgements, 1);
+    assert.equal(decisions.status(operationId)[0]!.state, "accepted");
     assert.deepEqual(await decisions.receive(decisionInput), {
       duplicate: true,
       state: "accepted",
     });
     assert.equal(saves, 0);
     const execute = { operationId, decisionId: command.id, confirmed: true };
-    await assert.rejects(decisions.execute(execute));
+    const execution = await host.prepare({
+      action: "execute",
+      operationId,
+      decisionId: command.id,
+      expectedRevision: host.status(operationId).revision,
+    });
+    await assert.rejects(
+      host.confirm({
+        reviewId: execution.id,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
     assert.equal(saves, 1);
     assert.equal(decisions.status(operationId)[0]!.state, "uncertain");
     await assert.rejects(decisions.execute(execute));
-    await ledger.reconcile(operationId);
-    assert.equal(
-      decisions.recordReconciled(operationId, command.id)[0]!.state,
-      "saved",
-    );
+    const reconciliation = await host.prepare({
+      action: "reconcile",
+      operationId,
+      decisionId: command.id,
+      expectedRevision: host.status(operationId).revision,
+    });
+    const recovered = await host.confirm({
+      reviewId: reconciliation.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    assert.equal(recovered.decisions[0]!.state, "saved");
     assert.deepEqual(
       decisions.status(operationId)[0]!.result?.receipt,
       receipt,

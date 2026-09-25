@@ -250,6 +250,7 @@ const privateKeys =
           enabled: process.env.BITTREES_PRIVATE_AUTONOTE_APPROVAL === "1",
           approval: autonoteApproval,
           sources: autonoteSources,
+          source: autonote,
         },
       )
     : undefined;

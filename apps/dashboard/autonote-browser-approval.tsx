@@ -8,6 +8,9 @@ const labels: Record<string, string> = {
   send: "Send remaining encrypted parts",
   stop: "Stop this offer",
   remove: "Remove this local offer",
+  receive: "Receive this browser decision",
+  execute: "Save the browser-approved notes",
+  reconcile: "Check the existing save receipt",
 };
 export function AutoNoteBrowserApproval({
   id,
@@ -24,6 +27,7 @@ export function AutoNoteBrowserApproval({
   const [peer, setPeer] = useState(""),
     [connection, setConnection] = useState(""),
     [review, setReview] = useState<any>(null);
+  const [after, setAfter] = useState<any>(null);
   const [ack, setAck] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -158,7 +162,8 @@ export function AutoNoteBrowserApproval({
       <h4>Review on a paired browser</h4>
       <p>
         Prepare and send these exact notes with a separate browser permission.
-        Browser receiving and saving controls are still being built.
+        The browser decision return is still being built; received decisions
+        appear below.
       </p>
       <button disabled={busy} onClick={() => void refresh()}>
         Refresh browser approval progress
@@ -206,6 +211,7 @@ export function AutoNoteBrowserApproval({
             onChange={(e) => {
               cancel();
               setConnection(e.target.value);
+              setAfter(null);
             }}
           >
             <option value="">Choose an active connection</option>
@@ -239,6 +245,27 @@ export function AutoNoteBrowserApproval({
                 onClick={() => void prepare("create", { permissionId: p.id })}
               >
                 Review preparing encrypted notes
+              </button>
+              <button
+                disabled={
+                  busy ||
+                  !!review ||
+                  !data.canSetup ||
+                  !relay ||
+                  p.expiresAt <= Date.now()
+                }
+                onClick={() =>
+                  void prepare("receive", {
+                    permissionId: p.id,
+                    connection: {
+                      id: relay.id,
+                      expectedRevision: relay.revision,
+                    },
+                    after,
+                  })
+                }
+              >
+                Review receiving a browser decision
               </button>
               <button
                 disabled={busy || !!review}
@@ -309,6 +336,51 @@ export function AutoNoteBrowserApproval({
           )}
         </div>
       ))}
+      {after && (
+        <button
+          disabled={busy}
+          onClick={() => {
+            cancel();
+            setAfter(null);
+          }}
+        >
+          Start at first queued message
+        </button>
+      )}
+      {(data?.decisions ?? []).map((d: any) => (
+        <div key={d.decisionId}>
+          <p>
+            Browser decision: {d.decision}.{" "}
+            {d.state === "accepted"
+              ? "Ready for a separate save confirmation."
+              : d.state === "uncertain"
+                ? "Save outcome uncertain. Check the receipt before taking further action."
+                : d.state === "saved"
+                  ? `Saved meeting version ${d.result.receipt.version}.`
+                  : "Rejected; no save requested."}
+          </p>
+          {d.state === "accepted" && (
+            <button
+              disabled={busy || !!review || !data.canSetup}
+              onClick={() =>
+                void prepare("execute", { decisionId: d.decisionId })
+              }
+            >
+              Review saving browser-approved notes
+            </button>
+          )}
+          {d.state === "uncertain" && (
+            <button
+              disabled={busy || !!review}
+              onClick={() =>
+                void prepare("reconcile", { decisionId: d.decisionId })
+              }
+            >
+              Review checking save receipt
+            </button>
+          )}
+        </div>
+      ))}
       {review && (
         <div role="group" aria-label="Review browser approval action">
           <h5>{labels[review.action]}</h5>
@@ -337,6 +409,37 @@ export function AutoNoteBrowserApproval({
               Send {review.summary.messageIds.length} remaining encrypted parts
               through the selected connection. This grants no additional source
               permission.
+            </p>
+          )}
+          {review.action === "receive" && (
+            <>
+              <p>
+                Receive queued message {review.summary.item.selection.messageId}
+                . Its browser decision is verified before storage. Receiving
+                does not save notes.
+              </p>
+              <button
+                disabled={busy}
+                onClick={() => {
+                  const cursor = review.summary.item.cursor;
+                  cancel();
+                  setAfter(cursor);
+                }}
+              >
+                Skip this message without receiving
+              </button>
+            </>
+          )}
+          {review.action === "execute" && (
+            <p>
+              Save the exact notes approved by this browser. Current source
+              permission and notes are checked again before saving.
+            </p>
+          )}
+          {review.action === "reconcile" && (
+            <p>
+              Look up the result of the earlier save. This does not send another
+              save request.
             </p>
           )}
           <p>
