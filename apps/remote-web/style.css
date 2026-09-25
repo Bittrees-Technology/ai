@@ -165,3 +165,25 @@ footer {
 #private-relay-controls [role="alert"] {
   color: #8a2630;
 }
+
+.getting-started {
+  margin-top: 24px;
+  padding: 14px 0;
+  border-block: 1px solid #aabec5;
+}
+.getting-started summary {
+  cursor: pointer;
+  color: #245e79;
+  font-weight: 600;
+}
+.getting-started summary:focus-visible {
+  outline: 2px solid #28685c;
+  outline-offset: 4px;
+}
+.getting-started li {
+  max-width: 72ch;
+  margin-block: 14px;
+}
+.getting-started a {
+  overflow-wrap: anywhere;
+}
