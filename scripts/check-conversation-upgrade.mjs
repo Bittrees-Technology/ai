@@ -69,7 +69,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 35);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 36);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.exportPrivateConversationConsent(owner), {
     revision: 0,
@@ -119,7 +119,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 27,
-    to: 35,
+    to: 36,
     legacyStoreSha256: legacyHash,
     checks: [
       "existing waiting task/question and omitted policy preserved",

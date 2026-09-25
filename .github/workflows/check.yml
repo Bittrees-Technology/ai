@@ -19,6 +19,18 @@ jobs:
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/
       - run: npm run build
+      - name: Check actual resume authority storage upgrade
+        run: |
+          git fetch --no-tags --depth=1 origin 3dbcf4e02ef22a2f4851779b11ba4255e8f6a4ae
+          node scripts/prepare-legacy-resume-authority.mjs
+          node scripts/check-resume-authority-upgrade.mjs
+      - name: Retain resume authority upgrade evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-authority-upgrade
+          path: test-results/resume-authority-upgrade.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Check historical Mac keys through authenticated conversation API
         run: |
           git fetch --no-tags --depth=1 origin d3ee4a9e5f82533509fde131e2e284906ed2d9fe

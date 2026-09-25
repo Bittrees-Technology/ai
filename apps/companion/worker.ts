@@ -168,6 +168,19 @@ export class LocalWorker {
         this.resolveProfile(claim.task.input.modelProfileId),
         abort.signal,
       );
+      const checkResumeModel = () =>
+        this.store.remoteResumes.checkExecutionModel(
+          this.owner,
+          claim.task.id,
+          pinned,
+        );
+      const generate: Runtime["generate"] = async (...args) => {
+        checkResumeModel();
+        const result = await this.runtime.generate(...args);
+        checkResumeModel();
+        return result;
+      };
+      checkResumeModel();
       const memories = [];
       for (const id of claim.task.input.memoryIds ?? []) {
         if (!this.memory) throw new Error("Memory unavailable");
@@ -229,7 +242,7 @@ export class LocalWorker {
               memories.map(({ text, sources }) => ({ text, sources })),
             );
         const decision = readQuestionDecision(
-          await this.runtime.generate(
+          await generate(
             pinned,
             questionPrompt(prompt, reference, pinned),
             abort.signal,
@@ -271,7 +284,7 @@ export class LocalWorker {
               source,
               prompt,
               pinned,
-              (prompt) => this.runtime.generate(pinned, prompt, abort.signal),
+              (prompt) => generate(pinned, prompt, abort.signal),
               async () => {
                 await this.sources!.validate(binding!);
               },
@@ -282,8 +295,7 @@ export class LocalWorker {
         ? await separatedMailDraft(
             source,
             prompt,
-            (prompt, format) =>
-              this.runtime.generate(pinned, prompt, abort.signal, format),
+            (prompt, format) => generate(pinned, prompt, abort.signal, format),
             async () => {
               await this.sources!.validate(binding!);
             },
@@ -294,7 +306,7 @@ export class LocalWorker {
         separated ??
         (batched
           ? ""
-          : await this.runtime.generate(
+          : await generate(
               pinned,
               source
                 ? sourcePrompt(source, prompt, claim.task.input.kind)
@@ -331,6 +343,7 @@ export class LocalWorker {
         : null;
       checkDeadline();
       checkDependencies();
+      checkResumeModel();
       this.store.complete(
         this.owner,
         claim.task.id,

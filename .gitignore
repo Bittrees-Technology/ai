@@ -60,3 +60,5 @@ tests/browser/fixture/public/legacy-receipts/
 
 .legacy-browser-relay-content/
 tests/browser/fixture/public/legacy-relay-content/
+
+.legacy-resume-authority/

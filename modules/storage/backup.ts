@@ -193,6 +193,9 @@ async function restoreSnapshot(
       tasks.db
         .prepare("UPDATE remote_template_permissions SET payload=NULL")
         .run();
+      tasks.db
+        .prepare("UPDATE remote_resume_permissions SET payload=NULL")
+        .run();
       tasks.db.pragma("wal_checkpoint(TRUNCATE)");
     } else {
       // Recovery does not grant source access; the application must supply its

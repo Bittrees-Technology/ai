@@ -91,7 +91,7 @@ try {
   unchanged.close();
   const s = new Store(f.path, f.vault, f.clock);
   stores.push(s);
-  assert.equal(s.db.pragma("user_version", { simple: true }), 35);
+  assert.equal(s.db.pragma("user_version", { simple: true }), 36);
   assert.deepEqual(s.exportPrivateConversationContent(owner), []);
   assert.deepEqual(s.exportPrivateConversationOffers(owner), originalOffers);
   assert.deepEqual(s.message(owner, f.message.id), originalMessage);
@@ -206,7 +206,7 @@ try {
   const result = {
     verifiedAt: new Date().toISOString(),
     from: 32,
-    to: 35,
+    to: 36,
     legacyHead: "45c32caa452a0d63e67503c1cf1da165d7686ab3",
     compiledHashes: expected,
     checks: [
