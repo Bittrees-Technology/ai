@@ -23,7 +23,16 @@ test("local HTTP rejects unauthenticated access, hostile origins and source sele
       "Idempotency-Key": "k",
     };
   try {
-    assert.equal((await fetch(url + "/v1/requests")).status, 401);
+    const denied = await fetch(url + "/v1/requests", {
+      headers: { "X-Correlation-ID": "caller-controlled" },
+    });
+    assert.equal(denied.status, 401);
+    const diagnostic = denied.headers.get("x-correlation-id");
+    assert.match(diagnostic!, /^[a-f0-9-]{36}$/);
+    assert.equal(
+      ((await denied.json()) as { correlationId: string }).correlationId,
+      diagnostic,
+    );
     assert.equal(
       (
         await fetch(url + "/v1/requests", {

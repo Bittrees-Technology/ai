@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual, randomUUID } from "node:crypto";
 import { RemoteMcpDelegationStore } from "./mcp-delegations.js";
 import { mountPrivateRelayRoutes } from "./private-relay-http.js";
 import {
@@ -129,6 +129,7 @@ export function createRemoteApp(
   app.set("trust proxy", false);
   app.use((req, res, next) => {
     res.set({
+      "X-Correlation-ID": randomUUID(),
       "Cache-Control": "no-store",
       Pragma: "no-cache",
       "Referrer-Policy": "no-referrer",

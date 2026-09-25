@@ -148,6 +148,7 @@ export function localApi({
   const origins = new Set([...hosts].map((h) => "http://" + h));
   app.use((req, res, next) => {
     res.locals.correlationId = randomUUID();
+    res.set("X-Correlation-ID", res.locals.correlationId);
     res.set("Cache-Control", "no-store");
     res.set("X-Content-Type-Options", "nosniff");
     const reject = (status: number, error: string) => {

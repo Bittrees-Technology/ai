@@ -202,7 +202,14 @@ export async function checkRemoteHttp(pool: Pool) {
       "X-Bittrees-Request": "1",
       "Sec-Fetch-Site": "same-origin",
     };
-    const page = await call("/", {}, {}, server, "GET");
+    const page = await call(
+      "/",
+      {},
+      { "X-Correlation-ID": "caller-controlled" },
+      server,
+      "GET",
+    );
+    assert.match(String(page.headers["x-correlation-id"]), /^[a-f0-9-]{36}$/);
     assert.equal(page.status, 200);
     assert.match(page.body, /Your companion, connected/);
     assert.match(
