@@ -281,7 +281,7 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
     .getByRole("button", { name: "Review source for memory" })
     .click();
   await memory
-    .getByLabel("Memory type", { exact: true })
+    .getByRole("combobox", { name: "Memory type", exact: true })
     .selectOption("decision");
   await memory
     .getByLabel("What to remember", { exact: true })
@@ -311,7 +311,7 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
     .getByRole("button", { name: "Review source for memory" })
     .click();
   await memory
-    .getByLabel("Memory type", { exact: true })
+    .getByRole("combobox", { name: "Memory type", exact: true })
     .selectOption("decision");
   await memory
     .getByLabel("What to remember", { exact: true })
