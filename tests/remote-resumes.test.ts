@@ -1,3 +1,5 @@
+import { resumeTaskAccess } from "../apps/companion/resume-access.js";
+import { SourceTasks } from "../modules/connectors/source-tasks.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -664,6 +666,98 @@ test("remote resume fences clarification generation and discards revoked decisio
     await worker.runOnce();
     assert.equal(generated, 1);
     assert.notEqual(f.store.get(owner, f.task.id).status, "completed");
+  } finally {
+    f.close();
+  }
+});
+
+test("host resume access validates the exact local model and commits only with fresh dependencies", async () => {
+  for (const mode of [
+    "valid",
+    "digest",
+    "profile",
+    "unavailable",
+    "expired",
+    "changed",
+  ] as const) {
+    const f = fixture();
+    try {
+      f.store.remoteResumes.approve(owner, f.approval);
+      let calls = 0;
+      const access = resumeTaskAccess(
+        f.store,
+        owner,
+        new SourceTasks(),
+        {
+          pin: async (raw, signal) => {
+            assert.equal(f.store.db.inTransaction, false);
+            assert.ok(signal);
+            assert.deepEqual(raw, profile);
+            calls++;
+            if (mode === "unavailable") throw new Error("MODEL_UNAVAILABLE");
+            if (mode === "expired") f.advance(10000);
+            if (mode === "changed")
+              f.store.addProfile(owner, { ...profile, temperature: 1 });
+            return {
+              profile:
+                mode === "profile" ? { ...profile, temperature: 1 } : profile,
+              digest: (mode === "digest" ? "b" : "a").repeat(64),
+            };
+          },
+        },
+        undefined,
+        () => f.now,
+        () => f.now,
+      );
+      if (mode === "valid") {
+        await f.store.remoteResumes.execute(
+          owner,
+          f.identity,
+          f.command,
+          access,
+        );
+        assert.equal(f.store.get(owner, f.task.id).status, "queued");
+      } else {
+        await assert.rejects(
+          f.store.remoteResumes.execute(owner, f.identity, f.command, access),
+        );
+        unchanged(f);
+      }
+      assert.equal(calls, 1);
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("host resume access rejects wrong owner and stale task before model access", async () => {
+  const f = fixture();
+  try {
+    let calls = 0;
+    const runtime = {
+      pin: async () => {
+        calls++;
+        return { profile, digest: "a".repeat(64) };
+      },
+    };
+    await assert.rejects(
+      resumeTaskAccess(
+        f.store,
+        other,
+        new SourceTasks(),
+        runtime,
+      )(f.task, profile, "a".repeat(64)),
+    );
+    const stale = { ...f.task, revision: f.task.revision + 1 };
+    await assert.rejects(
+      resumeTaskAccess(
+        f.store,
+        owner,
+        new SourceTasks(),
+        runtime,
+      )(stale, profile, "a".repeat(64)),
+    );
+    assert.equal(calls, 0);
   } finally {
     f.close();
   }
