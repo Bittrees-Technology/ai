@@ -203,4 +203,153 @@ export async function checkRemoteMaintenance(pool: Pool) {
     );
   }
   assert.equal((await cleanupRemote(pool, 1, cutoff)).counts.pairings, 1);
+
+  // Explicit 90-day history cleanup preserves active/recent records and bounded dependencies.
+  const historyCutoff = 90 * 86400000 + cutoff;
+  const historical = [] as {
+    browser: string;
+    grant: string;
+    delegation: string;
+    device: string;
+  }[];
+  for (const deadline of [cutoff, cutoff + 1, historyCutoff + 1]) {
+    const ids = {
+      browser: randomUUID(),
+      grant: randomUUID(),
+      delegation: randomUUID(),
+      device: randomUUID(),
+    };
+    historical.push(ids);
+    await pool.query(
+      "INSERT INTO remote_devices(id,owner_id,epoch,expires_at) VALUES($1,$2,1,$3)",
+      [ids.device, owner, deadline],
+    );
+    await pool.query(
+      "INSERT INTO remote_browser_devices(id,owner_id,operation_id,credential_hash,credential_epoch,created_at,expires_at) VALUES($1,$2,$3,$4,1,1,$5)",
+      [ids.browser, owner, randomUUID(), hash(), deadline],
+    );
+    await pool.query(
+      "INSERT INTO remote_private_relay_grants(id,owner_id,endpoint_kind,endpoint_id,credential_epoch,operation_id,revision,state,created_at,expires_at) VALUES($1,$2,'browser',$3,1,$4,1,'active',1,$5)",
+      [ids.grant, owner, ids.browser, randomUUID(), deadline],
+    );
+    await pool.query(
+      "INSERT INTO remote_mcp_delegations(id,client_id,actor,request_hash,challenge,approval_hash,request_expires_at) VALUES($1,'bittrees-mcp','{}',$2,$3,$4,$5)",
+      [
+        ids.delegation,
+        hash(),
+        randomBytes(32).toString("base64url"),
+        hash(),
+        deadline,
+      ],
+    );
+  }
+  const oldest = historical[0]!;
+  const protectedStatus = randomUUID();
+  await pool.query(
+    "INSERT INTO remote_status(device_id,id,status,revision,updated_at,projection_hash,expires_at) VALUES($1,$2,'queued',1,1,$3,$4)",
+    [oldest.device, protectedStatus, hash(), historyCutoff + 1],
+  );
+  // Default maintenance does not silently opt into the new history policy.
+  await cleanupRemote(pool, 1000, historyCutoff);
+  assert.equal(
+    (
+      await pool.query("SELECT id FROM remote_browser_devices WHERE id=$1", [
+        oldest.browser,
+      ])
+    ).rowCount,
+    1,
+  );
+  const busy = await pool.connect();
+  try {
+    await busy.query("BEGIN");
+    await busy.query(
+      "SELECT id FROM remote_browser_devices WHERE id=$1 FOR UPDATE",
+      [oldest.browser],
+    );
+    const result = await cleanupRemote(pool, 1, historyCutoff, 90);
+    assert.ok(Object.values(result.counts).every((n) => n <= 1));
+    assert.equal(
+      (
+        await pool.query("SELECT id FROM remote_browser_devices WHERE id=$1", [
+          oldest.browser,
+        ])
+      ).rowCount,
+      1,
+    );
+  } finally {
+    await busy.query("ROLLBACK");
+    busy.release();
+  }
+  // Earlier base deletes also roll back if a history phase fails.
+  const rollbackPair = randomUUID();
+  await pool.query(
+    "INSERT INTO remote_pairings(id,approval_hash,challenge,expires_at) VALUES($1,$2,$3,$4)",
+    [
+      rollbackPair,
+      hash(),
+      randomBytes(32).toString("base64url"),
+      historyCutoff,
+    ],
+  );
+  await pool.query(
+    "ALTER TABLE remote_private_relay_grants RENAME TO maintenance_hidden_grants",
+  );
+  try {
+    await assert.rejects(
+      cleanupRemote(pool, 1000, historyCutoff, 90),
+      /UNAVAILABLE/,
+    );
+    assert.equal(
+      (
+        await pool.query("SELECT id FROM remote_pairings WHERE id=$1", [
+          rollbackPair,
+        ])
+      ).rowCount,
+      1,
+    );
+  } finally {
+    await pool.query(
+      "ALTER TABLE maintenance_hidden_grants RENAME TO remote_private_relay_grants",
+    );
+  }
+  await cleanupRemote(pool, 1000, historyCutoff, 90);
+  for (const [i, ids] of historical.entries()) {
+    for (const [table, id] of [
+      ["remote_browser_devices", ids.browser],
+      ["remote_private_relay_grants", ids.grant],
+      ["remote_mcp_delegations", ids.delegation],
+    ]) {
+      assert.equal(
+        (await pool.query(`SELECT id FROM ${table} WHERE id=$1`, [id]))
+          .rowCount,
+        i === 0 ? 0 : 1,
+      );
+    }
+    assert.equal(
+      (
+        await pool.query("SELECT id FROM remote_devices WHERE id=$1", [
+          ids.device,
+        ])
+      ).rowCount,
+      1,
+    );
+  }
+  await pool.query("DELETE FROM remote_status WHERE device_id=$1 AND id=$2", [
+    oldest.device,
+    protectedStatus,
+  ]);
+  await cleanupRemote(pool, 1000, historyCutoff, 90);
+  assert.equal(
+    (
+      await pool.query("SELECT id FROM remote_devices WHERE id=$1", [
+        oldest.device,
+      ])
+    ).rowCount,
+    0,
+  );
+  assert.equal(
+    (await pool.query("SELECT id FROM remote_accounts WHERE id=$1", [owner]))
+      .rowCount,
+    1,
+  );
 }

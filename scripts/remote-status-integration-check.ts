@@ -363,6 +363,7 @@ try {
   );
   await pool.query(await readFile(new URL("../modules/remote/migrations/011-mcp-delegation.sql", import.meta.url), "utf8"));
   await pool.query(await readFile(new URL("../modules/remote/migrations/012-retention-90-days.sql", import.meta.url), "utf8"));
+  await pool.query(await readFile(new URL("../modules/remote/migrations/013-history-retention-indexes.sql", import.meta.url), "utf8"));
   await checkBrowserDevices(pool);
   await checkRemoteHttp(pool);
   await checkRemoteCommands(pool);

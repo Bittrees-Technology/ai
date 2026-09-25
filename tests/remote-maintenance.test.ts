@@ -18,6 +18,8 @@ test("Remote cleanup refuses invalid limits before connecting and CLI requires e
     "postgresql://PRIVATE_CLEANUP_SECRET@invalid.invalid/database";
   for (const args of [
     [],
+    ["--apply", "--batch-size", "1", "--history-retention-days", "30"],
+    ["--apply", "--batch-size", "1", "--history-retention-days", "0"],
     ["--batch-size", "1"],
     ["--apply", "--batch-size", "0"],
     ["--apply", "--batch-size", "1001"],
