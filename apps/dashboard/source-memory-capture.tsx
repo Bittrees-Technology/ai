@@ -136,7 +136,10 @@ export function SourceMemoryCapture({
     }
   };
   return (
-    <section aria-label="Source memory capture">
+    <section
+      className="source-memory-capture"
+      aria-label="Source memory capture"
+    >
       <h3>
         Remember from{" "}
         {sourceApp === "memory"
@@ -191,14 +194,16 @@ export function SourceMemoryCapture({
               }}
             />
           </label>
-          <label>
+          <label className="source-memory-confirmation">
             <input
               type="checkbox"
               disabled={busy}
               checked={confirmed}
               onChange={(e) => setConfirmed(e.target.checked)}
             />
-            Save this text as a candidate linked to the reviewed draft.
+            <span>
+              Save this text as a candidate linked to the reviewed draft.
+            </span>
           </label>
           <div className="actions">
             <button

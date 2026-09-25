@@ -1195,3 +1195,21 @@ select.model-profile-select {
 .autonote-browser-approval .approval-fingerprint {
   overflow-wrap: anywhere;
 }
+
+.source-memory-capture .source-memory-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  min-height: 44px;
+  padding: 10px 0;
+}
+.source-memory-confirmation input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+.source-memory-confirmation span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
