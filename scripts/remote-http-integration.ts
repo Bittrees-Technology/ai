@@ -1,3 +1,4 @@
+import { createRemoteServer } from "../apps/api/server.js";
 import { checkPrivateRelayHttp } from "./private-relay-http-integration.js";
 import { checkBrowserDeviceHttp } from "./browser-device-http-integration.js";
 import { RemoteTemplateReceiver } from "../modules/remote/template-receiver.js";
@@ -5,10 +6,10 @@ import { checkTemplateHttp } from "./remote-template-http-integration.js";
 import { RemoteReceiver } from "../modules/remote/receiver.js";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer, request } from "node:https";
 import {
   createServer as httpServer,
@@ -62,8 +63,25 @@ export async function checkRemoteHttp(pool: Pool) {
     retentionMs: 90 * 86400000,
   };
   const app = createRemoteApp(pool, config);
-  const server = createServer({ key, cert }, app),
-    plain = httpServer(app);
+  const launchConfig = {
+    listenHost: "127.0.0.1",
+    listenPort: 8443,
+    origin,
+    chainId: config.chainId,
+    sessionMs: config.sessionMs,
+    deviceMs: config.deviceMs,
+    requestsPerMinute: config.requestsPerMinute,
+    quotas: config.quotas,
+    templateQuotas: {
+      permissionsPerDevice: 1000,
+      commandsPerDevice: 1000,
+      pendingPerDevice: 20,
+    },
+    tlsKeyFile: join(temp, "key.pem"),
+    tlsCertFile: join(temp, "cert.pem"),
+  };
+  const { server } = await createRemoteServer(pool, launchConfig);
+  const plain = httpServer(app);
   const limited = createServer(
     { key, cert },
     createRemoteApp(pool, { ...config, requestsPerMinute: 2 }),
@@ -93,9 +111,15 @@ export async function checkRemoteHttp(pool: Pool) {
     createRemoteApp(pool, { ...config, privateRelayPolicy }),
   );
   const mcpClientCredential = randomBytes(32).toString("base64url");
-  const mcpServer = createServer({ key, cert }, createRemoteApp(pool, {
-    ...config, mcpClientCredentialHash: createHash("sha256").update(mcpClientCredential).digest("hex"),
-  }));
+  const mcpServer = createServer(
+    { key, cert },
+    createRemoteApp(pool, {
+      ...config,
+      mcpClientCredentialHash: createHash("sha256")
+        .update(mcpClientCredential)
+        .digest("hex"),
+    }),
+  );
   const servers = [server, plain, limited, privateServer, mcpServer];
   try {
     for (const s of servers)
@@ -836,7 +860,10 @@ export async function checkRemoteHttp(pool: Pool) {
       device,
       controls,
       item.deviceId,
-      { call: (path, body, headers) => call(path, body, headers, mcpServer), clientCredential: mcpClientCredential },
+      {
+        call: (path, body, headers) => call(path, body, headers, mcpServer),
+        clientCredential: mcpClientCredential,
+      },
     );
     const overCapacity = await call(
       "/device/status",
@@ -1312,6 +1339,87 @@ export async function checkRemoteHttp(pool: Pool) {
     );
     assert.equal(exhausted.status, 429);
     assert.ok(exhausted.headers["retry-after"]);
+    // Exercise the actual standalone entry point with the same isolated schema.
+    const listenPort = port(server);
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((e) => (e ? reject(e) : resolve())),
+    );
+    const configPath = join(temp, "server.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ ...launchConfig, listenPort }),
+      { mode: 0o600 },
+    );
+    const schema = (await pool.query("SELECT current_schema() AS name")).rows[0]
+      .name;
+    assert.match(schema, /^remote_test_[a-f0-9]+$/);
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "apps/api/start.ts", "--config", configPath],
+      {
+        env: {
+          ...process.env,
+          REMOTE_DATABASE_URL: process.env.REMOTE_TEST_DATABASE_URL,
+          PGOPTIONS: "-c search_path=" + schema,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const exited = new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", resolve);
+    });
+    try {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          child.stdout.on("data", (data) => {
+            if (String(data).includes("Remote HTTPS service ready.")) resolve();
+          });
+        }),
+        exited.then(() => {
+          throw Error("standalone host exited before readiness");
+        }),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(
+            () => reject(Error("standalone host readiness timeout")),
+            15000,
+          );
+          timer.unref();
+        }),
+      ]);
+      const response = await new Promise<{ status: number; body: string }>(
+        (resolve, reject) => {
+          const req = request(
+            {
+              hostname: "127.0.0.1",
+              port: listenPort,
+              path: "/settings.json",
+              rejectUnauthorized: false,
+              headers: { Host: new URL(origin).host },
+            },
+            (res) => {
+              let body = "";
+              res.on("data", (data) => (body += data));
+              res.on("end", () => resolve({ status: res.statusCode!, body }));
+            },
+          );
+          req.on("error", reject);
+          req.end();
+        },
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(JSON.parse(response.body), {
+        origin,
+        chainId: config.chainId,
+      });
+      child.kill("SIGTERM");
+      assert.equal(await exited, 0);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+      await exited;
+    }
   } finally {
     for (const s of servers) {
       s.closeAllConnections();

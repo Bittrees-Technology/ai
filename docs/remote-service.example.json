@@ -1,0 +1,21 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 8443,
+  "origin": "https://remote.example.invalid:8443",
+  "chainId": 1,
+  "sessionMs": 3600000,
+  "deviceMs": 86400000,
+  "tlsKeyFile": "/absolute/path/to/private-key.pem",
+  "tlsCertFile": "/absolute/path/to/certificate-chain.pem",
+  "requestsPerMinute": 120,
+  "quotas": {
+    "pendingPairings": 100,
+    "devicesPerOwner": 10,
+    "statusesPerDevice": 1000
+  },
+  "templateQuotas": {
+    "permissionsPerDevice": 100,
+    "commandsPerDevice": 1000,
+    "pendingPerDevice": 20
+  }
+}
