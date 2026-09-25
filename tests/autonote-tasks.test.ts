@@ -1225,6 +1225,8 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
   const peer = await conversationFixture();
   let proposal: any,
     changed = false,
+    saves = 0,
+    receipt: any = null,
     secret: Uint8Array | undefined;
   const reviewId = randomUUID(),
     expiresAt = new Date(peer.clock() + 600000).toISOString(),
@@ -1234,7 +1236,7 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
         .update(JSON.stringify(proposal))
         .digest("hex"),
       expiresAt,
-      receipt: null,
+      receipt,
     });
   const f = await fixture(
     (url, body) => {
@@ -1249,6 +1251,8 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
         proposal = body;
         return Response.json(reply());
       }
+      if (url.endsWith("review-receipt"))
+        return Response.json({ ...reply(), deleted: false });
       throw Error("Unexpected source request");
     },
     peerOwner,
@@ -1278,6 +1282,19 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
     async (url) => {
       if (String(url).endsWith("approval-exchange"))
         return Response.json(credential);
+      if (String(url).endsWith("approval-save")) {
+        saves++;
+        assert.equal(
+          peer.store.autoNoteReview(peerOwner, proposal.operationId).state,
+          "uncertain",
+        );
+        receipt = {
+          meetingId: f.meeting.id,
+          version: proposal.version + 1,
+          operationId: proposal.operationId,
+        };
+        throw Error("Synthetic lost save response");
+      }
       assert.ok(String(url).endsWith("approval-review"));
       return Response.json({
         id: reviewId,
@@ -1630,10 +1647,93 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
     assert.ok(
       complete.offers[0]!.packets.every((p) => p.receipt?.state === "stored"),
     );
+    const { PrivateAutoNoteDecisions } =
+      await import("../modules/remote/private-autonote-decisions.js");
+    const { sealPrivateEnvelope, privateEnvelopeSuite } =
+      await import("../modules/remote/private-envelope.js");
+    const decisions = new PrivateAutoNoteDecisions(
+      peer.store,
+      peer.vault,
+      peerOwner,
+      consent,
+      approval,
+      peer.clock,
+    );
+    const box = peer.store.autoNoteReview(peerOwner, operationId)
+      .approvalOutboxes![0]!;
+    const g = box.grant;
+    const command = {
+      version: 1,
+      type: "autonote.approval.decision",
+      id: randomUUID(),
+      offerId: box.id,
+      permissionId: g.id,
+      detailHash: g.detailHash,
+      proposalDigest: g.proposalDigest,
+      decision: "approve",
+      confirmed: true,
+      issuedAt: peer.clock(),
+    };
+    const envelope = await sealPrivateEnvelope(
+      {
+        version: 1,
+        suite: privateEnvelopeSuite,
+        ownerId: g.local.binding.ownerId,
+        senderId: g.peer.peerId,
+        recipientId: g.local.binding.deviceId,
+        senderKeyEpoch: g.peer.keyEpoch,
+        recipientKeyEpoch: g.local.keyEpoch,
+        messageId: randomUUID(),
+        operationId: command.id,
+        sequence: 90000,
+        issuedAt: command.issuedAt,
+        expiresAt: box.manifest.expiresAt,
+      },
+      new TextEncoder().encode(JSON.stringify(command)),
+      {
+        senderKey: peer.sender,
+        recipientPublicKey: (await peer.keys.resolve()).pair.publicKey,
+      },
+      peer.clock,
+    );
+    const decisionInput = {
+      operationId,
+      permissionId: g.id,
+      envelope,
+      confirmed: true,
+    };
+    assert.deepEqual(await decisions.receive(decisionInput), {
+      duplicate: false,
+      state: "accepted",
+    });
+    assert.deepEqual(await decisions.receive(decisionInput), {
+      duplicate: true,
+      state: "accepted",
+    });
+    assert.equal(saves, 0);
+    const execute = { operationId, decisionId: command.id, confirmed: true };
+    await assert.rejects(decisions.execute(execute));
+    assert.equal(saves, 1);
+    assert.equal(decisions.status(operationId)[0]!.state, "uncertain");
+    await assert.rejects(decisions.execute(execute));
+    await ledger.reconcile(operationId);
+    assert.equal(
+      decisions.recordReconciled(operationId, command.id)[0]!.state,
+      "saved",
+    );
+    assert.deepEqual(
+      decisions.status(operationId)[0]!.result?.receipt,
+      receipt,
+    );
+    assert.deepEqual(await decisions.receive(decisionInput), {
+      duplicate: true,
+      state: "saved",
+    });
+    assert.equal(saves, 1);
     const stop = await host.prepare({
       action: "stop",
       operationId,
-      expectedRevision: complete.revision,
+      expectedRevision: host.status(operationId).revision,
       offerId: ready.offers[0]!.id,
     });
     const stopped = await host.confirm({

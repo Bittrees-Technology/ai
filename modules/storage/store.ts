@@ -1,4 +1,8 @@
 import {
+  autoNoteRetainedDecisionsSchema,
+  type AutoNoteRetainedDecision,
+} from "../remote/private-autonote-decisions-state.js";
+import {
   autoNoteApprovalOutboxesSchema,
   type AutoNoteApprovalOutbox,
 } from "../remote/private-autonote-approval-outbox-contracts.js";
@@ -150,6 +154,7 @@ export interface AutoNoteReview {
   };
   approvalDelegations?: AutoNotePeerApprovalGrant[];
   approvalOutboxes?: AutoNoteApprovalOutbox[];
+  approvalDecisions?: AutoNoteRetainedDecision[];
   revision: number;
 }
 export interface Claim {
@@ -836,6 +841,38 @@ CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_i
             this.vault.seal(value, "autonote-review:" + value.id),
           );
         return this.autoNoteReview(owner, value.id);
+      })
+      .immediate();
+  }
+  setAutoNoteApprovalDecisions(
+    owner: Owner,
+    id: string,
+    expectedRevision: number,
+    raw: unknown,
+  ): AutoNoteReview {
+    const decisions = autoNoteRetainedDecisionsSchema.parse(raw);
+    return this.db
+      .transaction(() => {
+        const item = this.autoNoteReview(owner, id);
+        if (
+          item.revision !== expectedRevision ||
+          decisions.some(
+            (e) =>
+              e.grant.operationId !== item.id ||
+              e.grant.taskId !== item.taskId ||
+              e.grant.grantId !== item.grantId ||
+              e.manifest.meetingId !== item.proposal.meetingId,
+          )
+        )
+          throw new StoreError("CONFLICT");
+        const { revision: _revision, ...value } = item;
+        value.approvalDecisions = decisions;
+        this.db
+          .prepare(
+            "UPDATE autonote_reviews SET payload=?,revision=revision+1 WHERE id=?",
+          )
+          .run(this.vault.seal(value, "autonote-review:" + id), id);
+        return this.autoNoteReview(owner, id);
       })
       .immediate();
   }
