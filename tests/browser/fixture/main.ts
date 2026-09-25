@@ -376,3 +376,5 @@ if (new URLSearchParams(location.search).has("question-forms"))
 
 if (new URLSearchParams(location.search).has("autonote-approval"))
   void import("./autonote-approval.js");
+if (new URLSearchParams(location.search).has("autonote-exact-approval"))
+  void import("./autonote-exact-approval.js");

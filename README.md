@@ -154,7 +154,7 @@ The AutoNote connector module supports one explicitly approved meeting per perso
 
 Reads validate the saved account/workspace/grant, selected meeting, policy, transcript version, unique segment IDs and finite timestamp bounds. The companion independently recomputes the source projection hash and enforces the one-MiB transcript limit. Unexpected fields, recording keys, notes and integration credentials are rejected. The module cannot approve a save or publish to CRM. Its review transport below stages drafts for the separate AutoNote-owned save path.
 
-Disconnect persists a suspended state before contacting the source, survives restart after an uncertain response, and deletes the local credential only after acknowledgement. Explicit local removal is separate from source revocation. Pending reads cannot return after either operation invalidates their connection. Source activation, reviewed saves and end-to-end pilot acceptance remain pending.
+Disconnect persists a suspended state before contacting the source, survives restart after an uncertain response, and deletes the local credential only after acknowledgement. Explicit local removal is separate from source revocation. Pending reads cannot return after either operation invalidates their connection. Source activation and end-to-end pilot acceptance remain pending; separately granted companion reviewed saves are described below.
 
 ## AutoNote trusted draft engine
 
@@ -171,6 +171,12 @@ Connections → AutoNote starts separate source consent, accepts its one-time co
 
 Source task detail and individual exports use the matching adapter for fresh access/content checks. Lists and bulk exports conceal source-derived results; denied individual exports fail instead of returning partial content. The source detail clears on focus loss and revalidates every 15 seconds while visible. AutoNote tasks show unconfirmed suggestions and do not offer the separate CRM publication controls. Explicit submission and receipt controls are described below; this release does not activate production source access. HTTP integration is tested, while browser/keyboard and real-source pilot acceptance remain open.
 
+
+## Exact AutoNote approval from the companion
+
+Connections includes separate source-owned approval setup for the selected meeting, stored in its own Mac Keychain entry. Prepared AutoNote submissions can show the source audience and full resulting notes, require a fresh acknowledgement and confirm a single save. The source rechecks its own authority and exact proposal. The companion records an encrypted uncertain attempt before dispatch and reconciles a lost response through the existing source receipt; it never resends on restart. Cancellation before dispatch prevents the save; after dispatch, check its receipt.
+
+This local flow does not grant CRM publication or encrypted browser approval authority. Source feature activation, native/personal acceptance and encrypted approval transport remain open. See [the exact approval design](docs/autonote-exact-approval.md).
 
 ## AutoNote review transport
 

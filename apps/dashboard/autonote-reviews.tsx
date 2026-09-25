@@ -1,3 +1,4 @@
+import { AutoNoteExactApproval } from "./autonote-exact-approval.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
 export function AutoNoteReviewControls({
@@ -77,8 +78,8 @@ export function AutoNoteReviewControls({
       <p>
         Enable draft review uploads on your AutoNote connection first. Preparing
         a submission below keeps it local. Sending it transfers the exact draft
-        to AutoNote; only your review there can save it. Nothing is published to
-        CRM here.
+        to AutoNote; review there or use a separately granted companion approval
+        permission to save it. Nothing is published to CRM here.
       </p>
       <a
         href="https://autonote.bittrees.org/connect/ai"
@@ -200,6 +201,14 @@ export function AutoNoteReviewControls({
               {new Date(item.review.expiresAt).toLocaleString()}. On AutoNote,
               review the exact additions and confirm there to save.
             </p>
+          )}
+          {item.approvalAvailable && item.state === "prepared" && (
+            <AutoNoteExactApproval
+              key={item.id + ":" + item.state}
+              id={item.id}
+              api={api}
+              onChanged={refresh}
+            />
           )}
           {item.receipt && (
             <p>

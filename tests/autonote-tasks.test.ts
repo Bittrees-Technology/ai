@@ -1018,3 +1018,193 @@ test("autonote conversation access uses a fresh source read and fences local rem
     store.close();
   }
 });
+
+test("exact companion approval cancels, fences changed detail and reconciles a lost save after restart", async () => {
+  const { AutoNoteReviews } =
+      await import("../modules/connectors/autonote-reviews.js"),
+    { AutoNoteApprovalConnector } =
+      await import("../modules/connectors/autonote-approval.js"),
+    { mkdtempSync, rmSync, readFileSync } = await import("node:fs"),
+    { tmpdir } = await import("node:os"),
+    { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "autonote-exact-")),
+    path = join(dir, "tasks.db"),
+    vault = new Vault(randomBytes(32));
+  let store = new Store(path, vault),
+    proposal: any,
+    receipt: any = null,
+    saves = 0,
+    changed = false;
+  const reviewId = randomUUID(),
+    expiresAt = new Date(Date.now() + 600000).toISOString();
+  const reply = () => ({
+    reviewId,
+    digest: createHash("sha256").update(JSON.stringify(proposal)).digest("hex"),
+    expiresAt,
+    receipt,
+  });
+  const f = await fixture((url, body) => {
+    if (url.endsWith("review-status"))
+      return Response.json({
+        grantId: f.grant.grantId,
+        meetingId: f.meeting.id,
+        enabled: true,
+        expiresAt: f.grant.expiresAt,
+      });
+    if (url.endsWith("review-prepare")) {
+      proposal = body;
+      return Response.json(reply());
+    }
+    assert.ok(url.endsWith("review-receipt"));
+    return Response.json({ ...reply(), deleted: false });
+  });
+  let secret: Uint8Array | undefined;
+  const credential = {
+    approvalId: randomUUID(),
+    grantId: f.grant.grantId,
+    meetingId: f.meeting.id,
+    actions: ["approve_meeting_notes"],
+    token: "b".repeat(64),
+    expiresAt,
+  };
+  const approval = new AutoNoteApprovalConnector(
+    "owner",
+    {
+      getSecret: async () => secret,
+      setSecret: async (v) => {
+        secret = v;
+      },
+      deleteCredential: async () => {
+        secret = undefined;
+        return true;
+      },
+    },
+    f.connector,
+    async (url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (String(url).endsWith("approval-exchange"))
+        return Response.json(credential);
+      assert.equal(
+        new Headers(init?.headers).get("authorization"),
+        "Bearer " + credential.token,
+      );
+      if (String(url).endsWith("approval-review"))
+        return Response.json({
+          id: reviewId,
+          digest: reply().digest,
+          expiresAt,
+          meetingId: f.meeting.id,
+          title: changed ? "Changed title" : f.meeting.title,
+          visibility: "workspace",
+          proposal,
+          notes: {
+            summary: "SYNTHETIC_EXACT_NOTES",
+            topics: [],
+            decisions: [],
+            actions: [],
+            questions: [],
+            recommendations: [],
+          },
+        });
+      assert.ok(String(url).endsWith("approval-save"));
+      assert.deepEqual(body, {
+        reviewId,
+        digest: reply().digest,
+        confirmed: true,
+      });
+      const journal = store.autoNoteReview(owner, proposal.operationId);
+      assert.equal(journal.state, "uncertain");
+      assert.equal(journal.approvalAttempt?.approvalId, credential.approvalId);
+      assert.equal(store.db.inTransaction, false);
+      saves++;
+      receipt = {
+        meetingId: f.meeting.id,
+        version: proposal.version + 1,
+        operationId: proposal.operationId,
+      };
+      throw Error("synthetic lost save response");
+    },
+  );
+  try {
+    const start = await approval.begin();
+    await approval.finish(start.id, "c".repeat(64));
+    const task = await f.adapter.create(
+      store,
+      input,
+      f.meeting.id,
+      "approval-lost-response",
+    );
+    await worker(store, f, async () => JSON.stringify(draft)).runOnce();
+    let service = new AutoNoteReviews(
+      store,
+      owner,
+      f.connector,
+      f.adapter,
+      approval,
+    );
+    const operationId = randomUUID();
+    await service.reserve(task.id, { operationId });
+    await service.prepare(operationId);
+    const cancelled = await service.reviewApproval(operationId);
+    service.cancelApproval(operationId);
+    await assert.rejects(
+      service.approve(operationId, {
+        reviewToken: cancelled.reviewToken,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    assert.equal(saves, 0);
+    const stale = await service.reviewApproval(operationId);
+    changed = true;
+    await assert.rejects(
+      service.approve(operationId, {
+        reviewToken: stale.reviewToken,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    assert.equal(saves, 0);
+    changed = false;
+    const exact = await service.reviewApproval(operationId);
+    await assert.rejects(
+      service.approve(operationId, {
+        reviewToken: exact.reviewToken,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    assert.equal(saves, 1);
+    assert.equal(store.autoNoteReview(owner, operationId).state, "uncertain");
+    await assert.rejects(
+      service.approve(operationId, {
+        reviewToken: exact.reviewToken,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    assert.equal(saves, 1);
+    store.close();
+    assert.equal(
+      readFileSync(path).includes(Buffer.from("SYNTHETIC_EXACT_NOTES")),
+      false,
+    );
+    store = new Store(path, vault);
+    service = new AutoNoteReviews(
+      store,
+      owner,
+      f.connector,
+      f.adapter,
+      approval,
+    );
+    await assert.rejects(service.reviewApproval(operationId));
+    assert.equal(saves, 1);
+    const reconciled = await service.reconcile(operationId);
+    assert.equal(reconciled.state, "saved");
+    assert.deepEqual(reconciled.response?.receipt, receipt);
+    assert.equal(saves, 1);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -1,3 +1,4 @@
+import { AutoNoteApprovalConnector } from "../modules/connectors/autonote-approval.js";
 // Actual three-repository code, isolated synthetic databases, no external requests.
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes } from "node:crypto";
@@ -29,11 +30,14 @@ const originalFetch = globalThis.fetch;
 let sourceDb: any, crmDb: any;
 let crmDispatches = 0,
   losePublication = true,
-  losePreparation = true;
+  losePreparation = true,
+  loseApproval = true,
+  approvalDispatches = 0;
 try {
   for (const name of namespaces) await admin.query("CREATE SCHEMA " + name);
   process.env.AUTH_SECRET = "synthetic-cross-app-only-secret";
   process.env.AI_CONNECTOR_ENABLED = "true";
+  process.env.AI_REMOTE_APPROVAL_ENABLED = "true";
   process.env.AUTONOTE_MODE = "live";
   process.env.APP_URL = "https://autonote.bittrees.org";
   process.env.CRM_URL = "https://crm.bittrees.org";
@@ -51,6 +55,7 @@ try {
   await crmDb.pool().query(crmDb.schema);
   const ai = await load(sourceRoot, "lib/ai.ts"),
     reviews = await load(sourceRoot, "lib/ai-reviews.ts"),
+    approvals = await load(sourceRoot, "lib/ai-approval.ts"),
     route = await load(sourceRoot, "app/api/integrations/ai/[action]/route.ts"),
     sourceService = await load(sourceRoot, "lib/service.ts"),
     sourceCrm = await load(sourceRoot, "lib/crm.ts"),
@@ -133,6 +138,13 @@ try {
       if (action === "review-prepare" && response.ok && losePreparation) {
         losePreparation = false;
         throw Error("Synthetic lost staging response");
+      }
+      if (action === "approval-save") {
+        approvalDispatches++;
+        if (response.ok && loseApproval) {
+          loseApproval = false;
+          throw Error("Synthetic lost approval response");
+        }
       }
       return response;
     }
@@ -228,11 +240,49 @@ try {
   );
   await worker.runOnce();
   assert.equal(store.get(owner, task.id).status, "completed");
-  const ledger = new AutoNoteReviews(store, owner, connector, adapter);
+  let approvalSecret: Uint8Array | undefined;
+  const approval = new AutoNoteApprovalConnector(
+    JSON.stringify(owner),
+    {
+      getSecret: async () => approvalSecret,
+      setSecret: async (v) => {
+        approvalSecret = v;
+      },
+      deleteCredential: async () => {
+        approvalSecret = undefined;
+        return true;
+      },
+    },
+    connector,
+  );
+  const ledger = new AutoNoteReviews(
+    store,
+    owner,
+    connector,
+    adapter,
+    approval,
+  );
   const operationId = randomUUID();
   await assert.rejects(ledger.reserve(task.id, { operationId }));
   const status = await connector.status();
   await reviews.allowReviews(user, status!.grantId, true);
+  const approvalSetup = await approval.begin();
+  const approvalIssued = await approvals.authorizeApproval(user, {
+    grantId: status!.grantId,
+    expectedReviewEpoch: (
+      await sourceDb
+        .pool()
+        .query("SELECT review_epoch FROM ai_grants WHERE id=$1", [
+          status!.grantId,
+        ])
+    ).rows[0].review_epoch,
+    actions: ["approve_meeting_notes"],
+    expiresInMinutes: 15,
+    challenge: new URL(approvalSetup.consentUrl).searchParams.get(
+      "approval_challenge",
+    ),
+  });
+  await approval.finish(approvalSetup.id, approvalIssued.code);
   const local = await ledger.reserve(task.id, { operationId });
   await assert.rejects(ledger.prepare(local.id));
   assert.equal(store.autoNoteReview(owner, local.id).state, "uncertain");
@@ -243,13 +293,32 @@ try {
     prepared.response!.reviewId,
   );
   assert.equal(sourceDetail.notes.actions[0].status, "proposed");
-  const receipt = await reviews.saveReview(
-    user,
-    prepared.response!.reviewId,
-    prepared.response!.digest,
+  const exact = await ledger.reviewApproval(local.id);
+  assert.deepEqual(exact.detail.notes, sourceDetail.notes);
+  await assert.rejects(
+    ledger.approve(local.id, {
+      reviewToken: exact.reviewToken,
+      confirmed: true,
+      acknowledged: true,
+    }),
   );
-  assert.equal(receipt.version, 2);
-  assert.equal((await ledger.reconcile(local.id)).state, "saved");
+  assert.equal(store.autoNoteReview(owner, local.id).state, "uncertain");
+  assert.equal(approvalDispatches, 1);
+  const saved = await ledger.reconcile(local.id);
+  assert.equal(saved.state, "saved");
+  assert.equal(saved.response!.receipt!.version, 2);
+  await assert.rejects(
+    ledger.approve(local.id, {
+      reviewToken: exact.reviewToken,
+      confirmed: true,
+      acknowledged: true,
+    }),
+  );
+  assert.equal(
+    approvalDispatches,
+    1,
+    "Lost approval must not automatically dispatch again",
+  );
   await assert.rejects(adapter.validate(store.sourceBinding(owner, task.id)!));
   assert.equal(crmDispatches, 0, "AI save must not dispatch CRM publication");
   // Establish the existing, separate AutoNote-to-CRM PKCE connection.
@@ -338,7 +407,7 @@ try {
   await connector.disconnect();
   assert.equal(await connector.status(), null);
   console.log(
-    "Three-repository synthetic acceptance passed: draft, source save, accepted-action publication, lost-response recovery, deduplication and revoke. Inference is stubbed; this is not browser or model-quality acceptance.",
+    "Three-repository synthetic acceptance passed: draft, separate exact companion approval with lost-response reconciliation, accepted-action publication, lost-response recovery, deduplication and revoke. Inference is stubbed; this is not browser or model-quality acceptance.",
   );
 } finally {
   globalThis.fetch = originalFetch;

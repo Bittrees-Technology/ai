@@ -135,6 +135,11 @@ export interface AutoNoteReview {
   proposal: AutoNoteProposal;
   state: "local" | "uncertain" | "prepared" | "saved" | "deleted";
   response: z.infer<typeof autoNoteReconciledSchema> | null;
+  approvalAttempt?: {
+    approvalId: string;
+    reviewedHash: string;
+    requestedAt: string;
+  };
   revision: number;
 }
 export interface Claim {
@@ -821,6 +826,42 @@ CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_i
             this.vault.seal(value, "autonote-review:" + value.id),
           );
         return this.autoNoteReview(owner, value.id);
+      })
+      .immediate();
+  }
+  markAutoNoteApprovalAttempt(
+    owner: Owner,
+    id: string,
+    expectedRevision: number,
+    raw: unknown,
+  ): AutoNoteReview {
+    const attempt = z
+      .strictObject({
+        approvalId: z.uuid(),
+        reviewedHash: z.string().regex(/^[a-f0-9]{64}$/),
+        requestedAt: z.iso.datetime(),
+      })
+      .parse(raw);
+    return this.db
+      .transaction(() => {
+        const current = this.autoNoteReview(owner, id);
+        if (
+          current.revision !== expectedRevision ||
+          current.state !== "prepared" ||
+          !current.response ||
+          current.response.receipt ||
+          Date.parse(current.response.expiresAt) <= Date.now()
+        )
+          throw new StoreError("CONFLICT");
+        const { revision: _revision, ...value } = current;
+        value.state = "uncertain";
+        value.approvalAttempt = attempt;
+        this.db
+          .prepare(
+            "UPDATE autonote_reviews SET payload=?,revision=revision+1 WHERE id=?",
+          )
+          .run(this.vault.seal(value, "autonote-review:" + id), id);
+        return this.autoNoteReview(owner, id);
       })
       .immediate();
   }
