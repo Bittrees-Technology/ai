@@ -1,3 +1,4 @@
+import { ResumeOfferError } from "../../modules/remote/private-resume-offers.js";
 import { PrivateResumeConsentError } from "../../modules/remote/private-resume-consent.js";
 import { PrivateResumeDeliveryError } from "../../modules/remote/private-resume-delivery.js";
 import { ConversationContentError } from "../../modules/remote/private-conversation-content.js";
@@ -336,6 +337,23 @@ export function localApi({
   app.post("/v1/private-resume/confirm", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.confirmResumePermission(req.body));
+  });
+  app.get("/v1/private-resume/offers", (_req, res) =>
+    res.json(
+      privateKeys?.resumeOfferStatus() ?? {
+        available: false,
+        canSetup: false,
+        offers: [],
+      },
+    ),
+  );
+  app.post("/v1/private-resume/offers/prepare", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareResumeOffer(req.body));
+  });
+  app.post("/v1/private-resume/offers/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmResumeOffer(req.body));
   });
   app.post("/v1/private-resume/receive", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
@@ -1688,6 +1706,7 @@ export function localApi({
             err instanceof PrivateResumeConsentError ||
             err instanceof PrivateResumeDeliveryError ||
             err instanceof ConversationOfferError ||
+            err instanceof ResumeOfferError ||
             err instanceof ConversationContentError ||
             err instanceof PrivateKeyError ||
             err instanceof PrivateKeyLifecycleError ||
@@ -1709,6 +1728,7 @@ export function localApi({
               err instanceof PrivateKeyError ||
               err instanceof PrivateKeyLifecycleError ||
               err instanceof ConversationOfferError ||
+              err instanceof ResumeOfferError ||
               err instanceof ConversationContentError ||
               err instanceof PrivateResumeConsentError ||
               err instanceof PrivateResumeDeliveryError) &&
