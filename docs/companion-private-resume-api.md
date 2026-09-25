@@ -1,0 +1,20 @@
+# Companion private resume API and worker boundaries
+
+The authenticated local API has `/v1/private-resume` status plus explicit `prepare`, `confirm`, `receive` and `receipt` actions. Existing local bearer and origin checks apply. No remote credential or existing conversation/task grant authorizes these actions. The feature is disabled by default and requires a separately supplied runtime, source/model access guard and verified remote-device client.
+
+The host permission controller computes the digest from the selected paused task's local model profile, using bounded runtime pinning. A caller cannot supply the digest. Confirmation obtains fresh device identity, re-pins the model and rechecks the reviewed task/profile/source snapshot, key and peer revisions, proof and expiry. Changed model, stale task, cross-panel operations, logout/invalidation and expired review deny confirmation. Revocation remains locally reviewable without a network connection.
+
+The parent shares its native-operation lock across resume, key, peer and other private operations. Encrypted receive and separately confirmed receipt preparation run within a fresh verified-device scope and call the existing atomic encrypted admission component. Status and review do not expose task text. Storage failures return the existing service-unavailable class; authority denials retain the API's existing `DENIED` response mapping.
+
+Five real local HTTP/controller tests cover authenticated review without implicit grant, caller-digest rejection, missing bearer/foreign origin, disabled configuration, changed-model confirmation, cross-panel invalidation, the shared operation lock and host invalidation during pinning, and real authenticated encrypted resume/duplicate/receipt round trips. All data and key entries are synthetic.
+
+Startup now supplies the source/model guard, local runtime and worker boundary. Operations require the existing remote client, private-key setup and the separate development setting `BITTREES_PRIVATE_RESUME=1`. The normal launcher leaves it disabled. Browser/native UI, encrypted offers, relay integration and full distributed-client acceptance remain pending. The schema and encrypted core are inherited from PR206. No installed app, personal Keychain, model, runtime, deployment or Acer changes are made by these tests.
+
+
+## Fresh worker authority
+
+For tasks resumed under private consent, each worker boundary obtains a new verified-device scope and validates the exact stored consent/model. Generation starts, post-generation acceptance, model provenance, clarification writes and final completion run their synchronous checks/actions inside that scope. The identity handle is not cached after `withVerifiedDevice` returns. A long generation releases the short identity operation and obtains fresh verification afterward; a denied check aborts pending inference and prevents a late result from being committed.
+
+Ordinary local tasks skip remote identity entirely and retain existing model/source checks. Existing internal resume grants retain their separate behavior. Private tasks without a configured current-authority provider fail closed. Remote identity verification is a bounded observation, not an atomic transaction with the remote server; local permission/key/lease checks happen at the synchronous task commit boundary. Post-commit network uncertainty must not be interpreted as permission to repeat an already accepted task.
+
+Six additional worker regressions prove one completion from an authenticated HTTP resume, unchanged duplicate behavior, fresh checks after a synthetic40-second generation with maintained task lease, remote denial before/after generation, guarded clarification storage, and local execution without network identity. All920 engine tests, typecheck, production builds and unchanged public contracts pass locally. These are synthetic functional tests, not real-model speed measurements or a personal-device pilot. Current-head CI and the unresolved shared browser test gate remain required before integration.

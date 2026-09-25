@@ -1,3 +1,5 @@
+import { exportPrivateResumeDelivery } from "../remote/private-resume-delivery.js";
+import { exportPrivateResumeConsent } from "../remote/private-resume-consent.js";
 import { RemoteResumes } from "./remote-resumes.js";
 import { exportPrivateConversationContent } from "../remote/private-conversation-content.js";
 import { exportPrivateIncomingReplay } from "../remote/private-incoming-replay.js";
@@ -170,7 +172,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 36) {
+    if (version > 37) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -303,8 +305,14 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db
           .exec(`CREATE TABLE IF NOT EXISTS remote_resume_permissions(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,device_id TEXT NOT NULL,task_id TEXT NOT NULL,payload BLOB,PRIMARY KEY(user_id,tenant_id,id));
 CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_resume_consents(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB,PRIMARY KEY(user_id,tenant_id))",
+        );
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_resume_delivery(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id))",
+        );
         // Older writers must not bypass retained single-use resume authority.
-        this.db.pragma("user_version = 36");
+        this.db.pragma("user_version = 37");
       })();
     } catch (error) {
       this.db.close();
@@ -1799,6 +1807,12 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateIncomingReplay(owner: Owner) {
     return exportPrivateIncomingReplay(this, this.vault, owner);
   }
+  exportPrivateResumeDelivery(owner: Owner) {
+    return exportPrivateResumeDelivery(this, this.vault, owner);
+  }
+  exportPrivateResumeConsent(owner: Owner) {
+    return exportPrivateResumeConsent(this, this.vault, owner);
+  }
   exportPrivateConversationConsent(owner: Owner) {
     return exportPrivateConversationConsent(this, this.vault, owner);
   }
@@ -2115,6 +2129,11 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           .run(owner.userId, owner.tenantId);
         this.db
           .prepare(
+            "UPDATE private_resume_consents SET payload=NULL,locked=1,revision=revision+1 WHERE user_id=? AND tenant_id=?",
+          )
+          .run(owner.userId, owner.tenantId);
+        this.db
+          .prepare(
             "UPDATE private_peer_states SET payload=NULL,locked=1,revision=revision+1 WHERE user_id=? AND tenant_id=?",
           )
           .run(owner.userId, owner.tenantId);
@@ -2130,6 +2149,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           "private_send_channels",
           "private_task_receipts",
           "remote_resume_receipts",
+          "private_resume_delivery",
           "remote_resume_permissions",
           "remote_template_receipts",
           "remote_template_permissions",

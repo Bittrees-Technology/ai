@@ -19,6 +19,18 @@ jobs:
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/
       - run: npm run build
+      - name: Check actual private resume consent storage upgrade
+        run: |
+          git fetch --no-tags --depth=1 origin 3c697c8388b0a06ab570db61637f6fe70ee687a6
+          node scripts/prepare-legacy-private-resume.mjs
+          node scripts/check-private-resume-upgrade.mjs
+      - name: Retain private resume consent upgrade evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-resume-upgrade
+          path: test-results/private-resume-upgrade.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Check actual resume authority storage upgrade
         run: |
           git fetch --no-tags --depth=1 origin 3dbcf4e02ef22a2f4851779b11ba4255e8f6a4ae

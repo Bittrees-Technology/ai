@@ -1,4 +1,4 @@
-/** Actual compiled schema35 writer -> schema36; synthetic temporary files only. */
+/** Actual compiled schema35 writer -> schema37; synthetic temporary files only. */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
@@ -78,7 +78,7 @@ try {
   unchanged.close();
   let s = new Store(path, vault, () => now);
   stores.push(s);
-  assert.equal(s.db.pragma("user_version", { simple: true }), 36);
+  assert.equal(s.db.pragma("user_version", { simple: true }), 37);
   assert.deepEqual(s.get(owner, paused.id), paused);
   assert.equal(
     s.remoteControlsAllowed(owner, {
@@ -184,12 +184,12 @@ try {
     legacySourceHead: "3dbcf4e02ef22a2f4851779b11ba4255e8f6a4ae",
     compiledHashes: hashes,
     from: 35,
-    to: 36,
+    to: 37,
     checks: [
       "actual old writer preserves task and pause/cancel grant; migration creates no resume authority",
       "wrong vault leaves prior schema and content unchanged",
       "fresh separate approval executes once and receipt survives reopen",
-      "actual old writer refuses schema36",
+      "actual old writer refuses schema37",
       "current encrypted restore locks resume permission while retaining receipt",
       "untouched actual schema35 backup rolls back with restored control authority locked",
     ],

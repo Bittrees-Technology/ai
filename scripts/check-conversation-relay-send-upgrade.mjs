@@ -137,7 +137,7 @@ try {
   unchanged.close();
   const s = new Store(f.path, f.vault, f.clock);
   stores.push(s);
-  assert.equal(s.db.pragma("user_version", { simple: true }), 36);
+  assert.equal(s.db.pragma("user_version", { simple: true }), 37);
   assert.deepEqual(s.exportPrivateConversationContent(owner), rows);
   assert.deepEqual(s.exportPrivateIncomingReplay(owner), replay);
   assert.deepEqual(s.message(owner, f.message.id), message);
@@ -238,7 +238,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 34,
-    to: 36,
+    to: 37,
     legacyHead: "4eafe8e83171fb298a6d4454ee6ce96dae0bf177",
     compiledHashes: expected,
     checks: [

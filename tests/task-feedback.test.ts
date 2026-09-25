@@ -208,7 +208,7 @@ test("feedback stays encrypted and survives supported backup/restore while delet
     const copy = new Store(restored, f.vault);
     try {
       assert.deepEqual(copy.taskFeedback.read(owner, task.id), saved);
-      assert.equal(copy.db.pragma("user_version", { simple: true }), 36);
+      assert.equal(copy.db.pragma("user_version", { simple: true }), 37);
     } finally {
       copy.close();
     }
@@ -238,7 +238,7 @@ test("schema19 upgrades preserve tasks and failed review writes roll back withou
     f.store.db.exec("DROP TABLE task_feedback; PRAGMA user_version=19;");
     f.reopen();
     assert.deepEqual(f.store.get(owner, task.id), task);
-    assert.equal(f.store.db.pragma("user_version", { simple: true }), 36);
+    assert.equal(f.store.db.pragma("user_version", { simple: true }), 37);
     f.store.db.exec(
       "CREATE TRIGGER feedback_fail BEFORE INSERT ON task_feedback BEGIN SELECT RAISE(FAIL,'fixture'); END;",
     );

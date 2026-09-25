@@ -673,7 +673,7 @@ test("Schema15 migration preserves accepted tasks and receipts and starts an emp
     );
     f.target.close();
     migrated = new Store(join(f.dir, "target.db"), f.targetVault, f.clock);
-    assert.equal(migrated.db.pragma("user_version", { simple: true }), 36);
+    assert.equal(migrated.db.pragma("user_version", { simple: true }), 37);
     assert.deepEqual(migrated.exportPrivateTaskReceipts(owner), [receipt]);
     assert.equal(
       migrated.get(owner, receipt.taskId).input.prompt,

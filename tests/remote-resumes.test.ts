@@ -762,3 +762,229 @@ test("host resume access rejects wrong owner and stale task before model access"
     f.close();
   }
 });
+
+// A synthetic durable receiver journal isolates the transaction contract here.
+// These tests do not claim encryption, shared-ledger or private-consent wiring.
+function admissionProbe(f: ReturnType<typeof fixture>) {
+  f.store.db.exec(
+    "CREATE TABLE resume_admission_probe(id TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+  );
+  const count = () =>
+    (
+      f.store.db
+        .prepare("SELECT count(*) AS n FROM resume_admission_probe")
+        .get() as { n: number }
+    ).n;
+  let valid = true,
+    failAfterWrite = false;
+  return {
+    count,
+    revoke() {
+      valid = false;
+    },
+    failAfterWrite() {
+      failAfterWrite = true;
+    },
+    hooks: {
+      check() {
+        assert.equal(f.store.db.inTransaction, true);
+        if (!valid) throw Error("PRIVATE_CONSENT_ENDED");
+      },
+      admit(receipt: { id: string }) {
+        assert.equal(f.store.db.inTransaction, true);
+        const payload = JSON.stringify(receipt);
+        const row = f.store.db
+          .prepare("SELECT payload FROM resume_admission_probe WHERE id=?")
+          .get(receipt.id) as { payload: string } | undefined;
+        if (row) {
+          assert.equal(row.payload, payload);
+          return "duplicate" as const;
+        }
+        f.store.db
+          .prepare("INSERT INTO resume_admission_probe VALUES(?,?)")
+          .run(receipt.id, payload);
+        if (failAfterWrite) throw Error("AFTER_ADMISSION_WRITE");
+        return "new" as const;
+      },
+    },
+  };
+}
+test("delivery admission shares durable resume effects across concurrent calls and restart", async () => {
+  const f = fixture();
+  try {
+    const journal = admissionProbe(f);
+    f.store.remoteResumes.approve(owner, f.approval);
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        f.store.remoteResumes.executeDelivery(
+          owner,
+          f.identity,
+          f.command,
+          allow,
+          journal.hooks,
+        ),
+      ),
+    );
+    assert.deepEqual(results.map((v) => v.duplicate).sort(), [false, true]);
+    assert.equal(journal.count(), 1);
+    f.reopen();
+    const duplicate = await f.store.remoteResumes.executeDelivery(
+      owner,
+      f.identity,
+      f.command,
+      undefined,
+      journal.hooks,
+    );
+    assert.equal(duplicate.duplicate, true);
+    assert.deepEqual(duplicate.receipt, results[0]!.receipt);
+    assert.equal(f.store.get(owner, f.task.id).revision, f.task.revision + 1);
+    journal.revoke();
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        undefined,
+        journal.hooks,
+      ),
+      /PRIVATE_CONSENT_ENDED/,
+    );
+    assert.equal(journal.count(), 1);
+  } finally {
+    f.close();
+  }
+});
+test("delivery failure after journal write rolls back task, consumed permission, receipt and journal", async () => {
+  const f = fixture();
+  try {
+    const journal = admissionProbe(f);
+    f.store.remoteResumes.approve(owner, f.approval);
+    journal.failAfterWrite();
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        allow,
+        journal.hooks,
+      ),
+      /AFTER_ADMISSION_WRITE/,
+    );
+    unchanged(f);
+    assert.equal(journal.count(), 0);
+    // Permission was not consumed; an ordinary explicit local authority check
+    // can still apply the same command after the failed delivery transaction.
+    const accepted = await f.store.remoteResumes.execute(
+      owner,
+      f.identity,
+      f.command,
+      allow,
+    );
+    assert.equal(accepted.duplicate, false);
+  } finally {
+    f.close();
+  }
+});
+test("late private-consent loss rolls back accepted journal and all resume effects", async () => {
+  const f = fixture();
+  try {
+    const journal = admissionProbe(f);
+    f.store.remoteResumes.approve(owner, f.approval);
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        allow,
+        {
+          check: journal.hooks.check,
+          admit(receipt) {
+            const result = journal.hooks.admit(receipt);
+            journal.revoke();
+            return result;
+          },
+        },
+      ),
+      /PRIVATE_CONSENT_ENDED/,
+    );
+    unchanged(f);
+    assert.equal(journal.count(), 0);
+  } finally {
+    f.close();
+  }
+});
+test("delivery rejects replay classification mismatch and cannot invent admission for old plain receipt", async () => {
+  const f = fixture();
+  try {
+    const journal = admissionProbe(f);
+    f.store.remoteResumes.approve(owner, f.approval);
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        allow,
+        {
+          check: journal.hooks.check,
+          admit() {
+            return "duplicate";
+          },
+        },
+      ),
+      /CONFLICT/,
+    );
+    unchanged(f);
+    await f.store.remoteResumes.execute(owner, f.identity, f.command, allow);
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        undefined,
+        journal.hooks,
+      ),
+      /CONFLICT/,
+    );
+    assert.equal(journal.count(), 0);
+    assert.equal(f.store.remoteResumes.receipts(owner).length, 1);
+  } finally {
+    f.close();
+  }
+});
+test("delivery denies consent before source access and rejects accidentally async admission guards", async () => {
+  const f = fixture();
+  try {
+    const journal = admissionProbe(f);
+    f.store.remoteResumes.approve(owner, f.approval);
+    journal.revoke();
+    let accesses = 0;
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        async () => {
+          accesses++;
+          return () => {};
+        },
+        journal.hooks,
+      ),
+      /PRIVATE_CONSENT_ENDED/,
+    );
+    assert.equal(accesses, 0);
+    await assert.rejects(
+      f.store.remoteResumes.executeDelivery(
+        owner,
+        f.identity,
+        f.command,
+        allow,
+        { ...journal.hooks, check: async () => {} },
+      ),
+      /INVALID_INPUT/,
+    );
+    unchanged(f);
+    assert.equal(journal.count(), 0);
+  } finally {
+    f.close();
+  }
+});
