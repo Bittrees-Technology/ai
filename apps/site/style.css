@@ -1,0 +1,145 @@
+:root {
+  font:
+    17px/1.6 Avenir,
+    "Avenir Next",
+    system-ui,
+    sans-serif;
+  color: #183945;
+  background: #edf3f6;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+header,
+main,
+footer {
+  max-width: 1000px;
+  margin: auto;
+  padding-inline: 28px;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding-block: 25px;
+  border-bottom: 1px solid #aabec5;
+}
+a {
+  color: #245e79;
+  text-underline-offset: 4px;
+}
+a:focus-visible {
+  outline: 3px solid #28685c;
+  outline-offset: 5px;
+}
+.brand {
+  font-weight: 700;
+  text-decoration: none;
+  color: #183945;
+}
+nav {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+.intro {
+  padding-block: 70px;
+}
+.status {
+  color: #28685c;
+  font-weight: 700;
+  margin: 0;
+}
+h1 {
+  font-size: clamp(3rem, 8vw, 5rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  margin: 20px 0 28px;
+}
+h2 {
+  font-size: 1.9rem;
+  line-height: 1.2;
+}
+h3 {
+  font-size: 1.15rem;
+  margin-bottom: 6px;
+}
+p {
+  max-width: 68ch;
+}
+.lead {
+  font-size: 1.4rem;
+  max-width: 42ch;
+}
+.primary {
+  display: inline-block;
+  background: #28685c;
+  color: #fff;
+  padding: 12px 19px;
+  margin-top: 15px;
+  border-radius: 5px;
+  text-decoration: none;
+  font-weight: 600;
+}
+.primary:hover {
+  background: #183945;
+}
+.caption {
+  font-size: 0.9rem;
+}
+section + section {
+  border-top: 1px solid #aabec5;
+  padding-block: 35px;
+}
+ol {
+  padding-left: 24px;
+}
+li {
+  padding-left: 10px;
+  margin-bottom: 26px;
+}
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+}
+footer {
+  border-top: 1px solid #aabec5;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding-block: 25px;
+  font-size: 0.9rem;
+}
+@media (max-width: 600px) {
+  header,
+  main,
+  footer {
+    padding-inline: 20px;
+  }
+  header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+  nav {
+    gap: 18px;
+  }
+  .intro {
+    padding-block: 44px;
+  }
+  .columns {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  h2 {
+    font-size: 1.6rem;
+  }
+  footer {
+    flex-wrap: wrap;
+  }
+}
