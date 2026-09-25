@@ -9,7 +9,8 @@ import {
 
 async function setup(
   page: Page,
-  previous: false | "content" | "receipts" | "relay-content" = false,
+  previous:
+    false | "content" | "receipts" | "relay-content" | "key-boundary" = false,
   questions = false,
 ) {
   const f = await ready(page, previous);
@@ -1102,3 +1103,138 @@ test("actual version14 content upgrades without invented relay history and the o
     f.mac.close();
   }
 });
+
+for (const kind of ["message", "question"] as const)
+  test(`actual version11 historical key rejects authenticated ${kind} content after upgrade and fresh consent`, async ({
+    page,
+  }) => {
+    const f = await setup(page, "key-boundary", kind === "question");
+    try {
+      const question = kind === "question" ? await f.offer.question() : null;
+      const envelope =
+        question?.envelope ??
+        (await f.offer.message("SYNTHETIC_HISTORICAL_KEY_MESSAGE"));
+      const before = await page.evaluate(async (keyId) => {
+        const api = window.browserPeersTest;
+        return {
+          key: await api.key(),
+          kit: await api.recovery(keyId),
+          grants: await api.conversationStatus(),
+        };
+      }, f.local.keyId);
+      const old = await inspect(page);
+      expect(old.version).toBe(11);
+      const oldSlots = JSON.parse(old.all).slots;
+      expect(oldSlots).toHaveLength(1);
+      expect(oldSlots[0].incomingReplayBoundary).toBeUndefined();
+      // Authenticate actual Mac-produced bytes with the retained browser key.
+      // Cryptographic validity is deliberately separate from content admission.
+      const opened = await page.evaluate(
+        ({ peerId, keyEpoch, envelope }) =>
+          window.browserPeersTest.open(
+            peerId,
+            keyEpoch,
+            envelope,
+            envelope.header,
+          ),
+        { peerId: f.pin.peerId, keyEpoch: f.pin.keyEpoch, envelope },
+      );
+      expect(JSON.parse(opened).type).toBe(`conversation.${kind}`);
+      await reopen(page, f.f);
+      expect(await page.evaluate(() => window.browserPeersTest.key())).toEqual(
+        before.key,
+      );
+      expect(
+        await page.evaluate(
+          (id) => window.browserPeersTest.recovery(id),
+          f.local.keyId,
+        ),
+      ).toEqual(before.kit);
+      expect(
+        await page.evaluate(() => window.browserPeersTest.conversationStatus()),
+      ).toEqual(before.grants);
+      const upgraded = await inspect(page);
+      expect(upgraded.version).toBe(15);
+      expect(upgraded.ledger).toBe(old.ledger);
+      expect(upgraded.channels).toBe(old.channels);
+      expect(JSON.parse(upgraded.all).slots).toEqual(oldSlots);
+      await expect(accept(page, f, envelope)).rejects.toThrow("DENIED");
+      await expect(prepare(page, f)).rejects.toThrow("DENIED");
+      expect(await inspect(page)).toEqual(upgraded);
+      // A newly reviewed offer under the same old key cannot manufacture provenance.
+      const next = await f.mac.conversationOffer(undefined, {
+        questions: kind === "question",
+      });
+      const saved = await page.evaluate(
+        async ({ offer, peerId, peerKeyEpoch, now }) => {
+          const api = window.browserPeersTest;
+          const state = await api.conversationStatus();
+          const review = await api.conversationPrepare({
+            expectedRevision: state.revision,
+            peerId,
+            peerKeyEpoch,
+            envelope: offer.envelope,
+            permissions: offer.permissions,
+            expiresAt: now + 240000,
+          });
+          return api.conversationApprove({
+            reviewId: review.reviewId,
+            expectedRevision: review.expectedRevision,
+            confirmed: true,
+            acknowledged: true,
+          });
+        },
+        {
+          offer: {
+            envelope: next.envelope,
+            permissions: next.data.permissions,
+          },
+          peerId: f.pin.peerId,
+          peerKeyEpoch: f.pin.keyEpoch,
+          now: f.f.now,
+        },
+      );
+      const nextEnvelope = await next.message(
+        "SYNTHETIC_FRESH_CONSENT_OLD_KEY",
+      );
+      const renewed = await inspect(page);
+      const oldReplay = JSON.parse(old.ledger);
+      const renewedReplay = JSON.parse(renewed.ledger);
+      expect(renewedReplay).toHaveLength(oldReplay.length + 1);
+      expect(renewedReplay).toEqual(expect.arrayContaining(oldReplay));
+      expect(
+        renewedReplay
+          .filter((entry: { type: string }) =>
+            entry.type.startsWith("conversation."),
+          )
+          .map((entry: { type: string }) => entry.type),
+      ).toEqual(["conversation.offer", "conversation.offer"]);
+      await expect(
+        page.evaluate((raw) => window.browserPeersTest.contentAccept(raw), {
+          grantId: saved.id,
+          envelope: nextEnvelope,
+          confirmed: true,
+        }),
+      ).rejects.toThrow("DENIED");
+      expect(await inspect(page)).toEqual(renewed);
+      await reopen(page, f.f);
+      await expect(accept(page, f, envelope)).rejects.toThrow("DENIED");
+      const final = await inspect(page);
+      expect(final.count).toBe(0);
+      expect(final.ledger).toBe(renewed.ledger);
+      expect(final.channels).toBe(renewed.channels);
+      expect(JSON.parse(final.all).slots).toEqual(oldSlots);
+      expect(
+        await page.evaluate(
+          (id) => window.browserPeersTest.recovery(id),
+          f.local.keyId,
+        ),
+      ).toEqual(before.kit);
+      if (question) {
+        expect(question.task().status).toBe("awaiting_input");
+        expect(await question.run()).toBe(false);
+      }
+    } finally {
+      f.mac.close();
+    }
+  });

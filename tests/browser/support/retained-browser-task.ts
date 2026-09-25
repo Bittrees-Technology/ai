@@ -18,6 +18,7 @@ export async function init(
     | "replay"
     | "offer-replay"
     | "offer-ack"
+    | "key-boundary"
     | "content"
     | "relay-content"
     | "receipts" = false,
@@ -47,6 +48,7 @@ export async function reopen(
     | "replay"
     | "offer-replay"
     | "offer-ack"
+    | "key-boundary"
     | "content"
     | "relay-content"
     | "receipts" = false,
@@ -69,6 +71,7 @@ export async function paired(
     | "replay"
     | "offer-replay"
     | "offer-ack"
+    | "key-boundary"
     | "content"
     | "relay-content"
     | "receipts" = false,
@@ -211,6 +214,7 @@ export async function ready(
     | "replay"
     | "offer-replay"
     | "offer-ack"
+    | "key-boundary"
     | "content"
     | "relay-content"
     | "receipts" = false,
