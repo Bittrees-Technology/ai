@@ -359,7 +359,8 @@ function App() {
             <p>
               In the macOS menu bar at the top of your screen, choose{" "}
               <strong>Bittrees AI → Copy pairing code</strong>. Paste the code
-              below, then select <strong>Open workspace</strong>.
+              below, then select <strong>Open workspace</strong>. The menu copies
+              the code without displaying it; the field hides it as dots.
             </p>
             <details>
               <summary>Started the companion from a terminal?</summary>
