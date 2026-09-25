@@ -183,7 +183,7 @@ export function mountBrowserResumes(
     el("h2", "Choose task resume permission"),
     el(
       "p",
-      "Review permission for one paused task on your Mac. Saving permission alone does not resume it. Sending a resume request and receiving its confirmation are still being prepared.",
+      "Review permission for one paused task on your Mac. Saving permission alone does not resume it. When private delivery is enabled, use Resume a task on your Mac to review sending a request and check its receipt.",
     ),
     current,
     actions,
