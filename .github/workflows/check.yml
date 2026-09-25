@@ -206,6 +206,18 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Verify conversation delivery review readiness
+        run: |
+          mkdir -p regression-reports
+          npx playwright test --config scripts/private-browser.config.ts production-browser-conversation-delivery.spec.ts --reporter=json > regression-reports/conversation-delivery.json
+      - name: Retain conversation delivery regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-delivery-regression
+          path: regression-reports/conversation-delivery.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - name: Retain Mac incoming conversation previews
