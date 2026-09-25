@@ -1,3 +1,6 @@
+import { CompanionAutoNoteApprovals } from "./private-autonote-approvals.js";
+import type { AutoNoteApprovalConnector } from "../../modules/connectors/autonote-approval.js";
+import type { AutoNoteTasks } from "../../modules/connectors/autonote-tasks.js";
 import { CompanionPrivateResumes } from "./private-resumes.js";
 import type { ResumeAccess } from "../../modules/storage/remote-resumes.js";
 import type { PinnedModel, Ollama } from "../../modules/models/ollama.js";
@@ -65,6 +68,7 @@ export class CompanionPrivateKeys {
   private conversationContent: CompanionConversationContent;
   private resumes: CompanionPrivateResumes;
   private tasks: CompanionPrivateTasks;
+  private autoNoteApprovals?: CompanionAutoNoteApprovals;
   private review?: Review;
   private running = false;
   constructor(
@@ -85,8 +89,25 @@ export class CompanionPrivateKeys {
       runtime?: Pick<Ollama, "pin">;
       taskAccess?: ResumeAccess;
     } = {},
+    autoNoteOptions?: {
+      enabled: boolean;
+      approval: AutoNoteApprovalConnector;
+      sources: AutoNoteTasks;
+    },
   ) {
     this.owner = { ...owner };
+    if (autoNoteOptions)
+      this.autoNoteApprovals = new CompanionAutoNoteApprovals(
+        store,
+        vault,
+        this.owner,
+        (current) => this.keys(current),
+        autoNoteOptions.approval,
+        autoNoteOptions.sources,
+        remote,
+        setupEnabled && autoNoteOptions.enabled,
+        now,
+      );
     this.peerChecks = new CompanionPeerChecks(
       store,
       vault,
@@ -193,6 +214,7 @@ export class CompanionPrivateKeys {
     this.conversationOffers.invalidate();
     this.conversationContent.invalidate();
     this.resumes.invalidate();
+    this.autoNoteApprovals?.invalidate();
     this.remote?.invalidatePrivateIdentity();
   }
   peerStatus() {
@@ -206,6 +228,7 @@ export class CompanionPrivateKeys {
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
       this.resumes.invalidate();
+      this.autoNoteApprovals?.invalidate();
       return this.peers.invitation(raw);
     });
   }
@@ -217,6 +240,7 @@ export class CompanionPrivateKeys {
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
       this.resumes.invalidate();
+      this.autoNoteApprovals?.invalidate();
       return this.peers.prepare(raw);
     });
   }
@@ -422,6 +446,7 @@ export class CompanionPrivateKeys {
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
       this.resumes.invalidate();
+      this.autoNoteApprovals?.invalidate();
       return this.permissions.prepare(raw);
     });
   }
@@ -459,6 +484,31 @@ export class CompanionPrivateKeys {
   }
   confirmResumePermission(raw: unknown) {
     return this.exclusive(() => this.resumes.confirm(raw));
+  }
+  autoNoteApprovalStatus(operationId: string) {
+    return (
+      this.autoNoteApprovals?.status(operationId) ?? {
+        available: false,
+        canSetup: false,
+        permissions: [],
+        offers: [],
+      }
+    );
+  }
+  prepareAutoNoteApproval(raw: unknown, relay?: CompanionPrivateRelay) {
+    return this.protocolOperation(() => {
+      if (!this.autoNoteApprovals) throw new PrivateKeyLifecycleError("DENIED");
+      return this.autoNoteApprovals.prepare(raw, relay);
+    });
+  }
+  confirmAutoNoteApproval(raw: unknown, relay?: CompanionPrivateRelay) {
+    return this.exclusive(() => {
+      if (!this.autoNoteApprovals) throw new PrivateKeyLifecycleError("DENIED");
+      return this.autoNoteApprovals.confirm(raw, relay);
+    });
+  }
+  cancelAutoNoteApproval() {
+    this.autoNoteApprovals?.invalidate();
   }
   resumeOfferStatus() {
     return this.resumes.offerStatus();
@@ -505,6 +555,7 @@ export class CompanionPrivateKeys {
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
       this.resumes.invalidate();
+      this.autoNoteApprovals?.invalidate();
       return this.conversations.prepare(raw);
     });
   }
@@ -555,6 +606,7 @@ export class CompanionPrivateKeys {
     return this.exclusive(async () => {
       this.conversationContent.invalidate();
       this.resumes.invalidate();
+      this.autoNoteApprovals?.invalidate();
       this.review = undefined;
       this.peers.invalidate();
       this.permissions.invalidate();
@@ -612,6 +664,7 @@ export class CompanionPrivateKeys {
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
       this.resumes.invalidate();
+      this.autoNoteApprovals?.invalidate();
       const parsed = request.safeParse(raw);
       if (!parsed.success) throw new PrivateKeyLifecycleError("DENIED");
       const input = parsed.data;

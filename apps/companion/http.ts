@@ -1,3 +1,5 @@
+import { ApprovalOutboxError } from "../../modules/remote/private-autonote-approval-outbox.js";
+import { AutoNotePeerApprovalError } from "../../modules/remote/private-autonote-approval-consent.js";
 import type { AutoNoteApprovalConnector } from "../../modules/connectors/autonote-approval.js";
 import { ResumeOfferError } from "../../modules/remote/private-resume-offers.js";
 import { PrivateResumeConsentError } from "../../modules/remote/private-resume-consent.js";
@@ -329,6 +331,27 @@ export function localApi({
   app.post("/v1/private-peer-checks/stop", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.stopPeerCheck(req.body));
+  });
+  app.get("/v1/private-autonote-approvals/:operationId", (req, res) => {
+    if (!privateKeys) throw new ApprovalOutboxError("DENIED");
+    res.json(
+      privateKeys.autoNoteApprovalStatus(
+        z.uuid().parse(req.params.operationId),
+      ),
+    );
+  });
+  app.post("/v1/private-autonote-approvals/prepare", async (req, res) => {
+    if (!privateKeys) throw new ApprovalOutboxError("DENIED");
+    res.json(await privateKeys.prepareAutoNoteApproval(req.body, privateRelay));
+  });
+  app.post("/v1/private-autonote-approvals/confirm", async (req, res) => {
+    if (!privateKeys) throw new ApprovalOutboxError("DENIED");
+    res.json(await privateKeys.confirmAutoNoteApproval(req.body, privateRelay));
+  });
+  app.post("/v1/private-autonote-approvals/cancel", (req, res) => {
+    z.strictObject({}).parse(req.body);
+    privateKeys?.cancelAutoNoteApproval();
+    res.json({ cancelled: true });
   });
   app.get("/v1/private-resume", (_req, res) =>
     res.json(
@@ -1643,6 +1666,7 @@ export function localApi({
   app.post("/v1/backup", async (req, res) => {
     z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
     if (!backupDownload) throw new StoreError("NOT_FOUND");
+    if (privateKeys?.busy) throw new StoreError("CONFLICT");
     const bytes = await backupDownload();
     res.set(
       "Content-Disposition",
@@ -1780,6 +1804,8 @@ export function localApi({
             err instanceof PrivateResumeDeliveryError ||
             err instanceof ConversationOfferError ||
             err instanceof ResumeOfferError ||
+            err instanceof ApprovalOutboxError ||
+            err instanceof AutoNotePeerApprovalError ||
             err instanceof ConversationContentError ||
             err instanceof PrivateKeyError ||
             err instanceof PrivateKeyLifecycleError ||
@@ -1802,6 +1828,8 @@ export function localApi({
               err instanceof PrivateKeyLifecycleError ||
               err instanceof ConversationOfferError ||
               err instanceof ResumeOfferError ||
+              err instanceof ApprovalOutboxError ||
+              err instanceof AutoNotePeerApprovalError ||
               err instanceof ConversationContentError ||
               err instanceof PrivateResumeConsentError ||
               err instanceof PrivateResumeDeliveryError) &&

@@ -1504,6 +1504,126 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       }),
     );
     assert.equal(consent.list(operationId).grants[0]!.revoked, true);
+    const { CompanionAutoNoteApprovals } =
+      await import("../apps/companion/private-autonote-approvals.js");
+    const host = new CompanionAutoNoteApprovals(
+      peer.store,
+      peer.vault,
+      peerOwner,
+      () => peer.keys,
+      approval,
+      f.adapter,
+      {
+        withVerifiedDevice: async (fn: any) => fn({ current: peer.current }),
+      } as any,
+      true,
+      peer.clock,
+    );
+    const grantInput = () => ({
+      action: "grant",
+      operationId,
+      expectedRevision: host.status(operationId).revision,
+      peerId: peer.peerId,
+      peerKeyEpoch: 1,
+      expiresAt: peer.clock() + 240000,
+    });
+    const cancelled = await host.prepare(grantInput());
+    host.invalidate();
+    await assert.rejects(
+      host.confirm({
+        reviewId: cancelled.id,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    const hostReview = await host.prepare(grantInput());
+    const permitted = await host.confirm({
+      reviewId: hostReview.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    assert.equal(permitted.permissions.length, 1);
+    assert.equal(permitted.permissions[0]!.revoked, false);
+    const create = await host.prepare({
+      action: "create",
+      operationId,
+      expectedRevision: permitted.revision,
+      permissionId: permitted.permissions[0]!.id,
+    });
+    const ready = await host.confirm({
+      reviewId: create.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    assert.equal(ready.offers.length, 1);
+    assert.equal(ready.offers[0]!.state, "ready");
+    assert.ok(
+      ready.offers[0]!.packets.every((p) => p.encrypted && p.attempts === 0),
+    );
+    await assert.rejects(
+      host.confirm({
+        reviewId: create.id,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    let uploads = 0;
+    const relay = {
+      withTransport: async (_: unknown, fn: any) =>
+        fn(
+          {
+            recipient: async () => ({
+              endpointId: peer.peerId,
+              expiresAt: peer.clock() + 300000,
+            }),
+            submit: async ({ envelope }: any, check: () => void) => {
+              check();
+              uploads++;
+              return {
+                receipt: {
+                  version: 1,
+                  messageId: envelope.header.messageId,
+                  envelopeHash: await privateRelayEnvelopeHash(envelope),
+                  revision: 1,
+                  storedAt: peer.clock(),
+                  state: "stored",
+                },
+              };
+            },
+          },
+          peer.current,
+          peer.clock() + 300000,
+        ),
+    } as any;
+    const send = await host.prepare(
+      {
+        action: "send",
+        operationId,
+        expectedRevision: ready.revision,
+        offerId: ready.offers[0]!.id,
+        index: 0,
+        connection: { id: randomUUID(), expectedRevision: 1 },
+      },
+      relay,
+    );
+    const delivered = await host.confirm(
+      { reviewId: send.id, confirmed: true, acknowledged: true },
+      relay,
+    );
+    assert.equal(uploads, 1);
+    assert.equal(delivered.offers[0]!.packets[0]!.receipt?.state, "stored");
+    const stop = await host.prepare({
+      action: "stop",
+      operationId,
+      expectedRevision: delivered.revision,
+      offerId: ready.offers[0]!.id,
+    });
+    const stopped = await host.confirm({
+      reviewId: stop.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    assert.equal(stopped.offers[0]!.state, "stopped");
   } finally {
     peer.close();
   }

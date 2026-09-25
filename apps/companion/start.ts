@@ -246,6 +246,11 @@ const privateKeys =
             memory,
           ),
         },
+        {
+          enabled: process.env.BITTREES_PRIVATE_AUTONOTE_APPROVAL === "1",
+          approval: autonoteApproval,
+          sources: autonoteSources,
+        },
       )
     : undefined;
 const privateRelay =
