@@ -357,9 +357,18 @@ function App() {
           <section className="pair">
             <h2>Connect to this Mac</h2>
             <p>
-              Enter the one-time code from the pairing-code file shown when the
-              companion started. It expires after ten minutes.
+              In the macOS menu bar at the top of your screen, choose{" "}
+              <strong>Bittrees AI → Copy pairing code</strong>. Paste the code
+              below, then select <strong>Open workspace</strong>. The menu copies
+              the code without displaying it; the field hides it as dots.
             </p>
+            <details>
+              <summary>Started the companion from a terminal?</summary>
+              <p>
+                Use the one-time code in the pairing-code file whose location
+                was printed when the companion started.
+              </p>
+            </details>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -385,7 +394,9 @@ function App() {
               </button>
             </form>
             <p className="hint">
-              Restart the companion to pair another browser session.
+              The code is single-use and expires after ten minutes. If it has
+              expired or was already used, quit and reopen Bittrees AI to get a
+              new code.
             </p>
           </section>
         ) : (
