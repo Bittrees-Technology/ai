@@ -17,7 +17,8 @@
     "activate": "node dist/apps/companion/activate-cli.js",
     "test:browser-private": "playwright test --config scripts/private-browser.config.ts",
     "build:remote": "vite build --config scripts/remote-web.config.ts",
-    "build:site": "vite build apps/site --outDir ../../dist/site --emptyOutDir"
+    "build:site": "vite build apps/site --outDir ../../dist/site --emptyOutDir",
+    "start:remote": "node dist/apps/api/start.js"
   },
   "dependencies": {
     "@hpke/core": "1.9.0",
