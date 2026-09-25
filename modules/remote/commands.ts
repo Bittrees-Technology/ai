@@ -31,7 +31,11 @@ export class RemoteCommandStore {
     private retentionMs: number,
     private now = Date.now,
   ) {
-    if (![86400000, 7 * 86400000, 30 * 86400000].includes(retentionMs))
+    if (
+      ![86400000, 7 * 86400000, 30 * 86400000, 90 * 86400000].includes(
+        retentionMs,
+      )
+    )
       throw new RemoteStatusError("INVALID_INPUT");
   }
   private async transaction<T>(fn: (db: PoolClient) => Promise<T>) {

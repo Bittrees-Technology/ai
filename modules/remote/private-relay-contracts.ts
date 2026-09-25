@@ -39,6 +39,7 @@ export const privateRelayPolicySchema = z.strictObject({
   operationalMetadataMs: z.union([
     z.literal(7 * 86400000),
     z.literal(30 * 86400000),
+    z.literal(90 * 86400000),
   ]),
   maxMessagesPerOwner: z.number().int().min(1).max(10000),
   maxBytesPerOwner: z
