@@ -1363,6 +1363,79 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
     assert.equal(offer.manifest.detailHash, granted.grant.detailHash);
     assert.equal(offer.manifest.operationId, operationId);
 
+    const { PrivateAutoNoteApprovalOutbox } =
+      await import("../modules/remote/private-autonote-approval-outbox.js");
+    const { privateRelayEnvelopeHash } =
+      await import("../modules/remote/private-relay-contracts.js");
+    const outbox = new PrivateAutoNoteApprovalOutbox(
+      peer.store,
+      peer.vault,
+      peerOwner,
+      consent,
+      peer.clock,
+    );
+    const request = {
+      operationId,
+      permissionId: granted.grant.id,
+      clientRequestId: randomUUID(),
+      expectedRevision: consent.list(operationId).revision,
+      confirmed: true,
+    };
+    const queued = await outbox.prepare(request);
+    assert.deepEqual(await outbox.prepare(request), queued);
+    await outbox.encrypt(operationId, queued.id);
+    let sent: unknown;
+    await assert.rejects(
+      outbox.dispatch(operationId, queued.id, 0, async (envelope) => {
+        sent = structuredClone(envelope);
+        throw Error("Synthetic lost response");
+      }),
+      /Synthetic lost response/,
+    );
+    assert.equal(outbox.status(operationId)[0]!.packets[0]!.attempts, 1);
+    assert.equal(outbox.status(operationId)[0]!.packets[0]!.receipt, null);
+    const reopened = new Store(peer.path, peer.vault, peer.clock);
+    try {
+      const reopenedKeys = peer.build(reopened);
+      const reopenedConsent = new PrivateAutoNoteApprovalConsent(
+        reopened,
+        peer.vault,
+        peerOwner,
+        peer.current,
+        reopenedKeys.keys,
+        reopenedKeys.peers,
+        approval,
+        f.adapter,
+        peer.clock,
+      );
+      const resumed = new PrivateAutoNoteApprovalOutbox(
+        reopened,
+        peer.vault,
+        peerOwner,
+        reopenedConsent,
+        peer.clock,
+      );
+      await resumed.encrypt(operationId, queued.id);
+      await resumed.dispatch(operationId, queued.id, 0, async (envelope) => {
+        assert.deepEqual(envelope, sent);
+        return {
+          version: 1,
+          messageId: envelope.header.messageId,
+          envelopeHash: await privateRelayEnvelopeHash(envelope),
+          revision: 1,
+          storedAt: peer.clock(),
+          state: "stored",
+        };
+      });
+      assert.equal(resumed.status(operationId)[0]!.packets[0]!.attempts, 2);
+      assert.equal(
+        resumed.status(operationId)[0]!.packets[0]!.receipt?.state,
+        "stored",
+      );
+    } finally {
+      reopened.close();
+    }
+
     const { encryptedBackup, restoreBackup } =
       await import("../modules/storage/backup.js");
     const { join } = await import("node:path");
@@ -1385,6 +1458,15 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
         peer.clock,
       );
       assert.equal(restoredConsent.list(operationId).grants.length, 1);
+      const restoredOutbox = new PrivateAutoNoteApprovalOutbox(
+        restored,
+        peer.vault,
+        peerOwner,
+        restoredConsent,
+        peer.clock,
+      );
+      assert.equal(restoredOutbox.status(operationId).length, 1);
+      await assert.rejects(restoredOutbox.encrypt(operationId, queued.id));
       await assert.rejects(
         restoredConsent.resolve(operationId, granted.grant.id),
       );
@@ -1392,13 +1474,21 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       restored.close();
     }
 
+    outbox.stop(operationId, queued.id);
+    await assert.rejects(
+      outbox.dispatch(operationId, queued.id, 0, async () => {
+        assert.fail("Stopped outbox must not upload");
+      }),
+    );
+    outbox.remove(operationId, queued.id);
+    assert.equal(outbox.status(operationId).length, 0);
     changed = true;
     await assert.rejects(consent.resolve(operationId, granted.grant.id));
     changed = false;
     consent.revoke({
       operationId,
       permissionId: granted.grant.id,
-      expectedRevision: granted.revision,
+      expectedRevision: consent.list(operationId).revision,
       confirmed: true,
     });
     assert.throws(() => resolved.check());
