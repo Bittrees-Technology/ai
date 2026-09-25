@@ -38,7 +38,7 @@ const request = z.discriminatedUnion("action", [
     ...base,
     action: z.literal("send"),
     offerId: z.uuid(),
-    index: z.number().int().nonnegative(),
+    index: z.number().int().nonnegative().optional(),
     connection: z.strictObject({ id: z.uuid(), expectedRevision: revision }),
   }),
   z.strictObject({ ...base, action: z.literal("stop"), offerId: z.uuid() }),
@@ -152,9 +152,26 @@ export class CompanionAutoNoteApprovals {
     const box = this.store
       .autoNoteReview(this.owner, input.operationId)
       .approvalOutboxes?.find((b) => b.id === input.offerId);
-    if (!box || !box.parts[input.index] || box.state === "stopped")
+    if (
+      !box ||
+      (input.index !== undefined && !box.parts[input.index]) ||
+      box.state === "stopped"
+    )
       throw denied();
     return box;
+  }
+  private parts(
+    box: NonNullable<
+      ReturnType<Store["autoNoteReview"]>["approvalOutboxes"]
+    >[number],
+    index?: number,
+  ) {
+    const parts =
+      index === undefined
+        ? box.parts.filter((p) => !p.receipt)
+        : [box.parts[index]!];
+    if (!parts.length) throw denied();
+    return parts;
   }
   async prepare(raw: unknown, relay?: CompanionPrivateRelay) {
     this.invalidate();
@@ -201,7 +218,9 @@ export class CompanionAutoNoteApprovals {
           return {
             grant: handle.grant,
             recipient,
-            messageId: box.parts[input.index]!.header.messageId,
+            messageIds: this.parts(box, input.index).map(
+              (p) => p.header.messageId,
+            ),
           };
         },
       );
@@ -292,28 +311,35 @@ export class CompanionAutoNoteApprovals {
             !same(r.snapshot, {
               grant: handle.grant,
               recipient,
-              messageId: box.parts[action.index]!.header.messageId,
+              messageIds: this.parts(box, action.index).map(
+                (p) => p.header.messageId,
+              ),
             }) ||
             box.manifest.expiresAt > Math.min(limit, recipient.expiresAt)
           )
             throw denied();
           const outbox = this.outbox(consent);
           await outbox.encrypt(action.operationId, action.offerId);
-          await outbox.dispatch(
-            action.operationId,
-            action.offerId,
-            action.index,
-            async (envelope) => {
-              const result = await client.submit(
-                { version: 1, envelope },
-                () => {
-                  if (!current()) throw denied();
-                  handle.check();
-                },
-              );
-              return result.receipt;
-            },
-          );
+          for (const part of this.parts(box, action.index)) {
+            const index = box.parts.findIndex(
+              (p) => p.header.messageId === part.header.messageId,
+            );
+            await outbox.dispatch(
+              action.operationId,
+              action.offerId,
+              index,
+              async (envelope) => {
+                const result = await client.submit(
+                  { version: 1, envelope },
+                  () => {
+                    if (!current()) throw denied();
+                    handle.check();
+                  },
+                );
+                return result.receipt;
+              },
+            );
+          }
         },
       );
     } else

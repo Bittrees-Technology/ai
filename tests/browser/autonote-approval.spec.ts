@@ -254,3 +254,166 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
   expect(saves).toBe(1);
   expect(cancels).toBeGreaterThanOrEqual(1);
 });
+
+test("browser approval delivery reviews remaining parts and cancels on focus loss", async ({
+  page,
+}, info) => {
+  const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    peerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    connection = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  let sends = 0,
+    cancels = 0,
+    action = "";
+  const expiry = Date.now() + 300000;
+  const state = () => ({
+    available: true,
+    canSetup: true,
+    revision: sends + 1,
+    permissions: [
+      {
+        id,
+        peerId,
+        fingerprint: "ab".repeat(32),
+        expiresAt: expiry,
+        revoked: false,
+      },
+    ],
+    offers: [
+      {
+        id,
+        state: "ready",
+        expiresAt: expiry,
+        packets: [0, 1, 2].map((index) => ({
+          index,
+          attempts: index === 0 || sends ? 1 : 0,
+          receipt: sends ? { state: "stored" } : null,
+        })),
+      },
+    ],
+  });
+  await page.route("**/v1/**", async (route) => {
+    const request = route.request(),
+      path = new URL(request.url()).pathname;
+    if (path === "/v1/private-peers")
+      return route.fulfill({
+        json: {
+          peers: [
+            {
+              peerId,
+              keyEpoch: 1,
+              fingerprint: "ab".repeat(32),
+              revoked: false,
+            },
+          ],
+        },
+      });
+    if (path === "/v1/private-relay")
+      return route.fulfill({
+        json: {
+          state: {
+            items: [
+              {
+                id: connection,
+                revision: 1,
+                phase: "active",
+                locked: false,
+                permission: { state: "active", expiresAt: expiry },
+              },
+            ],
+          },
+        },
+      });
+    if (path.endsWith("/cancel")) {
+      cancels++;
+      return route.fulfill({ json: { cancelled: true } });
+    }
+    if (path.endsWith("/prepare")) {
+      const body = request.postDataJSON();
+      action = body.action;
+      expect(body.operationId).toBe(id);
+      expect(body).not.toHaveProperty("index");
+      return route.fulfill({
+        json: {
+          id,
+          action,
+          expiresAt: Date.now() + 60000,
+          summary: {
+            grant: {
+              peer: { fingerprint: "ab".repeat(32) },
+              detailHash: "cd".repeat(32),
+            },
+            messageIds: [id, peerId, connection],
+          },
+        },
+      });
+    }
+    if (path.endsWith("/confirm")) {
+      expect(action).toBe("send");
+      expect(request.postDataJSON()).toEqual({
+        reviewId: id,
+        confirmed: true,
+        acknowledged: true,
+      });
+      sends++;
+      return route.fulfill({ json: state() });
+    }
+    if (path === "/v1/private-autonote-approvals/" + id)
+      return route.fulfill({ json: state() });
+    throw Error("Unexpected request: " + path);
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?autonote-browser-approval");
+  const region = page.getByRole("region", {
+    name: "Browser approval delivery",
+  });
+  await region
+    .getByRole("button", { name: "Refresh browser approval progress" })
+    .click();
+  await region
+    .getByLabel("Encrypted relay connection", { exact: true })
+    .selectOption(connection);
+  await region
+    .getByRole("button", { name: "Review sending remaining parts" })
+    .click();
+  const confirm = region.getByRole("button", {
+    name: "Confirm reviewed action",
+  });
+  await expect(confirm).toBeDisabled();
+  await region
+    .getByLabel("I understand and want to perform this action.")
+    .check();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(confirm).toHaveCount(0);
+  await region
+    .getByRole("button", { name: "Review sending remaining parts" })
+    .click();
+  await expect(confirm).toBeDisabled();
+  await expect(
+    region.getByText(
+      "Send 3 remaining encrypted parts through the selected connection.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await mkdir("test-results/autonote-approval", { recursive: true });
+  await region.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-delivery-phone.png`,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    ),
+  ).toBe(false);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await region.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-delivery-desktop.png`,
+  });
+  await region
+    .getByLabel("I understand and want to perform this action.")
+    .check();
+  await confirm.click();
+  await expect(
+    region.getByText("3 of 3 parts stored at the relay.", { exact: false }),
+  ).toBeVisible();
+  expect(sends).toBe(1);
+  expect(cancels).toBeGreaterThanOrEqual(1);
+});

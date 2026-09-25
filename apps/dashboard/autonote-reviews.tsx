@@ -1,3 +1,4 @@
+import { AutoNoteBrowserApproval } from "./autonote-browser-approval.js";
 import { AutoNoteExactApproval } from "./autonote-exact-approval.js";
 import React, { useEffect, useRef, useState } from "react";
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
@@ -210,6 +211,16 @@ export function AutoNoteReviewControls({
               onChanged={refresh}
             />
           )}
+          {item.approvalAvailable &&
+            item.state === "prepared" &&
+            item.review && (
+              <AutoNoteBrowserApproval
+                key={item.id + ":browser:" + item.state}
+                id={item.id}
+                expiresAt={item.review.expiresAt}
+                api={api}
+              />
+            )}
           {item.receipt && (
             <p>
               Saved meeting version {item.receipt.version}. This is the original
