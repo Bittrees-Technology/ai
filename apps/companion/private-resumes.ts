@@ -1,3 +1,4 @@
+import { CompanionResumeOffers } from "./private-resume-offers.js";
 import type { PinnedModel } from "../../modules/models/ollama.js";
 import { PrivateResumeDelivery } from "../../modules/remote/private-resume-delivery.js";
 import type { ResumeAccess } from "../../modules/storage/remote-resumes.js";
@@ -50,6 +51,7 @@ const same = (a: unknown, b: unknown) =>
 /** Parent owns the shared key/peer/permission operation lock and logout fence. */
 export class CompanionPrivateResumes {
   private review?: Review;
+  private offerControls: CompanionResumeOffers;
   private generation = 0;
   constructor(
     private store: Store,
@@ -66,10 +68,32 @@ export class CompanionPrivateResumes {
     private taskAccess?: ResumeAccess,
   ) {
     this.owner = { ...owner };
+    this.offerControls = new CompanionResumeOffers(
+      store,
+      vault,
+      this.owner,
+      keys,
+      remote,
+      enabled && !!runtime && !!taskAccess,
+      now,
+      mono,
+      (taskId, revision) => this.pinModel(taskId, revision),
+    );
   }
   invalidate() {
     this.generation++;
     this.review = undefined;
+    this.offerControls.invalidate();
+  }
+  offerStatus() {
+    return this.offerControls.status();
+  }
+  prepareOffer(raw: unknown) {
+    this.invalidate();
+    return this.offerControls.prepare(raw);
+  }
+  confirmOffer(raw: unknown) {
+    return this.offerControls.confirm(raw);
   }
   private consent(current: () => PrivateBinding | null = () => null) {
     return new PrivateResumeConsent(

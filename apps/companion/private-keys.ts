@@ -460,6 +460,23 @@ export class CompanionPrivateKeys {
   confirmResumePermission(raw: unknown) {
     return this.exclusive(() => this.resumes.confirm(raw));
   }
+  resumeOfferStatus() {
+    return this.resumes.offerStatus();
+  }
+  prepareResumeOffer(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      this.peers.invalidate();
+      this.permissions.invalidate();
+      this.conversations.invalidate();
+      this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
+      return this.resumes.prepareOffer(raw);
+    });
+  }
+  confirmResumeOffer(raw: unknown) {
+    return this.exclusive(() => this.resumes.confirmOffer(raw));
+  }
   receivePrivateResume(raw: unknown) {
     return this.protocolOperation(() => this.resumes.receive(raw));
   }
