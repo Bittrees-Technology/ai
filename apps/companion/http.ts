@@ -1549,6 +1549,7 @@ export function localApi({
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
       privateConversationConsent: store.exportPrivateConversationConsent(owner),
       privateResumeConsent: store.exportPrivateResumeConsent(owner),
+      privateResumeDelivery: store.exportPrivateResumeDelivery(owner),
       privateConversationOffers: store.exportPrivateConversationOffers(owner),
       privateConversationContent: store
         .exportPrivateConversationContent(owner)

@@ -10,6 +10,7 @@ export const privateIncomingReplayLimit = 4096;
 const outcomeSchema = z.strictObject({
   collection: z.enum([
     "private_task_receipts",
+    "remote_resume_receipts",
     "private_task_outbox",
     "private_peer_checks",
     "messages",

@@ -1,3 +1,13 @@
+import {
+  PrivateResumeDelivery,
+  privateResumeReceiptSchema,
+} from "../modules/remote/private-resume-delivery.js";
+import {
+  sealPrivateEnvelope,
+  openPrivateEnvelope,
+  privateEnvelopeSuite,
+} from "../modules/remote/private-envelope.js";
+import { exportPrivateIncomingReplay } from "../modules/remote/private-incoming-replay.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -318,6 +328,303 @@ test("private resume explicit revocation and corrupt retained consent fail close
       .run(Buffer.from("corrupt"));
     assert.throws(() => f.consent.check(second.id), /STORAGE_UNAVAILABLE/);
     await assert.rejects(f.consent.resolve(second.id), /STORAGE_UNAVAILABLE/);
+  } finally {
+    f.close();
+  }
+});
+
+async function encryptedCommand(
+  f: Awaited<ReturnType<typeof fixture>>,
+  permissionId: string,
+  overrides = {},
+  headerOverrides = {},
+  sender = f.sender,
+) {
+  const cmd = { ...command(f, permissionId), ...overrides };
+  const key = await f.keys.resolve();
+  const header = {
+    version: 1,
+    suite: privateEnvelopeSuite,
+    ownerId: f.binding.ownerId,
+    senderId: f.peerId,
+    recipientId: f.binding.deviceId,
+    senderKeyEpoch: 1,
+    recipientKeyEpoch: key.proof.keyEpoch,
+    messageId: randomUUID(),
+    operationId: cmd.id,
+    sequence: 90,
+    issuedAt: Date.parse(cmd.issuedAt),
+    expiresAt: Date.parse(cmd.expiresAt),
+    ...headerOverrides,
+  };
+  const envelope = await sealPrivateEnvelope(
+    header,
+    new TextEncoder().encode(
+      JSON.stringify({ version: 1, type: "task.resume", command: cmd }),
+    ),
+    { senderKey: sender, recipientPublicKey: key.pair.publicKey },
+    f.clock,
+  );
+  return { cmd, envelope, input: { permissionId, envelope, confirmed: true } };
+}
+function delivery(
+  f: Awaited<ReturnType<typeof fixture>>,
+  store = f.store,
+  access = async () => () => {},
+) {
+  return new PrivateResumeDelivery(
+    store,
+    f.vault,
+    owner,
+    f.buildResume(store),
+    access,
+    f.clock,
+  );
+}
+test("encrypted resume admits once and returns the original authenticated receipt across concurrent calls and reopen", async () => {
+  const f = await fixture();
+  try {
+    const grant = f.approve(await f.prepare()).grant,
+      wire = await encryptedCommand(f, grant.id),
+      receiver = delivery(f);
+    const accepted = await Promise.all([
+      receiver.receive(wire.input),
+      delivery(f).receive(wire.input),
+    ]);
+    assert.deepEqual(accepted.map((r) => r.duplicate).sort(), [false, true]);
+    assert.equal(f.store.get(owner, f.task.id).revision, f.task.revision + 1);
+    const replay = exportPrivateIncomingReplay(f.store, f.vault, owner).filter(
+      (r) => r.identity.type === "task.resume",
+    );
+    assert.equal(replay.length, 1);
+    assert.equal(replay[0]!.outcome.collection, "remote_resume_receipts");
+    const request = {
+      permissionId: grant.id,
+      commandId: wire.cmd.id,
+      confirmed: true,
+    };
+    const [first, second] = await Promise.all([
+      receiver.receipt(request),
+      delivery(f).receipt(request),
+    ]);
+    assert.deepEqual(first, second);
+    const key = await f.keys.resolve();
+    const opened = await openPrivateEnvelope(
+      first,
+      first.header,
+      { recipientKey: f.sender, senderPublicKey: key.pair.publicKey },
+      f.clock,
+    );
+    try {
+      const body = privateResumeReceiptSchema.parse(
+        JSON.parse(new TextDecoder().decode(opened.plaintext)),
+      );
+      assert.deepEqual(body.receipt, accepted[0]!.receipt);
+      assert.equal(body.receipt.outcome, "queued");
+    } finally {
+      opened.plaintext.fill(0);
+    }
+    const reopened = new Store(f.path, f.vault, f.clock);
+    try {
+      const next = delivery(f, reopened);
+      assert.equal((await next.receive(wire.input)).duplicate, true);
+      assert.deepEqual(await next.receipt(request), first);
+      assert.equal(reopened.exportPrivateResumeDelivery(owner).length, 1);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    f.close();
+  }
+});
+test("encrypted resume rejects wrong sender, task, scope and envelope operation before changing the task", async () => {
+  const f = await fixture();
+  try {
+    const grant = f.approve(await f.prepare()).grant,
+      receiver = delivery(f);
+    const wrong = await crypto.subtle.generateKey(
+      { name: "ECDH", namedCurve: "P-256" },
+      true,
+      ["deriveBits"],
+    );
+    for (const wire of [
+      await encryptedCommand(f, grant.id, {}, {}, wrong),
+      await encryptedCommand(f, grant.id, { taskId: randomUUID() }),
+      await encryptedCommand(f, grant.id, { permissionId: randomUUID() }),
+      await encryptedCommand(f, grant.id, {}, { operationId: randomUUID() }),
+    ]) {
+      await assert.rejects(
+        receiver.receive({ ...wire.input, permissionId: grant.id }),
+      );
+    }
+    assert.equal(f.store.get(owner, f.task.id).status, "paused");
+    assert.deepEqual(f.store.remoteResumes.receipts(owner), []);
+    assert.deepEqual(f.store.exportPrivateResumeDelivery(owner), []);
+    assert.equal(
+      exportPrivateIncomingReplay(f.store, f.vault, owner).some(
+        (r) => r.identity.type === "task.resume",
+      ),
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});
+test("encrypted resume rejects new ciphertext for a consumed operation and rechecks consent on duplicates", async () => {
+  const f = await fixture();
+  try {
+    const grant = f.approve(await f.prepare()).grant,
+      wire = await encryptedCommand(f, grant.id),
+      receiver = delivery(f);
+    await receiver.receive(wire.input);
+    const changed = await encryptedCommand(f, grant.id, wire.cmd, {
+      messageId: wire.envelope.header.messageId,
+      sequence: wire.envelope.header.sequence,
+    });
+    await assert.rejects(receiver.receive(changed.input), /CONFLICT/);
+    assert.equal(f.store.exportPrivateResumeDelivery(owner).length, 1);
+    f.consent.revoke({
+      permissionId: grant.id,
+      expectedRevision: f.consent.list().revision,
+      confirmed: true,
+    });
+    await assert.rejects(receiver.receive(wire.input), /DENIED/);
+    await assert.rejects(
+      receiver.receipt({
+        permissionId: grant.id,
+        commandId: wire.cmd.id,
+        confirmed: true,
+      }),
+      /DENIED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+test("encrypted resume journal failure rolls back task, replay, receipt, sequence and permission use", async () => {
+  const f = await fixture();
+  try {
+    const grant = f.approve(await f.prepare()).grant,
+      wire = await encryptedCommand(f, grant.id),
+      receiver = delivery(f);
+    const beforeReplay = exportPrivateIncomingReplay(f.store, f.vault, owner);
+    const beforeSequences = f.store.db
+      .prepare("SELECT * FROM private_send_channels")
+      .all();
+    f.store.db.exec(
+      "CREATE TRIGGER fail_resume_journal BEFORE INSERT ON private_resume_delivery BEGIN SELECT RAISE(ABORT,'JOURNAL_FAILURE'); END",
+    );
+    await assert.rejects(receiver.receive(wire.input), /JOURNAL_FAILURE/);
+    assert.equal(f.store.get(owner, f.task.id).status, "paused");
+    assert.deepEqual(f.store.remoteResumes.receipts(owner), []);
+    assert.deepEqual(
+      exportPrivateIncomingReplay(f.store, f.vault, owner),
+      beforeReplay,
+    );
+    assert.deepEqual(
+      f.store.db.prepare("SELECT * FROM private_send_channels").all(),
+      beforeSequences,
+    );
+    assert.equal(
+      f.store.remoteResumes.history(owner)[0]!.permission!.consumed,
+      false,
+    );
+    f.store.db.exec("DROP TRIGGER fail_resume_journal");
+    assert.equal((await receiver.receive(wire.input)).duplicate, false);
+  } finally {
+    f.close();
+  }
+});
+test("encrypted resume expiry, recovery and deletion never revive delivery authority", async () => {
+  const f = await fixture();
+  try {
+    const grant = f.approve(await f.prepare()).grant,
+      wire = await encryptedCommand(f, grant.id),
+      receiver = delivery(f);
+    await receiver.receive(wire.input);
+    const backup = join(f.dir, "delivery.enc"),
+      path = join(f.dir, "delivery-restored.db");
+    await encryptedBackup(f.store, f.vault, backup);
+    await restoreBackup(backup, f.vault, path);
+    const restored = new Store(path, f.vault, f.clock);
+    try {
+      assert.equal(
+        restored.exportPrivateResumeDelivery(owner)[0]!.locked,
+        true,
+      );
+      await assert.rejects(delivery(f, restored).receive(wire.input), /DENIED/);
+    } finally {
+      restored.close();
+    }
+    f.time(Date.parse(wire.cmd.expiresAt));
+    await assert.rejects(receiver.receive(wire.input));
+    assert.equal(f.store.get(owner, f.task.id).revision, f.task.revision + 1);
+    f.store.deleteAll(owner);
+    assert.deepEqual(f.store.exportPrivateResumeDelivery(owner), []);
+  } finally {
+    f.close();
+  }
+});
+test("encrypted resume rejects reused directed sequence for a separately approved operation", async () => {
+  const f = await fixture();
+  try {
+    const first = f.approve(await f.prepare()).grant,
+      wire = await encryptedCommand(f, first.id),
+      receiver = delivery(f);
+    await receiver.receive(wire.input);
+    const current = f.store.get(owner, f.task.id);
+    const paused = f.store.command(owner, f.task.id, {
+      command: "pause",
+      expectedRevision: current.revision,
+    });
+    const next = f.approve(
+      await f.prepare({ taskRevision: paused.revision }),
+    ).grant;
+    const collision = await encryptedCommand(f, next.id, {
+      expectedRevision: paused.revision,
+    });
+    await assert.rejects(receiver.receive(collision.input), /CONFLICT/);
+    assert.equal(f.store.get(owner, f.task.id).revision, paused.revision);
+    assert.equal(
+      f.store.remoteResumes.history(owner).find((p) => p.id === next.id)!
+        .permission!.consumed,
+      false,
+    );
+    assert.equal(f.store.remoteResumes.receipts(owner).length, 1);
+    const fresh = await encryptedCommand(
+      f,
+      next.id,
+      { expectedRevision: paused.revision },
+      { sequence: 91 },
+    );
+    assert.equal((await receiver.receive(fresh.input)).duplicate, false);
+  } finally {
+    f.close();
+  }
+});
+test("encrypted resume rechecks private authority after async source validation and keeps replay available on denial", async () => {
+  const f = await fixture();
+  try {
+    const grant = f.approve(await f.prepare()).grant,
+      wire = await encryptedCommand(f, grant.id);
+    const before = exportPrivateIncomingReplay(f.store, f.vault, owner);
+    const receiver = delivery(f, f.store, async () => {
+      assert.equal(f.store.db.inTransaction, false);
+      f.consent.revoke({
+        permissionId: grant.id,
+        expectedRevision: f.consent.list().revision,
+        confirmed: true,
+      });
+      return () => {};
+    });
+    await assert.rejects(receiver.receive(wire.input));
+    assert.equal(f.store.get(owner, f.task.id).status, "paused");
+    assert.deepEqual(
+      exportPrivateIncomingReplay(f.store, f.vault, owner),
+      before,
+    );
+    assert.deepEqual(f.store.exportPrivateResumeDelivery(owner), []);
+    assert.deepEqual(f.store.remoteResumes.receipts(owner), []);
   } finally {
     f.close();
   }

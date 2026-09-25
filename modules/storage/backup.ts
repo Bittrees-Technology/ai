@@ -201,6 +201,7 @@ async function restoreSnapshot(
           "UPDATE private_resume_consents SET locked=1,revision=revision+1",
         )
         .run();
+      tasks.db.prepare("UPDATE private_resume_delivery SET locked=1").run();
       tasks.db.pragma("wal_checkpoint(TRUNCATE)");
     } else {
       // Recovery does not grant source access; the application must supply its

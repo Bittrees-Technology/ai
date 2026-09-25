@@ -1,3 +1,4 @@
+import { exportPrivateResumeDelivery } from "../remote/private-resume-delivery.js";
 import { exportPrivateResumeConsent } from "../remote/private-resume-consent.js";
 import { RemoteResumes } from "./remote-resumes.js";
 import { exportPrivateConversationContent } from "../remote/private-conversation-content.js";
@@ -306,6 +307,9 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
 CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_resume_consents(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB,PRIMARY KEY(user_id,tenant_id))",
+        );
+        this.db.exec(
+          "CREATE TABLE IF NOT EXISTS private_resume_delivery(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id))",
         );
         // Older writers must not bypass retained single-use resume authority.
         this.db.pragma("user_version = 37");
@@ -1803,6 +1807,9 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
   exportPrivateIncomingReplay(owner: Owner) {
     return exportPrivateIncomingReplay(this, this.vault, owner);
   }
+  exportPrivateResumeDelivery(owner: Owner) {
+    return exportPrivateResumeDelivery(this, this.vault, owner);
+  }
   exportPrivateResumeConsent(owner: Owner) {
     return exportPrivateResumeConsent(this, this.vault, owner);
   }
@@ -2142,6 +2149,7 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           "private_send_channels",
           "private_task_receipts",
           "remote_resume_receipts",
+          "private_resume_delivery",
           "remote_resume_permissions",
           "remote_template_receipts",
           "remote_template_permissions",

@@ -8,6 +8,8 @@ export const privateReplayTypeSchema = z.enum([
   "peer.key.challenge",
   "peer.key.response",
   "task.submit",
+  "task.resume",
+  "task.resumed",
   "task.accepted",
   "task.result",
   "conversation.offer",
