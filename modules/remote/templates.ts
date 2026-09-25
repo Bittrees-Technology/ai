@@ -309,78 +309,81 @@ export class RemoteTemplateStore {
     });
   }
   async submit(owner: string, raw: unknown) {
+    return this.transaction((db) => this.submitInTransaction(db, owner, raw));
+  }
+  /** Internal composition boundary. The caller owns this transaction and must
+   * provide its independently authenticated owner; never exposed as an API. */
+  async submitInTransaction(db: PoolClient, owner: string, raw: unknown) {
     parse(z.uuid(), owner);
     const input = parse(submission, raw),
       requestHash = hash(JSON.stringify(input));
-    return this.transaction(async (db) => {
-      const { device, grant } = await this.grant(db, owner, input.permissionId);
-      this.fresh(device, grant);
-      const r = input.command;
-      if (
-        r.deviceId !== device.id ||
-        r.templateId !== grant.template_id ||
-        r.templateRevision !== Number(grant.template_revision)
-      )
+    const { device, grant } = await this.grant(db, owner, input.permissionId);
+    this.fresh(device, grant);
+    const r = input.command;
+    if (
+      r.deviceId !== device.id ||
+      r.templateId !== grant.template_id ||
+      r.templateRevision !== Number(grant.template_revision)
+    )
+      throw new RemoteStatusError("CONFLICT");
+    const old = (
+      await db.query("SELECT * FROM remote_template_commands WHERE id=$1", [
+        r.id,
+      ])
+    ).rows[0];
+    if (old) {
+      if (old.permission_id !== input.permissionId)
+        throw new RemoteStatusError("DENIED");
+      if (old.request_hash !== requestHash)
         throw new RemoteStatusError("CONFLICT");
-      const old = (
-        await db.query("SELECT * FROM remote_template_commands WHERE id=$1", [
-          r.id,
-        ])
-      ).rows[0];
-      if (old) {
-        if (old.permission_id !== input.permissionId)
-          throw new RemoteStatusError("DENIED");
-        if (old.request_hash !== requestHash)
-          throw new RemoteStatusError("CONFLICT");
-        this.fresh(device, grant);
-        return { command: command(old, grant), duplicate: true };
-      }
-      const now = this.now(),
-        issued = Date.parse(r.issuedAt),
-        expires = Date.parse(r.expiresAt);
-      if (
-        issued > now ||
-        issued < Number(grant.approved_at) ||
-        expires <= now ||
-        expires <= issued ||
-        expires - issued > 300000 ||
-        expires > Number(grant.expires_at)
-      )
-        throw new RemoteStatusError("INVALID_INPUT");
-      if (grant.submitted_runs >= grant.max_runs)
-        throw new RemoteStatusError("CAPACITY");
-      const count = (
-        await db.query(
-          "SELECT count(*) AS stored,count(*) FILTER(WHERE c.outcome IS NULL AND c.expires_at>$2 AND t.revoked_at IS NULL AND t.device_epoch=$3) AS pending FROM remote_template_commands c JOIN remote_templates t ON t.permission_id=c.permission_id WHERE t.device_id=$1",
-          [device.id, now, device.epoch],
-        )
-      ).rows[0];
-      if (
-        Number(count.stored) >= this.limits.commandsPerDevice ||
-        Number(count.pending) >= this.limits.pendingPerDevice
-      )
-        throw new RemoteStatusError("CAPACITY");
-      const row = (
-        await db.query(
-          "INSERT INTO remote_template_commands(id,permission_id,request_hash,issued_at,expires_at,purge_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",
-          [
-            r.id,
-            grant.permission_id,
-            requestHash,
-            issued,
-            expires,
-            expires + this.retentionMs,
-          ],
-        )
-      ).rows[0];
-      await db.query(
-        "UPDATE remote_templates SET submitted_runs=submitted_runs+1 WHERE permission_id=$1",
-        [grant.permission_id],
-      );
       this.fresh(device, grant);
-      if (expires <= this.now()) throw new RemoteStatusError("DENIED");
-      return { command: command(row, grant), duplicate: false };
-    });
+      return { command: command(old, grant), duplicate: true };
+    }
+    const now = this.now(),
+      issued = Date.parse(r.issuedAt),
+      expires = Date.parse(r.expiresAt);
+    if (
+      issued > now ||
+      issued < Number(grant.approved_at) ||
+      expires <= now ||
+      expires <= issued ||
+      expires - issued > 300000 ||
+      expires > Number(grant.expires_at)
+    )
+      throw new RemoteStatusError("INVALID_INPUT");
+    if (grant.submitted_runs >= grant.max_runs)
+      throw new RemoteStatusError("CAPACITY");
+    const count = (
+      await db.query(
+        "SELECT count(*) AS stored,count(*) FILTER(WHERE c.outcome IS NULL AND c.expires_at>$2 AND t.revoked_at IS NULL AND t.device_epoch=$3) AS pending FROM remote_template_commands c JOIN remote_templates t ON t.permission_id=c.permission_id WHERE t.device_id=$1",
+        [device.id, now, device.epoch],
+      )
+    ).rows[0];
+    if (
+      Number(count.stored) >= this.limits.commandsPerDevice ||
+      Number(count.pending) >= this.limits.pendingPerDevice
+    )
+      throw new RemoteStatusError("CAPACITY");
+    const row = (
+      await db.query(
+        "INSERT INTO remote_template_commands(id,permission_id,request_hash,issued_at,expires_at,purge_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",
+        [
+          r.id,
+          grant.permission_id,
+          requestHash,
+          issued,
+          expires,
+          expires + this.retentionMs,
+        ],
+      )
+    ).rows[0];
+    await db.query(
+      "UPDATE remote_templates SET submitted_runs=submitted_runs+1 WHERE permission_id=$1",
+      [grant.permission_id],
+    );
+    this.fresh(device, grant);
+    if (expires <= this.now()) throw new RemoteStatusError("DENIED");
+    return { command: command(row, grant), duplicate: false };
   }
   async poll(rawIdentity: unknown) {
     return this.transaction(async (db) => {
