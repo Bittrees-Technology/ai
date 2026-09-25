@@ -1,3 +1,5 @@
+import { PrivateResumeConsent } from "../../../modules/remote/private-resume-consent.js";
+import { PrivateResumeOffers } from "../../../modules/remote/private-resume-offers.js";
 import { conversationTaskAccess } from "../../../apps/companion/conversation-access.js";
 import { SourceTasks } from "../../../modules/connectors/source-tasks.js";
 import { PrivateConversationContent } from "../../../modules/remote/private-conversation-content.js";
@@ -144,6 +146,79 @@ export async function retainedMac(
     binding,
     consent,
     work,
+    async resumeOffer() {
+      let task = store.create(
+        owner,
+        {
+          conversationId: randomUUID(),
+          kind: "query",
+          prompt: "Synthetic paused task",
+          modelProfileId: profile.id,
+        },
+        randomUUID(),
+      );
+      task = store.command(owner, task.id, {
+        command: "pause",
+        expectedRevision: task.revision,
+      });
+      const browserKey = peers
+        .list()
+        .peers.find((p) => p.peerId === browser.deviceId)!;
+      const resumeConsent = new PrivateResumeConsent(
+        store,
+        vault,
+        owner,
+        () => binding,
+        keys,
+        peers,
+        clock,
+      );
+      const review = await resumeConsent.prepare({
+        expectedRevision: resumeConsent.list().revision,
+        choices: {
+          peerId: browser.deviceId,
+          peerKeyEpoch: browserKey.keyEpoch,
+          taskId: task.id,
+          taskRevision: task.revision,
+          modelDigest: "a".repeat(64),
+          expiresAt: clock() + 300000,
+        },
+      });
+      const saved = resumeConsent.approve({
+        reviewId: review.id,
+        expectedRevision: review.revision,
+        confirmed: true,
+        acknowledged: true,
+      });
+      const offers = new PrivateResumeOffers(
+        store,
+        vault,
+        owner,
+        resumeConsent,
+        clock,
+      );
+      const prepared = await offers.prepare({
+        clientRequestId: randomUUID(),
+        permissionId: saved.grant.id,
+        expectedConsentRevision: saved.revision,
+        confirmed: true,
+      });
+      const ready = await offers.resume({
+        id: prepared.id,
+        expectedRevision: prepared.revision,
+        confirmed: true,
+      });
+      return {
+        data: ready.value.offer,
+        envelope: await offers.delivery({
+          id: ready.id,
+          expectedRevision: ready.revision,
+          confirmed: true,
+        }),
+        task: () => store.get(owner, task.id),
+        grants: () => resumeConsent.list(),
+      };
+    },
     async conversationOffer(
       deliveryExpiresAt?: number,
       options: { questions?: boolean } = {},

@@ -1,3 +1,4 @@
+import { mountBrowserResumes } from "./browser-resumes.js";
 import { mountBrowserConversationContent } from "./browser-conversation-content.js";
 import { mountBrowserConversations } from "./browser-conversations.js";
 import { mountBrowserTasks } from "./browser-tasks.js";
@@ -31,6 +32,7 @@ export function mountBrowserSetup(
   monotonic = () => performance.now(),
   privateDelivery = false,
 ) {
+  let resumeView: ReturnType<typeof mountBrowserResumes> | undefined;
   let contentView:
     ReturnType<typeof mountBrowserConversationContent> | undefined;
   let disposed = false,
@@ -126,6 +128,7 @@ export function mountBrowserSetup(
     keyView.invalidate();
     conversationView.invalidate();
     contentView?.invalidate();
+    resumeView?.invalidate();
   });
   const checkRoot = el("div");
   root.append(checkRoot);
@@ -135,6 +138,7 @@ export function mountBrowserSetup(
     peerView.invalidate();
     conversationView.invalidate();
     contentView?.invalidate();
+    resumeView?.invalidate();
   });
   const permissionRoot = el("div");
   root.append(permissionRoot);
@@ -150,6 +154,7 @@ export function mountBrowserSetup(
       checkView.invalidate();
       conversationView.invalidate();
       contentView?.invalidate();
+      resumeView?.invalidate();
     },
   );
   const taskRoot = el("div");
@@ -167,6 +172,7 @@ export function mountBrowserSetup(
       permissionView.invalidate();
       conversationView.invalidate();
       contentView?.invalidate();
+      resumeView?.invalidate();
     },
     privateDelivery,
   );
@@ -185,6 +191,7 @@ export function mountBrowserSetup(
       permissionView.invalidate();
       taskView.invalidate();
       contentView?.invalidate();
+      resumeView?.invalidate();
     },
   );
   const contentRoot = el("div");
@@ -202,8 +209,21 @@ export function mountBrowserSetup(
       permissionView.invalidate();
       taskView.invalidate();
       conversationView.invalidate();
+      resumeView?.invalidate();
     },
   );
+  const resumeRoot = el("div");
+  root.append(resumeRoot);
+  resumeView = mountBrowserResumes(resumeRoot, host, now, monotonic, () => {
+    reset("Registration review closed while reviewing task resume permission.");
+    keyView.invalidate();
+    peerView.invalidate();
+    checkView.invalidate();
+    permissionView.invalidate();
+    taskView.invalidate();
+    conversationView.invalidate();
+    contentView?.invalidate();
+  });
   const stamp = () => {
     const c = host.session();
     return c ? JSON.stringify(c) : null;
@@ -280,6 +300,7 @@ export function mountBrowserSetup(
     taskView.invalidate();
     conversationView.invalidate();
     contentView?.invalidate();
+    resumeView?.invalidate();
   }
   const describe = (row: Registration) =>
     row.revokedAt !== null
@@ -502,6 +523,8 @@ export function mountBrowserSetup(
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
       box.removeEventListener("keydown", keydown);
+      resumeView?.destroy();
+      resumeRoot.remove();
       contentView?.destroy();
       contentRoot.remove();
       conversationView.destroy();

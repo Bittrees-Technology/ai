@@ -310,6 +310,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Verify browser resume permission controls
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config scripts/private-browser.config.ts production-browser-resumes.spec.ts --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-controls.json
+      - name: Retain browser resume controls report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-controls-regression
+          path: regression-reports/browser-resume-controls.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain browser resume controls previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-controls-preview
+          path: test-results/browser-resume-ui/*.png
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain browser resume controls failure details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-resume-controls-failure-details
+          path: |
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Verify browser and companion private-protocol interoperability
         run: npm run test:browser-private -- --max-failures=3
       - name: Retain Mac incoming conversation previews
