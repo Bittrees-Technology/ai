@@ -70,8 +70,26 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
             );
           }
           if (meta.version < 3) {
-            // The encrypted payload defaults legacy rows to local-only. Bump the
-            // format so an older writer cannot erase destination restrictions.
+            // Canonicalize the new default without duplicating old candidates or
+            // losing feedback bound to unchanged content. Older writers refuse3.
+            for (const row of this.db
+              .prepare("SELECT * FROM memory")
+              .all() as Row[]) {
+              const input = this.input(row),
+                fingerprint = this.vault.fingerprint(input);
+              this.db
+                .prepare("UPDATE memory SET payload=?,fingerprint=? WHERE id=?")
+                .run(
+                  this.vault.seal(input, "memory:" + row.id),
+                  fingerprint,
+                  row.id,
+                );
+              this.db
+                .prepare(
+                  "UPDATE feedback SET content_fingerprint=? WHERE memory_id=? AND content_fingerprint=?",
+                )
+                .run(fingerprint, row.id, row.fingerprint);
+            }
             this.db.exec("UPDATE memory_meta SET version=3 WHERE id=1");
           }
         } else {
@@ -205,11 +223,7 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
             .prepare(
               "UPDATE memory SET revision=revision+1,updated_at=?,payload=? WHERE id=?",
             )
-            .run(
-              this.now(),
-              this.vault.seal(next, "memory:" + row.id),
-              row.id,
-            );
+            .run(this.now(), this.vault.seal(next, "memory:" + row.id), row.id);
         }
       })
       .immediate();

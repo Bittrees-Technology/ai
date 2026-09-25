@@ -23,6 +23,17 @@ jobs:
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/
       - run: npm run build
+      - name: Check actual connected-memory storage upgrade
+        run: |
+          git fetch --no-tags --depth=1 origin d9865a7af12bfee5524c9e88df2bdc9d40025e4d
+          node scripts/check-memory-scope-upgrade.mjs test-results/memory-scope-upgrade.json
+      - name: Retain connected-memory upgrade evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-scope-upgrade
+          path: test-results/memory-scope-upgrade.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Check actual resume offer storage upgrade
         run: |
           git fetch --no-tags --depth=1 origin 59804e6febfb35a62ceb3abee0c9a73ae673780f
