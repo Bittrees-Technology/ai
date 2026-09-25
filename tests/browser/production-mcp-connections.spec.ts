@@ -38,6 +38,9 @@ test("owner reviews one MCP template connection, clears stale review and revokes
   await review();
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await expect(panel.getByRole("combobox", { name: "Approved template", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load devices", exact: true }).click();
+  await page.getByRole("button", { name: "View approved templates", exact: true }).click();
+  await expect(page.locator("#templates")).toContainText(templateId);
   await review();
   await panel.getByLabel("Maximum requests (1–20)").fill("1");
   await panel.getByLabel("Connection duration in minutes").fill("5");
