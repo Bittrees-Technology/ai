@@ -48,7 +48,7 @@ export function conversationTaskAccess(
       sources,
       now,
       mono,
-    );
+    ).catch(deny);
     const sourceCheck = binding ? await sources.commitGuard(binding) : () => {};
     const check = () => {
       const wall = now(),
@@ -61,8 +61,12 @@ export function conversationTaskAccess(
       )
         deny();
       sourceCheck();
-      dependencies();
       const current = store.get(scope, id);
+      try {
+        dependencies();
+      } catch {
+        deny();
+      }
       if (
         JSON.stringify(current.input) !== input ||
         JSON.stringify(store.sourceBinding(scope, id)) !== source ||
