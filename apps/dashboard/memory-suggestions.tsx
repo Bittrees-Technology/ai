@@ -28,11 +28,6 @@ export function MemorySuggestions({
     const hide = () => c.hide();
     window.addEventListener("blur", hide);
     document.addEventListener("visibilitychange", hide);
-    useEffect(() => {
-      if (!sourceLinked || (!c.prepared && !c.review)) return;
-      const timer = setTimeout(() => c.hide(), 120000);
-      return () => clearTimeout(timer);
-    }, [c, sourceLinked, c.prepared, c.review]);
     return () => {
       window.removeEventListener("blur", hide);
       document.removeEventListener("visibilitychange", hide);
@@ -40,6 +35,11 @@ export function MemorySuggestions({
     };
   }, [c]);
   useEffect(() => c.hide(), [c, profileId]);
+  useEffect(() => {
+    if (!sourceLinked || (!c.prepared && !c.review)) return;
+    const timer = setTimeout(() => c.hide(), 120000);
+    return () => clearTimeout(timer);
+  }, [c, sourceLinked, c.prepared, c.review]);
   return (
     <section aria-label="Memory suggestions">
       <h3>Memory suggestions</h3>
