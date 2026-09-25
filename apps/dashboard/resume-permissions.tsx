@@ -211,7 +211,7 @@ export function ResumePermissions({
           <p>
             This review ends {new Date(review.expiresAt).toLocaleTimeString()}.
           </p>
-          <label>
+          <label className="resume-ack">
             <input
               type="checkbox"
               checked={ack}

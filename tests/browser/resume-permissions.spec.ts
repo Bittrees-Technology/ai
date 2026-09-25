@@ -253,6 +253,12 @@ test("Mac task detail reviews one resume and revokes the saved permission after 
   await f.panel.screenshot({
     path: `test-results/resume-permission-ui/${info.project.name}-review.png`,
   });
+  const desktopViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await f.panel.screenshot({
+    path: `test-results/resume-permission-ui/${info.project.name}-narrow-review.png`,
+  });
+  await page.setViewportSize(desktopViewport);
   await f.panel.getByRole("checkbox").check();
   await f.panel
     .getByRole("button", { name: "Save resume permission", exact: true })

@@ -1172,3 +1172,14 @@ select.model-profile-select {
   border-left: 3px solid #28685c;
   padding-left: 16px;
 }
+
+.resume-review .resume-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.resume-review .resume-ack input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 5px 0 0;
+}
