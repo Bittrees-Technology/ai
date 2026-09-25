@@ -1,3 +1,4 @@
+import { RemoteResumes } from "./remote-resumes.js";
 import { exportPrivateConversationContent } from "../remote/private-conversation-content.js";
 import { exportPrivateIncomingReplay } from "../remote/private-incoming-replay.js";
 import { exportPrivateConversationOffers } from "../remote/private-conversation-offers.js";
@@ -152,6 +153,7 @@ const terminal = ["completed", "failed", "cancelled", "expired"];
 export class Store {
   readonly db: Database.Database;
   readonly remoteTemplates: RemoteTemplates;
+  readonly remoteResumes: RemoteResumes;
   readonly memoryExtractions: MemoryExtractions;
   readonly taskFeedback: TaskFeedback;
   readonly newsPublications: NewsPublications;
@@ -168,7 +170,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 35) {
+    if (version > 36) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -298,14 +300,18 @@ INSERT INTO message_positions(message_id) SELECT m.id FROM messages m LEFT JOIN 
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_conversation_content(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id_hash))",
         );
-        // Schema35 fences older writers before retained conversation relay delivery history.
-        this.db.pragma("user_version = 35");
+        this.db
+          .exec(`CREATE TABLE IF NOT EXISTS remote_resume_permissions(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,device_id TEXT NOT NULL,task_id TEXT NOT NULL,payload BLOB,PRIMARY KEY(user_id,tenant_id,id));
+CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id));`);
+        // Older writers must not bypass retained single-use resume authority.
+        this.db.pragma("user_version = 36");
       })();
     } catch (error) {
       this.db.close();
       throw error;
     }
     this.remoteTemplates = new RemoteTemplates(this, vault, now);
+    this.remoteResumes = new RemoteResumes(this, vault, now);
     this.memoryExtractions = new MemoryExtractions(this, vault);
     this.taskFeedback = new TaskFeedback(this, vault, now);
     this.newsPublications = new NewsPublications(this, vault, now);
@@ -2123,6 +2129,8 @@ AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on WH
           "private_incoming_replay",
           "private_send_channels",
           "private_task_receipts",
+          "remote_resume_receipts",
+          "remote_resume_permissions",
           "remote_template_receipts",
           "remote_template_permissions",
           "local_templates",

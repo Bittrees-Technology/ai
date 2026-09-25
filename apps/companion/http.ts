@@ -1541,6 +1541,10 @@ export function localApi({
       messages: store.exportMessages(owner).map(exportedMessage),
       inputWaits: store.exportInputWaits(owner),
       remoteControls: store.exportRemoteControls(owner),
+      remoteResumes: {
+        permissions: store.remoteResumes.history(owner),
+        receipts: store.remoteResumes.receipts(owner),
+      },
       privateRelayCredentials: store.exportPrivateRelayCredentials(owner),
       privateTaskConsent: store.exportPrivateTaskConsent(owner),
       privateConversationConsent: store.exportPrivateConversationConsent(owner),
