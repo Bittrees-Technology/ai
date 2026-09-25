@@ -1,3 +1,4 @@
+import { BrowserAutoNoteApprovalInbox } from "../../../modules/remote/browser-autonote-approval-inbox.js";
 import { BrowserResumeDelivery } from "../../../modules/remote/browser-resume-delivery.js";
 import {
   BrowserResumeConsent,
@@ -71,6 +72,17 @@ async function resumeDeliveryStore() {
     owner,
     () => binding,
     await resumeStore(),
+    () => now,
+    () => mono,
+  ));
+}
+let approvalInbox: BrowserAutoNoteApprovalInbox | undefined;
+async function approvalInboxStore() {
+  return (approvalInbox ??= await BrowserAutoNoteApprovalInbox.open(
+    owner,
+    () => binding,
+    keys,
+    peers,
     () => now,
     () => mono,
   ));
@@ -215,6 +227,8 @@ const fixture = {
     consents = undefined;
     contentStore?.close();
     contentStore = undefined;
+    approvalInbox?.close();
+    approvalInbox = undefined;
     resumeDelivery?.close();
     resumeDelivery = undefined;
     resumes?.close();
@@ -968,6 +982,18 @@ const fixture = {
     withKey(async () => (await resumeDeliveryStore()).read(raw)),
   resumeDeliveryReconcile: (raw: unknown) =>
     withKey(async () => (await resumeDeliveryStore()).reconcile(raw)),
+  approvalReceive: (raw: unknown) =>
+    withKey(async () => (await approvalInboxStore()).receive(raw)),
+  approvalReveal: (raw: unknown) =>
+    withKey(async () => (await approvalInboxStore()).reveal(raw)),
+  approvalExport: (raw: unknown) =>
+    approvalInboxStore().then((c) => c.export(raw)),
+  approvalRemove: (raw: unknown) =>
+    approvalInboxStore().then((c) => c.remove(raw)),
+  approvalReopen: () => {
+    approvalInbox?.close();
+    approvalInbox = undefined;
+  },
   resumeStatus: () =>
     host ? host.resumeAPI.status() : resumeStore().then((c) => c.status()),
   resumeInspect: (raw: unknown) =>

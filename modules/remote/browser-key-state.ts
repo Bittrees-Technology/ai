@@ -57,7 +57,7 @@ export class BrowserKeyError extends Error {
   }
 }
 export const browserKeyDatabaseName = "org.bittrees.ai.browser-endpoint-keys";
-export const browserKeyDatabaseVersion = 17;
+export const browserKeyDatabaseVersion = 18;
 export async function browserKeyScope(localOwner: string) {
   if (
     !z.string().min(1).max(256).safeParse(localOwner).success ||
@@ -152,6 +152,16 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         for (const field of ["operation", "message", "sequence"])
           replay.createIndex(field, ["scope", field], { unique: true });
       }
+      if (event.oldVersion < 18) {
+        const inbox = r.result.createObjectStore("autonote_approval_inbox", {
+          keyPath: ["scope", "id"],
+        });
+        inbox.createIndex("scope", "scope");
+        inbox.createIndex("offer", ["scope", "offer"]);
+        inbox.createIndex("part", ["scope", "offer", "index"], {
+          unique: true,
+        });
+      }
       if (event.oldVersion < 17) {
         const delivery = r.result.createObjectStore("resume_delivery", {
           keyPath: ["scope", "id"],
@@ -167,7 +177,7 @@ export function openBrowserKeyDatabase(): Promise<IDBDatabase> {
         content.createIndex("scope", "scope");
       }
     };
-    // Version17 adds empty retained resume delivery and fences previous writers.
+    // Version18 adds an empty encrypted AutoNote approval inbox and fences previous writers.
     // Version16 adds separate resume consent and fences older replay writers.
     // Version14 fences older writers before outgoing recipient receipts are retained.
     // Existing encrypted content, keys, channels and replay rows are preserved.

@@ -500,7 +500,7 @@ test("actual version12 upgrade preserves keys, grants, shared replay and channel
     expect(before.version).toBe(12);
     await reopen(page, f.f);
     const after = await inspect(page);
-    expect(after.version).toBe(17);
+    expect(after.version).toBe(18);
     expect(after.count).toBe(0);
     const oldRows = JSON.parse(before.all),
       newRows = JSON.parse(after.all);
@@ -929,7 +929,7 @@ test("actual version13 upgrade preserves encrypted originals and receipts fence 
     const receipt = await f.offer.receipt(envelope);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(17);
+    expect(upgraded.version).toBe(18);
     expect(JSON.parse(upgraded.all)).toEqual({
       ...JSON.parse(before.all),
       resume_consents: [],
@@ -1101,7 +1101,7 @@ test("actual version14 content upgrades without invented relay history and the o
     expect(before.version).toBe(14);
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(17);
+    expect(upgraded.version).toBe(18);
     expect(JSON.parse(upgraded.all)).toEqual({
       ...JSON.parse(before.all),
       resume_consents: [],
@@ -1172,7 +1172,7 @@ for (const kind of ["message", "question"] as const)
         await page.evaluate(() => window.browserPeersTest.conversationStatus()),
       ).toEqual(before.grants);
       const upgraded = await inspect(page);
-      expect(upgraded.version).toBe(17);
+      expect(upgraded.version).toBe(18);
       expect(upgraded.ledger).toBe(old.ledger);
       expect(upgraded.channels).toBe(old.channels);
       expect(JSON.parse(upgraded.all).slots).toEqual(oldSlots);
@@ -1500,7 +1500,7 @@ test("actual version15 browser storage preserves encrypted content and replay wh
     );
     await reopen(page, f.f);
     const upgraded = await inspect(page);
-    expect(upgraded.version).toBe(17);
+    expect(upgraded.version).toBe(18);
     expect(JSON.parse(upgraded.all)).toEqual({
       ...JSON.parse(before.all),
       resume_consents: [],
@@ -1564,7 +1564,7 @@ test("actual version16 storage preserves resume consent, encrypted content and r
     expect(permissions.grants).toEqual([grant]);
     await reopen(page, f.f);
     const after = await inspect(page);
-    expect(after.version).toBe(17);
+    expect(after.version).toBe(18);
     expect(JSON.parse(after.all)).toEqual({
       ...JSON.parse(before.all),
       resume_delivery: [],

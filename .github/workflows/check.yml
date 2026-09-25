@@ -253,7 +253,7 @@ jobs:
       - name: Verify AutoNote approval setup
         run: |
           mkdir -p regression-reports
-          npx playwright test --config scripts/private-browser.config.ts 'autonote-approval\.spec\.ts$' --trace=retain-on-failure --reporter=json > regression-reports/autonote-approval.json
+          npx playwright test --config scripts/private-browser.config.ts '(autonote-approval|browser-autonote-approval)\.spec\.ts$' --trace=retain-on-failure --reporter=json > regression-reports/autonote-approval.json
       - name: Retain AutoNote approval setup evidence
         if: always()
         uses: actions/upload-artifact@v4

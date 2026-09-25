@@ -12,6 +12,10 @@ export const browserIncomingReplayStore = "incoming_replay";
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
 const outcomeSchema = z.discriminatedUnion("store", [
   z.strictObject({
+    store: z.literal("autonote_approval_inbox"),
+    key: z.tuple([hex, hex]),
+  }),
+  z.strictObject({
     store: z.literal("resume_delivery"),
     key: z.tuple([hex, hex]),
   }),
