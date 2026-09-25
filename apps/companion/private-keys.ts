@@ -1,3 +1,6 @@
+import { CompanionPrivateResumes } from "./private-resumes.js";
+import type { ResumeAccess } from "../../modules/storage/remote-resumes.js";
+import type { Ollama } from "../../modules/models/ollama.js";
 import { CompanionConversationContent } from "./private-conversation-content.js";
 import type { ConversationTaskAccess } from "../../modules/remote/private-conversation-content.js";
 import { CompanionConversationOffers } from "./private-conversation-offers.js";
@@ -60,6 +63,7 @@ export class CompanionPrivateKeys {
   private conversations: CompanionConversationPermissions;
   private conversationOffers: CompanionConversationOffers;
   private conversationContent: CompanionConversationContent;
+  private resumes: CompanionPrivateResumes;
   private tasks: CompanionPrivateTasks;
   private review?: Review;
   private running = false;
@@ -75,6 +79,11 @@ export class CompanionPrivateKeys {
     conversationOptions: {
       enabled?: boolean;
       taskAccess?: ConversationTaskAccess;
+    } = {},
+    resumeOptions: {
+      enabled?: boolean;
+      runtime?: Pick<Ollama, "pin">;
+      taskAccess?: ResumeAccess;
     } = {},
   ) {
     this.owner = { ...owner };
@@ -133,6 +142,18 @@ export class CompanionPrivateKeys {
       conversationOptions.taskAccess,
       now,
     );
+    this.resumes = new CompanionPrivateResumes(
+      store,
+      vault,
+      this.owner,
+      (current) => this.keys(current),
+      remote,
+      setupEnabled && resumeOptions.enabled === true,
+      now,
+      undefined,
+      resumeOptions.runtime,
+      resumeOptions.taskAccess,
+    );
     this.peers = new CompanionPrivatePeers(
       store,
       vault,
@@ -171,6 +192,7 @@ export class CompanionPrivateKeys {
     this.conversations.invalidate();
     this.conversationOffers.invalidate();
     this.conversationContent.invalidate();
+    this.resumes.invalidate();
     this.remote?.invalidatePrivateIdentity();
   }
   peerStatus() {
@@ -183,6 +205,7 @@ export class CompanionPrivateKeys {
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
+      this.resumes.invalidate();
       return this.peers.invitation(raw);
     });
   }
@@ -193,6 +216,7 @@ export class CompanionPrivateKeys {
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
+      this.resumes.invalidate();
       return this.peers.prepare(raw);
     });
   }
@@ -397,11 +421,35 @@ export class CompanionPrivateKeys {
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
+      this.resumes.invalidate();
       return this.permissions.prepare(raw);
     });
   }
   confirmPermission(raw: unknown) {
     return this.exclusive(async () => this.permissions.confirm(raw));
+  }
+  resumePermissionStatus() {
+    return this.resumes.status();
+  }
+  prepareResumePermission(raw: unknown) {
+    return this.exclusive(async () => {
+      this.review = undefined;
+      this.peers.invalidate();
+      this.permissions.invalidate();
+      this.conversations.invalidate();
+      this.conversationOffers.invalidate();
+      this.conversationContent.invalidate();
+      return this.resumes.prepare(raw);
+    });
+  }
+  confirmResumePermission(raw: unknown) {
+    return this.exclusive(() => this.resumes.confirm(raw));
+  }
+  receivePrivateResume(raw: unknown) {
+    return this.protocolOperation(() => this.resumes.receive(raw));
+  }
+  privateResumeReceipt(raw: unknown) {
+    return this.protocolOperation(() => this.resumes.receipt(raw));
   }
   conversationPermissionStatus() {
     return this.conversations.status();
@@ -413,6 +461,7 @@ export class CompanionPrivateKeys {
       this.permissions.invalidate();
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
+      this.resumes.invalidate();
       return this.conversations.prepare(raw);
     });
   }
@@ -462,6 +511,7 @@ export class CompanionPrivateKeys {
   prepareConversationOffer(raw: unknown, relay?: CompanionPrivateRelay) {
     return this.exclusive(async () => {
       this.conversationContent.invalidate();
+      this.resumes.invalidate();
       this.review = undefined;
       this.peers.invalidate();
       this.permissions.invalidate();
@@ -518,6 +568,7 @@ export class CompanionPrivateKeys {
       this.conversations.invalidate();
       this.conversationOffers.invalidate();
       this.conversationContent.invalidate();
+      this.resumes.invalidate();
       const parsed = request.safeParse(raw);
       if (!parsed.success) throw new PrivateKeyLifecycleError("DENIED");
       const input = parsed.data;

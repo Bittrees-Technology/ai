@@ -1,3 +1,5 @@
+import { PrivateResumeConsentError } from "../../modules/remote/private-resume-consent.js";
+import { PrivateResumeDeliveryError } from "../../modules/remote/private-resume-delivery.js";
 import { ConversationContentError } from "../../modules/remote/private-conversation-content.js";
 import { conversationTaskAccess } from "./conversation-access.js";
 import { ConversationOfferError } from "../../modules/remote/private-conversation-offers.js";
@@ -317,6 +319,31 @@ export function localApi({
   app.post("/v1/private-peer-checks/stop", async (req, res) => {
     if (!privateKeys) throw new StoreError("CONFLICT");
     res.json(await privateKeys.stopPeerCheck(req.body));
+  });
+  app.get("/v1/private-resume", (_req, res) =>
+    res.json(
+      privateKeys?.resumePermissionStatus() ?? {
+        available: false,
+        canSetup: false,
+        grants: [],
+      },
+    ),
+  );
+  app.post("/v1/private-resume/prepare", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.prepareResumePermission(req.body));
+  });
+  app.post("/v1/private-resume/confirm", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.confirmResumePermission(req.body));
+  });
+  app.post("/v1/private-resume/receive", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.receivePrivateResume(req.body));
+  });
+  app.post("/v1/private-resume/receipt", async (req, res) => {
+    if (!privateKeys) throw new StoreError("CONFLICT");
+    res.json(await privateKeys.privateResumeReceipt(req.body));
   });
   app.get("/v1/private-conversation-content", (_req, res) => {
     res.json(
@@ -1657,6 +1684,8 @@ export function localApi({
             err instanceof PrivateResponseError ||
             err instanceof PrivateConsentError ||
             err instanceof PrivateConversationConsentError ||
+            err instanceof PrivateResumeConsentError ||
+            err instanceof PrivateResumeDeliveryError ||
             err instanceof ConversationOfferError ||
             err instanceof ConversationContentError ||
             err instanceof PrivateKeyError ||
@@ -1679,7 +1708,9 @@ export function localApi({
               err instanceof PrivateKeyError ||
               err instanceof PrivateKeyLifecycleError ||
               err instanceof ConversationOfferError ||
-              err instanceof ConversationContentError) &&
+              err instanceof ConversationContentError ||
+              err instanceof PrivateResumeConsentError ||
+              err instanceof PrivateResumeDeliveryError) &&
               code === "STORAGE_UNAVAILABLE")
           ? 503
           : code === "NOT_FOUND"

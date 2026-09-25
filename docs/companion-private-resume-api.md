@@ -1,0 +1,11 @@
+# Companion private resume API under development
+
+The authenticated local API has `/v1/private-resume` status plus explicit `prepare`, `confirm`, `receive` and `receipt` actions. Existing local bearer and origin checks apply. No remote credential or existing conversation/task grant authorizes these actions. The feature is disabled by default and requires a separately supplied runtime, source/model access guard and verified remote-device client.
+
+The host permission controller computes the digest from the selected paused task's local model profile, using bounded runtime pinning. A caller cannot supply the digest. Confirmation obtains fresh device identity, re-pins the model and rechecks the reviewed task/profile/source snapshot, key and peer revisions, proof and expiry. Changed model, stale task, cross-panel operations, logout/invalidation and expired review deny confirmation. Revocation remains locally reviewable without a network connection.
+
+The parent shares its native-operation lock across resume, key, peer and other private operations. Encrypted receive and separately confirmed receipt preparation run within a fresh verified-device scope and call the existing atomic encrypted admission component. Status and review do not expose task text. Storage failures return the existing service-unavailable class; authority denials retain the API's existing `DENIED` response mapping.
+
+Five real local HTTP/controller tests cover authenticated review without implicit grant, caller-digest rejection, missing bearer/foreign origin, disabled configuration, changed-model confirmation, cross-panel invalidation, the shared operation lock and host invalidation during pinning, and real authenticated encrypted resume/duplicate/receipt round trips. All data and key entries are synthetic.
+
+This work does not yet configure the feature in startup or supply the worker's fresh private-authority boundary. Received private tasks must remain fail-closed in a worker without that provider. Startup/provider wiring, browser/native UI, encrypted offers, relay integration and full distributed-client acceptance remain pending. The schema and encrypted core are inherited from PR206. No installed app, personal Keychain, model, runtime, deployment or Acer changes are made by these tests.
