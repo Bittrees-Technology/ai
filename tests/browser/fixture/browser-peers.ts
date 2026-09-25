@@ -1,8 +1,14 @@
-import { BrowserResumeConsent } from "../../../modules/remote/browser-resume-consent.js";
+import {
+  BrowserResumeConsent,
+  BrowserResumeConsentError,
+} from "../../../modules/remote/browser-resume-consent.js";
 import { BrowserConversationContent } from "../../../modules/remote/browser-conversation-content.js";
 import { BrowserConversationConsent } from "../../../modules/remote/browser-conversation-consent.js";
 import { openBrowserPrivateDatabase } from "../../../modules/remote/browser-outbox-migration.js";
-import { browserStorageTransaction } from "../../../modules/remote/browser-storage.js";
+import {
+  browserStorageTransaction,
+  browserStorageError,
+} from "../../../modules/remote/browser-storage.js";
 import { BrowserRelayPermissionsClient } from "../../../modules/remote/private-relay-client.js";
 import { BrowserTaskComposition } from "../../../modules/remote/browser-task-composition.js";
 import { BrowserTaskHistory } from "../../../modules/remote/browser-task-history.js";
@@ -847,6 +853,10 @@ const fixture = {
           "readonly",
           a.check,
           (io) => a.validate(io, () => io.done(true)),
+          (error) =>
+            error instanceof BrowserResumeConsentError
+              ? error
+              : browserStorageError(error),
         );
       } finally {
         db.close();
