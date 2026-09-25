@@ -1,3 +1,13 @@
+import {
+  privateRelayStorageReceiptSchema,
+  privateRelayEnvelopeHash,
+} from "./private-relay-contracts.js";
+import {
+  openBrowserAutoNoteDecisionRow,
+  readBrowserAutoNoteDecisionRow,
+  type BrowserAutoNoteDecisionEntry,
+  sealBrowserAutoNoteDecisionRow,
+} from "./browser-autonote-decision-state.js";
 import { z } from "zod";
 import {
   BrowserKeyLifecycle,
@@ -17,6 +27,9 @@ import {
 } from "./browser-private-authority.js";
 import { browserStoredCheckMatches } from "./browser-peer-checks.js";
 import {
+  browserPrivateChannel,
+  browserOutboxChannelSchema,
+  reserveBrowserSequence,
   browserPrivateDigest,
   browserPrivateIdentity,
   BrowserOutboxError,
@@ -27,16 +40,21 @@ import {
 } from "./browser-incoming-replay.js";
 import { privateReplayIdentity } from "./private-replay.js";
 import {
+  type PrivateEnvelope,
+  privateEnvelopeSuite,
+  sealPrivateEnvelope,
   privateEnvelopeSchema,
   openPrivateEnvelope,
 } from "./private-envelope.js";
 import type { PrivateBinding } from "./private-peer-contracts.js";
 import {
+  autoNoteApprovalDecisionSchema,
   autoNoteApprovalManifestSchema,
   autoNoteApprovalChunkSchema,
 } from "./private-autonote-approval-contracts.js";
 import { assembleAutoNoteApproval } from "./private-autonote-approval-content.js";
 const name = "autonote_approval_inbox";
+const decisionStore = "autonote_approval_decisions";
 const stores = [
   name,
   "lifecycle",
@@ -113,6 +131,7 @@ export class BrowserAutoNoteApprovalInbox {
   }
   invalidate() {
     this.generation++;
+    this.decisionReview = undefined;
   }
   close() {
     this.closed = true;
@@ -415,73 +434,493 @@ export class BrowserAutoNoteApprovalInbox {
       );
     });
   }
+  private async inspectOffer(offerId: string, check: () => void) {
+    const offer = await browserPrivateDigest(["autonote-offer:v1", offerId]);
+    const rows = await browserStorageTransaction<Row[]>(
+      this.db,
+      [name],
+      "readonly",
+      check,
+      (io) => this.rows(io, offer, io.done),
+    );
+    const first = rows.find((r) => r.index === -1);
+    if (!first) throw fail();
+    const p = await this.proof(first.peer.peerId, first.peer.keyEpoch, check);
+    if (
+      rows.some(
+        (r) => !same(r.local, p.local.proof) || !same(r.peer, p.peer.proof),
+      )
+    )
+      throw fail();
+    const manifest = autoNoteApprovalManifestSchema.parse(
+      await this.openPacket(first.envelope, p, check),
+    );
+    if (manifest.offerId !== offerId) throw fail();
+    const chunks = [];
+    for (const row of rows.filter((r) => r.index !== -1)) {
+      const chunk = autoNoteApprovalChunkSchema.parse(
+        await this.openPacket(row.envelope, p, check),
+      );
+      if (
+        chunk.index !== row.index ||
+        chunk.offerId !== manifest.offerId ||
+        row.envelope.header.issuedAt !== manifest.issuedAt ||
+        row.envelope.header.expiresAt !== manifest.expiresAt
+      )
+        throw fail();
+      chunks.push(chunk);
+    }
+    const retained = await this.replayRows(rows, p.identity.scope);
+    const detail = await assembleAutoNoteApproval(manifest, chunks, this.now);
+    await browserStorageTransaction<{
+      manifest: z.infer<typeof autoNoteApprovalManifestSchema>;
+      detail: Awaited<ReturnType<typeof assembleAutoNoteApproval>>;
+    }>(
+      this.db,
+      stores,
+      "readonly",
+      () => {
+        check();
+        if (this.now() >= manifest.expiresAt) throw fail();
+      },
+      (io) =>
+        this.validate(io, p, () =>
+          this.retained(io, retained, () =>
+            this.rows(io, offer, (current) => {
+              if (!same(current, rows))
+                throw new BrowserOutboxError("CONFLICT");
+              io.done({ manifest, detail });
+            }),
+          ),
+        ),
+    );
+    return { manifest, detail, p, rows, retained, offer };
+  }
   async reveal(raw: unknown) {
     const input = z
       .strictObject({ offerId: z.uuid(), confirmed: z.literal(true) })
       .parse(raw);
     return this.exclusive(async (check) => {
-      const offer = await browserPrivateDigest([
-        "autonote-offer:v1",
+      const { manifest, detail } = await this.inspectOffer(
         input.offerId,
-      ]);
-      const rows = await browserStorageTransaction<Row[]>(
-        this.db,
-        [name],
-        "readonly",
         check,
-        (io) => this.rows(io, offer, io.done),
       );
-      const first = rows.find((r) => r.index === -1);
-      if (!first) throw fail();
-      const p = await this.proof(first.peer.peerId, first.peer.keyEpoch, check);
-      if (
-        rows.some(
-          (r) => !same(r.local, p.local.proof) || !same(r.peer, p.peer.proof),
-        )
-      )
-        throw fail();
-      const manifest = autoNoteApprovalManifestSchema.parse(
-        await this.openPacket(first.envelope, p, check),
-      );
-      if (manifest.offerId !== input.offerId) throw fail();
-      const chunks = [];
-      for (const row of rows.filter((r) => r.index !== -1)) {
-        const chunk = autoNoteApprovalChunkSchema.parse(
-          await this.openPacket(row.envelope, p, check),
-        );
+      return { manifest, detail };
+    });
+  }
+  private decisionReview?: {
+    id: string;
+    decision: "approve" | "reject";
+    at: number;
+    mono: number;
+    expiresAt: number;
+    inspected: Awaited<
+      ReturnType<BrowserAutoNoteApprovalInbox["inspectOffer"]>
+    >;
+  };
+  async prepareDecision(raw: unknown) {
+    const input = z
+      .strictObject({
+        offerId: z.uuid(),
+        decision: z.enum(["approve", "reject"]),
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    this.decisionReview = undefined;
+    return this.exclusive(async (check) => {
+      const inspected = await this.inspectOffer(input.offerId, check);
+      const review = {
+        id: crypto.randomUUID(),
+        decision: input.decision,
+        at: this.now(),
+        mono: this.mono(),
+        expiresAt: Math.min(this.now() + 60000, inspected.manifest.expiresAt),
+        inspected,
+      };
+      check();
+      this.decisionReview = review;
+      return {
+        id: review.id,
+        decision: review.decision,
+        expiresAt: review.expiresAt,
+        manifest: inspected.manifest,
+        detail: inspected.detail,
+      };
+    });
+  }
+  async confirmDecision(raw: unknown) {
+    const input = z
+      .strictObject({
+        reviewId: z.uuid(),
+        confirmed: z.literal(true),
+        acknowledged: z.literal(true),
+      })
+      .parse(raw);
+    const review = this.decisionReview;
+    this.decisionReview = undefined;
+    if (!review || review.id !== input.reviewId) throw fail();
+    return this.exclusive(async (operationCheck) => {
+      const check = () => {
+        operationCheck();
         if (
-          chunk.index !== row.index ||
-          chunk.offerId !== manifest.offerId ||
-          row.envelope.header.issuedAt !== manifest.issuedAt ||
-          row.envelope.header.expiresAt !== manifest.expiresAt
+          this.now() < review.at ||
+          this.now() >= review.expiresAt ||
+          this.mono() < review.mono ||
+          this.mono() - review.mono >= review.expiresAt - review.at
         )
           throw fail();
-        chunks.push(chunk);
-      }
-      const retained = await this.replayRows(rows, p.identity.scope);
-      const detail = await assembleAutoNoteApproval(manifest, chunks, this.now);
-      return browserStorageTransaction<{
-        manifest: z.infer<typeof autoNoteApprovalManifestSchema>;
-        detail: Awaited<ReturnType<typeof assembleAutoNoteApproval>>;
-      }>(
+      };
+      const inspected = await this.inspectOffer(
+          review.inspected.manifest.offerId,
+          check,
+        ),
+        { p, manifest, offer } = inspected;
+      if (
+        !same(manifest, review.inspected.manifest) ||
+        !same(inspected.detail, review.inspected.detail) ||
+        !same(p.local.proof, review.inspected.p.local.proof) ||
+        !same(p.peer.proof, review.inspected.p.peer.proof)
+      )
+        throw fail();
+      const channel = await browserPrivateChannel(p.identity, {
+        senderKeyEpoch: p.local.proof.keyEpoch,
+        peerId: p.peer.proof.peerId,
+        peerKeyEpoch: p.peer.proof.keyEpoch,
+      });
+      const sequence = await browserStorageTransaction<number>(
         this.db,
-        stores,
+        ["channels"],
         "readonly",
-        () => {
-          check();
-          if (this.now() >= manifest.expiresAt) throw fail();
+        check,
+        (io) => {
+          io.request(
+            io.store("channels").get([p.identity.scope, channel]),
+            (raw) => {
+              const value =
+                raw === undefined
+                  ? { scope: p.identity.scope, channel, next: 1 }
+                  : browserOutboxChannelSchema.parse(raw);
+              if (value.scope !== p.identity.scope || value.channel !== channel)
+                throw fail();
+              io.done(value.next);
+            },
+          );
         },
-        (io) =>
+      );
+      const command = autoNoteApprovalDecisionSchema.parse({
+        version: 1,
+        type: "autonote.approval.decision",
+        id: crypto.randomUUID(),
+        offerId: manifest.offerId,
+        permissionId: manifest.permissionId,
+        detailHash: manifest.detailHash,
+        proposalDigest: manifest.proposalDigest,
+        decision: review.decision,
+        confirmed: true,
+        issuedAt: this.now(),
+      });
+      const plaintext = new TextEncoder().encode(JSON.stringify(command));
+      let envelope;
+      try {
+        envelope = await sealPrivateEnvelope(
+          {
+            version: 1,
+            suite: privateEnvelopeSuite,
+            ownerId: p.local.proof.binding.ownerId,
+            senderId: p.local.proof.binding.deviceId,
+            recipientId: p.peer.proof.peerId,
+            senderKeyEpoch: p.local.proof.keyEpoch,
+            recipientKeyEpoch: p.peer.proof.keyEpoch,
+            operationId: command.id,
+            messageId: crypto.randomUUID(),
+            sequence,
+            issuedAt: command.issuedAt,
+            expiresAt: Math.min(
+              manifest.expiresAt,
+              p.local.proof.binding.expiresAt,
+            ),
+          },
+          plaintext,
+          { senderKey: p.local.pair, recipientPublicKey: p.peer.publicKey },
+          this.now,
+        );
+      } finally {
+        plaintext.fill(0);
+      }
+      const row = await sealBrowserAutoNoteDecisionRow(
+        {
+          scope: this.scope,
+          id: offer,
+          deviceHash: p.identity.deviceHash,
+          revision: 1,
+        },
+        {
+          manifest,
+          command,
+          local: p.local.proof,
+          peer: p.peer.proof,
+          envelope,
+          attempts: 0,
+          transport: null,
+          result: null,
+          resultEnvelope: null,
+          stopped: false,
+        },
+      );
+      return browserStorageTransaction(
+        this.db,
+        [...stores, decisionStore, "channels"],
+        "readwrite",
+        check,
+        (io) => {
           this.validate(io, p, () =>
-            this.retained(io, retained, () =>
-              this.rows(io, offer, (current) => {
-                if (!same(current, rows))
+            this.retained(io, inspected.retained, () =>
+              this.rows(io, offer, (rows) => {
+                if (!same(rows, inspected.rows))
                   throw new BrowserOutboxError("CONFLICT");
-                io.done({ manifest, detail });
+                io.request(
+                  io.store(decisionStore).get([this.scope, offer]),
+                  (old) => {
+                    if (old !== undefined)
+                      throw new BrowserOutboxError("CONFLICT");
+                    io.request(
+                      io.store(decisionStore).index("scope").count(this.scope),
+                      (count) => {
+                        if (count >= 64)
+                          throw new BrowserOutboxError("CAPACITY");
+                        io.request(io.store(decisionStore).count(), (total) => {
+                          if (total >= 512)
+                            throw new BrowserOutboxError("CAPACITY");
+                          reserveBrowserSequence(
+                            io,
+                            p.identity.scope,
+                            channel,
+                            (actual) => {
+                              if (actual !== sequence)
+                                throw new BrowserOutboxError("CONFLICT");
+                              io.store(decisionStore).add(row);
+                              io.done({
+                                decisionId: command.id,
+                                offerId: manifest.offerId,
+                                decision: command.decision,
+                                state: "retained" as const,
+                              });
+                            },
+                          );
+                        });
+                      },
+                    );
+                  },
+                );
               }),
             ),
+          );
+        },
+      );
+    });
+  }
+  private async savedDecision(offerId: string, check: () => void) {
+    const id = await browserPrivateDigest(["autonote-offer:v1", offerId]);
+    const raw = await browserStorageTransaction<unknown>(
+      this.db,
+      [decisionStore],
+      "readonly",
+      check,
+      (io) =>
+        io.request(io.store(decisionStore).get([this.scope, id]), io.done),
+    );
+    const entry = await openBrowserAutoNoteDecisionRow(raw);
+    check();
+    if (
+      entry.row.scope !== this.scope ||
+      entry.row.id !== id ||
+      entry.value.manifest.offerId !== offerId
+    )
+      throw fail();
+    return entry;
+  }
+  private decisionSummary(entry: BrowserAutoNoteDecisionEntry) {
+    const v = entry.value;
+    return {
+      decisionId: v.command.id,
+      offerId: v.manifest.offerId,
+      decision: v.command.decision,
+      attempts: v.attempts,
+      transport: v.transport,
+      result: v.result,
+      stopped: v.stopped,
+    };
+  }
+  decisionHistory() {
+    return this.maintenance(async (check) => {
+      const rows = await browserStorageTransaction<unknown[]>(
+        this.db,
+        [decisionStore],
+        "readonly",
+        check,
+        (io) =>
+          io.request(
+            io.store(decisionStore).index("scope").getAll(this.scope, 65),
+            io.done,
           ),
       );
+      if (rows.length > 64) throw new BrowserOutboxError("STORAGE_UNAVAILABLE");
+      const entries = await Promise.all(
+        rows.map(openBrowserAutoNoteDecisionRow),
+      );
+      check();
+      if (entries.some((e) => e.row.scope !== this.scope)) throw fail();
+      return entries.map((e) => this.decisionSummary(e));
+    });
+  }
+  async exportDecision(raw: unknown) {
+    const input = z
+      .strictObject({ offerId: z.uuid(), confirmed: z.literal(true) })
+      .parse(raw);
+    return this.maintenance(async (check) => {
+      const entry = await this.savedDecision(input.offerId, check);
+      return {
+        version: 1,
+        envelope: entry.value.envelope,
+        resultEnvelope: entry.value.resultEnvelope,
+        restoreAuthority: false,
+      };
+    });
+  }
+  async decisionStatus(raw: unknown) {
+    const input = z.strictObject({ offerId: z.uuid() }).parse(raw);
+    return this.maintenance(async (check) =>
+      this.decisionSummary(await this.savedDecision(input.offerId, check)),
+    );
+  }
+  async dispatchDecision(
+    raw: unknown,
+    upload: (
+      envelope: PrivateEnvelope,
+      check: () => Promise<void>,
+    ) => Promise<unknown>,
+  ) {
+    const input = z
+      .strictObject({ offerId: z.uuid(), confirmed: z.literal(true) })
+      .parse(raw);
+    return this.exclusive(async (check) => {
+      const inspected = await this.inspectOffer(input.offerId, check),
+        { p } = inspected;
+      let entry = await this.savedDecision(input.offerId, check);
+      const value = entry.value;
+      if (
+        value.stopped ||
+        value.result ||
+        !same(value.manifest, inspected.manifest) ||
+        !same(value.local, p.local.proof) ||
+        !same(value.peer, p.peer.proof) ||
+        entry.row.deviceHash !== p.identity.deviceHash
+      )
+        throw fail();
+      const channel = await browserPrivateChannel(p.identity, {
+        senderKeyEpoch: p.local.proof.keyEpoch,
+        peerId: p.peer.proof.peerId,
+        peerKeyEpoch: p.peer.proof.keyEpoch,
+      });
+      const live = () => {
+        check();
+        if (
+          this.now() < value.envelope.header.issuedAt ||
+          this.now() >= value.envelope.header.expiresAt
+        )
+          throw fail();
+      };
+      const current = (
+        mode: IDBTransactionMode,
+        update?: BrowserAutoNoteDecisionEntry["row"],
+      ) =>
+        browserStorageTransaction<void>(
+          this.db,
+          [...stores, decisionStore, "channels"],
+          mode,
+          live,
+          (io) =>
+            this.validate(io, p, () =>
+              this.retained(io, inspected.retained, () =>
+                this.rows(io, inspected.offer, (rows) => {
+                  if (!same(rows, inspected.rows)) throw fail();
+                  io.request(
+                    io.store("channels").get([p.identity.scope, channel]),
+                    (raw) => {
+                      const sequence = browserOutboxChannelSchema.parse(raw);
+                      if (
+                        sequence.scope !== p.identity.scope ||
+                        sequence.channel !== channel ||
+                        sequence.next <= value.envelope.header.sequence
+                      )
+                        throw fail();
+                      io.request(
+                        io.store(decisionStore).get([this.scope, entry.row.id]),
+                        (saved) => {
+                          if (
+                            !same(
+                              readBrowserAutoNoteDecisionRow(saved),
+                              entry.row,
+                            )
+                          )
+                            throw new BrowserOutboxError("CONFLICT");
+                          if (update) io.store(decisionStore).put(update);
+                          io.done(undefined);
+                        },
+                      );
+                    },
+                  );
+                }),
+              ),
+            ),
+        );
+      const attempted = { ...value, attempts: value.attempts + 1 };
+      const row = await sealBrowserAutoNoteDecisionRow(
+        { ...entry.row, revision: entry.row.revision + 1 },
+        attempted,
+        entry.row.key,
+      );
+      await current("readwrite", row);
+      entry = { row, value: attempted };
+      const transport = privateRelayStorageReceiptSchema.parse(
+        await upload(value.envelope, () => current("readonly")),
+      );
+      if (
+        transport.messageId !== value.envelope.header.messageId ||
+        transport.envelopeHash !==
+          (await privateRelayEnvelopeHash(value.envelope)) ||
+        transport.storedAt < value.envelope.header.issuedAt ||
+        transport.storedAt > this.now() ||
+        !["stored", "received"].includes(transport.state)
+      )
+        throw fail();
+      const settled = { ...attempted, transport };
+      const receiptRow = await sealBrowserAutoNoteDecisionRow(
+        { ...row, revision: row.revision + 1 },
+        settled,
+        row.key,
+      );
+      // Preserve a matching storage receipt after upload even if its authority has expired.
+      // A removed/replaced row is never recreated by a late network response.
+      await browserStorageTransaction<void>(
+        this.db,
+        [decisionStore],
+        "readwrite",
+        () => {
+          if (this.closed) throw fail();
+        },
+        (io) =>
+          io.request(
+            io.store(decisionStore).get([this.scope, row.id]),
+            (saved) => {
+              if (!same(readBrowserAutoNoteDecisionRow(saved), row))
+                throw new BrowserOutboxError("CONFLICT");
+              io.store(decisionStore).put(receiptRow);
+              io.done(undefined);
+            },
+          ),
+      );
+      return this.decisionSummary({ row: receiptRow, value: settled });
     });
   }
   status() {
@@ -544,12 +983,13 @@ export class BrowserAutoNoteApprovalInbox {
       ]);
       return browserStorageTransaction<{ removed: number }>(
         this.db,
-        [name],
+        [name, decisionStore],
         "readwrite",
         check,
         (io) =>
           this.rows(io, offer, (rows) => {
             for (const row of rows) io.store(name).delete([this.scope, row.id]);
+            io.store(decisionStore).delete([this.scope, offer]);
             io.done({ removed: rows.length });
           }),
       );

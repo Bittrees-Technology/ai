@@ -1089,6 +1089,54 @@ export class BrowserKeyHost {
   /** Transport storage is not Mac acceptance. Originals are retained before any
    * upload; uncertain uploads reuse that exact envelope on an explicit retry. */
   readonly autoNoteApprovalAPI = {
+    decisionHistory: () =>
+      this.operation(async () =>
+        (await this.approvalInboxStore()).decisionHistory(),
+      ),
+    exportDecision: (raw: unknown) =>
+      this.operation(async () =>
+        (await this.approvalInboxStore()).exportDecision(raw),
+      ),
+    prepareDecision: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.approvalInboxStore()).prepareDecision(raw),
+      ),
+    confirmDecision: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        (await this.approvalInboxStore()).confirmDecision(raw),
+      ),
+    decisionStatus: (raw: unknown) =>
+      this.operation(async () =>
+        (await this.approvalInboxStore()).decisionStatus(raw),
+      ),
+    sendDecision: (raw: unknown) =>
+      this.verifiedPeer(async () =>
+        this.relay.withClient(async (client, sender, check) => {
+          return (await this.approvalInboxStore()).dispatchDecision(
+            raw,
+            async (envelope, current) => {
+              const recipient = await client.recipient({
+                endpointId: envelope.header.recipientId,
+              });
+              check();
+              if (
+                envelope.header.expiresAt >
+                Math.min(sender.expiresAt, recipient.expiresAt)
+              )
+                throw Error("DENIED");
+              const result = await client.submit(
+                { version: 1, envelope },
+                async () => {
+                  check();
+                  await current();
+                  check();
+                },
+              );
+              return result.receipt;
+            },
+          );
+        }),
+      ),
     status: () =>
       this.operation(async () => (await this.approvalInboxStore()).status()),
     reveal: (raw: unknown) =>
