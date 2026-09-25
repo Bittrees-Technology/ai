@@ -275,6 +275,9 @@ test("HTTP feedback enforces source access on read/write/export and rejects dele
     entered: (() => void) | undefined,
     checks = 0;
   const sources = {
+    captureReadBoundary: () => () => {
+      if (!allowed) throw new ConnectorError("SOURCE_DENIED");
+    },
     validate: async () => {
       checks++;
       entered?.();

@@ -72,7 +72,7 @@ test("unavailable local references explain hidden content and expose no suggesti
 }, info) => {
   const f = await fixture(page, true);
   await expect(
-    page.getByText(/A local reference used by this task/),
+    page.getByText(/A source or memory used by this task/),
   ).toBeVisible();
   await expect(
     page
@@ -116,7 +116,7 @@ test("dependency loss removes result and quality review and suppresses an alread
   await expect.poll(() => !!f.pending()).toBe(true);
   f.hide();
   await expect(
-    page.getByText(/A local reference used by this task/),
+    page.getByText(/A source or memory used by this task/),
   ).toBeVisible({ timeout: 10000 });
   await f
     .pending()!

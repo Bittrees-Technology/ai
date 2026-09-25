@@ -3,7 +3,7 @@ import type { SourceTasks } from "../../modules/connectors/source-tasks.js";
 import type { MemoryStore } from "../../modules/memory/store.js";
 import type { ConversationTaskAccess } from "../../modules/remote/private-conversation-content.js";
 import { Store, type Owner } from "../../modules/storage/store.js";
-import { localTaskDependencies } from "./memory.js";
+import { taskDependencyGuard } from "./memory.js";
 
 /** Host-owned per-operation access: source reads happen outside the SQLite
  * transaction; the returned check is synchronous and valid for at most 10s.
@@ -40,7 +40,15 @@ export function conversationTaskAccess(
       JSON.stringify(binding.refs) !== JSON.stringify(initial.input.sourceRefs)
     )
       deny();
-    if (!localTaskDependencies(store, scope, id, memory)) deny();
+    const dependencies = await taskDependencyGuard(
+      store,
+      scope,
+      id,
+      memory,
+      sources,
+      now,
+      mono,
+    ).catch(deny);
     const sourceCheck = binding ? await sources.commitGuard(binding) : () => {};
     const check = () => {
       const wall = now(),
@@ -54,11 +62,15 @@ export function conversationTaskAccess(
         deny();
       sourceCheck();
       const current = store.get(scope, id);
+      try {
+        dependencies();
+      } catch {
+        deny();
+      }
       if (
         JSON.stringify(current.input) !== input ||
         JSON.stringify(store.sourceBinding(scope, id)) !== source ||
-        memory?.changeToken() !== memoryToken ||
-        !localTaskDependencies(store, scope, id, memory)
+        memory?.changeToken() !== memoryToken
       )
         deny();
     };

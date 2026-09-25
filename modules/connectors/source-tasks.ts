@@ -11,6 +11,7 @@ type AutoNoteSnapshot = Awaited<ReturnType<AutoNoteTasks["validate"]>>;
 export type SourceSnapshot =
   CrmSnapshot | AutoNoteSnapshot | Awaited<ReturnType<MailTasks["validate"]>>;
 export interface SourceValidator {
+  commitGuard?(binding: SourceBinding): Promise<() => void>;
   validate(binding: SourceBinding): Promise<SourceSnapshot>;
 }
 /** Explicit app dispatch; an unavailable adapter never falls back to another app. */

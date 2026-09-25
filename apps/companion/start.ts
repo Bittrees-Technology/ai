@@ -64,7 +64,7 @@ import {
   macKeychainEntry,
 } from "../../modules/storage/keychain.js";
 import { Ollama } from "../../modules/models/ollama.js";
-import { localMemoryAccess } from "./memory.js";
+import { sourceMemoryAccess } from "./source-memory.js";
 import { LocalWorker } from "./worker.js";
 import { dashboardServer } from "./dashboard-server.js";
 const directory = join(
@@ -114,11 +114,6 @@ const importDirectory = join(directory, "model-imports");
 await mkdir(importDirectory, { recursive: true, mode: 0o700 });
 const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
 await imports.maintain();
-const memory: MemoryStore = new MemoryStore(
-  join(content.directory, "memory.db"),
-  new Vault(key),
-  localMemoryAccess(store, () => memory),
-);
 const crm = new CrmConnector(
     JSON.stringify(owner),
     crmKeychainEntry("personal"),
@@ -156,6 +151,15 @@ const crm = new CrmConnector(
     store.newsPublications.forOwner(owner),
   ),
   runtime = new Ollama(),
+  memory: MemoryStore = new MemoryStore(
+    join(content.directory, "memory.db"),
+    new Vault(key),
+    sourceMemoryAccess(
+      store,
+      new SourceTasks(sources, autonoteSources, mailSources),
+      () => memory,
+    ),
+  ),
   worker = new LocalWorker(
     store,
     owner,

@@ -6,7 +6,7 @@ import {
   maxModelQuestions,
   ClarificationLimitError,
 } from "../../modules/models/questions.js";
-import { localTaskDependencies } from "./memory.js";
+import { taskDependencyGuard } from "./memory.js";
 import {
   defaultExecutionLimits,
   type ExecutionControls,
@@ -136,18 +136,20 @@ export class LocalWorker {
       }
     }, 5000);
     heartbeat.unref();
-    const checkDependencies = () => {
-      if (
-        !localTaskDependencies(
-          this.store,
-          this.owner,
-          claim.task.id,
-          this.memory,
-        )
-      )
-        throw new Error("Local memory dependencies changed");
+    let checkDependencies: () => void = () => {
+      throw new Error("Memory dependencies not checked");
+    };
+    const refreshDependencies = async () => {
+      checkDependencies = await taskDependencyGuard(
+        this.store,
+        this.owner,
+        claim.task.id,
+        this.memory,
+        this.sources,
+      );
     };
     try {
+      await refreshDependencies();
       checkDependencies();
       const inputContext = this.store.taskInputContext(
         this.owner,
@@ -176,6 +178,7 @@ export class LocalWorker {
         abort.signal,
       );
       const fence = async <T>(action: () => T): Promise<T> => {
+        await refreshDependencies();
         const apply = (privateAuthority = this.resumePrivateAuthority) => {
           checkDeadline();
           checkDependencies();
