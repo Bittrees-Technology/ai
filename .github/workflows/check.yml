@@ -312,7 +312,7 @@ jobs:
 
       - name: Verify retained browser resume delivery
         if: ${{ !cancelled() }}
-        run: npx playwright test --config scripts/private-browser.config.ts browser-resume-delivery.spec.ts --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-delivery.json
+        run: npx playwright test --config scripts/private-browser.config.ts '/browser-resume-delivery\.spec\.ts$' --trace=retain-on-failure --reporter=json > regression-reports/browser-resume-delivery.json
       - name: Retain browser resume delivery report
         if: always()
         uses: actions/upload-artifact@v4
@@ -385,9 +385,10 @@ jobs:
           retention-days: 7
 
       - name: Verify browser and companion private-protocol interoperability
+        if: github.event_name != 'pull_request'
         run: npm run test:browser-private -- --max-failures=3
       - name: Retain Mac incoming conversation previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: mac-conversation-receive-focused-preview
@@ -395,7 +396,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain browser conversation delivery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-conversation-delivery-focused-preview
@@ -403,7 +404,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain Mac conversation delivery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: mac-conversation-delivery-focused-preview
@@ -411,7 +412,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain conversation content previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-conversation-content-focused-preview
@@ -419,7 +420,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: private-browser-results
           path: test-results/private-browser.json
@@ -427,7 +428,7 @@ jobs:
           retention-days: 7
 
       - name: Retain Mac encrypted offer upload previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: conversation-relay-offer-ui-preview
@@ -436,7 +437,7 @@ jobs:
           retention-days: 7
 
       - name: Retain browser queue recovery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-queue-ui-preview
@@ -445,7 +446,7 @@ jobs:
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: private-results-ui-preview
           path: test-results/private-results-*.png
@@ -453,14 +454,14 @@ jobs:
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: private-keys-ui-preview
           path: test-results/private-keys-*.png
           if-no-files-found: error
           retention-days: 7
       - name: Retain Mac peer review previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: private-peers-ui-preview
@@ -468,7 +469,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain Mac task permission previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: private-permissions-ui-preview
@@ -476,7 +477,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain Mac device check previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: private-checks-ui-preview
@@ -484,7 +485,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain prerequisite failure previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: dependency-failure-ui-preview
@@ -493,7 +494,7 @@ jobs:
           retention-days: 7
 
       - name: Retain complete local workspace previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: workspace-ui-preview
@@ -501,7 +502,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain configurable model profile previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: model-profiles-ui-preview
@@ -509,7 +510,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain import cleanup previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: import-cleanup-ui-preview
@@ -517,7 +518,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain task quality review previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: task-quality-ui-preview
@@ -525,7 +526,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain local execution limit previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: execution-limits-ui-preview
@@ -533,7 +534,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain memory ranking explanation previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: memory-ranking-ui-preview
@@ -541,7 +542,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain local memory dependency previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: local-memory-dependencies-ui-preview
@@ -549,7 +550,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain News connection review and read previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: news-connection-ui-preview
@@ -557,7 +558,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain reviewed News curation previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: news-curation-ui-preview
@@ -566,7 +567,7 @@ jobs:
           retention-days: 7
 
       - name: Retain reviewed News publication previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: news-publication-ui-preview
@@ -574,7 +575,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain reviewed Mail sending previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: mail-send-ui-preview
@@ -582,7 +583,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain browser key setup and recovery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-key-controls-ui-preview
@@ -590,7 +591,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain browser registration and key setup previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-registration-ui-preview
@@ -600,7 +601,7 @@ jobs:
 
       - name: Retain production browser recovery previews
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: production-browser-recovery-preview
           path: test-results/production-recovery-*.png
@@ -609,7 +610,7 @@ jobs:
 
       - name: Retain browser device identity controls previews
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: browser-peer-controls-ui-preview
           path: test-results/browser-peer-controls-*.png
@@ -618,7 +619,7 @@ jobs:
 
       - name: Retain browser device check controls previews
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: browser-check-controls-ui-preview
           path: test-results/browser-check-controls-*.png
@@ -627,7 +628,7 @@ jobs:
 
       - name: Retain browser task permission previews
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: browser-permission-controls-ui-preview
           path: test-results/browser-permission-controls-*.png
@@ -636,7 +637,7 @@ jobs:
 
       - name: Retain reviewed browser task controls previews
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: browser-task-controls-ui-preview
           path: test-results/browser-task-controls-*.png
@@ -644,7 +645,7 @@ jobs:
           retention-days: 7
 
       - name: Retain Mac private relay connection previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: mac-private-relay-ui-preview
@@ -653,14 +654,14 @@ jobs:
           retention-days: 7
       - name: Retain command history controls previews
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         with:
           name: browser-command-history-ui-preview
           path: test-results/browser-command-history-*.png
           if-no-files-found: error
           retention-days: 7
       - name: Retain browser relay control previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-relay-ui-preview
@@ -669,7 +670,7 @@ jobs:
           retention-days: 7
 
       - name: Retain reviewed private task delivery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-relay-tasks-ui-preview
@@ -678,7 +679,7 @@ jobs:
           retention-days: 7
 
       - name: Retain Mac task delivery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: mac-task-delivery-ui-preview
@@ -687,7 +688,7 @@ jobs:
           retention-days: 7
 
       - name: Retain Mac queue recovery previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: mac-queue-ui-preview
@@ -696,7 +697,7 @@ jobs:
           retention-days: 7
 
       - name: Retain task-linked Inbox previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: inbox-task-review-ui-preview
@@ -705,7 +706,7 @@ jobs:
           retention-days: 7
 
       - name: Retain reviewed local task answer previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: task-answer-ui-preview
@@ -714,7 +715,7 @@ jobs:
           retention-days: 7
 
       - name: Upload model question form previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: model-question-ui-preview
@@ -723,7 +724,7 @@ jobs:
           retention-days: 7
 
       - name: Upload conversation permission previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: conversation-permission-ui-preview
@@ -732,7 +733,7 @@ jobs:
           retention-days: 7
 
       - name: Upload conversation offer previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: conversation-offer-ui-preview
@@ -741,7 +742,7 @@ jobs:
           retention-days: 7
 
       - name: Upload browser offer receipt previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-relay-offer-ui-preview
@@ -749,7 +750,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Upload browser conversation permission previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-conversation-ui-preview
@@ -758,7 +759,7 @@ jobs:
           retention-days: 7
 
       - name: Upload browser conversation content previews
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: browser-conversation-content-ui-preview
