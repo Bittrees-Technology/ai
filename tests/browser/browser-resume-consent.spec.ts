@@ -265,3 +265,78 @@ test("resume reviews reject invalidation and monotonic expiry before any consent
     f.mac.close();
   }
 });
+
+test("resume authority rejects a deleted or altered original replay outcome at resolution and commit", async ({
+  page,
+}) => {
+  const f = await ready(page);
+  try {
+    const o = await offer(f),
+      g = await approve(page, await prepare(page, f, o));
+    for (const mode of ["alter", "delete"] as const) {
+      await authorize(page, g);
+      const original = await page.evaluate(
+        async ({ operation, mode }) => {
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+          });
+          try {
+            return await new Promise<any>((resolve, reject) => {
+              const tx = db.transaction("incoming_replay", "readwrite"),
+                store = tx.objectStore("incoming_replay");
+              const r = store.getAll();
+              let original: any;
+              r.onsuccess = () => {
+                original = r.result.find((v: any) => v.operation === operation);
+                if (!original) {
+                  tx.abort();
+                  return;
+                }
+                if (mode === "delete")
+                  store.delete([original.scope, original.operation]);
+                else
+                  store.put({
+                    ...original,
+                    outcome: {
+                      ...original.outcome,
+                      key: ["f".repeat(64), operation],
+                    },
+                  });
+              };
+              tx.oncomplete = () => resolve(original);
+              tx.onabort = () => reject(tx.error);
+            });
+          } finally {
+            db.close();
+          }
+        },
+        { operation: g.offerReplay.operation, mode },
+      );
+      await expect(
+        page.evaluate(() => window.browserPeersTest.resumeUse()),
+      ).rejects.toThrow("DENIED");
+      await expect(authorize(page, g)).rejects.toThrow("DENIED");
+      await page.evaluate(async (original) => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const r = indexedDB.open("org.bittrees.ai.browser-endpoint-keys");
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("incoming_replay", "readwrite");
+            tx.objectStore("incoming_replay").put(original);
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error);
+          });
+        } finally {
+          db.close();
+        }
+      }, original);
+    }
+  } finally {
+    f.mac.close();
+  }
+});

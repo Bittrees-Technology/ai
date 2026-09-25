@@ -1,6 +1,7 @@
 import {
   consumeBrowserIncomingReplay,
   browserIncomingReplayStore,
+  browserIncomingReplaySchema,
 } from "./browser-incoming-replay.js";
 import {
   privateReplayIdentity,
@@ -890,6 +891,29 @@ export class BrowserResumeConsent {
         grant.approvedAt > this.now()
       )
         throw new BrowserResumeConsentError("DENIED");
+      const identity = await browserPrivateIdentity(p.local.proof.binding);
+      const retainedReplay = <T>(io: BrowserStorageIO<T>, next: () => void) => {
+        const expected = browserIncomingReplaySchema.parse({
+          scope: identity.scope,
+          ...grant.offerReplay,
+          outcome: {
+            store: "resume_consents",
+            key: [this.scope, grant.offerReplay.operation],
+          },
+        });
+        io.request(
+          io
+            .store(browserIncomingReplayStore)
+            .index("operation")
+            .get([identity.scope, grant.offerReplay.operation]),
+          (raw) => {
+            const found = browserIncomingReplaySchema.safeParse(raw);
+            if (!found.success || !same(found.data, expected))
+              throw new BrowserResumeConsentError("DENIED");
+            next();
+          },
+        );
+      };
       const check = () => this.check(g, p.proof.local, grant.choices.expiresAt);
       check();
       const validate = <T>(io: BrowserStorageIO<T>, next: () => void) => {
@@ -899,7 +923,10 @@ export class BrowserResumeConsent {
             check();
             if (!same(this.row(raw), row))
               throw new BrowserResumeConsentError("DENIED");
-            next();
+            retainedReplay(io, () => {
+              check();
+              next();
+            });
           }),
         );
       };
@@ -910,7 +937,10 @@ export class BrowserResumeConsent {
         (io, current) => {
           if (!same(current, row))
             throw new BrowserResumeConsentError("CONFLICT");
-          io.done(null);
+          retainedReplay(io, () => {
+            check();
+            io.done(null);
+          });
         },
         grant.choices.expiresAt,
       );
