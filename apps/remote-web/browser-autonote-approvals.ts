@@ -67,6 +67,7 @@ export function mountBrowserAutoNoteApprovals(
   const context = () =>
     JSON.stringify([host.session(), host.keyContext()?.binding]);
   function clear(cancelHost = true) {
+    const hadWork = busy || !!review || !!queue || shownUntil > 0 || urls.size > 0;
     epoch++;
     review = null;
     queue = null;
@@ -75,7 +76,8 @@ export function mountBrowserAutoNoteApprovals(
     shownUntil = 0;
     for (const url of urls) URL.revokeObjectURL(url);
     urls.clear();
-    if (cancelHost) host.autoNoteApprovalAPI.invalidate();
+    // An idle sibling panel must not cancel another panel's host review.
+    if (cancelHost && hadWork) host.autoNoteApprovalAPI.invalidate();
     controls();
   }
   function controls() {
