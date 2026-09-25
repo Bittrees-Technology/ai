@@ -47,11 +47,12 @@ class Slot {
 export async function privateEndpoints(
   verifyKeys = true,
   conversations = false,
+  liveClock = false,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "mac-private-dispatch-")),
     accountId = randomUUID();
   let now = Date.now();
-  const clock = () => now;
+  const clock = () => (liveClock ? Date.now() : now);
   async function endpoint(name: string) {
     const vault = new Vault(randomBytes(32)),
       owner = { userId: name, tenantId: "synthetic" },
