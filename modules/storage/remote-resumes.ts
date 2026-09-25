@@ -1,3 +1,4 @@
+import type { PinnedModel } from "../models/ollama.js";
 import { z } from "zod";
 import { StoreError, type Store, type Owner, type Task } from "./store.js";
 import type { Vault } from "./vault.js";
@@ -25,6 +26,7 @@ type Permission = z.infer<typeof permissionSchema>;
 export type ResumeAccess = (
   task: Task,
   profile: ReturnType<Store["profile"]>,
+  approvedModelDigest: string,
 ) => Promise<() => void>;
 
 /** Companion-side foundation only: no route, credential issuer or polling loop.
@@ -220,6 +222,7 @@ export class RemoteResumes {
     const check = await access(
       structuredClone(task),
       structuredClone(this.store.profile(owner, task.input.modelProfileId)),
+      initial.approval.modelDigest,
     );
     if (typeof check !== "function") throw new StoreError("NOT_FOUND");
     const runCheck = () => {
@@ -304,6 +307,38 @@ export class RemoteResumes {
         return { receipt, duplicate: false };
       })
       .immediate();
+  }
+  /** A remotely resumed task retains its execution constraint across worker
+   * claims, clarification waits and restart. Revoked/restored grants fail closed.
+   * Local tasks with no resume receipt retain their existing execution policy. */
+  checkExecutionModel(owner: Owner, taskId: string, model: PinnedModel) {
+    const rows = this.store.db
+      .prepare(
+        "SELECT id,payload FROM remote_resume_receipts WHERE user_id=? AND tenant_id=? ORDER BY rowid DESC",
+      )
+      .all(owner.userId, owner.tenantId) as { id: string; payload: Buffer }[];
+    for (const row of rows) {
+      const { receipt } = savedReceiptSchema.parse(
+        this.vault.open(row.payload, this.purpose(owner, "receipt", row.id)),
+      );
+      if (receipt.taskId !== taskId) continue;
+      const permission = this.permission(owner, receipt.permissionId);
+      if (!permission) throw new StoreError("NOT_FOUND");
+      this.current(owner, permission.approval.identity);
+      const task = this.store.get(owner, taskId);
+      if (
+        !permission.consumed ||
+        permission.approval.taskId !== taskId ||
+        permission.approval.modelDigest !== model.digest ||
+        this.snapshot(owner, task) !== permission.snapshot ||
+        this.vault.fingerprint(model.profile) !==
+          this.vault.fingerprint(
+            this.store.profile(owner, task.input.modelProfileId),
+          )
+      )
+        throw new StoreError("CONFLICT");
+      return;
+    }
   }
   history(owner: Owner) {
     return (

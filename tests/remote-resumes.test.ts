@@ -20,7 +20,7 @@ const profile = {
   maxOutputTokens: 1000,
   temperature: 0,
 };
-function fixture(waiting = false) {
+function fixture(waiting = false, questions = waiting) {
   const dir = mkdtempSync(join(tmpdir(), "bittrees-resume-")),
     path = join(dir, "tasks.db"),
     vault = new Vault(randomBytes(32));
@@ -34,7 +34,7 @@ function fixture(waiting = false) {
       kind: "query",
       prompt: "PRIVATE_TASK",
       modelProfileId: profile.id,
-      allowQuestions: waiting,
+      allowQuestions: questions,
     },
     randomUUID(),
   );
@@ -64,6 +64,7 @@ function fixture(waiting = false) {
     identity,
     taskId: task.id,
     taskRevision: task.revision,
+    modelDigest: "a".repeat(64),
     expiresAt: now + 600000,
     confirmed: true,
   };
@@ -427,6 +428,14 @@ test("backup recovery locks resume grants, preserves receipts and refuses reappr
       f.store.remoteResumes.receipts(owner),
     );
     assert.equal(restored.remoteResumes.history(owner)[0]!.revoked, true);
+    assert.throws(
+      () =>
+        restored!.remoteResumes.checkExecutionModel(owner, f.task.id, {
+          profile,
+          digest: "a".repeat(64),
+        }),
+      /NOT_FOUND/,
+    );
     await assert.rejects(
       restored.remoteResumes.execute(owner, f.identity, f.command, allow),
       /NOT_FOUND/,
@@ -547,6 +556,114 @@ test("an accidentally asynchronous commit guard cannot authorize resume", async 
       f.store.remoteResumes.history(owner)[0]!.permission!.consumed,
       false,
     );
+  } finally {
+    f.close();
+  }
+});
+
+test("remote resume binds the approved digest into access validation and worker execution", async () => {
+  const f = fixture();
+  try {
+    assert.throws(() =>
+      f.store.remoteResumes.approve(owner, {
+        ...f.approval,
+        modelDigest: undefined,
+      }),
+    );
+    f.store.remoteResumes.approve(owner, f.approval);
+    await f.store.remoteResumes.execute(
+      owner,
+      f.identity,
+      f.command,
+      async (_task, _profile, digest) => {
+        assert.equal(digest, "a".repeat(64));
+        return () => {};
+      },
+    );
+    f.reopen();
+    let generated = 0;
+    const worker = new LocalWorker(
+      f.store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "b".repeat(64) }),
+        generate: async () => {
+          generated++;
+          return "WRONG_MODEL";
+        },
+      },
+      () => profile,
+    );
+    assert.equal(await worker.runOnce(), true);
+    assert.equal(generated, 0);
+    assert.notEqual(f.store.get(owner, f.task.id).status, "completed");
+  } finally {
+    f.close();
+  }
+});
+
+test("remote resume denies revoked or expired grants after queueing and drops late results", async () => {
+  for (const change of [
+    "revoke-before",
+    "expire-before",
+    "revoke-during",
+    "profile-during",
+  ] as const) {
+    const f = fixture();
+    try {
+      f.store.remoteResumes.approve(owner, f.approval);
+      await f.store.remoteResumes.execute(owner, f.identity, f.command, allow);
+      const revoke = () =>
+        f.store.remoteResumes.revoke(owner, f.identity.deviceId);
+      if (change === "revoke-before") revoke();
+      if (change === "expire-before") f.advance(600000);
+      let generated = 0;
+      const worker = new LocalWorker(
+        f.store,
+        owner,
+        {
+          pin: async () => ({ profile, digest: "a".repeat(64) }),
+          generate: async () => {
+            generated++;
+            if (change === "revoke-during") revoke();
+            if (change === "profile-during")
+              f.store.addProfile(owner, { ...profile, temperature: 1 });
+            return "LATE_RESULT";
+          },
+        },
+        () => profile,
+      );
+      await worker.runOnce();
+      assert.equal(generated, change.endsWith("before") ? 0 : 1);
+      assert.notEqual(f.store.get(owner, f.task.id).status, "completed");
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("remote resume fences clarification generation and discards revoked decisions", async () => {
+  const f = fixture(false, true);
+  try {
+    f.store.remoteResumes.approve(owner, f.approval);
+    await f.store.remoteResumes.execute(owner, f.identity, f.command, allow);
+    let generated = 0;
+    const worker = new LocalWorker(
+      f.store,
+      owner,
+      {
+        pin: async () => ({ profile, digest: "a".repeat(64) }),
+        generate: async () => {
+          generated++;
+          f.store.remoteResumes.revoke(owner, f.identity.deviceId);
+          return JSON.stringify({ decision: "proceed" });
+        },
+      },
+      () => profile,
+    );
+    await worker.runOnce();
+    assert.equal(generated, 1);
+    assert.notEqual(f.store.get(owner, f.task.id).status, "completed");
   } finally {
     f.close();
   }

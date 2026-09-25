@@ -101,6 +101,7 @@ try {
       identity,
       taskId: paused.id,
       taskRevision: paused.revision,
+      modelDigest: "a".repeat(64),
       expiresAt: now + 600000,
       confirmed: true,
     },
