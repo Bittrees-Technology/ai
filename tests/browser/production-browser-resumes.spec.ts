@@ -337,3 +337,72 @@ test("built browser closes resume reviews on Escape, focus loss and another perm
     f.mac.close();
   }
 });
+
+test("built browser expires an acknowledged resume review without saving permission", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const f = await ready(page);
+  try {
+    await open(page, f);
+    await review(page);
+    await panel(page).getByLabel(ackName, { exact: true }).check();
+    await page.clock.fastForward(120001);
+    await expect(
+      panel(page).getByRole("button", {
+        name: "Save resume permission",
+        exact: true,
+      }),
+    ).toBeHidden();
+    await expect(panel(page).getByRole("status")).toContainText("expired");
+    await refresh(page);
+    expect((await exported(page)).history.grants).toHaveLength(0);
+    expect(f.offer.task().status).toBe("paused");
+  } finally {
+    f.mac.close();
+  }
+});
+
+test("built browser discards a late resume inspection after leaving its review window", async ({
+  page,
+  identityServer,
+}) => {
+  const f = await ready(page);
+  try {
+    await refresh(page);
+    await panel(page)
+      .getByLabel("Mac for task resume", { exact: true })
+      .selectOption(f.mac.binding.deviceId);
+    await panel(page)
+      .getByLabel("Encrypted resume offer from your Mac", { exact: true })
+      .fill(JSON.stringify(f.offer.envelope));
+    const lateResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/browser/registration/identity",
+    );
+    identityServer.hold();
+    await panel(page)
+      .getByRole("button", { name: "Open selected Mac offer", exact: true })
+      .click();
+    await expect.poll(() => identityServer.held()).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    identityServer.release();
+    await (await lateResponse).finished();
+    await expect(panel(page).getByRole("status")).toContainText(
+      "leaving this window",
+    );
+    await refresh(page);
+    await expect(panel(page)).not.toContainText(f.offer.data.taskId);
+    await expect(
+      panel(page).getByRole("button", {
+        name: "Review resume permission",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect((await exported(page)).history.grants).toHaveLength(0);
+    expect(f.offer.task().status).toBe("paused");
+  } finally {
+    identityServer.release();
+    f.mac.close();
+  }
+});
