@@ -139,9 +139,8 @@ jobs:
 
   browser-private-protocol:
     runs-on: ubuntu-latest
-    # The 1,419-case full run took 39.6 minutes after ~18 minutes of focused checks.
-    # Receipt/migration coverage adds work; leave room for retained artifacts.
-    # Per-test timeouts, one worker and zero retries remain unchanged.
+    # Run the complete suite once; historical focused checks are included in it.
+    # Keep one worker, zero retries, per-test limits and time to retain artifacts.
     timeout-minutes: 90
     services:
       postgres:
@@ -195,11 +194,9 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
-      - name: Check upgraded historical browser keys against actual conversation content
-        run: npm run test:browser-private -- tests/browser/browser-conversation-content.spec.ts --grep "actual version11 historical key" --max-failures=1
-      - name: Check reviewed Mac incoming conversations and browser receipts
-        run: npm run test:browser-private -- tests/browser/mac-conversation-receive-controls.spec.ts --max-failures=1
-      - name: Retain focused Mac incoming conversation previews
+      - name: Verify browser and companion private-protocol interoperability
+        run: npm run test:browser-private -- --max-failures=3
+      - name: Retain Mac incoming conversation previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -207,9 +204,7 @@ jobs:
           path: test-results/mac-conversation-receive-ui/*.png
           if-no-files-found: error
           retention-days: 7
-      - name: Check reviewed browser conversation delivery and offline history
-        run: npm run test:browser-private -- tests/browser/production-browser-conversation-delivery.spec.ts tests/browser/browser-conversation-content-host.spec.ts --grep 'built conversation|built incoming conversation|owner-local conversation' --max-failures=1
-      - name: Retain focused browser conversation delivery previews
+      - name: Retain browser conversation delivery previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -217,15 +212,7 @@ jobs:
           path: test-results/browser-conversation-delivery-ui/*.png
           if-no-files-found: error
           retention-days: 7
-      - name: Check explicit browser conversation relay receipt and worker round trip
-        run: npm run test:browser-private -- tests/browser/browser-conversation-content-host.spec.ts --grep 'incoming conversation relay' --max-failures=1
-      - name: Check browser conversation relay sending and actual version14 preservation
-        run: npm run test:browser-private -- tests/browser/browser-conversation-content.spec.ts tests/browser/browser-conversation-content-host.spec.ts --grep 'conversation relay|version14|host relay' --max-failures=1
-      - name: Check shared sequence rollback independently of storage version
-        run: npm run test:browser-private -- tests/browser/browser-private-migration.spec.ts --grep 'Task writes and shared reservations' --max-failures=1
-      - name: Check Mac conversation preparation and reviewed uploads
-        run: npm run test:browser-private -- tests/browser/mac-conversation-delivery.spec.ts --max-failures=1
-      - name: Retain focused Mac conversation delivery previews
+      - name: Retain Mac conversation delivery previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -233,9 +220,7 @@ jobs:
           path: test-results/mac-conversation-delivery-ui/*.png
           if-no-files-found: error
           retention-days: 7
-      - name: Check built browser conversation controls and actual worker answer
-        run: npm run test:browser-private -- tests/browser/production-browser-conversation-content.spec.ts --max-failures=1
-      - name: Retain focused conversation content previews
+      - name: Retain conversation content previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -243,64 +228,6 @@ jobs:
           path: test-results/browser-conversation-content-ui/*.png
           if-no-files-found: error
           retention-days: 7
-      - name: Check authenticated browser conversation host
-        run: npm run test:browser-private -- tests/browser/browser-conversation-content-host.spec.ts --max-failures=1
-      - name: Check atomic browser conversation content and actual version12 upgrade
-        run: npm run test:browser-private -- tests/browser/browser-conversation-content.spec.ts --max-failures=1
-      - name: Check browser generation provenance and actual version11 upgrade
-        run: npm run test:browser-private -- tests/browser/browser-key-replay-boundary.spec.ts --max-failures=1
-      - name: Check browser offer receipt history and actual version10 upgrade
-        run: npm run test:browser-private -- tests/browser/browser-conversation-consent.spec.ts tests/browser/browser-conversation-host.spec.ts --max-failures=1
-      - name: Check reviewed browser offer queue and receipt controls
-        run: npm run test:browser-private -- tests/browser/production-browser-relay-offers.spec.ts --max-failures=1
-      - name: Check reviewed Mac encrypted offer uploads
-        run: npm run test:browser-private -- tests/browser/conversation-relay-offers.spec.ts --max-failures=1
-      - name: Check shared browser replay and actual version8 upgrade
-        run: npm run test:browser-private -- tests/browser/browser-incoming-replay.spec.ts --max-failures=1
-      - name: Check reviewed Mac conversation offer downloads
-        run: npm run test:browser-private -- tests/browser/conversation-offers.spec.ts --max-failures=1
-      - name: Check built browser conversation consent reviews
-        run: npm run test:browser-private -- tests/browser/production-browser-conversations.spec.ts --max-failures=1
-      - name: Check selected conversation permission reviews
-        run: npm run test:browser-private -- tests/browser/conversation-permissions.spec.ts --max-failures=1
-      - name: Check reviewed local task answers before full suite
-        run: npm run test:browser-private -- tests/browser/task-answer.spec.ts --max-failures=1
-      - name: Check task-linked Inbox privacy before full suite
-        run: npm run test:browser-private -- tests/browser/inbox-task-review.spec.ts --max-failures=1
-      - name: Check reviewed browser queue controls over real relay
-        run: npm run test:browser-private -- tests/browser/browser-relay-queue-controls.spec.ts --max-failures=1
-      - name: Check shipped command history controls before full suite
-        run: npm run test:browser-private -- tests/browser/production-command-history.spec.ts --max-failures=1
-      - name: Check durable command journal before full suite
-        run: npm run test:browser-private -- tests/browser/browser-command-history.spec.ts --max-failures=1
-      - name: Check narrow permission layout before full suite
-        run: npm run test:browser-private -- tests/browser/production-browser-permissions.spec.ts --project=webkit --grep 'permission choices, review and history' --max-failures=1
-      - name: Check reviewed task flow before full suite
-        run: npm run test:browser-private -- tests/browser/production-browser-tasks.spec.ts --project=chromium --grep 'built task controls review exact input' --max-failures=1
-      - name: Check connection fixture cleanup before full suite
-        run: npm run test:browser-private -- tests/browser/news-publication.spec.ts --project=webkit --grep 'source-blocked feeds' --max-failures=1
-      - name: Check relay permission uncertainty before full suite
-        run: npm run test:browser-private -- tests/browser/production-relay-controls.spec.ts --max-failures=1
-      - name: Check browser to native relay delivery before full suite
-        run: npm run test:browser-private -- tests/browser/browser-relay-transfer.spec.ts --max-failures=1
-      - name: Check reviewed private task delivery before full suite
-        run: npm run test:browser-private -- tests/browser/production-relay-tasks.spec.ts --max-failures=1
-      - name: Check future browser storage version fences before full suite
-        run: npm run test:browser-private -- tests/browser/browser-endpoint-keys.spec.ts tests/browser/browser-peers.spec.ts tests/browser/private-protocol.spec.ts --grep 'database version' --max-failures=1
-      - name: Check retained browser delivery history before full suite
-        run: npm run test:browser-private -- tests/browser/browser-relay-delivery-history.spec.ts tests/browser/browser-delivery-upgrade.spec.ts --max-failures=1
-      - name: Check Mac task delivery controls before full suite
-        run: npm run test:browser-private -- tests/browser/mac-task-delivery.spec.ts --max-failures=1
-      - name: Check Mac UI over authenticated local API and real relay
-        run: npm run test:browser-private -- tests/browser/mac-task-delivery-native.spec.ts --max-failures=1
-      - name: Check bounded relay queue recovery before full suite
-        run: npm run test:browser-private -- tests/browser/relay-queue-inspection.spec.ts --max-failures=1
-      - name: Check reviewed Mac queue controls over real local API and relay
-        run: npm run test:browser-private -- tests/browser/mac-relay-queue-controls.spec.ts --max-failures=1
-      - name: Check model question choices in local task forms
-        run: npm run test:browser-private -- tests/browser/model-questions.spec.ts --max-failures=1
-      - name: Verify browser and companion private-protocol interoperability
-        run: npm run test:browser-private -- --max-failures=3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
