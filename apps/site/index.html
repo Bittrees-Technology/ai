@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Bittrees AI is a Mac development preview for local AI tasks, private memory and explicitly approved app connections."
+      content="Bittrees AI is a macOS application for running local AI models, reviewing drafts and managing saved context."
     />
-    <title>Bittrees AI — Your Mac companion</title>
+    <title>Bittrees AI for macOS</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -21,14 +21,14 @@
     <main>
       <section class="intro" aria-labelledby="title">
         <p class="status">Mac development preview</p>
-        <h1 id="title">Your AI work.<br />Your Mac.</h1>
+        <h1 id="title">Bittrees AI</h1>
         <p class="lead">
-          Run local tasks, review drafts and manage source-linked memory with
-          the Bittrees AI companion.
+          Run AI models on your Mac. Review generated drafts and manage saved
+          context with links to its sources.
         </p>
         <p>
-          Choose what each app can share. Review a proposed change before it is
-          sent back to its destination.
+          App connections require permission. Changes to connected apps require
+          review before submission.
         </p>
         <a
           class="primary"
@@ -42,36 +42,33 @@
         </p>
       </section>
       <section id="setup" aria-labelledby="setup-title">
-        <h2 id="setup-title">Start with sample data</h2>
+        <h2 id="setup-title">Installation</h2>
         <ol>
           <li>
-            <h3>Prepare the preview</h3>
+            <h3>Download and verify</h3>
             <p>
               Follow the
               <a
                 href="https://github.com/Bittrees-Technology/ai/blob/main/docs/mac-download-provenance.md"
                 rel="noreferrer"
-                >verified development download instructions</a
-              >. The build has source-bound GitHub provenance. Apple signing and
-              notarization, automatic updates and hands-on personal pilot
-              acceptance remain in progress.
+                >download verification guide</a
+              > to check the file’s source and checksum. This is a development
+              preview, not a notarized release. Automatic updates are not available.
             </p>
           </li>
           <li>
-            <h3>Choose a local model</h3>
+            <h3>Install a local model</h3>
             <p>
-              Ollama and model weights are separate from the companion. Model
-              size affects memory use and speed. Generated answers can be wrong;
-              review their source passages and any proposed actions.
+              Install Ollama and download a compatible model separately. Model
+              size affects memory use and speed. Check generated answers against
+              their sources.
             </p>
           </li>
           <li>
-            <h3>Connect an app when ready</h3>
+            <h3>Configure app access</h3>
             <p>
-              Each connector needs its own setup and source-owned permission.
-              Device pairing, reading records and publishing changes have
-              separate controls. A listed integration does not mean your account
-              is connected.
+              Start with sample data. Each app connection requires its own setup
+              and permissions for reading or publishing records.
             </p>
           </li>
         </ol>
@@ -81,8 +78,7 @@
           <a href="https://support.apple.com/en-gb/102445" rel="noreferrer"
             >Apple’s instructions for opening an app you trust</a
           >
-          if macOS blocks it. Device policies may prevent opening it. Keep
-          Gatekeeper enabled and do not override malware warnings.
+          if macOS blocks it. Device policies may prevent opening it.
         </p>
         <p>
           Read the
@@ -91,34 +87,31 @@
             rel="noreferrer"
             >Mac setup guide</a
           >
-          before first launch. Existing users should preserve their stopped app,
-          local data and original Keychain keys before upgrading. This preview
-          has no automatic updater.
+          before first launch. Back up your existing app and data before upgrading,
+          and retain your original Keychain keys.
         </p>
         <p>
-          Windows and Linux companion apps are planned. Remote account and
-          private-content features require their own deployment and approval;
-          this public page provides setup information.
+          The current preview supports Apple Silicon Macs. Windows and Linux
+          versions are planned. Remote access is not available from this site.
         </p>
       </section>
       <section id="privacy" aria-labelledby="privacy-title">
-        <h2 id="privacy-title">Choose what leaves your device</h2>
+        <h2 id="privacy-title">Data and privacy</h2>
         <div class="columns">
           <div>
             <h3>Local content</h3>
             <p>
-              Local task content and memory remain until you delete them. Use
-              the companion’s export and deletion controls. Keep recovery
-              material safe: Bittrees cannot recover your content keys.
+              Tasks and saved context stay on your Mac until you delete them.
+              Export and deletion controls are available in the app. Keep your
+              recovery key: Bittrees cannot recover it for you.
             </p>
           </div>
           <div>
-            <h3>App and remote access</h3>
+            <h3>Connected apps</h3>
             <p>
-              Approved publications keep their destination’s lifecycle. Remote
-              content and metadata retention are separate deployment choices.
-              Independent encryption review and the personal-data pilot remain
-              open.
+              Content you publish to another app follows that app’s retention
+              rules. Independent security review and broader user testing of this
+              preview are not complete.
             </p>
           </div>
         </div>
@@ -128,19 +121,19 @@
         </p>
       </section>
       <section id="support" aria-labelledby="support-title">
-        <h2 id="support-title">Help shape the preview</h2>
+        <h2 id="support-title">Support</h2>
         <p>
           <a
             href="https://github.com/Bittrees-Technology/ai/issues"
             rel="noreferrer"
-            >Read reports or report a problem</a
+            >View issues or report a problem</a
           >. Include your app version and steps using sample data. Reports are
           public: leave out messages, credentials, pairing details and recovery
           codes.
         </p>
         <p>
           <a href="https://github.com/Bittrees-Technology/ai" rel="noreferrer"
-            >Explore the source</a
+            >Source code</a
           >. The companion is MIT licensed; imported models keep their own
           licenses.
         </p>
@@ -148,7 +141,7 @@
     </main>
     <footer>
       <span>Bittrees AI</span
-      ><a href="https://bittrees.org" rel="noreferrer">Bittrees directory</a>
+      ><a href="https://bittrees.org" rel="noreferrer">Bittrees</a>
     </footer>
   </body>
 </html>
