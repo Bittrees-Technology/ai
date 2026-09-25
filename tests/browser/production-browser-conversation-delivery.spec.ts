@@ -78,8 +78,28 @@ async function confirm(page: Page, name: string) {
 // previews must wait for the actual review, not cancel its preparation by accident.
 async function reviewSend(page: Page) {
   await button(page, "Review sending to Mac").click();
-  await expect(button(page, "Send reviewed message")).toBeDisabled();
-  await expect(panel(page).getByLabel(ack, { exact: true })).not.toBeChecked();
+  try {
+    await expect(button(page, "Send reviewed message")).toBeDisabled();
+    await expect(
+      panel(page).getByLabel(ack, { exact: true }),
+    ).not.toBeChecked();
+  } catch (error) {
+    await test.info().attach("delivery-review-diagnostic", {
+      contentType: "application/json",
+      body: Buffer.from(
+        JSON.stringify({
+          panel: await panel(page).innerText(),
+          focus: await page.evaluate(() => ({
+            focused: document.hasFocus(),
+            visibility: document.visibilityState,
+          })),
+          notices: await page.getByRole("status").allTextContents(),
+          alerts: await page.getByRole("alert").allTextContents(),
+        }),
+      ),
+    });
+    throw error;
+  }
 }
 async function openMessage(page: Page, name = "Open message to mac 1") {
   await button(page, name).click();
