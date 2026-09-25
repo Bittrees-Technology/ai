@@ -26,6 +26,7 @@ export function localTaskDependencies(
   const visiting = new Set<string>(),
     checked = new Set<string>();
   let remaining = 1000;
+  let destination = "local";
   const taskToken = store.changeToken(),
     memoryToken = memory?.changeToken();
   const source = (
@@ -92,7 +93,12 @@ export function localTaskDependencies(
         return false;
       for (const memoryId of ids) {
         const revision = versions?.find((v) => v.id === memoryId)?.revision;
-        for (const ref of memory.dependencySources(owner, memoryId, revision))
+        for (const ref of memory.dependencySources(
+          owner,
+          memoryId,
+          revision,
+          destination,
+        ))
           if (!source(ref, depth + 1)) return false;
       }
     }
@@ -101,6 +107,8 @@ export function localTaskDependencies(
     return true;
   };
   try {
+    destination =
+      store.sourceBinding(owner, taskId)?.authority.sourceApp ?? "local";
     return (
       walk(taskId, 0) &&
       taskToken === store.changeToken() &&
@@ -162,13 +170,8 @@ export async function taskDependencyGuard(
     monotonic = mono();
   const required = new Map<string, SourceBinding>();
   const collect = (id: string, binding: SourceBinding) => {
-    // Selecting memory for a personal local task is explicit. A connected-app
-    // task cannot silently import another app's data through that selection.
-    if (
-      destination &&
-      destination.authority.sourceApp !== binding.authority.sourceApp
-    )
-      return false;
+    // Each memory in the transitive walk must explicitly permit the root
+    // destination. Current source authorization remains independently required.
     required.set(id, binding);
     return true;
   };

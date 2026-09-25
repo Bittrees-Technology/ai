@@ -1,3 +1,4 @@
+import { memoryUseAppsSchema } from "../../modules/memory/scope.js";
 import { AutoNoteDecisionError } from "../../modules/remote/private-autonote-decisions.js";
 import { ApprovalOutboxError } from "../../modules/remote/private-autonote-approval-outbox.js";
 import { AutoNotePeerApprovalError } from "../../modules/remote/private-autonote-approval-consent.js";
@@ -1561,6 +1562,8 @@ export function localApi({
           approve: z.boolean().optional(),
           text: z.string().min(1).max(16000).optional(),
           pinned: z.boolean().optional(),
+          useApps: memoryUseAppsSchema.optional(),
+          scopeConfirmed: z.literal(true).optional(),
         })
         .parse(req.body);
       const { revision, ...change } = body;
