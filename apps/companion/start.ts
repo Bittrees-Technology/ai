@@ -1,3 +1,7 @@
+import {
+  AutoNoteApprovalConnector,
+  autonoteApprovalKeychainEntry,
+} from "../../modules/connectors/autonote-approval.js";
 import { resumeTaskAccess } from "./resume-access.js";
 import { conversationTaskAccess } from "./conversation-access.js";
 import { CompanionPrivateRelay } from "./private-relay.js";
@@ -127,6 +131,11 @@ const crm = new CrmConnector(
   autonote = new AutoNoteConnector(
     JSON.stringify(owner),
     autonoteKeychainEntry("personal"),
+  ),
+  autonoteApproval = new AutoNoteApprovalConnector(
+    JSON.stringify(owner),
+    autonoteApprovalKeychainEntry("personal"),
+    autonote,
   ),
   autonoteSources = new AutoNoteTasks(autonote, owner, "personal"),
   mail = new MailConnector(
@@ -277,6 +286,7 @@ server.on(
     crm,
     sources,
     autonote,
+    autonoteApproval,
     roles,
     news,
     mail,

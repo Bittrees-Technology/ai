@@ -1,3 +1,4 @@
+import { AutoNoteApprovalPanel } from "./autonote-approval.js";
 import { PrivateRelayPanel } from "./private-relay.js";
 import { MailSendPanel } from "./mail-send.js";
 import { NewsConnectionPanel } from "./news-connection.js";
@@ -295,6 +296,7 @@ export function Connections(props: {
       <PrivatePermissionPanel api={props.api} />
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
+      <AutoNoteApprovalPanel api={props.api} />
       <RolesConnection api={props.api} onError={props.onError} />
       <MailConnection {...props} />
       <MailSendPanel api={props.api} />

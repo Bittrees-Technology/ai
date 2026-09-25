@@ -250,6 +250,22 @@ jobs:
       - name: Install disposable CI browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
+      - name: Verify AutoNote approval setup
+        run: |
+          mkdir -p regression-reports
+          npx playwright test --config scripts/private-browser.config.ts 'autonote-approval\.spec\.ts$' --trace=retain-on-failure --reporter=json > regression-reports/autonote-approval.json
+      - name: Retain AutoNote approval setup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonote-approval-setup
+          path: |
+            regression-reports/autonote-approval.json
+            test-results/autonote-approval/*.png
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: error
+          retention-days: 7
       - name: Verify built Mac resume request flow
         run: |
           mkdir -p regression-reports
