@@ -234,11 +234,13 @@ export function SourceDraftDetail({
   return (
     <section>
       <h3>
-        {sourceApp === "mail"
-          ? "Mail"
-          : sourceApp === "autonote"
-            ? "AutoNote"
-            : "CRM"}{" "}
+        {sourceApp === "memory"
+          ? "Source-linked memory"
+          : sourceApp === "mail"
+            ? "Mail"
+            : sourceApp === "autonote"
+              ? "AutoNote"
+              : "CRM"}{" "}
         draft
       </h3>
       <p>
@@ -272,11 +274,13 @@ export function SourceDraftDetail({
           )}
           <p>
             Unreviewed draft. Verify citations and claims before use.
-            {sourceApp === "crm"
-              ? "Publication status is shown separately below."
-              : sourceApp === "mail"
-                ? "Nothing has been sent or saved in Mail. Download text to review and use yourself."
-                : "Proposed owners and deadlines are unconfirmed. Send for AutoNote review using the controls below."}
+            {sourceApp === "memory"
+              ? "Source-linked memories are checked again before this result is opened or exported."
+              : sourceApp === "crm"
+                ? "Publication status is shown separately below."
+                : sourceApp === "mail"
+                  ? "Nothing has been sent or saved in Mail. Download text to review and use yourself."
+                  : "Proposed owners and deadlines are unconfirmed. Send for AutoNote review using the controls below."}
           </p>
           {sourceApp === "mail" && detail.task.result?.text && (
             <button
@@ -351,11 +355,13 @@ export function SourceDraftDetail({
                 a.href = url;
                 a.download =
                   "bittrees-" +
-                  (sourceApp === "mail"
-                    ? "mail"
-                    : sourceApp === "autonote"
-                      ? "autonote"
-                      : "crm") +
+                  (sourceApp === "memory"
+                    ? "memory"
+                    : sourceApp === "mail"
+                      ? "mail"
+                      : sourceApp === "autonote"
+                        ? "autonote"
+                        : "crm") +
                   "-draft.json";
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(url), 1000);

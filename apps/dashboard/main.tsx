@@ -1,3 +1,4 @@
+import { SourceMemoryCapture } from "./source-memory-capture.js";
 import { ResumePermissions } from "./resume-permissions.js";
 import { QuestionChoice } from "./question-choice.js";
 import { ModelProfileFields } from "./model-profile-fields.js";
@@ -185,8 +186,23 @@ function App() {
     );
     if (key === "UNAUTHORIZED") clear();
   }
+  const memoryViewEpoch = useRef(0);
+  useEffect(() => {
+    const hide = () => {
+      memoryViewEpoch.current++;
+      setMemories([]);
+      setCandidate("");
+    };
+    window.addEventListener("blur", hide);
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      window.removeEventListener("blur", hide);
+      document.removeEventListener("visibilitychange", hide);
+    };
+  }, []);
   async function refresh() {
     const version = epoch.current,
+      memoryView = memoryViewEpoch.current,
       sequence = ++refreshSequence.current;
     const currentApi = requests.current!.api;
     try {
@@ -198,7 +214,12 @@ function App() {
       if (version !== epoch.current || sequence !== refreshSequence.current)
         return;
       setTasks(t.items);
-      setMemories(m.items);
+      if (
+        memoryView === memoryViewEpoch.current &&
+        !document.hidden &&
+        document.hasFocus()
+      )
+        setMemories(m.items);
       setProfiles(p.items);
       setProfile((old) => old || p.defaultProfile?.id || p.items[0]?.id || "");
     } catch (error) {
@@ -576,7 +597,7 @@ function App() {
                       />
                       {task.dependencyAccess === "unavailable" && (
                         <p role="status">
-                          A local reference used by this task is no longer
+                          A source or memory used by this task is no longer
                           available or has changed. Its content and history are
                           hidden. Create a new task with current references to
                           continue.
@@ -589,6 +610,14 @@ function App() {
                           sourceApp={task.sourceApp}
                           api={api}
                           onError={fail}
+                        />
+                      )}
+                      {task.status === "completed" && task.sourceBound && (
+                        <SourceMemoryCapture
+                          key={task.id + ":" + task.revision}
+                          taskId={task.id}
+                          sourceApp={task.sourceApp}
+                          api={api}
                         />
                       )}
                       {task.status === "completed" &&
@@ -823,7 +852,9 @@ function App() {
                 <h2>Keep what helps</h2>
                 <p>
                   Candidates need your review before a task can use them.
-                  Approval does not make a statement verified.
+                  Approval does not make a statement verified. Source-linked
+                  memories need current source access, including when a later
+                  task uses them.
                 </p>
                 <MemorySearch
                   key={memories.map((m) => `${m.id}:${m.revision}`).join("|")}
@@ -860,8 +891,11 @@ function App() {
                       <ul>
                         {m.sources.map((source, index) => (
                           <li key={index}>
-                            {source.app} source <code>{source.resourceId}</code>
-                            , version {source.revision}.
+                            {source.app === "local"
+                              ? "Companion task"
+                              : source.app + " source"}{" "}
+                            <code>{source.resourceId}</code>, version{" "}
+                            {source.revision}.
                           </li>
                         ))}
                       </ul>

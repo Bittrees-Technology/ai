@@ -1,3 +1,5 @@
+import type { SourceBinding } from "../../modules/contracts/index.js";
+import type { SourceTasks } from "../../modules/connectors/source-tasks.js";
 import { z } from "zod";
 import type { AccessCheck, MemoryStore } from "../../modules/memory/store.js";
 import { Store, StoreError, type Owner } from "../../modules/storage/store.js";
@@ -19,6 +21,7 @@ export function localTaskDependencies(
   owner: Owner,
   taskId: string,
   memory?: MemoryStore,
+  sourceAccess?: (taskId: string, binding: SourceBinding) => boolean,
 ): boolean {
   const visiting = new Set<string>(),
     checked = new Set<string>();
@@ -36,11 +39,15 @@ export function localTaskDependencies(
   ): boolean => {
     if (ref.app !== "local" || ref.tenantId !== owner.tenantId) return false;
     const task = store.get(owner, ref.resourceId);
+    const binding = store.sourceBinding(owner, task.id);
+    const sourceAllowed = binding
+      ? JSON.stringify(task.input.sourceRefs) ===
+          JSON.stringify(binding.refs) && !!sourceAccess?.(task.id, binding)
+      : task.input.sourceRefs.length === 0;
     return (
       task.status === "completed" &&
       String(task.revision) === ref.revision &&
-      task.input.sourceRefs.length === 0 &&
-      !store.sourceBinding(owner, task.id) &&
+      sourceAllowed &&
       walk(task.id, depth)
     );
   };
@@ -134,4 +141,71 @@ export function localMemoryAccess(
       current(owner, sources),
     { current },
   );
+}
+
+/** Fresh operation-scoped checks for the entire memory dependency graph.
+ * The legacy synchronous walker remains local-only unless this function supplies
+ * fresh source checks. A final fence never refreshes or inherits authority. */
+export async function taskDependencyGuard(
+  store: Store,
+  owner: Owner,
+  taskId: string,
+  memory?: MemoryStore,
+  sources?: Partial<Pick<SourceTasks, "commitGuard">>,
+  now: () => number = Date.now,
+  mono: () => number = () => performance.now(),
+): Promise<() => void> {
+  if (store.db.inTransaction) throw new StoreError("NOT_FOUND");
+  const input = JSON.stringify(store.get(owner, taskId).input);
+  const destination = store.sourceBinding(owner, taskId);
+  const started = now(),
+    monotonic = mono();
+  const required = new Map<string, SourceBinding>();
+  const collect = (id: string, binding: SourceBinding) => {
+    // Selecting memory for a personal local task is explicit. A connected-app
+    // task cannot silently import another app's data through that selection.
+    if (
+      destination &&
+      destination.authority.sourceApp !== binding.authority.sourceApp
+    )
+      return false;
+    required.set(id, binding);
+    return true;
+  };
+  if (!localTaskDependencies(store, owner, taskId, memory, collect))
+    throw new StoreError("NOT_FOUND");
+  const checks = new Map<string, () => void>();
+  for (const [id, binding] of required) {
+    if (!sources?.commitGuard) throw new StoreError("NOT_FOUND");
+    checks.set(id, await sources.commitGuard(binding));
+  }
+  const current = (id: string, binding: SourceBinding) => {
+    const previous = required.get(id),
+      check = checks.get(id);
+    if (
+      !previous ||
+      !check ||
+      JSON.stringify(binding) !== JSON.stringify(previous)
+    )
+      return false;
+    check();
+    return true;
+  };
+  const guard = () => {
+    const wall = now(),
+      elapsed = mono() - monotonic;
+    if (
+      wall < started ||
+      wall - started >= 10000 ||
+      elapsed < 0 ||
+      elapsed >= 10000 ||
+      JSON.stringify(store.get(owner, taskId).input) !== input ||
+      JSON.stringify(store.sourceBinding(owner, taskId)) !==
+        JSON.stringify(destination) ||
+      !localTaskDependencies(store, owner, taskId, memory, current)
+    )
+      throw new StoreError("NOT_FOUND");
+  };
+  guard();
+  return guard;
 }

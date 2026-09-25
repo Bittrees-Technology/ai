@@ -1,3 +1,5 @@
+import { sourceMemoryAccess } from "../apps/companion/source-memory.js";
+import { MemoryStore } from "../modules/memory/store.js";
 import { conversationTaskAccess } from "../apps/companion/conversation-access.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -222,6 +224,154 @@ test("AutoNote local generation verifies citations, derives source timestamps an
       { segmentId: "s1", start: 4.5, end: 12 },
     ]);
     assert.equal(result.autonote.actions[0].status, "unconfirmed");
+    // Reuse this source-generation fixture for memory provenance and revocation.
+    const memoryAccess = sourceMemoryAccess(store, f.sources, () => memory);
+    const memory = new MemoryStore(
+      ":memory:",
+      new Vault(randomBytes(32)),
+      memoryAccess,
+    );
+    try {
+      const candidate = await memory.add(owner, {
+        type: "decision",
+        text: result.text,
+        origin: "model",
+        sources: [
+          {
+            app: "local",
+            tenantId: owner.tenantId,
+            resourceId: task.id,
+            revision: String(saved.revision),
+          },
+        ],
+      });
+      const retained = await memory.get(owner, candidate.id);
+      assert.equal(retained.state, "candidate");
+      assert.equal(retained.verified, false);
+      await memory.review(owner, candidate.id, retained.revision, {
+        approve: true,
+      });
+      assert.equal((await memory.search(owner, "Review the plan")).length, 1);
+      await assert.rejects(
+        memory.get({ ...owner, userId: "other" }, candidate.id),
+      );
+      const followup = store.create(
+        owner,
+        {
+          ...input,
+          conversationId: "memory-followup",
+          memoryIds: [candidate.id],
+        },
+        randomUUID(),
+      );
+      const reuse = new LocalWorker(
+        store,
+        owner,
+        {
+          pin: async () => ({ profile, digest: "e".repeat(64) }),
+          generate: async (_profile, prompt) => {
+            assert.match(prompt, /Review the plan/);
+            return "SOURCE_MEMORY_RESULT";
+          },
+        },
+        () => profile,
+        "source-memory-worker",
+        memory,
+        f.sources,
+      );
+      await reuse.runOnce();
+      assert.equal(store.get(owner, followup.id).status, "completed");
+      const access = conversationTaskAccess(store, owner, f.sources, memory);
+      (await access(followup.id))();
+      // Retaining another memory from a derived result keeps the original source dependency.
+      const derived = store.get(owner, followup.id);
+      const child = await memory.add(owner, {
+        type: "outcome",
+        text: "SOURCE_MEMORY_RESULT",
+        origin: "model",
+        sources: [
+          {
+            app: "local",
+            tenantId: owner.tenantId,
+            resourceId: derived.id,
+            revision: String(derived.revision),
+          },
+        ],
+      });
+      assert.equal((await memory.get(owner, child.id)).state, "candidate");
+      const { createServer } = await import("node:http");
+      const { localApi } = await import("../apps/companion/http.js");
+      const server = createServer();
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const token = "synthetic-memory-credential".repeat(3);
+      server.on(
+        "request",
+        localApi({
+          store,
+          owner,
+          port,
+          token,
+          memory,
+          autonote: f.connector,
+          autonoteSources: f.adapter,
+        }),
+      );
+      const call = (path: string, body?: unknown) =>
+        fetch(`http://127.0.0.1:${port}${path}`, {
+          method: body ? "POST" : "GET",
+          headers: {
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+      try {
+        const current = await (
+          await call("/v1/requests/" + followup.id)
+        ).json();
+        assert.equal(current.result.text, "SOURCE_MEMORY_RESULT");
+        const captured = await call("/v1/requests/" + task.id + "/memories", {
+          text: "Reviewed meeting memory",
+          type: "decision",
+          expectedRevision: saved.revision,
+        });
+        assert.equal(captured.status, 201);
+        f.deny();
+        const hidden = await (await call("/v1/requests/" + followup.id)).json();
+        assert.equal(hidden.result, null);
+        assert.equal(hidden.dependencyAccess, "unavailable");
+        assert.deepEqual(
+          (await (await call("/v1/requests/" + followup.id + "/runs")).json())
+            .items,
+          [],
+        );
+        const deniedCapture = await call(
+          "/v1/requests/" + task.id + "/memories",
+          {
+            text: "Unavailable memory",
+            type: "fact",
+          },
+        );
+        assert.equal(deniedCapture.status, 400);
+        assert.equal((await deniedCapture.json()).error, "SOURCE_DENIED");
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+      await assert.rejects(access(followup.id));
+      await assert.rejects(memory.get(owner, child.id));
+      await assert.rejects(memory.get(owner, candidate.id));
+      assert.deepEqual(await memory.search(owner, "Review the plan"), []);
+      assert.deepEqual(await memory.export(owner), []);
+      memory.forget(owner, candidate.id);
+    } finally {
+      memory.close();
+    }
+
     assert.equal(
       (store.runHistory(owner, task.id)[0]!.model as any).source.authority
         .grantId,

@@ -15,7 +15,7 @@ import {
 } from "./private-relay.js";
 import type { MailSendConnector } from "../../modules/connectors/mail-send.js";
 import type { NewsConnector } from "../../modules/connectors/news.js";
-import { localTaskDependencies } from "./memory.js";
+import { localTaskDependencies, taskDependencyGuard } from "./memory.js";
 import type { ExecutionControls } from "./execution-limits.js";
 import { PrivatePeerCheckError } from "../../modules/remote/private-peer-checks.js";
 import { PrivateKeyError } from "../../modules/remote/private-endpoint-keys.js";
@@ -881,18 +881,34 @@ export function localApi({
     if (!dependenciesCurrent(id)) throw new StoreError("NOT_FOUND");
   };
   const concealed = (task: Task) => {
-    if (!dependenciesCurrent(task.id))
+    if (!dependenciesCurrent(task.id)) {
+      let sourceLinked = false;
+      const structured = localTaskDependencies(
+        store,
+        owner,
+        task.id,
+        memory,
+        () => {
+          sourceLinked = true;
+          return true;
+        },
+      );
+      const inspectSource = structured && sourceLinked;
       return {
         ...task,
         input: {
           ...task.input,
-          prompt: "Local reference unavailable",
+          prompt: inspectSource
+            ? "Source-linked task. Open to check current access."
+            : "Local reference unavailable",
           sourceRefs: [],
           memoryIds: [],
         },
         result: null,
         dependencyAccess: "unavailable" as const,
+        ...(inspectSource ? { sourceBound: true, sourceApp: "memory" } : {}),
       };
+    }
     return task.input.sourceRefs.length
       ? {
           ...task,
@@ -904,22 +920,38 @@ export function localApi({
         }
       : task;
   };
+  const projectionGuards = new WeakMap<Task, () => void>();
   const project = async (task: Task) => {
-    if (!dependenciesCurrent(task.id) || !task.input.sourceRefs.length)
-      return concealed(task);
     try {
+      const dependencyGuard = await taskDependencyGuard(
+        store,
+        owner,
+        task.id,
+        memory,
+        sourceRouter,
+      );
       const binding = store.sourceBinding(owner, task.id);
-      if (!binding) return concealed(task);
-      await sourceRouter.validate(binding);
+      if (task.input.sourceRefs.length && !binding) return concealed(task);
+      const sourceCheck = binding
+        ? await sourceRouter.commitGuard(binding)
+        : () => {};
+      const check = () => {
+        dependencyGuard();
+        sourceCheck();
+      };
+      check();
       const current = store.get(owner, task.id);
       if (current.revision !== task.revision) throw new StoreError("CONFLICT");
-      requireDependencies(task.id);
-      return {
-        ...current,
-        sourceAccess: "current",
-        sourceBound: true,
-        sourceApp: binding.authority.sourceApp,
-      };
+      const projected = binding
+        ? {
+            ...current,
+            sourceAccess: "current",
+            sourceBound: true,
+            sourceApp: binding.authority.sourceApp,
+          }
+        : current;
+      projectionGuards.set(projected, check);
+      return projected;
     } catch {
       return concealed(store.get(owner, task.id));
     }
@@ -928,9 +960,14 @@ export function localApi({
   // its resolved value and the response/export/review assembled by the handler.
   const finalProject = <T extends Task>(task: T) => {
     const current = store.get(owner, task.id);
-    return current.revision !== task.revision || !dependenciesCurrent(task.id)
-      ? concealed(current)
-      : task;
+    try {
+      const check = projectionGuards.get(task);
+      if (check) check();
+      else requireDependencies(task.id);
+      return current.revision !== task.revision ? concealed(current) : task;
+    } catch {
+      return concealed(current);
+    }
   };
   const unavailable = (task: ReturnType<typeof concealed>) =>
     ("dependencyAccess" in task && task.dependencyAccess === "unavailable") ||
@@ -1276,15 +1313,26 @@ export function localApi({
   const checkFeedbackAccess = async (id: string) => {
     const initial = store.get(owner, id),
       binding = store.sourceBinding(owner, id);
-    if (initial.input.sourceRefs.length || binding) {
-      if (!binding) throw new ConnectorError("SOURCE_DENIED");
-      await sourceRouter.validate(binding);
-    }
-    requireDependencies(id);
-    // Source checks are asynchronous. A deleted or changed task cannot receive
-    // a review based on the earlier snapshot after that check returns.
-    if (store.get(owner, id).revision !== initial.revision)
-      throw new StoreError("CONFLICT");
+    const dependencies = await taskDependencyGuard(
+      store,
+      owner,
+      id,
+      memory,
+      sourceRouter,
+    );
+    if (initial.input.sourceRefs.length && !binding)
+      throw new ConnectorError("SOURCE_DENIED");
+    const sourceCheck = binding
+      ? await sourceRouter.commitGuard(binding)
+      : () => {};
+    const check = () => {
+      dependencies();
+      sourceCheck();
+      if (store.get(owner, id).revision !== initial.revision)
+        throw new StoreError("CONFLICT");
+    };
+    check();
+    return check;
   };
   const taskQuestion = (messageId: string) => {
     const message = store.message(owner, messageId),
@@ -1299,8 +1347,8 @@ export function localApi({
   };
   app.get("/v1/messages/:id/task-question", async (req, res) => {
     const before = taskQuestion(req.params.id);
-    await checkFeedbackAccess(before.task.id);
-    requireDependencies(before.task.id);
+    const check = await checkFeedbackAccess(before.task.id);
+    check();
     const { message, task, wait } = taskQuestion(req.params.id);
     if (before.task.revision !== task.revision)
       throw new StoreError("CONFLICT");
@@ -1349,13 +1397,13 @@ export function localApi({
     );
   });
   app.get("/v1/requests/:id/quality-review", async (req, res) => {
-    await checkFeedbackAccess(req.params.id);
-    requireDependencies(req.params.id);
+    const check = await checkFeedbackAccess(req.params.id);
+    check();
     res.json(store.taskFeedback.read(owner, req.params.id));
   });
   app.put("/v1/requests/:id/quality-review", async (req, res) => {
-    await checkFeedbackAccess(req.params.id);
-    requireDependencies(req.params.id);
+    const check = await checkFeedbackAccess(req.params.id);
+    check();
     res.json(store.taskFeedback.save(owner, req.params.id, req.body));
   });
   app.post("/v1/requests/:id/commands", async (req, res) => {
@@ -1467,6 +1515,7 @@ export function localApi({
       const body = z
         .strictObject({
           text: z.string().min(1).max(16000),
+          expectedRevision: z.number().int().positive().optional(),
           type: z.enum([
             "preference",
             "fact",
@@ -1476,23 +1525,33 @@ export function localApi({
           ]),
         })
         .parse(req.body);
-      requireDependencies(req.params.id);
+      const check = await checkFeedbackAccess(req.params.id);
       const task = store.get(owner, req.params.id);
-      if (task.status !== "completed" || task.input.sourceRefs.length)
+      if (
+        (store.sourceBinding(owner, task.id) ||
+          body.expectedRevision !== undefined) &&
+        body.expectedRevision !== task.revision
+      )
         throw new StoreError("CONFLICT");
+      if (task.status !== "completed") throw new StoreError("CONFLICT");
       res.status(201).json(
-        await memory.add(owner, {
-          ...body,
-          origin: "user",
-          sources: [
-            {
-              app: "local",
-              tenantId: owner.tenantId,
-              resourceId: task.id,
-              revision: String(task.revision),
-            },
-          ],
-        }),
+        await memory.add(
+          owner,
+          {
+            text: body.text,
+            type: body.type,
+            origin: "user",
+            sources: [
+              {
+                app: "local",
+                tenantId: owner.tenantId,
+                resourceId: task.id,
+                revision: String(task.revision),
+              },
+            ],
+          },
+          check,
+        ),
       );
     });
     app.patch("/v1/memories/:id", async (req, res) => {

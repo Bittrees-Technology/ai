@@ -130,10 +130,33 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
     token = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   let saved = false,
     saves = 0,
-    cancels = 0;
+    cancels = 0,
+    memorySaves = 0;
   await page.route("**/v1/**", async (route) => {
     const req = route.request(),
       path = new URL(req.url()).pathname;
+    if (path === "/v1/requests/synthetic-task/export")
+      return route.fulfill({
+        json: {
+          task: {
+            id: "synthetic-task",
+            revision: 7,
+            status: "completed",
+            result: {
+              text: "Review the draft plan with the team. [s1: 2–8 seconds]",
+            },
+          },
+        },
+      });
+    if (path === "/v1/requests/synthetic-task/memories") {
+      expect(req.postDataJSON()).toEqual({
+        text: "Review the draft plan",
+        type: "decision",
+        expectedRevision: 7,
+      });
+      memorySaves++;
+      return route.fulfill({ json: { id } });
+    }
     if (path === "/v1/requests/synthetic-task/autonote-reviews")
       return route.fulfill({
         json: {
@@ -253,6 +276,50 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
   ).toBeVisible();
   expect(saves).toBe(1);
   expect(cancels).toBeGreaterThanOrEqual(1);
+  const memory = page.getByRole("region", { name: "Source memory capture" });
+  await memory
+    .getByRole("button", { name: "Review source for memory" })
+    .click();
+  await memory
+    .getByLabel("Memory type", { exact: true })
+    .selectOption("decision");
+  await memory
+    .getByLabel("What to remember", { exact: true })
+    .fill("Review the draft plan");
+  const capture = memory.getByRole("button", {
+    name: "Save source memory candidate",
+  });
+  await expect(capture).toBeDisabled();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await memory.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-memory-phone.png`,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth + 1,
+    ),
+  ).toBe(false);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await memory.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-memory-desktop.png`,
+  });
+  await memory.getByRole("checkbox").check();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(capture).toHaveCount(0);
+  expect(memorySaves).toBe(0);
+  await memory
+    .getByRole("button", { name: "Review source for memory" })
+    .click();
+  await memory
+    .getByLabel("Memory type", { exact: true })
+    .selectOption("decision");
+  await memory
+    .getByLabel("What to remember", { exact: true })
+    .fill("Review the draft plan");
+  await memory.getByRole("checkbox").check();
+  await capture.click();
+  await expect(memory.getByRole("status")).toContainText("Candidate saved");
+  expect(memorySaves).toBe(1);
 });
 
 test("browser approval delivery reviews remaining parts and cancels on focus loss", async ({
