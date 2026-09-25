@@ -34,6 +34,7 @@ export class AutoNoteTasks {
     input: Omit<TaskInput, "sourceRefs" | "memoryIds">,
     meetingId: string,
     key: string,
+    beforeCommit: () => void = () => {},
   ) {
     const status = await this.connector.status();
     if (!status || status.state !== "stored")
@@ -67,9 +68,14 @@ export class AutoNoteTasks {
       expiresAt: status.expiresAt,
       projectionHash: snapshot.projectionHash,
     };
+    beforeCommit();
     return store.create(
       this.owner,
-      { ...input, sourceRefs: refs, memoryIds: [] },
+      {
+        ...input,
+        sourceRefs: refs,
+        memoryIds: input.memorySelection?.memories.map((item) => item.id) ?? [],
+      },
       key,
       binding,
     );

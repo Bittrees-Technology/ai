@@ -23,6 +23,7 @@ export class MailTasks {
     input: Omit<TaskInput, "sourceRefs" | "memoryIds">,
     content: "metadata" | "plain" | "attachment-text",
     key: string,
+    beforeCommit: () => void = () => {},
   ) {
     if (
       !["summarize", "draft"].includes(input.kind) ||
@@ -63,9 +64,14 @@ export class MailTasks {
       expiresAt: snapshot.expiresAt,
       projectionHash: snapshot.projectionHash,
     };
+    beforeCommit();
     return store.create(
       this.owner,
-      { ...input, sourceRefs: refs, memoryIds: [] },
+      {
+        ...input,
+        sourceRefs: refs,
+        memoryIds: input.memorySelection?.memories.map((item) => item.id) ?? [],
+      },
       key,
       binding,
     );

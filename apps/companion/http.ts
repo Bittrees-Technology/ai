@@ -1,3 +1,5 @@
+import { memorySelectionSchema } from "../../modules/contracts/index.js";
+import { memorySelectionGuard } from "./memory-selection.js";
 import { memoryUseAppsSchema } from "../../modules/memory/scope.js";
 import { AutoNoteDecisionError } from "../../modules/remote/private-autonote-decisions.js";
 import { ApprovalOutboxError } from "../../modules/remote/private-autonote-approval-outbox.js";
@@ -1022,9 +1024,18 @@ export function localApi({
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
           allowQuestions: z.boolean().optional(),
+          memorySelection: memorySelectionSchema.optional(),
         })
         .parse(req.body);
       store.profile(owner, body.modelProfileId);
+      const checkMemories = await memorySelectionGuard(
+        store,
+        owner,
+        memory,
+        sourceRouter,
+        body.memorySelection,
+        "crm",
+      );
       const task = await sources.create(
         store,
         {
@@ -1032,6 +1043,9 @@ export function localApi({
           kind: "draft",
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
+          ...(body.memorySelection
+            ? { memorySelection: body.memorySelection }
+            : {}),
           ...(body.allowQuestions === undefined
             ? {}
             : { allowQuestions: body.allowQuestions }),
@@ -1041,6 +1055,7 @@ export function localApi({
         },
         body.recordIds,
         req.header("Idempotency-Key") ?? "",
+        checkMemories,
       );
       res.status(202).json(concealed(task));
     });
@@ -1069,9 +1084,18 @@ export function localApi({
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
           allowQuestions: z.boolean().optional(),
+          memorySelection: memorySelectionSchema.optional(),
         })
         .parse(req.body);
       store.profile(owner, body.modelProfileId);
+      const checkMemories = await memorySelectionGuard(
+        store,
+        owner,
+        memory,
+        sourceRouter,
+        body.memorySelection,
+        "mail",
+      );
       const task = await mailSources.create(
         store,
         {
@@ -1079,6 +1103,9 @@ export function localApi({
           kind: body.kind,
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
+          ...(body.memorySelection
+            ? { memorySelection: body.memorySelection }
+            : {}),
           ...(body.allowQuestions === undefined
             ? {}
             : { allowQuestions: body.allowQuestions }),
@@ -1088,6 +1115,7 @@ export function localApi({
         },
         body.content,
         req.header("Idempotency-Key") ?? "",
+        checkMemories,
       );
       res.status(202).json(concealed(task));
     });
@@ -1139,9 +1167,18 @@ export function localApi({
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
           allowQuestions: z.boolean().optional(),
+          memorySelection: memorySelectionSchema.optional(),
         })
         .parse(req.body);
       store.profile(owner, body.modelProfileId);
+      const checkMemories = await memorySelectionGuard(
+        store,
+        owner,
+        memory,
+        sourceRouter,
+        body.memorySelection,
+        "autonote",
+      );
       const task = await autonoteSources.create(
         store,
         {
@@ -1149,6 +1186,9 @@ export function localApi({
           kind: "summarize",
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
+          ...(body.memorySelection
+            ? { memorySelection: body.memorySelection }
+            : {}),
           ...(body.allowQuestions === undefined
             ? {}
             : { allowQuestions: body.allowQuestions }),
@@ -1158,6 +1198,7 @@ export function localApi({
         },
         body.meetingId,
         req.header("Idempotency-Key") ?? "",
+        checkMemories,
       );
       res.status(202).json(concealed(task));
     });

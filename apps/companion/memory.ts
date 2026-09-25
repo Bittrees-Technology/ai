@@ -22,6 +22,7 @@ export function localTaskDependencies(
   taskId: string,
   memory?: MemoryStore,
   sourceAccess?: (taskId: string, binding: SourceBinding) => boolean,
+  destinationOverride?: string,
 ): boolean {
   const visiting = new Set<string>(),
     checked = new Set<string>();
@@ -72,6 +73,13 @@ export function localTaskDependencies(
     )
       return false;
     const ids = task.input.memoryIds ?? [];
+    const selection = task.input.memorySelection;
+    if (
+      selection &&
+      JSON.stringify(selection.memories.map((item) => item.id)) !==
+        JSON.stringify(ids)
+    )
+      return false;
     if (ids.length) {
       if (!memory) return false;
       const run = store.runHistory(owner, id).at(-1);
@@ -92,7 +100,19 @@ export function localTaskDependencies(
       )
         return false;
       for (const memoryId of ids) {
-        const revision = versions?.find((v) => v.id === memoryId)?.revision;
+        const selectedRevision = selection?.memories.find(
+          (v) => v.id === memoryId,
+        )?.revision;
+        const recordedRevision = versions?.find(
+          (v) => v.id === memoryId,
+        )?.revision;
+        if (
+          selectedRevision !== undefined &&
+          recordedRevision !== undefined &&
+          selectedRevision !== recordedRevision
+        )
+          return false;
+        const revision = selectedRevision ?? recordedRevision;
         for (const ref of memory.dependencySources(
           owner,
           memoryId,
@@ -108,7 +128,9 @@ export function localTaskDependencies(
   };
   try {
     destination =
-      store.sourceBinding(owner, taskId)?.authority.sourceApp ?? "local";
+      destinationOverride ??
+      store.sourceBinding(owner, taskId)?.authority.sourceApp ??
+      "local";
     return (
       walk(taskId, 0) &&
       taskToken === store.changeToken() &&
@@ -162,6 +184,7 @@ export async function taskDependencyGuard(
   sources?: Partial<Pick<SourceTasks, "commitGuard">>,
   now: () => number = Date.now,
   mono: () => number = () => performance.now(),
+  destinationOverride?: string,
 ): Promise<() => void> {
   if (store.db.inTransaction) throw new StoreError("NOT_FOUND");
   const input = JSON.stringify(store.get(owner, taskId).input);
@@ -175,7 +198,16 @@ export async function taskDependencyGuard(
     required.set(id, binding);
     return true;
   };
-  if (!localTaskDependencies(store, owner, taskId, memory, collect))
+  if (
+    !localTaskDependencies(
+      store,
+      owner,
+      taskId,
+      memory,
+      collect,
+      destinationOverride,
+    )
+  )
     throw new StoreError("NOT_FOUND");
   const deadline = Math.min(
     started + 10000,
@@ -214,7 +246,14 @@ export async function taskDependencyGuard(
       JSON.stringify(store.get(owner, taskId).input) !== input ||
       JSON.stringify(store.sourceBinding(owner, taskId)) !==
         JSON.stringify(destination) ||
-      !localTaskDependencies(store, owner, taskId, memory, current)
+      !localTaskDependencies(
+        store,
+        owner,
+        taskId,
+        memory,
+        current,
+        destinationOverride,
+      )
     )
       throw new StoreError("NOT_FOUND");
   };

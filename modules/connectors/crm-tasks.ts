@@ -33,6 +33,7 @@ export class CrmTasks {
     input: Omit<TaskInput, "sourceRefs" | "memoryIds">,
     recordIds: string[],
     key: string,
+    beforeCommit: () => void = () => {},
   ) {
     const status = await this.connector.status();
     if (!status || status.state !== "stored")
@@ -64,9 +65,14 @@ export class CrmTasks {
       expiresAt: status.expiresAt,
       projectionHash: fingerprint(snapshot.records),
     };
+    beforeCommit();
     return store.create(
       this.owner,
-      { ...input, sourceRefs: refs, memoryIds: [] },
+      {
+        ...input,
+        sourceRefs: refs,
+        memoryIds: input.memorySelection?.memories.map((item) => item.id) ?? [],
+      },
       key,
       binding,
     );
