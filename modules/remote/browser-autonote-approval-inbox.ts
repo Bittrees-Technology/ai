@@ -468,6 +468,31 @@ export class BrowserAutoNoteApprovalInbox {
       );
     });
   }
+  status() {
+    return this.exclusive(async (check) =>
+      browserStorageTransaction<
+        { offerId: string; received: number; expiresAt: number }[]
+      >(this.db, [name], "readonly", check, (io) => {
+        io.request(
+          io.store(name).index("scope").getAll(this.scope, 513),
+          (raw) => {
+            const rows = raw.map((v) => rowSchema.parse(v));
+            if (rows.length > 512 || rows.some((r) => r.scope !== this.scope))
+              throw new BrowserOutboxError("STORAGE_UNAVAILABLE");
+            io.done(
+              rows
+                .filter((r) => r.index === -1)
+                .map((r) => ({
+                  offerId: r.envelope.header.operationId,
+                  received: rows.filter((p) => p.offer === r.offer).length,
+                  expiresAt: r.envelope.header.expiresAt,
+                })),
+            );
+          },
+        );
+      }),
+    );
+  }
   async export(raw: unknown) {
     const input = z
       .strictObject({ offerId: z.uuid(), confirmed: z.literal(true) })

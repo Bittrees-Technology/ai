@@ -107,6 +107,9 @@ test("encrypted AutoNote notes retain partial progress, exact replay and complet
     await expect(reveal()).rejects.toThrow();
     await receive(envelopes[1]!);
     await page.evaluate(() => window.browserPeersTest.approvalReopen());
+    expect(
+      (await page.evaluate(() => window.browserPeersTest.approvalStatus()))[0],
+    ).toMatchObject({ offerId, received: 2 });
     expect((await receive(envelopes[1]!)).duplicate).toBe(true);
     for (const envelope of envelopes.slice(2).reverse())
       await receive(envelope);

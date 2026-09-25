@@ -982,6 +982,7 @@ const fixture = {
     withKey(async () => (await resumeDeliveryStore()).read(raw)),
   resumeDeliveryReconcile: (raw: unknown) =>
     withKey(async () => (await resumeDeliveryStore()).reconcile(raw)),
+  approvalStatus: () => approvalInboxStore().then((c) => c.status()),
   approvalReceive: (raw: unknown) =>
     withKey(async () => (await approvalInboxStore()).receive(raw)),
   approvalReveal: (raw: unknown) =>
