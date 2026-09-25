@@ -165,3 +165,27 @@ footer {
 #private-relay-controls [role="alert"] {
   color: #8a2630;
 }
+
+/* Keep full connection identities readable without widening a phone viewport. */
+#mcp-connections,
+#mcp-connections label,
+#mcp-connections article {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#mcp-connections label { display: block; margin: 12px 0; }
+#mcp-connections select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  appearance: none;
+  padding: 10px;
+  border: 1px solid #aabec5;
+  border-radius: 4px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

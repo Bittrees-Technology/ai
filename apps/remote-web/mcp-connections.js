@@ -52,11 +52,14 @@ export function mountMcpConnections(root, context, templates, api) {
       if (!available.length) { details.append(el('p', 'Choose “View approved templates” on your device above, then review this connection again.')); return; }
       const select = el('select');
       for (const t of available) { const option = el('option', `Template ${t.templateId}, revision ${t.templateRevision}, device ${t.deviceId}`); option.value = t.permissionId; select.append(option); }
+      const selectedDetails = el('p');
+      select.onchange = () => { const selected = available.find(t => t.permissionId === select.value); selectedDetails.textContent = selected ? `Template ${selected.templateId}, revision ${selected.templateRevision}, on device ${selected.deviceId}.` : ''; };
+      select.onchange();
       const runs = el('input'); runs.type = 'number'; runs.min = '1'; runs.max = '20'; runs.value = '1'; runs.required = true;
       const minutes = el('input'); minutes.type = 'number'; minutes.min = '1'; minutes.max = '1440'; minutes.value = '30'; minutes.required = true;
       const ack = el('input'); ack.type = 'checkbox';
       const approve = el('button', 'Approve this connection'); approve.type = 'button';
-      details.append(field('Approved template', select), field('Maximum requests (1–20)', runs), field('Connection duration in minutes', minutes), field('I checked the MCP identity, template, limit and expiry.', ack), approve);
+      details.append(field('Approved template', select), selectedDetails, field('Maximum requests (1–20)', runs), field('Connection duration in minutes', minutes), field('I checked the MCP identity, template, limit and expiry.', ack), approve);
       approve.onclick = () => {
         const chosen = available.find(t => t.permissionId === select.value), pending = review;
         if (!ack.checked || !chosen || !pending || !runs.checkValidity() || !minutes.checkValidity()) return;
