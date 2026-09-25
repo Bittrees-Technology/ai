@@ -1587,6 +1587,7 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       }),
     );
     let uploads = 0;
+    let lastUpload: unknown;
     let incoming: any;
     let acknowledgements = 0;
     const relay = {
@@ -1608,6 +1609,7 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
             submit: async ({ envelope }: any, check: () => void) => {
               check();
               uploads++;
+              lastUpload = envelope;
               return {
                 receipt: {
                   version: 1,
@@ -1661,7 +1663,7 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
     );
     const { PrivateAutoNoteDecisions } =
       await import("../modules/remote/private-autonote-decisions.js");
-    const { sealPrivateEnvelope, privateEnvelopeSuite } =
+    const { sealPrivateEnvelope, openPrivateEnvelope, privateEnvelopeSuite } =
       await import("../modules/remote/private-envelope.js");
     const decisions = new PrivateAutoNoteDecisions(
       peer.store,
@@ -1765,6 +1767,14 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
     assert.equal(saves, 1);
     assert.equal(decisions.status(operationId)[0]!.state, "uncertain");
     await assert.rejects(decisions.execute(execute));
+    const resultInput = {
+      operationId,
+      decisionId: command.id,
+      confirmed: true,
+    };
+    await decisions.prepareResult(resultInput);
+    const uncertainMessage =
+      decisions.status(operationId)[0]!.resultDeliveries[0]!.messageId;
     const reconciliation = await host.prepare({
       action: "reconcile",
       operationId,
@@ -1785,6 +1795,76 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
       duplicate: true,
       state: "saved",
     });
+    assert.equal(saves, 1);
+    const resultReview = await host.prepare({
+      action: "prepare-result",
+      operationId,
+      decisionId: command.id,
+      expectedRevision: host.status(operationId).revision,
+    });
+    await host.confirm({
+      reviewId: resultReview.id,
+      confirmed: true,
+      acknowledged: true,
+    });
+    const resultMessage = decisions
+      .status(operationId)[0]!
+      .resultDeliveries.find((d) => d.status === "saved")!.messageId;
+    await assert.rejects(
+      decisions.sendResult(
+        { ...resultInput, messageId: uncertainMessage },
+        async () => {
+          assert.fail("Do not send a superseded uncertain result");
+        },
+      ),
+    );
+    let sentResult: any;
+    await assert.rejects(
+      decisions.sendResult(
+        { ...resultInput, messageId: resultMessage },
+        async (value, check) => {
+          check();
+          sentResult = structuredClone(value);
+          throw Error("Synthetic lost result upload response");
+        },
+      ),
+    );
+    const receivedResult = await openPrivateEnvelope(
+      sentResult,
+      sentResult.header,
+      {
+        recipientKey: peer.sender,
+        senderPublicKey: (await peer.keys.resolve()).pair.publicKey,
+      },
+      peer.clock,
+    );
+    assert.deepEqual(
+      JSON.parse(new TextDecoder().decode(receivedResult.plaintext)).receipt,
+      receipt,
+    );
+    receivedResult.plaintext.fill(0);
+    const sendResultReview = await host.prepare(
+      {
+        action: "send-result",
+        operationId,
+        decisionId: command.id,
+        messageId: resultMessage,
+        expectedRevision: host.status(operationId).revision,
+        connection: { id: randomUUID(), expectedRevision: 1 },
+      },
+      relay,
+    );
+    await host.confirm(
+      { reviewId: sendResultReview.id, confirmed: true, acknowledged: true },
+      relay,
+    );
+    assert.deepEqual(lastUpload, sentResult);
+    assert.equal(
+      decisions
+        .status(operationId)[0]!
+        .resultDeliveries.find((d) => d.messageId === resultMessage)!.attempts,
+      2,
+    );
     assert.equal(saves, 1);
     const stop = await host.prepare({
       action: "stop",

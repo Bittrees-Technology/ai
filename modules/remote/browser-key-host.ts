@@ -1177,6 +1177,42 @@ export class BrowserKeyHost {
           };
         });
       }),
+    receiveResult: (raw: unknown) =>
+      this.verifiedPeer(async () => {
+        const input = privateRelayQueueQuerySchema
+          .extend({ selection: privateRelaySelectionSchema, offerId: z.uuid() })
+          .parse(raw);
+        return this.relay.withClient(async (client, _identity, check) => {
+          const page = await client.poll({ after: input.after, limit: 1 });
+          const item = page.items[0];
+          check();
+          if (!item || !relaySelectionMatches(item, input.selection))
+            throw Error("CONFLICT");
+          const received = await (
+            await this.approvalInboxStore()
+          ).receiveResult(
+            {
+              offerId: input.offerId,
+              envelope: item.envelope,
+              confirmed: true,
+            },
+            check,
+          );
+          check();
+          const transport = await client.acknowledge({
+            messageId: item.receipt.messageId,
+            envelopeHash: item.receipt.envelopeHash,
+            expectedRevision: item.receipt.revision,
+            confirmed: true,
+          });
+          check();
+          return {
+            received,
+            transport: { transportOnly: true as const, ...transport },
+            nextCursor: page.nextCursor,
+          };
+        });
+      }),
     invalidate: () => this.cancelKeys(),
   };
   readonly relayResumeAPI = {

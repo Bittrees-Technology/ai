@@ -175,6 +175,57 @@ test("encrypted AutoNote notes retain partial progress, exact replay and complet
       offerId,
       detailHash: transfer.manifest.detailHash,
     });
+    const decisionId = JSON.parse(new TextDecoder().decode(opened.plaintext))
+      .id as string;
+    const resultEnvelope = async (saved: boolean) => {
+      const messageId = randomUUID();
+      return sealPrivateEnvelope(
+        {
+          ...envelopes[0]!.header,
+          messageId,
+          operationId: messageId,
+          sequence: sequence++,
+        },
+        new TextEncoder().encode(
+          JSON.stringify({
+            version: 1,
+            type: "autonote.approval.receipt",
+            decisionId,
+            offerId,
+            detailHash: transfer.manifest.detailHash,
+            status: saved ? "saved" : "uncertain",
+            receipt: saved
+              ? {
+                  meetingId,
+                  operationId: proposal.operationId,
+                  version: proposal.version + 1,
+                }
+              : null,
+          }),
+        ),
+        { senderKey: key.pair, recipientPublicKey: peer.publicKey },
+        () => now,
+      );
+    };
+    const receiveResult = (envelope: (typeof envelopes)[number]) =>
+      page.evaluate(
+        ({ offerId, envelope }) =>
+          window.browserPeersTest.approvalResultReceive({
+            offerId,
+            envelope,
+            confirmed: true,
+          }),
+        { offerId, envelope },
+      );
+    const uncertain = await resultEnvelope(false);
+    expect((await receiveResult(uncertain)).result.status).toBe("uncertain");
+    expect(
+      (await receiveResult(await resultEnvelope(true))).result.status,
+    ).toBe("saved");
+    expect(await receiveResult(uncertain)).toMatchObject({
+      duplicate: true,
+      result: { status: "saved" },
+    });
     opened.plaintext.fill(0);
     const exported = await page.evaluate(
       (offerId) =>
@@ -203,7 +254,8 @@ test("browser AutoNote panel reveals complete notes only on confirmation and cle
   let reads = 0,
     receives = 0,
     retainedDecision = false,
-    sentDecision = false;
+    sentDecision = false,
+    resultReceived = false;
   await page.route("**/approval-test/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     if (action === "decisionHistory")
@@ -216,7 +268,9 @@ test("browser AutoNote panel reveals complete notes only on confirmation and cle
                 decision: "approve",
                 attempts: sentDecision ? 1 : 0,
                 transport: sentDecision ? { state: "stored" } : null,
-                result: null,
+                result: resultReceived
+                  ? { status: "saved", receipt: { version: 2 } }
+                  : null,
                 stopped: false,
               },
             ]
@@ -235,6 +289,13 @@ test("browser AutoNote panel reveals complete notes only on confirmation and cle
       expect(retainedDecision).toBe(true);
       sentDecision = true;
       return route.fulfill({ json: { transport: { state: "stored" } } });
+    }
+    if (action === "receiveResult") {
+      expect(route.request().postDataJSON().offerId).toBe(id);
+      resultReceived = true;
+      return route.fulfill({
+        json: { received: { duplicate: false, result: { status: "saved" } } },
+      });
     }
     if (action === "status")
       return route.fulfill({ json: [{ offerId: id, received: 2, expiresAt }] });
@@ -392,6 +453,29 @@ test("browser AutoNote panel reveals complete notes only on confirmation and cle
     "Encrypted decision stored at relay",
   );
   expect(sentDecision).toBe(true);
+  await panel
+    .getByRole("button", {
+      name: "Inspect next result for this decision",
+      exact: true,
+    })
+    .click();
+  await expect(confirm).toBeDisabled();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-browser-result-phone.png`,
+  });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await panel.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-browser-result-desktop.png`,
+  });
+  await panel
+    .getByLabel("I understand and want to perform this action.")
+    .check();
+  await confirm.click();
+  await expect(
+    panel.getByText("Saved in AutoNote, meeting version 2.", { exact: false }),
+  ).toBeVisible();
+
   expect(reads).toBe(1);
   expect(receives).toBe(1);
 });
@@ -564,6 +648,60 @@ identityTest(
         decision: "approve",
         detailHash: transfer.manifest.detailHash,
       });
+      const returnedDecision = JSON.parse(
+        new TextDecoder().decode(plaintext.plaintext),
+      );
+      const resultId = randomUUID();
+      const resultEnvelope = await sealPrivateEnvelope(
+        {
+          ...envelope.header,
+          ownerId: f.registration.binding.ownerId,
+          senderId: f.mac.binding.deviceId,
+          recipientId: browser.peerId,
+          senderKeyEpoch: sender.proof.keyEpoch,
+          recipientKeyEpoch: browser.keyEpoch,
+          messageId: resultId,
+          operationId: resultId,
+          sequence: sequence++,
+          issuedAt: Date.now(),
+          expiresAt,
+        },
+        new TextEncoder().encode(
+          JSON.stringify({
+            version: 1,
+            type: "autonote.approval.receipt",
+            decisionId: returnedDecision.id,
+            offerId,
+            detailHash: transfer.manifest.detailHash,
+            status: "saved",
+            receipt: {
+              meetingId,
+              operationId: proposal.operationId,
+              version: proposal.version + 1,
+            },
+          }),
+        ),
+        { senderKey: sender.pair, recipientPublicKey: recipient.publicKey },
+      );
+      await f.native.relay.withTransport(
+        { id: native.id, expectedRevision: native.revision },
+        async (client) =>
+          client.submit({ version: 1, envelope: resultEnvelope }),
+      );
+      const next = await page.evaluate(
+        (after) =>
+          window.browserPeersTest.approvalHostInspect({
+            after,
+            confirmed: true,
+          }),
+        after,
+      );
+      const result = await page.evaluate(
+        (raw) => window.browserPeersTest.approvalHostResultReceive(raw),
+        { offerId, after, selection: next.item!.selection, confirmed: true },
+      );
+      expect(result.received.result.status).toBe("saved");
+      expect(result.transport.receipt.state).toBe("received");
       plaintext.plaintext.fill(0);
     } finally {
       f.mac.close();

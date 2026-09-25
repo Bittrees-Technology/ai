@@ -70,7 +70,7 @@ export const browserAutoNoteDecisionValueSchema = z
       (!r.receipt ||
         (r.receipt.operationId === m.operationId &&
           r.receipt.meetingId === m.meetingId)) &&
-      rh.operationId === c.id &&
+      rh.operationId === rh.messageId &&
       rh.ownerId === h.ownerId &&
       rh.senderId === h.recipientId &&
       rh.recipientId === h.senderId &&

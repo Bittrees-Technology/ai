@@ -21,6 +21,7 @@ mountBrowserAutoNoteApprovals(root, {
     ({ binding: { deviceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" } }) as any,
   reviewVersion: () => generation,
   autoNoteApprovalAPI: {
+    receiveResult: (raw) => call("receiveResult", raw),
     decisionHistory: () => call("decisionHistory"),
     exportDecision: (raw) => call("exportDecision", raw),
     prepareDecision: (raw) => call("prepareDecision", raw),

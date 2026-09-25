@@ -66,6 +66,18 @@ const request = z.discriminatedUnion("action", [
     action: z.literal("reconcile"),
     decisionId: z.uuid(),
   }),
+  z.strictObject({
+    ...base,
+    action: z.literal("prepare-result"),
+    decisionId: z.uuid(),
+  }),
+  z.strictObject({
+    ...base,
+    action: z.literal("send-result"),
+    decisionId: z.uuid(),
+    messageId: z.uuid(),
+    connection: z.strictObject({ id: z.uuid(), expectedRevision: revision }),
+  }),
   z.strictObject({ ...base, action: z.literal("stop"), offerId: z.uuid() }),
   z.strictObject({ ...base, action: z.literal("remove"), offerId: z.uuid() }),
 ]);
@@ -210,6 +222,13 @@ export class CompanionAutoNoteApprovals {
     if (!parts.length) throw denied();
     return parts;
   }
+  private resultEntry(operationId: string, decisionId: string) {
+    const entry = this.store
+      .autoNoteReview(this.owner, operationId)
+      .approvalDecisions?.find((e) => e.command.id === decisionId);
+    if (!entry?.result) throw denied();
+    return entry;
+  }
   async prepare(raw: unknown, relay?: CompanionPrivateRelay) {
     this.invalidate();
     const input = request.parse(raw),
@@ -266,6 +285,44 @@ export class CompanionAutoNoteApprovals {
         handle.check();
         return { decision, grant: handle.grant };
       });
+    } else if (input.action === "prepare-result") {
+      snapshot = await this.live().withVerifiedDevice(async (scope) => {
+        const entry = this.resultEntry(input.operationId, input.decisionId);
+        const handle = await this.consent(() =>
+          generation === this.generation ? scope.current() : null,
+        ).resolvePeer(input.operationId, entry.grant.id);
+        handle.check();
+        return { grant: handle.grant, result: entry.result };
+      });
+    } else if (input.action === "send-result") {
+      this.live();
+      if (!relay) throw denied();
+      snapshot = await relay.withTransport(
+        input.connection,
+        async (client, binding, limit) => {
+          const entry = this.resultEntry(input.operationId, input.decisionId);
+          const delivery = entry.resultDeliveries?.find(
+            (d) => d.header.messageId === input.messageId,
+          );
+          if (!delivery?.envelope || !same(delivery.result, entry.result))
+            throw denied();
+          const handle = await this.consent(() =>
+            generation === this.generation ? binding() : null,
+          ).resolvePeer(input.operationId, entry.grant.id);
+          const recipient = await client.recipient({
+            endpointId: handle.grant.peer.peerId,
+          });
+          handle.check();
+          if (delivery.header.expiresAt > Math.min(limit, recipient.expiresAt))
+            throw denied();
+          return {
+            grant: handle.grant,
+            result: entry.result,
+            header: delivery.header,
+            recipient,
+          };
+        },
+      );
     } else if (input.action === "reconcile") {
       snapshot = this.decisions()
         .status(input.operationId)
@@ -339,7 +396,7 @@ export class CompanionAutoNoteApprovals {
       summary: structuredClone(snapshot),
       title: prepared?.title ?? null,
       visibility: prepared?.visibility ?? null,
-      transportOnly: input.action === "send",
+      transportOnly: input.action === "send" || input.action === "send-result",
     };
   }
   async confirm(raw: unknown, relay?: CompanionPrivateRelay) {
@@ -386,6 +443,78 @@ export class CompanionAutoNoteApprovals {
       );
       await ledger.reconcile(action.operationId);
       this.decisions().recordReconciled(action.operationId, action.decisionId);
+    } else if (action.action === "prepare-result") {
+      await this.live().withVerifiedDevice(async (scope) => {
+        const consent = this.consent(() =>
+          this.valid(r) ? scope.current() : null,
+        );
+        const entry = this.resultEntry(action.operationId, action.decisionId);
+        const handle = await consent.resolvePeer(
+          action.operationId,
+          entry.grant.id,
+        );
+        handle.check();
+        if (!same(r.snapshot, { grant: handle.grant, result: entry.result }))
+          throw denied();
+        await this.decisions(consent).prepareResult({
+          operationId: action.operationId,
+          decisionId: action.decisionId,
+          confirmed: true,
+        });
+      });
+    } else if (action.action === "send-result") {
+      this.live();
+      if (!relay) throw denied();
+      await relay.withTransport(
+        action.connection,
+        async (client, binding, limit) => {
+          const current = () => (this.valid(r) ? binding() : null);
+          const consent = this.consent(current),
+            entry = this.resultEntry(action.operationId, action.decisionId);
+          const delivery = entry.resultDeliveries?.find(
+            (d) => d.header.messageId === action.messageId,
+          );
+          if (!delivery?.envelope || !same(delivery.result, entry.result))
+            throw denied();
+          const handle = await consent.resolvePeer(
+            action.operationId,
+            entry.grant.id,
+          );
+          const recipient = await client.recipient({
+            endpointId: handle.grant.peer.peerId,
+          });
+          handle.check();
+          this.checkRevision(action);
+          if (
+            !same(r.snapshot, {
+              grant: handle.grant,
+              result: entry.result,
+              header: delivery.header,
+              recipient,
+            }) ||
+            delivery.header.expiresAt > Math.min(limit, recipient.expiresAt)
+          )
+            throw denied();
+          await this.decisions(consent).sendResult(
+            {
+              operationId: action.operationId,
+              decisionId: action.decisionId,
+              messageId: action.messageId,
+              confirmed: true,
+            },
+            async (envelope, check) => {
+              const result = await client.submit(
+                { version: 1, envelope },
+                () => {
+                  if (!current()) throw denied();
+                  check();
+                },
+              );
+              return result.receipt;
+            },
+          );
+        },
+      );
     } else if (action.action === "execute") {
       await this.live().withVerifiedDevice(async (scope) => {
         const consent = this.consent(() =>

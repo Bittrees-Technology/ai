@@ -365,7 +365,7 @@ test("actual version8 provider upgrade preserves tasks and keys and only reconci
     await reopen(page, f.f);
     await f.authorize();
     const migrated = await snapshot(page);
-    expect(migrated.version).toBe(19);
+    expect(migrated.version).toBe(20);
     expect(migrated.rows.incoming_replay).toEqual([]);
     for (const name of Object.keys(before.rows))
       expect(migrated.rows[name]).toEqual(before.rows[name]);
