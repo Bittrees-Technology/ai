@@ -1,4 +1,4 @@
-/** Actual compiled schema37 ->38; disposable synthetic storage only. */
+/** Actual compiled schema37 ->39; disposable synthetic storage only. */
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -179,7 +179,7 @@ try {
   unchanged.close();
   const s = new Store(f.path, f.vault, f.clock);
   opened.push(s);
-  assert.equal(s.db.pragma("user_version", { simple: true }), 38);
+  assert.equal(s.db.pragma("user_version", { simple: true }), 39);
   assert.deepEqual(snapshot(s), expected);
   assert.deepEqual(s.exportPrivateResumeOffers(owner), []);
   assert.throws(
@@ -208,7 +208,7 @@ try {
   const report = {
     status: "passed",
     from: 37,
-    to: 38,
+    to: 39,
     legacySourceCommit: "59804e6febfb35a62ceb3abee0c9a73ae673780f",
     legacyArchiveSha256:
       "5b888c1705af5dbeb98e49c3d0eafce1291fe0ef384e2caf754eaac8aad42155",
@@ -217,7 +217,7 @@ try {
       "wrong key leaves actual37 storage unchanged",
       "unused and consumed private grants, original encrypted command/reply, tasks and profiles preserved exactly",
       "new offers start empty without authority",
-      "actual37 writer refuses38",
+      "actual37 writer refuses39",
       "current backup restore locks consent/delivery and strips resume authority",
       "untouched old backup rolls back to37 with authority locked",
     ],

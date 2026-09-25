@@ -193,7 +193,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.pragma("secure_delete = ON");
     const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > 38) {
+    if (version > 39) {
       this.db.close();
       throw new Error("Unsupported database version");
     }
@@ -336,7 +336,7 @@ CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_i
         this.db.exec(
           "CREATE TABLE IF NOT EXISTS private_resume_offers(user_id TEXT NOT NULL,tenant_id TEXT NOT NULL,id TEXT NOT NULL,client_hash TEXT NOT NULL,revision INTEGER NOT NULL,locked INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,PRIMARY KEY(user_id,tenant_id,id),UNIQUE(user_id,tenant_id,client_hash))",
         );
-        this.db.pragma("user_version = 38");
+        this.db.pragma("user_version = 39");
       })();
     } catch (error) {
       this.db.close();
@@ -1052,9 +1052,18 @@ CREATE TABLE IF NOT EXISTS remote_resume_receipts(user_id TEXT NOT NULL,tenant_i
       binding
         ? binding.authority.userId !== owner.userId ||
           JSON.stringify(binding.refs) !== JSON.stringify(input.sourceRefs) ||
-          input.memoryIds?.length ||
+          (input.memoryIds?.length && !input.memorySelection) ||
           Date.parse(binding.expiresAt) <= this.now()
         : input.sourceRefs.length
+    )
+      throw new StoreError("INVALID_INPUT");
+    if (
+      input.memorySelection &&
+      (input.memorySelection.destination !==
+        (binding?.authority.sourceApp ?? "local") ||
+        JSON.stringify(
+          input.memorySelection.memories.map((item) => item.id),
+        ) !== JSON.stringify(input.memoryIds ?? []))
     )
       throw new StoreError("INVALID_INPUT");
     if (!/^[A-Za-z0-9:_-]{1,128}$/.test(key))

@@ -211,7 +211,9 @@ async function restoreSnapshot(
     } else {
       // Recovery does not grant source access; the application must supply its
       // current source validator when opening the published memory database.
-      restored = new MemoryStore(staged, vault, async () => false);
+      const memories = new MemoryStore(staged, vault, async () => false);
+      restored = memories;
+      memories.lockDestinationScopesAfterRestore();
     }
     restored.close();
     restored = undefined;

@@ -63,12 +63,24 @@ export const sourceBindingSchema = z
       new Set(b.refs.map((r) => r.resourceId)).size === b.refs.length,
   );
 export type SourceBinding = z.infer<typeof sourceBindingSchema>;
+export const memorySelectionSchema = z.strictObject({
+  destination: z.enum(["local", "crm", "autonote", "mail"]),
+  confirmed: z.literal(true),
+  memories: z
+    .array(z.strictObject({ id, revision: z.number().int().positive() }))
+    .min(1)
+    .max(8)
+    .refine(
+      (items) => new Set(items.map((item) => item.id)).size === items.length,
+    ),
+});
 export const requestSchema = z.strictObject({
   conversationId: id,
   kind: z.enum(["query", "summarize", "draft"]),
   prompt: z.string().min(1).max(32_000),
   modelProfileId: id,
   allowQuestions: z.boolean().optional(),
+  memorySelection: memorySelectionSchema.optional(),
   memoryIds: z
     .array(id)
     .max(8)

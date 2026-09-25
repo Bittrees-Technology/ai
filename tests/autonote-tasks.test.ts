@@ -1,3 +1,4 @@
+import { memorySelectionGuard } from "../apps/companion/memory-selection.js";
 import { taskDependencyGuard } from "../apps/companion/memory.js";
 import { sourceMemoryAccess } from "../apps/companion/source-memory.js";
 import { MemoryStore } from "../modules/memory/store.js";
@@ -338,6 +339,7 @@ test("AutoNote local generation verifies citations, derives source timestamps an
           headers: {
             Authorization: "Bearer " + token,
             "Content-Type": "application/json",
+            "Idempotency-Key": "connected-memory-request",
           },
           body: body ? JSON.stringify(body) : undefined,
         });
@@ -352,6 +354,95 @@ test("AutoNote local generation verifies citations, derives source timestamps an
           expectedRevision: saved.revision,
         });
         assert.equal(captured.status, 201);
+        const scoped = await memory.add(owner, {
+          type: "preference",
+          text: "SOURCE_SCOPE_CONTEXT",
+          origin: "user",
+          sources: retained.sources,
+        });
+        const localOnly = await memory.review(owner, scoped.id, 1, {
+          approve: true,
+        });
+        await assert.rejects(
+          memorySelectionGuard(
+            store,
+            owner,
+            memory,
+            f.sources,
+            {
+              destination: "autonote",
+              confirmed: true,
+              memories: [{ id: scoped.id, revision: localOnly.revision }],
+            },
+            "autonote",
+          ),
+        );
+        const allowed = await memory.review(
+          owner,
+          scoped.id,
+          localOnly.revision,
+          {
+            useApps: ["local", "autonote"],
+            scopeConfirmed: true,
+          },
+        );
+        const selection = {
+          destination: "autonote" as const,
+          confirmed: true as const,
+          memories: [{ id: scoped.id, revision: allowed.revision }],
+        };
+        store.addProfile(owner, profile);
+        const submitted = await call("/v1/connections/autonote/drafts", {
+          conversationId: randomUUID(),
+          meetingId: f.meeting.id,
+          prompt: input.prompt,
+          modelProfileId: profile.id,
+          memorySelection: selection,
+        });
+        assert.equal(submitted.status, 202, await submitted.clone().text());
+        const connected = await submitted.json();
+        assert.deepEqual(
+          store.get(owner, connected.id).input.memorySelection,
+          selection,
+        );
+        const sourceWorker = new LocalWorker(
+          store,
+          owner,
+          {
+            pin: async () => ({ profile, digest: "e".repeat(64) }),
+            generate: async (_profile, prompt) => {
+              assert.match(prompt, /SOURCE_SCOPE_CONTEXT/);
+              assert.match(
+                prompt,
+                /not part of the selected source transcript/,
+              );
+              return JSON.stringify(draft);
+            },
+          },
+          () => profile,
+          "connected-memory-worker",
+          memory,
+          f.sources,
+        );
+        await sourceWorker.runOnce();
+        assert.equal(store.get(owner, connected.id).status, "completed");
+        const connectedCheck = await taskDependencyGuard(
+          store,
+          owner,
+          connected.id,
+          memory,
+          f.sources,
+        );
+        await memory.review(owner, scoped.id, allowed.revision, {
+          useApps: ["local"],
+          scopeConfirmed: true,
+        });
+        assert.throws(connectedCheck, /NOT_FOUND/);
+        assert.equal(
+          (await (await call("/v1/requests/" + connected.id)).json()).result,
+          null,
+        );
+
         f.deny();
         const hidden = await (await call("/v1/requests/" + followup.id)).json();
         assert.equal(hidden.result, null);
@@ -989,7 +1080,7 @@ test("schema six migration preserves tasks and adds the AutoNote operation ledge
     store = new Store(path, vault);
     assert.deepEqual(store.get(owner, task.id), task);
     assert.deepEqual(store.autoNoteReviews(owner, task.id), []);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 38);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 39);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

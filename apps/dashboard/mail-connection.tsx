@@ -1,3 +1,4 @@
+import { useAppMemory } from "./app-memory.js";
 import { QuestionChoice } from "./question-choice.js";
 import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useRef, useState } from "react";
@@ -33,6 +34,20 @@ export function MailConnection({
     [prompt, setPrompt] = useState(
       "Summarize the selected message. Cite the source and identify uncertainty.",
     );
+  const draftMemory = useAppMemory(
+    api,
+    "mail",
+    JSON.stringify({
+      selection,
+      plain,
+      attachment,
+      kind,
+      prompt,
+      profile,
+      allowQuestions,
+    }),
+    busy,
+  );
   const mounted = useRef(true),
     epoch = useRef(0),
     working = useRef(false),
@@ -160,7 +175,9 @@ export function MailConnection({
                   onSubmit={(e) => {
                     e.preventDefault();
                     void act(async () => {
+                      const memorySelection = draftMemory.request();
                       const fingerprint = JSON.stringify({
+                        memorySelection,
                         grantId: status.connection.grantId,
                         message: selection.message.id,
                         version: selection.message.sourceVersion,
@@ -192,10 +209,12 @@ export function MailConnection({
                           prompt,
                           modelProfileId: profile,
                           ...(allowQuestions ? { allowQuestions: true } : {}),
+                          ...(memorySelection ? { memorySelection } : {}),
                         },
                         { "Idempotency-Key": attempt.current.key },
                       );
                       attempt.current = null;
+                      draftMemory.clear();
                       if (mounted.current) onCreated(task.id);
                     });
                   }}
@@ -295,6 +314,7 @@ export function MailConnection({
                     summary option is checked. Review every generated claim
                     before use.
                   </p>
+                  {draftMemory.panel}
                   <QuestionChoice
                     checked={allowQuestions}
                     onChange={setAllowQuestions}
@@ -303,6 +323,7 @@ export function MailConnection({
                   <button
                     disabled={
                       busy ||
+                      draftMemory.blocked ||
                       !profile ||
                       !prompt.trim() ||
                       (kind === "draft" && !plain)

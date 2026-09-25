@@ -125,7 +125,7 @@ test("schema eleven migration indexes existing messages and preserves positions 
     store.db.exec("DROP TABLE message_positions; PRAGMA user_version=11");
     store.close();
     store = new Store(path, vault);
-    assert.equal(store.db.pragma("user_version", { simple: true }), 38);
+    assert.equal(store.db.pragma("user_version", { simple: true }), 39);
     assert.deepEqual(
       store.inboxConversationPage(owner, "personal").items.map((i) => i.id),
       ["second", "first"],

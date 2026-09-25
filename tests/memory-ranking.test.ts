@@ -140,7 +140,7 @@ test("feedback follows exact content through edits and pin changes without delet
       );
       assert.equal(
         (db.prepare("SELECT version FROM memory_meta").get() as any).version,
-        2,
+        3,
       );
     } finally {
       db.close();
@@ -276,7 +276,7 @@ test("failed memory migration rolls back its column and version without changing
     memory.close();
     assert.equal(
       (db.prepare("SELECT version FROM memory_meta").get() as any).version,
-      2,
+      3,
     );
   } finally {
     db.close();

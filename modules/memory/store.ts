@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { id, sourceRefSchema } from "../contracts/index.js";
+import { memoryUseAppsSchema, type MemoryApp } from "./scope.js";
 import { Vault } from "../storage/vault.js";
 import { StoreError, type Owner } from "../storage/store.js";
 const memorySchema = z.strictObject({
@@ -10,6 +11,7 @@ const memorySchema = z.strictObject({
   text: z.string().min(1).max(16000),
   sources: z.array(sourceRefSchema).min(1).max(32),
   origin: z.enum(["user", "model"]),
+  useApps: memoryUseAppsSchema.default(["local"]),
   expiresAt: z.number().int().positive().nullable().default(null),
 });
 type MemoryInput = z.infer<typeof memorySchema>;
@@ -57,7 +59,7 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
           .get() as { version: number; verifier: Buffer } | undefined;
         if (meta) {
           if (
-            ![1, 2].includes(meta.version) ||
+            ![1, 2, 3].includes(meta.version) ||
             this.vault.open(meta.verifier, "memory-key") !==
               "bittrees-ai-memory"
           )
@@ -67,12 +69,35 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
               "ALTER TABLE feedback ADD COLUMN content_fingerprint TEXT; UPDATE memory_meta SET version=2 WHERE id=1",
             );
           }
+          if (meta.version < 3) {
+            // Canonicalize the new default without duplicating old candidates or
+            // losing feedback bound to unchanged content. Older writers refuse3.
+            for (const row of this.db
+              .prepare("SELECT * FROM memory")
+              .all() as Row[]) {
+              const input = this.input(row),
+                fingerprint = this.vault.fingerprint(input);
+              this.db
+                .prepare("UPDATE memory SET payload=?,fingerprint=? WHERE id=?")
+                .run(
+                  this.vault.seal(input, "memory:" + row.id),
+                  fingerprint,
+                  row.id,
+                );
+              this.db
+                .prepare(
+                  "UPDATE feedback SET content_fingerprint=? WHERE memory_id=? AND content_fingerprint=?",
+                )
+                .run(fingerprint, row.id, row.fingerprint);
+            }
+            this.db.exec("UPDATE memory_meta SET version=3 WHERE id=1");
+          }
         } else {
           this.db.exec(
             "ALTER TABLE feedback ADD COLUMN content_fingerprint TEXT",
           );
           this.db
-            .prepare("INSERT INTO memory_meta VALUES(1,2,?)")
+            .prepare("INSERT INTO memory_meta VALUES(1,3,?)")
             .run(this.vault.seal("bittrees-ai-memory", "memory-key"));
         }
       })();
@@ -89,7 +114,9 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     return r;
   }
   private input(r: Row) {
-    return this.vault.open<MemoryInput>(r.payload, "memory:" + r.id);
+    return memorySchema.parse(
+      this.vault.open<unknown>(r.payload, "memory:" + r.id),
+    );
   }
   private unexpired(input: MemoryInput) {
     return input.expiresAt === null || input.expiresAt > this.now();
@@ -117,7 +144,10 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     return this.unexpired(input) && this.canRead(owner, input.sources);
   }
   async add(owner: Owner, raw: unknown, beforeCommit?: () => void) {
-    const input = memorySchema.parse(raw);
+    const input = {
+      ...memorySchema.omit({ useApps: true }).parse(raw),
+      useApps: ["local"] as MemoryApp[],
+    };
     if (!(await this.visible(owner, input))) throw new StoreError("NOT_FOUND");
     return this.db
       .transaction(() => {
@@ -158,16 +188,45 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
       .immediate();
   }
   /** Metadata for the local dependency walker, never a content/access grant. */
-  dependencySources(owner: Owner, memoryId: string, revision?: number) {
+  dependencySources(
+    owner: Owner,
+    memoryId: string,
+    revision?: number,
+    destination: string = "local",
+  ) {
     const row = this.row(owner, memoryId),
       input = this.input(row);
     if (
+      !input.useApps.some((app) => app === destination) ||
       row.state !== "approved" ||
       !this.unexpired(input) ||
       (revision !== undefined && row.revision !== revision)
     )
       throw new StoreError("NOT_FOUND");
     return input.sources;
+  }
+  /** Restoring a retained copy must not revive an earlier cross-app permission. */
+  lockDestinationScopesAfterRestore() {
+    this.db
+      .transaction(() => {
+        const rows = this.db.prepare("SELECT * FROM memory").all() as Row[];
+        for (const row of rows) {
+          const input = this.input(row);
+          if (input.useApps.every((app) => app === "local")) continue;
+          const next = {
+            ...input,
+            useApps: input.useApps.filter((app) => app === "local"),
+          };
+          // Preserve row identity: stripping scope must not collapse distinct
+          // retained candidates with otherwise equal content and provenance.
+          this.db
+            .prepare(
+              "UPDATE memory SET revision=revision+1,updated_at=?,payload=? WHERE id=?",
+            )
+            .run(this.now(), this.vault.seal(next, "memory:" + row.id), row.id);
+        }
+      })
+      .immediate();
   }
   async get(owner: Owner, memoryId: string) {
     const r = this.row(owner, memoryId),
@@ -189,19 +248,35 @@ CREATE TABLE IF NOT EXISTS feedback(memory_id TEXT NOT NULL REFERENCES memory(id
     owner: Owner,
     memoryId: string,
     revision: number,
-    change: { approve?: boolean; text?: string; pinned?: boolean },
+    change: {
+      approve?: boolean;
+      text?: string;
+      pinned?: boolean;
+      useApps?: MemoryApp[];
+      scopeConfirmed?: true;
+    },
   ) {
     const patch = z
       .strictObject({
         approve: z.boolean().optional(),
         text: z.string().min(1).max(16000).optional(),
         pinned: z.boolean().optional(),
+        useApps: memoryUseAppsSchema.optional(),
+        scopeConfirmed: z.literal(true).optional(),
       })
+      .refine(
+        (patch) =>
+          (patch.useApps !== undefined) === (patch.scopeConfirmed === true),
+      )
       .parse(change);
     const initial = this.row(owner, memoryId);
     const input = this.input(initial);
     if (!(await this.visible(owner, input))) throw new StoreError("NOT_FOUND");
-    const next = { ...input, ...(patch.text ? { text: patch.text } : {}) };
+    const next = {
+      ...input,
+      ...(patch.text ? { text: patch.text } : {}),
+      ...(patch.useApps !== undefined ? { useApps: patch.useApps } : {}),
+    };
     this.db
       .transaction(() => {
         const current = this.row(owner, memoryId);
