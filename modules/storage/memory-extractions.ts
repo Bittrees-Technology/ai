@@ -47,7 +47,13 @@ export class MemoryExtractions {
       ? { parentId: value.parentId, parentRevision: value.parentRevision }
       : null;
   }
-  private source(owner: Owner, id: string, revision: number) {
+  private source(
+    owner: Owner,
+    id: string,
+    revision: number,
+    checkAccess?: () => void,
+  ) {
+    checkAccess?.();
     const parent = this.store.get(owner, id);
     const result = z
       .object({ text: z.string().min(1) })
@@ -55,19 +61,30 @@ export class MemoryExtractions {
     if (
       parent.status !== "completed" ||
       parent.revision !== revision ||
-      parent.input.sourceRefs.length ||
-      this.store.sourceBinding(owner, id) ||
+      (!checkAccess &&
+        (parent.input.sourceRefs.length ||
+          this.store.sourceBinding(owner, id))) ||
       this.binding(owner, id) ||
       !result.success
     )
       throw new StoreError("CONFLICT");
     return { requestText: parent.input.prompt, resultText: result.data.text };
   }
-  create(owner: Owner, parentId: string, raw: unknown) {
+  create(
+    owner: Owner,
+    parentId: string,
+    raw: unknown,
+    checkAccess?: () => void,
+  ) {
     const input = request.parse(raw);
     return this.store.db
       .transaction(() => {
-        const source = this.source(owner, parentId, input.expectedRevision);
+        const source = this.source(
+          owner,
+          parentId,
+          input.expectedRevision,
+          checkAccess,
+        );
         const prepared = prepareMemoryCandidates(source);
         this.store.profile(owner, input.modelProfileId);
         const key = "memory-candidates:" + input.invocationId;
@@ -130,8 +147,8 @@ export class MemoryExtractions {
       runs: this.store.runHistory(owner, task_id),
     }));
   }
-  review(owner: Owner, id: string) {
-    const context = this.context(owner, id);
+  review(owner: Owner, id: string, checkAccess?: () => void) {
+    const context = this.context(owner, id, checkAccess);
     const task = this.store.get(owner, id);
     if (!context || task.status !== "completed")
       throw new StoreError("CONFLICT");
@@ -148,10 +165,15 @@ export class MemoryExtractions {
       ...result,
     };
   }
-  context(owner: Owner, id: string) {
+  context(owner: Owner, id: string, checkAccess?: () => void) {
     const binding = this.binding(owner, id);
     if (!binding) return null;
-    const source = this.source(owner, binding.parentId, binding.parentRevision);
+    const source = this.source(
+      owner,
+      binding.parentId,
+      binding.parentRevision,
+      checkAccess,
+    );
     const prepared = prepareMemoryCandidates(source);
     const task = this.store.get(owner, id);
     if (

@@ -131,7 +131,8 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
   let saved = false,
     saves = 0,
     cancels = 0,
-    memorySaves = 0;
+    memorySaves = 0,
+    suggestionRequests = 0;
   await page.route("**/v1/**", async (route) => {
     const req = route.request(),
       path = new URL(req.url()).pathname;
@@ -141,6 +142,7 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
           task: {
             id: "synthetic-task",
             revision: 7,
+            input: { prompt: "Summarize the reviewed meeting." },
             status: "completed",
             result: {
               text: "Review the draft plan with the team. [s1: 2–8 seconds]",
@@ -148,6 +150,15 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
           },
         },
       });
+    if (path === "/v1/requests/synthetic-task/memory-suggestions") {
+      expect(req.postDataJSON()).toMatchObject({
+        expectedRevision: 7,
+        modelProfileId: "local-model",
+        confirmed: true,
+      });
+      suggestionRequests++;
+      return route.fulfill({ json: { id: "suggestion-task" } });
+    }
     if (path === "/v1/requests/synthetic-task/memories") {
       expect(req.postDataJSON()).toEqual({
         text: "Review the draft plan",
@@ -320,6 +331,39 @@ test("exact resulting notes require fresh acknowledgement and show the saved rec
   await capture.click();
   await expect(memory.getByRole("status")).toContainText("Candidate saved");
   expect(memorySaves).toBe(1);
+  const suggestions = page.getByRole("region", {
+    name: "Memory suggestions",
+    exact: true,
+  });
+  await suggestions
+    .getByRole("button", { name: "Prepare suggestions" })
+    .click();
+  await expect(
+    suggestions.getByText("Summarize the reviewed meeting.", { exact: true }),
+  ).toBeVisible();
+  const requestSuggestions = suggestions.getByRole("button", {
+    name: "Request local suggestions",
+  });
+  await expect(requestSuggestions).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await suggestions.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-suggestions-phone.png`,
+  });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await suggestions.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-suggestions-desktop.png`,
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(requestSuggestions).toHaveCount(0);
+  expect(suggestionRequests).toBe(0);
+  await suggestions
+    .getByRole("button", { name: "Prepare suggestions" })
+    .click();
+  await requestSuggestions.click();
+  await expect(suggestions.getByRole("status")).toContainText(
+    "suggestion-task",
+  );
+  expect(suggestionRequests).toBe(1);
 });
 
 test("browser approval delivery reviews remaining parts and cancels on focus loss", async ({

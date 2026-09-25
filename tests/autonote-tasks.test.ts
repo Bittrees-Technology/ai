@@ -354,6 +354,81 @@ test("AutoNote local generation verifies citations, derives source timestamps an
           expectedRevision: saved.revision,
         });
         assert.equal(captured.status, 201);
+        // Use the same authorized source, actual HTTP routes and worker for suggestions.
+        store.addProfile(owner, profile);
+        const suggestions = "/v1/requests/" + task.id + "/memory-suggestions";
+        const prepared = await call(suggestions, {
+          expectedRevision: saved.revision,
+          modelProfileId: profile.id,
+          invocationId: randomUUID(),
+          confirmed: true,
+        });
+        assert.equal(prepared.status, 201, await prepared.clone().text());
+        const extraction = await prepared.json();
+        const suggestionWorker = new LocalWorker(
+          store,
+          owner,
+          {
+            pin: async () => ({ profile, digest: "e".repeat(64) }),
+            generate: async (_profile, prompt) => {
+              assert.match(prompt, /Review the plan/);
+              return JSON.stringify({
+                version: 1,
+                candidates: [
+                  {
+                    type: "decision",
+                    text: "Review the plan",
+                    evidence: [{ source: "result", quote: "Review the plan" }],
+                  },
+                ],
+              });
+            },
+          },
+          () => profile,
+          "source-suggestions-worker",
+          memory,
+          f.sources,
+        );
+        await suggestionWorker.runOnce();
+        assert.equal(
+          store.get(owner, extraction.id).status,
+          "completed",
+          JSON.stringify(store.get(owner, extraction.id).result),
+        );
+        const suggestionPath =
+          "/v1/requests/" + extraction.id + "/memory-suggestions";
+        const reviewedResponse = await call(suggestionPath);
+        assert.equal(
+          reviewedResponse.status,
+          200,
+          await reviewedResponse.clone().text(),
+        );
+        const reviewed = await reviewedResponse.json();
+        assert.equal(reviewed.parentId, task.id);
+        assert.equal(reviewed.candidates[0].text, "Review the plan");
+        const savedSuggestion = await call(suggestionPath + "/save", {
+          expectedRevision: reviewed.revision,
+          index: 0,
+          confirmed: true,
+        });
+        assert.equal(
+          savedSuggestion.status,
+          201,
+          await savedSuggestion.clone().text(),
+        );
+        const suggestion = await memory.get(
+          owner,
+          (await savedSuggestion.json()).id,
+        );
+        assert.equal(suggestion.state, "candidate");
+        assert.deepEqual(suggestion.useApps, ["local"]);
+        assert.equal(suggestion.sources[0]!.resourceId, task.id);
+        const listed = await (await call("/v1/requests")).json();
+        const listedExtraction = listed.items.find(
+          (item: any) => item.id === extraction.id,
+        );
+        assert.equal(listedExtraction.result, null);
+        assert.equal(listedExtraction.memoryExtraction, true);
         const scoped = await memory.add(owner, {
           type: "preference",
           text: "SOURCE_SCOPE_CONTEXT",
@@ -391,7 +466,6 @@ test("AutoNote local generation verifies citations, derives source timestamps an
           confirmed: true as const,
           memories: [{ id: scoped.id, revision: allowed.revision }],
         };
-        store.addProfile(owner, profile);
         const submitted = await call("/v1/connections/autonote/drafts", {
           conversationId: randomUUID(),
           meetingId: f.meeting.id,
@@ -444,6 +518,18 @@ test("AutoNote local generation verifies citations, derives source timestamps an
         );
 
         f.deny();
+        assert.notEqual((await call(suggestionPath)).status, 200);
+        assert.notEqual(
+          (
+            await call(suggestionPath + "/save", {
+              expectedRevision: reviewed.revision,
+              index: 0,
+              confirmed: true,
+            })
+          ).status,
+          201,
+        );
+        await assert.rejects(memory.get(owner, suggestion.id));
         const hidden = await (await call("/v1/requests/" + followup.id)).json();
         assert.equal(hidden.result, null);
         assert.equal(hidden.dependencyAccess, "unavailable");

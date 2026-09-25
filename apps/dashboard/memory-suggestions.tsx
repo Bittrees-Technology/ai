@@ -5,6 +5,7 @@ export function MemorySuggestions({
   revision,
   profileId,
   extraction,
+  sourceLinked = false,
   api,
   onError,
 }: {
@@ -12,6 +13,7 @@ export function MemorySuggestions({
   revision: number;
   profileId: string;
   extraction: boolean;
+  sourceLinked?: boolean;
   api: (path: string, method: string, body?: unknown) => Promise<any>;
   onError: (error: unknown) => void;
 }) {
@@ -26,6 +28,11 @@ export function MemorySuggestions({
     const hide = () => c.hide();
     window.addEventListener("blur", hide);
     document.addEventListener("visibilitychange", hide);
+    useEffect(() => {
+      if (!sourceLinked || (!c.prepared && !c.review)) return;
+      const timer = setTimeout(() => c.hide(), 120000);
+      return () => clearTimeout(timer);
+    }, [c, sourceLinked, c.prepared, c.review]);
     return () => {
       window.removeEventListener("blur", hide);
       document.removeEventListener("visibilitychange", hide);
@@ -34,7 +41,7 @@ export function MemorySuggestions({
   }, [c]);
   useEffect(() => c.hide(), [c, profileId]);
   return (
-    <section>
+    <section aria-label="Memory suggestions">
       <h3>Memory suggestions</h3>
       {extraction ? (
         <>
@@ -101,12 +108,30 @@ export function MemorySuggestions({
             <>
               <button
                 disabled={c.busy || !profileId}
-                onClick={() => c.prepare(profileId)}
+                onClick={() => {
+                  if (document.hidden || !document.hasFocus()) return;
+                  if (sourceLinked)
+                    void c.prepareSource(profileId).catch(onError);
+                  else c.prepare(profileId);
+                }}
               >
                 Prepare suggestions
               </button>
               {c.prepared && (
                 <div>
+                  {c.source && (
+                    <>
+                      <h4>Your request</h4>
+                      <p className="prose">{c.source.request}</p>
+                      <h4>Task result</h4>
+                      <p className="prose">{c.source.result}</p>
+                      <p>
+                        Review this source-backed draft before requesting
+                        suggestions. Saved candidates retain their source link
+                        and start with local-only app permissions.
+                      </p>
+                    </>
+                  )}
                   <p>
                     Use profile {profileId} on this Mac for task {taskId},
                     revision {revision}? Its request and result will enter the

@@ -1,3 +1,4 @@
+import { MemorySuggestions } from "../../../apps/dashboard/memory-suggestions.js";
 import { SourceMemoryCapture } from "../../../apps/dashboard/source-memory-capture.js";
 import React from "react";
 import { createRoot } from "react-dom/client";
@@ -23,6 +24,17 @@ createRoot(main).render(
       taskId: "synthetic-task",
       sourceApp: "autonote",
       api,
+    }),
+    React.createElement(MemorySuggestions, {
+      taskId: "synthetic-task",
+      revision: 7,
+      profileId: "local-model",
+      extraction: false,
+      sourceLinked: true,
+      api,
+      onError: (error) => {
+        throw error;
+      },
     }),
     React.createElement(AutoNoteReviewControls, {
       id: "synthetic-task",
