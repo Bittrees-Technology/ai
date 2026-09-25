@@ -1,4 +1,5 @@
 node_modules/
+.legacy-mac-key-boundary/
 dist/
 .env
 .env.*
