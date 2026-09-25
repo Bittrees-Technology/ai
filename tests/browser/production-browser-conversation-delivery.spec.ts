@@ -74,6 +74,13 @@ async function confirm(page: Page, name: string) {
   await panel(page).getByLabel(ack, { exact: true }).check();
   await button(page, name).click();
 }
+// Clicking begins asynchronous source/permission checks. Cross-panel actions and
+// previews must wait for the actual review, not cancel its preparation by accident.
+async function reviewSend(page: Page) {
+  await button(page, "Review sending to Mac").click();
+  await expect(button(page, "Send reviewed message")).toBeDisabled();
+  await expect(panel(page).getByLabel(ack, { exact: true })).not.toBeChecked();
+}
 async function openMessage(page: Page, name = "Open message to mac 1") {
   await button(page, name).click();
   await expect(panel(page).getByRole("status")).toContainText(
@@ -223,7 +230,7 @@ test("built conversation delivery reviews the original message, recovers a lost 
     await saveMessage(page);
     await expect(button(page, "Review sending to Mac")).toBeDisabled();
     await prepareCopy(page, undefined, info);
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     await expect(panel(page)).toContainText("SYNTHETIC_REVIEWED_DELIVERY");
     await expect(panel(page)).toContainText(f.mac.binding.deviceId);
     await preview(page, info, "send-review");
@@ -238,7 +245,7 @@ test("built conversation delivery reviews the original message, recovers a lost 
     await expect(panel(page)).toContainText("Upload result unconfirmed");
     await preview(page, info, "uncertain-history");
     await openMessage(page);
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     await confirm(page, "Send reviewed message");
     await expect(panel(page).getByRole("status")).toContainText(
       "Server storage response saved",
@@ -378,7 +385,7 @@ test("built conversation delivery closes reviews across focus and panel changes 
     await setup(page, f);
     await saveMessage(page);
     await prepareCopy(page);
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await expect(panel(page).getByRole("status")).toContainText(
       "Private text hidden",
@@ -387,7 +394,7 @@ test("built conversation delivery closes reviews across focus and panel changes 
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await refresh(page);
     await openMessage(page);
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     await page
       .getByRole("region", {
         name: "Browser conversation permissions",
@@ -399,9 +406,24 @@ test("built conversation delivery closes reviews across focus and panel changes 
       })
       .click();
     await expect(button(page, "Send reviewed message")).toBeHidden();
+    // Closing the other review is synchronous; loading its permissions is not.
+    // Finish that operation before testing the next independent panel action.
+    const permissions = page.getByRole("region", {
+      name: "Browser conversation permissions",
+      exact: true,
+    });
+    await expect(permissions.getByRole("status")).toContainText(
+      "Permission history loaded",
+    );
+    await expect(
+      permissions.getByRole("button", {
+        name: "Refresh conversation permissions",
+        exact: true,
+      }),
+    ).toBeEnabled();
     await refresh(page);
     await openMessage(page);
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     identityServer.hold("/browser/relay/messages/submit");
     await confirm(page, "Send reviewed message");
     await expect.poll(identityServer.held).toBe(true);
@@ -437,7 +459,7 @@ test("built conversation receipt review binds the exact outgoing copy and leaves
     const selected = await setup(page, f);
     await saveMessage(page, "SYNTHETIC_FIRST_COPY");
     await prepareCopy(page);
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     await confirm(page, "Send reviewed message");
     await expect(panel(page).getByRole("status")).toContainText(
       "Server storage response saved",
@@ -511,7 +533,7 @@ test("built conversation delivery carries a real worker question and reviewed an
     await refresh(page);
     await openMessage(page, "Open answer to mac 2");
     await prepareCopy(page, "Open answer to mac 2");
-    await button(page, "Review sending to Mac").click();
+    await reviewSend(page);
     await confirm(page, "Send reviewed message");
     await expect(panel(page).getByRole("status")).toContainText(
       "Server storage response saved",

@@ -100,8 +100,8 @@ export function ConversationPermissions({
       </p>
       <p className="hint">
         Saving choices does not send messages. Prepare and review each upload in
-        the delivery controls below. Incoming queue controls are still being
-        prepared.
+        the delivery controls below. Inspect incoming items there and review
+        each item before receiving it.
       </p>
       <button
         disabled={c.busy}

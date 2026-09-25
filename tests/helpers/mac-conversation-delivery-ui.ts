@@ -7,10 +7,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { localApi } from "../../apps/companion/http.js";
 import { LocalWorker } from "../../apps/companion/worker.js";
-import { macConversationRelayFixture } from "./mac-conversation-relay.js";
+import { macConversationReceiveFixture } from "./mac-conversation-receive.js";
 import { ConversationContentPanelState } from "../../apps/dashboard/conversation-content-state.js";
 export async function macConversationDeliveryFixture(questions = false) {
-  const g = await macConversationRelayFixture(true, questions),
+  const g = await macConversationReceiveFixture(questions),
     server = createServer(),
     token = randomBytes(32).toString("base64url");
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -86,22 +86,35 @@ export async function macConversationDeliveryFixture(questions = false) {
       },
       randomUUID(),
     );
+    let generations = 0;
     const worker = new LocalWorker(
       g.e.store,
       g.e.owner,
       {
         pin: async () => ({ profile, digest: "c".repeat(64) }),
-        generate: async () =>
-          JSON.stringify({
-            decision: "ask",
-            question: "Where are you travelling?",
-          }),
+        generate: async (_model, prompt, _signal, format) => {
+          generations++;
+          if (format)
+            return JSON.stringify(
+              generations === 1
+                ? { decision: "ask", question: "Where are you travelling?" }
+                : { decision: "continue" },
+            );
+          if (!prompt.includes("Lisbon"))
+            throw Error("Expected reviewed answer");
+          return "Synthetic Lisbon plan";
+        },
       },
       () => profile,
     );
     await worker.runOnce();
     const wait = g.e.store.inputWaitHistory(g.e.owner, task.id)[0]!;
-    return { task, wait };
+    return {
+      task,
+      wait,
+      run: () => worker.runOnce(),
+      calls: () => generations,
+    };
   };
   const incomingReceipt = async () => {
     const id = randomUUID(),
@@ -166,6 +179,7 @@ export async function macConversationDeliveryFixture(questions = false) {
     permissionId,
     controller,
     message,
+    incomingMessage: g.message,
     prepare,
     question,
     close: async () => {
