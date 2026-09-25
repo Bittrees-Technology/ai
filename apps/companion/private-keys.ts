@@ -477,6 +477,17 @@ export class CompanionPrivateKeys {
   confirmResumeOffer(raw: unknown) {
     return this.exclusive(() => this.resumes.confirmOffer(raw));
   }
+  inspectRelayedResume(relay: CompanionPrivateRelay, raw: unknown) {
+    return this.protocolOperation(() => this.resumes.inspectRelay(raw, relay));
+  }
+  receiveRelayedResume(relay: CompanionPrivateRelay, raw: unknown) {
+    return this.protocolOperation(() => this.resumes.receiveRelay(raw, relay));
+  }
+  sendRelayedResumeReceipt(relay: CompanionPrivateRelay, raw: unknown) {
+    return this.protocolOperation(() =>
+      this.resumes.sendRelayReceipt(raw, relay),
+    );
+  }
   receivePrivateResume(raw: unknown) {
     return this.protocolOperation(() => this.resumes.receive(raw));
   }

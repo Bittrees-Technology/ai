@@ -1,6 +1,17 @@
+import type { CompanionPrivateRelay } from "./private-relay.js";
+import type { PrivateRelayClient } from "../../modules/remote/private-relay-client.js";
+import {
+  privateRelayQueueQuerySchema,
+  privateRelaySelectionSchema,
+  relayQueueReview,
+  relaySelectionMatches,
+} from "../../modules/remote/private-relay-queue.js";
 import { CompanionResumeOffers } from "./private-resume-offers.js";
 import type { PinnedModel } from "../../modules/models/ollama.js";
-import { PrivateResumeDelivery } from "../../modules/remote/private-resume-delivery.js";
+import {
+  PrivateResumeDelivery,
+  exportPrivateResumeDelivery,
+} from "../../modules/remote/private-resume-delivery.js";
 import type { ResumeAccess } from "../../modules/storage/remote-resumes.js";
 import type { Ollama } from "../../modules/models/ollama.js";
 import { randomUUID } from "node:crypto";
@@ -19,6 +30,11 @@ import type { RemoteClient } from "../../modules/remote/client.js";
 import type { Owner, Store } from "../../modules/storage/store.js";
 import type { Vault } from "../../modules/storage/vault.js";
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const connection = z.strictObject({
+  id: z.uuid(),
+  expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+const relayQuery = privateRelayQueueQuerySchema.extend({ connection });
 const request = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("grant"),
@@ -118,6 +134,17 @@ export class CompanionPrivateResumes {
       keyState = this.keys().list(),
       peers = exportPrivatePeers(this.store, this.vault, this.owner);
     return {
+      deliveries: exportPrivateResumeDelivery(
+        this.store,
+        this.vault,
+        this.owner,
+      ).map(({ id, locked, value }) => ({
+        commandId: id,
+        locked,
+        permissionId: value.permissionId,
+        receipt: value.receipt,
+        expiresAt: value.header.expiresAt,
+      })),
       available: true,
       canSetup:
         this.enabled && !!this.remote && !!this.runtime && !!this.taskAccess,
@@ -206,6 +233,131 @@ export class CompanionPrivateResumes {
   receipt(raw: unknown) {
     this.invalidate();
     return this.delivery((receiver) => receiver.receipt(raw));
+  }
+  private relayScope<T>(
+    relay: CompanionPrivateRelay,
+    raw: z.infer<typeof connection>,
+    action: (
+      client: PrivateRelayClient,
+      receiver: PrivateResumeDelivery,
+      check: () => void,
+    ) => Promise<T>,
+  ) {
+    if (!this.enabled || !this.remote || !this.taskAccess)
+      throw new PrivateResumeConsentError("DENIED");
+    const generation = this.generation;
+    return relay.withTransport(raw, async (client, binding) => {
+      const current = () => (generation === this.generation ? binding() : null);
+      const check = () => {
+        if (!current()) throw new PrivateResumeConsentError("DENIED");
+      };
+      check();
+      const receiver = new PrivateResumeDelivery(
+        this.store,
+        this.vault,
+        this.owner,
+        this.consent(current),
+        this.taskAccess!,
+        this.now,
+      );
+      const result = await action(client, receiver, check);
+      check();
+      return result;
+    });
+  }
+  inspectRelay(raw: unknown, relay: CompanionPrivateRelay) {
+    const input = relayQuery.parse(raw);
+    return this.relayScope(
+      relay,
+      input.connection,
+      async (client, _receiver, check) => {
+        const page = await client.poll({ after: input.after, limit: 1 });
+        check();
+        return {
+          transportOnly: true as const,
+          item: relayQueueReview(page.items[0]),
+          nextCursor: page.nextCursor,
+        };
+      },
+    );
+  }
+  /** Exact task/model permission and shared replay admission precede acknowledgement. */
+  receiveRelay(raw: unknown, relay: CompanionPrivateRelay) {
+    const input = relayQuery
+      .extend({
+        selection: privateRelaySelectionSchema,
+        permissionId: z.uuid(),
+      })
+      .parse(raw);
+    return this.relayScope(
+      relay,
+      input.connection,
+      async (client, receiver, check) => {
+        const page = await client.poll({ after: input.after, limit: 1 });
+        check();
+        const item = page.items[0];
+        if (!item || !relaySelectionMatches(item, input.selection))
+          throw new PrivateResumeConsentError("CONFLICT");
+        const received = await receiver.receive({
+          permissionId: input.permissionId,
+          envelope: item.envelope,
+          confirmed: true,
+        });
+        check();
+        const transport = await client.acknowledge({
+          messageId: item.receipt.messageId,
+          envelopeHash: item.receipt.envelopeHash,
+          expectedRevision: item.receipt.revision,
+          confirmed: true,
+        });
+        check();
+        return {
+          received,
+          transport: { transportOnly: true as const, ...transport },
+          nextCursor: page.nextCursor,
+        };
+      },
+    );
+  }
+  /** Receipt transmission is separate from acceptance. A lost reply can be retried
+   * with the original retained ciphertext, without executing the command again. */
+  sendRelayReceipt(raw: unknown, relay: CompanionPrivateRelay) {
+    const input = z
+      .strictObject({
+        connection,
+        permissionId: z.uuid(),
+        commandId: z.uuid(),
+        confirmed: z.literal(true),
+      })
+      .parse(raw);
+    return this.relayScope(
+      relay,
+      input.connection,
+      async (client, receiver, check) => {
+        const receiptRequest = {
+          permissionId: input.permissionId,
+          commandId: input.commandId,
+          confirmed: true as const,
+        };
+        const envelope = await receiver.receipt(receiptRequest);
+        check();
+        const result = await client.submit(
+          { version: 1, envelope },
+          async () => {
+            check();
+            const current = await receiver.receipt(receiptRequest);
+            check();
+            if (!same(current, envelope))
+              throw new PrivateResumeConsentError("CONFLICT");
+          },
+        );
+        check();
+        return {
+          commandId: input.commandId,
+          transport: { transportOnly: true as const, ...result },
+        };
+      },
+    );
   }
   async withExecution<T>(
     taskId: string,
