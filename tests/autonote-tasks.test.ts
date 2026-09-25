@@ -46,6 +46,8 @@ const draft = {
 };
 async function fixture(
   review?: (url: string, body: unknown) => Response | Promise<Response>,
+  scope = owner,
+  clock = Date.now,
 ) {
   let secret: Uint8Array | undefined,
     denied = false;
@@ -71,11 +73,11 @@ async function fixture(
     workspaceId: randomUUID(),
     meetingId: meeting.id,
     actions: ["read_transcript"],
-    expiresAt: new Date(Date.now() + 86400000).toISOString(),
+    expiresAt: new Date(clock() + 86400000).toISOString(),
     policyRevision: "autonote-ai-transcript-v1",
   };
   const connector = new AutoNoteConnector(
-    JSON.stringify(owner),
+    JSON.stringify(scope),
     {
       getSecret: async () => secret,
       setSecret: async (v) => {
@@ -105,10 +107,11 @@ async function fixture(
                   .digest("hex"),
                 publication: { mode: "autonote_review_only", directCrm: false },
               }),
+    clock,
   );
   const start = await connector.begin();
   await connector.finish(start.id, "a".repeat(64));
-  const adapter = new AutoNoteTasks(connector, owner, "device");
+  const adapter = new AutoNoteTasks(connector, scope, "device");
   return {
     connector,
     adapter,
@@ -124,10 +127,11 @@ function worker(
   store: Store,
   f: Awaited<ReturnType<typeof fixture>>,
   generate: (_p: unknown, prompt: string) => Promise<string>,
+  scope = owner,
 ) {
   return new LocalWorker(
     store,
-    owner,
+    scope,
     { pin: async () => ({ profile, digest: "c".repeat(64) }), generate },
     () => profile,
     "worker",
@@ -1206,5 +1210,211 @@ test("exact companion approval cancels, fences changed detail and reconciles a l
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("separate browser approval consent binds exact notes, peer proofs and source permission", async () => {
+  const { conversationFixture, owner: peerOwner } =
+      await import("./helpers/conversation-fixture.js"),
+    { PrivateAutoNoteApprovalConsent } =
+      await import("../modules/remote/private-autonote-approval-consent.js"),
+    { AutoNoteApprovalConnector } =
+      await import("../modules/connectors/autonote-approval.js"),
+    { AutoNoteReviews } =
+      await import("../modules/connectors/autonote-reviews.js");
+  const peer = await conversationFixture();
+  let proposal: any,
+    changed = false,
+    secret: Uint8Array | undefined;
+  const reviewId = randomUUID(),
+    expiresAt = new Date(peer.clock() + 600000).toISOString(),
+    reply = () => ({
+      reviewId,
+      digest: createHash("sha256")
+        .update(JSON.stringify(proposal))
+        .digest("hex"),
+      expiresAt,
+      receipt: null,
+    });
+  const f = await fixture(
+    (url, body) => {
+      if (url.endsWith("review-status"))
+        return Response.json({
+          grantId: f.grant.grantId,
+          meetingId: f.meeting.id,
+          enabled: true,
+          expiresAt: f.grant.expiresAt,
+        });
+      if (url.endsWith("review-prepare")) {
+        proposal = body;
+        return Response.json(reply());
+      }
+      throw Error("Unexpected source request");
+    },
+    peerOwner,
+    peer.clock,
+  );
+  const credential = {
+    approvalId: randomUUID(),
+    grantId: f.grant.grantId,
+    meetingId: f.meeting.id,
+    actions: ["approve_meeting_notes"],
+    token: "b".repeat(64),
+    expiresAt,
+  };
+  const approval = new AutoNoteApprovalConnector(
+    JSON.stringify(peerOwner),
+    {
+      getSecret: async () => secret,
+      setSecret: async (v) => {
+        secret = v;
+      },
+      deleteCredential: async () => {
+        secret = undefined;
+        return true;
+      },
+    },
+    f.connector,
+    async (url) => {
+      if (String(url).endsWith("approval-exchange"))
+        return Response.json(credential);
+      assert.ok(String(url).endsWith("approval-review"));
+      return Response.json({
+        id: reviewId,
+        digest: reply().digest,
+        expiresAt,
+        meetingId: f.meeting.id,
+        title: changed ? "Changed audience context" : f.meeting.title,
+        visibility: "workspace",
+        proposal,
+        notes: {
+          summary: "Synthetic complete notes",
+          topics: [],
+          decisions: [],
+          actions: [],
+          questions: [],
+          recommendations: [],
+        },
+      });
+    },
+    peer.clock,
+  );
+  try {
+    const setup = await approval.begin();
+    await approval.finish(setup.id, "c".repeat(64));
+    const task = await f.adapter.create(
+      peer.store,
+      input,
+      f.meeting.id,
+      "peer-approval",
+    );
+    await worker(
+      peer.store,
+      f,
+      async () => JSON.stringify(draft),
+      peerOwner,
+    ).runOnce();
+    const ledger = new AutoNoteReviews(
+        peer.store,
+        peerOwner,
+        f.connector,
+        f.adapter,
+        approval,
+      ),
+      operationId = randomUUID();
+    await ledger.reserve(task.id, { operationId });
+    await ledger.prepare(operationId);
+    const consent = new PrivateAutoNoteApprovalConsent(
+      peer.store,
+      peer.vault,
+      peerOwner,
+      peer.current,
+      peer.keys,
+      peer.peers,
+      approval,
+      f.adapter,
+      peer.clock,
+    );
+    const prepare = () =>
+      consent.prepare({
+        operationId,
+        expectedRevision: consent.list(operationId).revision,
+        peerId: peer.peerId,
+        peerKeyEpoch: 1,
+        expiresAt: peer.clock() + 300000,
+      });
+    const review = await prepare();
+    assert.equal(consent.list(operationId).grants.length, 0);
+    const granted = await consent.approve({
+      reviewId: review.id,
+      expectedRevision: review.revision,
+      confirmed: true,
+      acknowledged: true,
+    });
+    assert.equal(granted.grant.scope, "autonote:approve-exact-notes");
+    const resolved = await consent.resolve(operationId, granted.grant.id);
+    resolved.check();
+    const offer = await consent.frameOffer(
+      operationId,
+      granted.grant.id,
+      randomUUID(),
+    );
+    assert.equal(offer.manifest.permissionId, granted.grant.id);
+    assert.equal(offer.manifest.detailHash, granted.grant.detailHash);
+    assert.equal(offer.manifest.operationId, operationId);
+
+    const { encryptedBackup, restoreBackup } =
+      await import("../modules/storage/backup.js");
+    const { join } = await import("node:path");
+    const backup = join(peer.dir, "approval.aib"),
+      restoredPath = join(peer.dir, "approval-restored.db");
+    await encryptedBackup(peer.store, peer.vault, backup);
+    await restoreBackup(backup, peer.vault, restoredPath);
+    const restored = new Store(restoredPath, peer.vault, peer.clock);
+    try {
+      const restoredKeys = peer.build(restored);
+      const restoredConsent = new PrivateAutoNoteApprovalConsent(
+        restored,
+        peer.vault,
+        peerOwner,
+        peer.current,
+        restoredKeys.keys,
+        restoredKeys.peers,
+        approval,
+        f.adapter,
+        peer.clock,
+      );
+      assert.equal(restoredConsent.list(operationId).grants.length, 1);
+      await assert.rejects(
+        restoredConsent.resolve(operationId, granted.grant.id),
+      );
+    } finally {
+      restored.close();
+    }
+
+    changed = true;
+    await assert.rejects(consent.resolve(operationId, granted.grant.id));
+    changed = false;
+    consent.revoke({
+      operationId,
+      permissionId: granted.grant.id,
+      expectedRevision: granted.revision,
+      confirmed: true,
+    });
+    assert.throws(() => resolved.check());
+    await assert.rejects(consent.resolve(operationId, granted.grant.id));
+    const fresh = await prepare();
+    consent.invalidate();
+    await assert.rejects(
+      consent.approve({
+        reviewId: fresh.id,
+        expectedRevision: fresh.revision,
+        confirmed: true,
+        acknowledged: true,
+      }),
+    );
+    assert.equal(consent.list(operationId).grants[0]!.revoked, true);
+  } finally {
+    peer.close();
   }
 });

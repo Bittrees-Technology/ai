@@ -7,6 +7,10 @@ import { privateEnvelopeSchema } from "./private-envelope.js";
 export const privateReplayTypeSchema = z.enum([
   "peer.key.challenge",
   "peer.key.response",
+  "autonote.approval.offer",
+  "autonote.approval.chunk",
+  "autonote.approval.decision",
+  "autonote.approval.receipt",
   "task.submit",
   "task.resume",
   "task.resume.offer",
