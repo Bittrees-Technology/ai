@@ -87,9 +87,36 @@ for (const source of ["crm", "autonote", "mail"] as const) {
     page,
   }, info) => {
     const posts: any[] = [];
+    let memoryRevision = 1;
+    let useApps = ["local"];
     const expiresAt = new Date(Date.now() + 3600000).toISOString();
     await page.route("**/v1/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
+      if (path === "/v1/memories/memory-reference") {
+        expect(route.request().method()).toBe("PATCH");
+        expect(route.request().postDataJSON()).toEqual({
+          revision: 1,
+          useApps: ["local", source],
+          scopeConfirmed: true,
+        });
+        memoryRevision++;
+        useApps = ["local", source];
+        return route.fulfill({ json: { id: "memory-reference" } });
+      }
+      if (path === "/v1/memories")
+        return route.fulfill({
+          json: {
+            items: [
+              {
+                id: "memory-reference",
+                revision: memoryRevision,
+                text: "Keep the planning summary concise.",
+                state: "approved",
+                useApps,
+              },
+            ],
+          },
+        });
       if (path.endsWith("/drafts")) {
         posts.push(route.request().postDataJSON());
         return route.fulfill({ json: { id } });
@@ -124,6 +151,32 @@ for (const source of ["crm", "autonote", "mail"] as const) {
       await route.fulfill({ json });
     });
     await page.goto(`/?question-forms&source=${source}`);
+    const scope = page.getByRole("region", { name: "Memory app permissions" });
+    const appName =
+      source === "crm" ? "CRM" : source === "autonote" ? "AutoNote" : "Mail";
+    await scope.getByRole("button", { name: "Review app permissions" }).click();
+    await scope.getByRole("checkbox", { name: appName, exact: true }).check();
+    await expect(
+      scope.getByRole("button", { name: "Save app permissions" }),
+    ).toBeDisabled();
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(
+      scope.getByRole("button", { name: "Save app permissions" }),
+    ).toHaveCount(0);
+    expect(memoryRevision).toBe(1);
+    await scope.getByRole("button", { name: "Review app permissions" }).click();
+    await scope.getByRole("checkbox", { name: appName, exact: true }).check();
+    await scope
+      .getByRole("checkbox", {
+        name: "Apply these app permissions to this memory.",
+        exact: true,
+      })
+      .check();
+    await scope.getByRole("button", { name: "Save app permissions" }).click();
+    await expect(
+      scope.getByRole("button", { name: "Review app permissions" }),
+    ).toBeVisible();
+
     await page
       .getByRole("button", {
         name:
@@ -143,12 +196,34 @@ for (const source of ["crm", "autonote", "mail"] as const) {
     });
     await expect(choice).not.toBeChecked();
     await choice.check();
+    await page
+      .getByRole("button", { name: "Load permitted memories", exact: true })
+      .click();
+    const memoryChoice = page.getByRole("checkbox", {
+      name: /Keep the planning summary concise/,
+    });
+    await expect(memoryChoice).not.toBeChecked();
+    await memoryChoice.check();
+    await expect(
+      page.getByRole("button", { name: "Create local draft", exact: true }),
+    ).toBeDisabled();
     await screenshots(page, source, info.project.name);
+    await page
+      .getByRole("checkbox", {
+        name: `Include these 1 selected memories in this ${appName} draft.`,
+        exact: true,
+      })
+      .check();
     await page
       .getByRole("button", { name: "Create local draft", exact: true })
       .click();
     await expect.poll(() => posts.length).toBe(1);
     expect(posts[0].allowQuestions).toBe(true);
+    expect(posts[0].memorySelection).toEqual({
+      destination: source,
+      confirmed: true,
+      memories: [{ id: "memory-reference", revision: 2 }],
+    });
     expect(posts[0].modelProfileId).toBe("local");
     if (source === "crm") expect(posts[0].recordIds).toEqual([id]);
     if (source === "autonote") expect(posts[0].meetingId).toBe(id);

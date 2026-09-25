@@ -1,3 +1,4 @@
+import { MemoryAppScope } from "./app-memory.js";
 import { SourceMemoryCapture } from "./source-memory-capture.js";
 import { ResumePermissions } from "./resume-permissions.js";
 import { QuestionChoice } from "./question-choice.js";
@@ -37,6 +38,7 @@ type Task = {
   result: null | { text?: string; kind?: string };
 };
 type Memory = {
+  useApps?: string[];
   type: string;
   origin: "user" | "model";
   expiresAt: number | null;
@@ -479,7 +481,11 @@ function App() {
                         Include reviewed memory ({memoryIds.length}/8)
                       </summary>
                       {memories
-                        .filter((m) => m.state === "approved")
+                        .filter(
+                          (m) =>
+                            m.state === "approved" &&
+                            (m.useApps ?? ["local"]).includes("local"),
+                        )
                         .map((m) => (
                           <label className="check" key={m.id}>
                             <input
@@ -874,6 +880,13 @@ function App() {
                       {m.pinned ? " · Pinned" : ""}
                     </div>
                     <p className="prose">{m.text}</p>
+                    <MemoryAppScope
+                      key={m.id + ":" + m.revision}
+                      item={m}
+                      api={api}
+                      onSaved={refresh}
+                      disabled={busy}
+                    />
                     <details>
                       <summary>Source and retention</summary>
                       <p>

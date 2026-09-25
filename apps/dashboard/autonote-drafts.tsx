@@ -1,3 +1,4 @@
+import { useAppMemory } from "./app-memory.js";
 import { QuestionChoice } from "./question-choice.js";
 import { profileLabel } from "./model-profile-settings.js";
 import React, { useEffect, useRef, useState } from "react";
@@ -27,6 +28,12 @@ export function AutoNoteDrafts({
     [profile, setProfile] = useState(profiles[0]?.id ?? ""),
     [allowQuestions, setAllowQuestions] = useState(false),
     [busy, setBusy] = useState(false);
+  const draftMemory = useAppMemory(
+    api,
+    "autonote",
+    JSON.stringify({ selected, prompt, profile, allowQuestions }),
+    busy,
+  );
   const viewEpoch = useRef(0);
   useEffect(() => {
     const clear = () => {
@@ -94,7 +101,9 @@ export function AutoNoteDrafts({
           onSubmit={(e) => {
             e.preventDefault();
             void act(async () => {
+              const memorySelection = draftMemory.request();
               const fingerprint = JSON.stringify({
+                memorySelection,
                 selected: [...selected].sort(),
                 prompt,
                 profile,
@@ -114,11 +123,13 @@ export function AutoNoteDrafts({
                   prompt,
                   modelProfileId: profile,
                   ...(allowQuestions ? { allowQuestions: true } : {}),
+                  ...(memorySelection ? { memorySelection } : {}),
                   conversationId: attempt.current.conversationId,
                 },
                 { "Idempotency-Key": attempt.current.key },
               );
               attempt.current = null;
+              draftMemory.clear();
               onCreated(task.id);
             });
           }}
@@ -154,13 +165,20 @@ export function AutoNoteDrafts({
             Meeting permissions and transcript versions are checked again during
             generation. Inferred owners and deadlines remain unconfirmed.
           </p>
+          {draftMemory.panel}
           <QuestionChoice
             checked={allowQuestions}
             onChange={setAllowQuestions}
             disabled={busy}
           />
           <button
-            disabled={busy || !profile || !selected.length || !prompt.trim()}
+            disabled={
+              busy ||
+              draftMemory.blocked ||
+              !profile ||
+              !selected.length ||
+              !prompt.trim()
+            }
           >
             Create local draft
           </button>

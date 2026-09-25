@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import { MemoryAppScope } from "../../../apps/dashboard/app-memory.js";
 import { createRoot } from "react-dom/client";
 import { CrmDrafts } from "../../../apps/dashboard/crm-drafts.js";
 import { AutoNoteDrafts } from "../../../apps/dashboard/autonote-drafts.js";
@@ -28,11 +29,33 @@ const component =
     : source === "autonote"
       ? AutoNoteDrafts
       : MailConnection;
-createRoot(main).render(
-  React.createElement(component, {
-    api,
-    onError: () => {},
-    onCreated: () => {},
-    profiles: [{ id: "local", model: "synthetic:local" }],
-  }),
-);
+function Fixture() {
+  const [item, setItem] = useState({
+    id: "memory-reference",
+    revision: 1,
+    text: "Keep the planning summary concise.",
+    state: "approved",
+    useApps: ["local"],
+  });
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(MemoryAppScope, {
+      key: item.revision,
+      item,
+      api,
+      disabled: false,
+      onSaved: async () => {
+        const data = await api("/v1/memories");
+        setItem(data.items[0]);
+      },
+    }),
+    React.createElement(component, {
+      api,
+      onError: () => {},
+      onCreated: () => {},
+      profiles: [{ id: "local", model: "synthetic:local" }],
+    }),
+  );
+}
+createRoot(main).render(React.createElement(Fixture));
