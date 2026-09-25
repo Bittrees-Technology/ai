@@ -29,6 +29,24 @@ export type ResumeAccess = (
   approvedModelDigest: string,
 ) => Promise<() => void>;
 
+/** Trusted in-process encrypted receiver boundary, never parsed from a request.
+ * Cryptography must finish before calling executeDelivery. Both callbacks run
+ * synchronously inside the SAME write transaction as the task and receipt.
+ * check revalidates current private consent/keys even for duplicate receipts;
+ * admit must retain/classify the exact authenticated envelope in the shared
+ * replay ledger. A duplicate may not invent a missing admission record. */
+export type ResumeAdmission = {
+  check: () => void;
+  admit: (receipt: z.infer<typeof resumeReceiptSchema>) => "new" | "duplicate";
+};
+function synchronousCheck(check: () => void) {
+  const result: unknown = check();
+  if (result !== undefined) {
+    void Promise.resolve(result).catch(() => {});
+    throw new StoreError("INVALID_INPUT");
+  }
+}
+
 /** Companion-side foundation only: no route, credential issuer or polling loop.
  * Identity comes from future separately authenticated resume delivery; a request
  * body or an existing pause/cancel grant is never an identity provider. */
@@ -174,11 +192,41 @@ export class RemoteResumes {
     if (value.hash !== hash) throw new StoreError("CONFLICT");
     return { receipt: value.receipt, duplicate: true };
   }
-  async execute(
+  execute(
+    owner: Owner,
+    identity: unknown,
+    command: unknown,
+    access?: ResumeAccess,
+  ) {
+    return this.executeInternal(owner, identity, command, access);
+  }
+  /** Host-only composition seam. This neither authenticates envelopes nor
+   * issues authority. The encrypted receiver must supply BOTH callbacks. */
+  executeDelivery(
+    owner: Owner,
+    identity: unknown,
+    command: unknown,
+    access: ResumeAccess | undefined,
+    admission: ResumeAdmission,
+  ) {
+    if (
+      !admission ||
+      typeof admission.check !== "function" ||
+      typeof admission.admit !== "function"
+    )
+      return Promise.reject(new StoreError("INVALID_INPUT"));
+    const { check, admit } = admission;
+    return this.executeInternal(owner, identity, command, access, {
+      check,
+      admit,
+    });
+  }
+  private async executeInternal(
     ownerRaw: Owner,
     rawIdentity: unknown,
     raw: unknown,
     access?: ResumeAccess,
+    admission?: ResumeAdmission,
   ) {
     const owner = { ...ownerRaw },
       identity = resumeIdentitySchema.parse(rawIdentity),
@@ -196,8 +244,38 @@ export class RemoteResumes {
       initial.approval.taskRevision !== command.expectedRevision
     )
       throw new StoreError("CONFLICT");
+    const checkAdmission = () => {
+      if (admission) synchronousCheck(admission.check);
+    };
+    const admit = (
+      receipt: z.infer<typeof resumeReceiptSchema>,
+      duplicate: boolean,
+    ) => {
+      if (!admission) return;
+      const result: unknown = admission.admit(structuredClone(receipt));
+      if (result !== (duplicate ? "duplicate" : "new")) {
+        void Promise.resolve(result).catch(() => {});
+        throw new StoreError("CONFLICT");
+      }
+    };
+    const duplicateResult = () => {
+      this.current(owner, identity);
+      checkAdmission();
+      const prior = this.prior(owner, command, hash);
+      if (!prior) throw new StoreError("CONFLICT");
+      admit(prior.receipt, true);
+      checkAdmission();
+      this.current(owner, identity);
+      // A trusted admission callback still must not change the saved outcome.
+      if (
+        this.vault.fingerprint(this.prior(owner, command, hash)) !==
+        this.vault.fingerprint(prior)
+      )
+        throw new StoreError("CONFLICT");
+      return prior;
+    };
     const previous = this.prior(owner, command, hash);
-    if (previous) return previous;
+    if (previous) return this.store.db.transaction(duplicateResult).immediate();
     if (!access) throw new StoreError("NOT_FOUND");
     const checkLease = () => {
       const now = this.now(),
@@ -219,26 +297,20 @@ export class RemoteResumes {
     const task = this.eligible(owner, initial.approval);
     if (this.snapshot(owner, task) !== initial.snapshot)
       throw new StoreError("CONFLICT");
+    if (admission) this.store.db.transaction(checkAdmission).immediate();
     const check = await access(
       structuredClone(task),
       structuredClone(this.store.profile(owner, task.input.modelProfileId)),
       initial.approval.modelDigest,
     );
     if (typeof check !== "function") throw new StoreError("NOT_FOUND");
-    const runCheck = () => {
-      const result: unknown = check();
-      // TypeScript's void callback type can accept an async function. Never let
-      // an accidentally asynchronous guard finish after the transaction commits.
-      if (result !== undefined) {
-        void Promise.resolve(result).catch(() => {});
-        throw new StoreError("INVALID_INPUT");
-      }
-    };
+    const runCheck = () => synchronousCheck(check);
     return this.store.db
       .transaction(() => {
         const current = this.current(owner, identity),
           previous = this.prior(owner, command, hash);
-        if (previous) return previous;
+        if (previous) return duplicateResult();
+        checkAdmission();
         checkLease();
         if (
           current.consumed ||
@@ -293,6 +365,10 @@ export class RemoteResumes {
             owner.tenantId,
             identity.permissionId,
           );
+        // Admission and all resume effects share this transaction. A failed
+        // replay/consent check rolls back BOTH sides, including duplicate paths.
+        admit(receipt, false);
+        checkAdmission();
         // Any failure rolls back the task transition, receipt and permission use.
         runCheck();
         checkLease();
