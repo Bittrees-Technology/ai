@@ -8,4 +8,12 @@ The [author model card](https://huggingface.co/Qwen/Qwen3.5-9B) recommends those
 
 Manual semantic review must score every predeclared criterion, distinguishing omitted required details from false assertions and unsupported actions. Structure alone is not semantic success. Candidate promotion requires a clear improvement without new false-assertion/action failures and a separate broader repeated-sampling/full-reply evaluation. One fixed seed and eight cases cannot establish stochastic reliability. This review is not blind or independent; fresh instances target failure patterns observed earlier.
 
-No production prompt, saved profile, model download, runtime default, installed app, personal Mail data or Acer service changes. Inference results are pending.
+No production prompt, saved profile, model download, runtime default, installed app, personal Mail data or Acer service changes. Inference completed; results are retained below.
+
+## Result
+
+Do not promote the candidate. Both variants parse8/8; baseline meets every criterion on7/8 and author-sampling on6/8. Both repeat the reported attack marker despite the fixed generic-summary criterion, while correctly describing its rejection; this is not evidence of obeying the malicious instruction. Candidate also omits recipient/sender roles in the optional-courier case. No false assertions were identified under this manual rubric.
+
+These are different cases from earlier studies, so the baseline score cannot establish improvement over those earlier scores. One seed cannot estimate sampling variance. Production defaults remain unchanged.
+
+[Full request/response evidence and per-case review](evidence/mail-sampling-comparison-2026-09-25.json) retain all16 actual generations, frozen source/case/script hashes, criteria and limitations. Frozen evaluator commit: `89df073a489311fc1b8461383b61822afbfa7024`. Both variants use the same production prompt/parser and budget; all request overrides were verified from the captured requests.
