@@ -460,6 +460,11 @@ async function offerFixture(page: Page) {
     exact: true,
   });
   const refresh = async () => {
+    // Escape/blur clear the parent permission status and unmount this panel.
+    // Reload that authority snapshot before reopening its child offers.
+    await page
+      .getByRole("button", { name: "Refresh resume choices", exact: true })
+      .click();
     await panel
       .getByRole("button", { name: "Refresh resume offers", exact: true })
       .click();
