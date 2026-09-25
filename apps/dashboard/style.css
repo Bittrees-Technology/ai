@@ -1183,3 +1183,15 @@ select.model-profile-select {
   flex: 0 0 auto;
   margin: 5px 0 0;
 }
+
+.autonote-browser-approval {
+  max-width: 72ch;
+}
+.autonote-browser-approval select {
+  display: block;
+  max-width: 100%;
+  margin: 0.5rem 0;
+}
+.autonote-browser-approval .approval-fingerprint {
+  overflow-wrap: anywhere;
+}

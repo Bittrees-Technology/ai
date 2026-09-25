@@ -1612,10 +1612,28 @@ test("separate browser approval consent binds exact notes, peer proofs and sourc
     );
     assert.equal(uploads, 1);
     assert.equal(delivered.offers[0]!.packets[0]!.receipt?.state, "stored");
+    const remaining = await host.prepare(
+      {
+        action: "send",
+        operationId,
+        expectedRevision: delivered.revision,
+        offerId: ready.offers[0]!.id,
+        connection: { id: randomUUID(), expectedRevision: 1 },
+      },
+      relay,
+    );
+    const complete = await host.confirm(
+      { reviewId: remaining.id, confirmed: true, acknowledged: true },
+      relay,
+    );
+    assert.equal(uploads, ready.offers[0]!.packets.length);
+    assert.ok(
+      complete.offers[0]!.packets.every((p) => p.receipt?.state === "stored"),
+    );
     const stop = await host.prepare({
       action: "stop",
       operationId,
-      expectedRevision: delivered.revision,
+      expectedRevision: complete.revision,
       offerId: ready.offers[0]!.id,
     });
     const stopped = await host.confirm({

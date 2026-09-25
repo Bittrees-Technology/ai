@@ -1,3 +1,4 @@
+import { mountBrowserAutoNoteApprovals } from "./browser-autonote-approvals.js";
 import { mountBrowserResumeDelivery } from "./browser-resume-delivery.js";
 import { mountBrowserResumes } from "./browser-resumes.js";
 import { mountBrowserConversationContent } from "./browser-conversation-content.js";
@@ -35,6 +36,8 @@ export function mountBrowserSetup(
 ) {
   let resumeDeliveryView:
     ReturnType<typeof mountBrowserResumeDelivery> | undefined;
+  let approvalView:
+    ReturnType<typeof mountBrowserAutoNoteApprovals> | undefined;
   let resumeView: ReturnType<typeof mountBrowserResumes> | undefined;
   let contentView:
     ReturnType<typeof mountBrowserConversationContent> | undefined;
@@ -132,6 +135,7 @@ export function mountBrowserSetup(
     conversationView.invalidate();
     contentView?.invalidate();
     resumeView?.invalidate();
+    approvalView?.invalidate();
     resumeDeliveryView?.invalidate();
   });
   const checkRoot = el("div");
@@ -143,6 +147,7 @@ export function mountBrowserSetup(
     conversationView.invalidate();
     contentView?.invalidate();
     resumeView?.invalidate();
+    approvalView?.invalidate();
     resumeDeliveryView?.invalidate();
   });
   const permissionRoot = el("div");
@@ -160,6 +165,7 @@ export function mountBrowserSetup(
       conversationView.invalidate();
       contentView?.invalidate();
       resumeView?.invalidate();
+      approvalView?.invalidate();
       resumeDeliveryView?.invalidate();
     },
   );
@@ -179,6 +185,7 @@ export function mountBrowserSetup(
       conversationView.invalidate();
       contentView?.invalidate();
       resumeView?.invalidate();
+      approvalView?.invalidate();
       resumeDeliveryView?.invalidate();
     },
     privateDelivery,
@@ -199,6 +206,7 @@ export function mountBrowserSetup(
       taskView.invalidate();
       contentView?.invalidate();
       resumeView?.invalidate();
+      approvalView?.invalidate();
       resumeDeliveryView?.invalidate();
     },
   );
@@ -218,6 +226,7 @@ export function mountBrowserSetup(
       taskView.invalidate();
       conversationView.invalidate();
       resumeView?.invalidate();
+      approvalView?.invalidate();
       resumeDeliveryView?.invalidate();
     },
   );
@@ -252,6 +261,29 @@ export function mountBrowserSetup(
         conversationView.invalidate();
         contentView?.invalidate();
         resumeView?.invalidate();
+        approvalView?.invalidate();
+      },
+    );
+  }
+  const approvalRoot = el("div");
+  if (privateDelivery) {
+    root.append(approvalRoot);
+    approvalView = mountBrowserAutoNoteApprovals(
+      approvalRoot,
+      host,
+      now,
+      monotonic,
+      () => {
+        reset("Registration review closed while receiving AutoNote notes.");
+        keyView.invalidate();
+        peerView.invalidate();
+        checkView.invalidate();
+        permissionView.invalidate();
+        taskView.invalidate();
+        conversationView.invalidate();
+        contentView?.invalidate();
+        resumeView?.invalidate();
+        resumeDeliveryView?.invalidate();
       },
     );
   }
@@ -332,6 +364,7 @@ export function mountBrowserSetup(
     conversationView.invalidate();
     contentView?.invalidate();
     resumeView?.invalidate();
+    approvalView?.invalidate();
     resumeDeliveryView?.invalidate();
   }
   const describe = (row: Registration) =>
@@ -557,6 +590,8 @@ export function mountBrowserSetup(
       box.removeEventListener("keydown", keydown);
       resumeDeliveryView?.destroy();
       resumeDeliveryRoot.remove();
+      approvalView?.destroy();
+      approvalRoot.remove();
       resumeView?.destroy();
       resumeRoot.remove();
       contentView?.destroy();
