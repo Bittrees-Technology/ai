@@ -4,10 +4,7 @@ import type { Owner, Store } from "../storage/store.js";
 import type { Vault } from "../storage/vault.js";
 import type { ResumeAccess } from "../storage/remote-resumes.js";
 import { PrivateResumeConsent } from "./private-resume-consent.js";
-import {
-  resumeCommandSchema,
-  resumeReceiptSchema,
-} from "./resume-contracts.js";
+import { resumeReceiptSchema } from "./resume-contracts.js";
 import {
   privateEnvelopeSchema,
   privateHeaderSchema,
@@ -18,16 +15,14 @@ import {
 import { privateReplayIdentity } from "./private-replay.js";
 import { consumePrivateIncomingReplay } from "./private-incoming-replay.js";
 import { reservePrivateSequence } from "./private-send-sequence.js";
-export const privateResumeCommandSchema = z.strictObject({
-  version: z.literal(1),
-  type: z.literal("task.resume"),
-  command: resumeCommandSchema,
-});
-export const privateResumeReceiptSchema = z.strictObject({
-  version: z.literal(1),
-  type: z.literal("task.resumed"),
-  receipt: resumeReceiptSchema,
-});
+import {
+  privateResumeCommandSchema,
+  privateResumeReceiptSchema,
+} from "./private-resume-contracts.js";
+export {
+  privateResumeCommandSchema,
+  privateResumeReceiptSchema,
+} from "./private-resume-contracts.js";
 const receiveSchema = z.strictObject({
   permissionId: z.uuid(),
   envelope: privateEnvelopeSchema,

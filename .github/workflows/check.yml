@@ -19,6 +19,18 @@ jobs:
       - run: npm run contracts
       - run: git diff --exit-code -- contracts/
       - run: npm run build
+      - name: Check actual resume offer storage upgrade
+        run: |
+          git fetch --no-tags --depth=1 origin 59804e6febfb35a62ceb3abee0c9a73ae673780f
+          node scripts/prepare-legacy-resume-offers.mjs
+          node scripts/check-resume-offers-upgrade.mjs
+      - name: Retain resume offer upgrade evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-offers-upgrade
+          path: test-results/resume-offers-upgrade.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Check actual private resume consent storage upgrade
         run: |
           git fetch --no-tags --depth=1 origin 3c697c8388b0a06ab570db61637f6fe70ee687a6
@@ -233,7 +245,7 @@ jobs:
       - name: Verify conversation delivery review readiness
         run: |
           mkdir -p regression-reports
-          npx playwright test --config scripts/private-browser.config.ts production-browser-conversation-delivery.spec.ts --reporter=json > regression-reports/conversation-delivery.json
+          npx playwright test --config scripts/private-browser.config.ts production-browser-conversation-delivery.spec.ts --trace=retain-on-failure --reporter=json > regression-reports/conversation-delivery.json
       - name: Retain conversation delivery regression report
         if: always()
         uses: actions/upload-artifact@v4
@@ -242,7 +254,18 @@ jobs:
           path: regression-reports/conversation-delivery.json
           if-no-files-found: error
           retention-days: 7
+      - name: Retain conversation delivery failure details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-delivery-failure-details
+          path: |
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify Mac resume permission controls
+        if: ${{ !cancelled() }}
         run: npx playwright test --config scripts/private-browser.config.ts resume-permissions.spec.ts --reporter=json > regression-reports/resume-permissions.json
       - name: Retain Mac resume permission report
         if: always()

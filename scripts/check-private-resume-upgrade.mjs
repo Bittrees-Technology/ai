@@ -1,4 +1,4 @@
-/** Actual compiled schema36 to37 acceptance; disposable synthetic storage only. */
+/** Actual compiled schema36 to38 acceptance; disposable synthetic storage only. */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
@@ -119,7 +119,7 @@ try {
   unchanged.close();
   let s = new Store(path, vault, () => now);
   stores.push(s);
-  assert.equal(s.db.pragma("user_version", { simple: true }), 37);
+  assert.equal(s.db.pragma("user_version", { simple: true }), 38);
   assert.deepEqual(s.get(owner, unused.task.id), unused.task);
   assert.deepEqual(s.get(owner, used.task.id), usedTask);
   assert.deepEqual(s.profile(owner, profile.id), profile);
@@ -206,13 +206,13 @@ try {
       "234ad3525b4e59ae1f7eae97cfc2942b73c880ca8e57c9dbe9f1f3e7c9c1145e",
     legacyHashes: hashes,
     from: 36,
-    to: 37,
+    to: 38,
     assertions: [
       "wrong key leaves actual36 store writable and unchanged",
       "existing tasks/profile/unconsumed and consumed grants/receipt preserved",
       "no implicit private resume consent",
       "old receipt duplicate stable; unconsumed internal grant applies once across reopen",
-      "actual36 writer refuses37",
+      "actual36 writer refuses38",
       "current recovery retains receipts and locks all resume authority",
       "untouched old encrypted backup supports36 rollback with authority locked",
     ],
