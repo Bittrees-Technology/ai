@@ -399,6 +399,21 @@ test("built conversation delivery closes reviews across focus and panel changes 
       })
       .click();
     await expect(button(page, "Send reviewed message")).toBeHidden();
+    // Closing the other review is synchronous; loading its permissions is not.
+    // Finish that operation before testing the next independent panel action.
+    const permissions = page.getByRole("region", {
+      name: "Browser conversation permissions",
+      exact: true,
+    });
+    await expect(permissions.getByRole("status")).toContainText(
+      "Permission history loaded",
+    );
+    await expect(
+      permissions.getByRole("button", {
+        name: "Refresh conversation permissions",
+        exact: true,
+      }),
+    ).toBeEnabled();
     await refresh(page);
     await openMessage(page);
     await button(page, "Review sending to Mac").click();
