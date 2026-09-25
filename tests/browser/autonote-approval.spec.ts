@@ -122,3 +122,135 @@ test("companion approval setup shows source consent, stores a code once and remo
   expect(exchanges).toBe(1);
   expect(cancels).toBe(1);
 });
+
+test("exact resulting notes require fresh acknowledgement and show the saved receipt", async ({
+  page,
+}, info) => {
+  const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    token = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  let saved = false,
+    saves = 0,
+    cancels = 0;
+  await page.route("**/v1/**", async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname;
+    if (path === "/v1/requests/synthetic-task/autonote-reviews")
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id,
+              state: saved ? "saved" : "prepared",
+              approvalAvailable: true,
+              review: {
+                expiresAt: new Date(Date.now() + 600000).toISOString(),
+                reviewUrl:
+                  "https://autonote.bittrees.org/connect/ai?review=" + id,
+              },
+              receipt: saved
+                ? { meetingId: id, version: 2, operationId: id }
+                : null,
+            },
+          ],
+        },
+      });
+    if (path.endsWith("/approval-review"))
+      return route.fulfill({
+        json: {
+          reviewToken: token,
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+          approvalId: id,
+          detail: {
+            title: "Synthetic planning meeting",
+            visibility: "workspace",
+            notes: {
+              summary: "Existing context. Review the draft plan with the team.",
+              topics: [],
+              decisions: [],
+              actions: [
+                {
+                  id: "action",
+                  text: "Prepare a draft plan",
+                  evidence: ["s1: 2–8 seconds"],
+                  owner: "Alex",
+                  dueDate: null,
+                  status: "proposed",
+                },
+              ],
+              questions: [],
+              recommendations: [],
+            },
+          },
+        },
+      });
+    if (path.endsWith("/approval-cancel")) {
+      cancels++;
+      return route.fulfill({ json: { cancelled: true } });
+    }
+    if (path.endsWith("/approve")) {
+      expect(req.postDataJSON()).toEqual({
+        reviewToken: token,
+        confirmed: true,
+        acknowledged: true,
+      });
+      saved = true;
+      saves++;
+      return route.fulfill({ json: { state: "saved" } });
+    }
+    throw Error("Unexpected route " + path);
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?autonote-exact-approval");
+  const region = page.getByRole("region", { name: "Exact AutoNote approval" });
+  await region
+    .getByRole("button", { name: "Review exact notes to save", exact: true })
+    .click();
+  const save = region.getByRole("button", {
+    name: "Save these exact notes in AutoNote",
+    exact: true,
+  });
+  await expect(save).toBeDisabled();
+  await region
+    .getByLabel("I reviewed these exact notes and the meeting audience.", {
+      exact: true,
+    })
+    .check();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(save).toHaveCount(0);
+  await region
+    .getByRole("button", { name: "Review exact notes to save", exact: true })
+    .click();
+  await expect(save).toBeDisabled();
+  await expect(
+    region.getByText("Existing context. Review the draft plan with the team.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await mkdir("test-results/autonote-approval", { recursive: true });
+  await region.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-exact-phone.png`,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    ),
+  ).toBe(false);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await region.screenshot({
+    path: `test-results/autonote-approval/${info.project.name}-exact-desktop.png`,
+  });
+  await region
+    .getByLabel("I reviewed these exact notes and the meeting audience.", {
+      exact: true,
+    })
+    .check();
+  await save.click();
+  await expect(
+    page.getByText("Submission: Saved in AutoNote", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Saved meeting version 2.", { exact: false }),
+  ).toBeVisible();
+  expect(saves).toBe(1);
+  expect(cancels).toBeGreaterThanOrEqual(1);
+});

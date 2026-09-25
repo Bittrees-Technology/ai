@@ -89,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Bittrees-Technology/autonote
-          ref: 78023033431c1f45e6b8b203321e1b48215fd803
+          ref: 952542edccf44e6d4e77876dd10ba494b3d0ab5e
           path: .integration/autonote
           persist-credentials: false
       - uses: actions/checkout@v4

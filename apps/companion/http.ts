@@ -127,7 +127,13 @@ export function localApi({
       : undefined;
   const autoReviews =
     autonote && autonoteSources
-      ? new AutoNoteReviews(store, owner, autonote, autonoteSources)
+      ? new AutoNoteReviews(
+          store,
+          owner,
+          autonote,
+          autonoteSources,
+          autonoteApproval,
+        )
       : undefined;
   const sourceRouter = new SourceTasks(sources, autonoteSources, mailSources);
   const app = express();
@@ -1149,7 +1155,23 @@ export function localApi({
           }
         : null,
       receipt: item.response?.receipt ?? null,
+      approvalAvailable: !!autonoteApproval,
+      approvalAttempt: item.approvalAttempt ?? null,
     });
+    if (autonoteApproval) {
+      app.post("/v1/autonote-reviews/:id/approval-review", async (req, res) => {
+        z.strictObject({}).parse(req.body);
+        res.json(await autoReviews.reviewApproval(req.params.id));
+      });
+      app.post("/v1/autonote-reviews/:id/approval-cancel", (req, res) => {
+        z.strictObject({}).parse(req.body);
+        store.autoNoteReview(owner, req.params.id);
+        res.json(autoReviews.cancelApproval(req.params.id));
+      });
+      app.post("/v1/autonote-reviews/:id/approve", async (req, res) => {
+        res.json(summary(await autoReviews.approve(req.params.id, req.body)));
+      });
+    }
     app.get("/v1/requests/:id/autonote-reviews", (req, res) =>
       res.json({
         items: store.autoNoteReviews(owner, req.params.id).map(summary),
