@@ -87,7 +87,7 @@ try {
   prior.close();
   prior = undefined;
   current = new Current(path, f.b.vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 36);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 37);
   assert.deepEqual(current.export(f.b.owner), before);
   assert.deepEqual(current.exportPrivateTaskReceipts(f.b.owner), receipts);
   assert.deepEqual(current.exportPrivatePeerChecks(f.b.owner), checks);
@@ -226,7 +226,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 29,
-    to: 36,
+    to: 37,
     legacyStoreSha256: hash,
     checks: [
       "actual legacy task, receipt, device checks and task consent preserved",

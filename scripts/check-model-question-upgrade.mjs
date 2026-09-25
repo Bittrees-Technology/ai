@@ -69,7 +69,7 @@ try {
   old.close();
   old = undefined;
   current = new Current(path, vault);
-  assert.equal(current.db.pragma("user_version", { simple: true }), 36);
+  assert.equal(current.db.pragma("user_version", { simple: true }), 37);
   assert.deepEqual(current.export(owner), before);
   assert.deepEqual(current.exportInputWaits(owner), waits);
   assert.equal(current.get(owner, task.id).input.allowQuestions, undefined);
@@ -114,7 +114,7 @@ try {
   const proof = {
     verifiedAt: new Date().toISOString(),
     from: 26,
-    to: 36,
+    to: 37,
     legacyStoreSha256: legacyHash,
     checks: [
       "existing waiting task/question preserved with omitted policy",

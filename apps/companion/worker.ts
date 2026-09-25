@@ -51,6 +51,7 @@ export class LocalWorker {
     private memory?: MemoryStore,
     private sources?: SourceValidator,
     private controls?: ExecutionControls,
+    private resumePrivateAuthority?: (permissionId: string) => void,
   ) {}
   stop() {
     this.stopped = true;
@@ -173,6 +174,7 @@ export class LocalWorker {
           this.owner,
           claim.task.id,
           pinned,
+          this.resumePrivateAuthority,
         );
       const generate: Runtime["generate"] = async (...args) => {
         checkResumeModel();

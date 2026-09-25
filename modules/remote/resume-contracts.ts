@@ -12,6 +12,7 @@ export const resumeApprovalSchema = z.strictObject({
   identity: resumeIdentitySchema,
   taskId: z.uuid(),
   taskRevision: positive,
+  privatePeerBound: z.literal(true).optional(),
   modelDigest: z.string().regex(/^[a-f0-9]{64}$/),
   expiresAt: positive,
   confirmed: z.literal(true),

@@ -178,6 +178,14 @@ export class RemoteResumes {
       )
       .run(owner.userId, owner.tenantId, deviceId, ...(taskId ? [taskId] : []));
   }
+  revokePermission(owner: Owner, permissionId: string) {
+    z.uuid().parse(permissionId);
+    this.store.db
+      .prepare(
+        "UPDATE remote_resume_permissions SET payload=NULL WHERE user_id=? AND tenant_id=? AND id=?",
+      )
+      .run(owner.userId, owner.tenantId, permissionId);
+  }
   private prior(owner: Owner, command: Command, hash: string) {
     const row = this.store.db
       .prepare(
@@ -239,6 +247,8 @@ export class RemoteResumes {
       throw new StoreError("INVALID_INPUT");
     const hash = this.vault.fingerprint({ identity, command });
     const initial = this.current(owner, identity);
+    if (initial.approval.privatePeerBound && !admission)
+      throw new StoreError("NOT_FOUND");
     if (
       initial.approval.taskId !== command.taskId ||
       initial.approval.taskRevision !== command.expectedRevision
@@ -387,7 +397,12 @@ export class RemoteResumes {
   /** A remotely resumed task retains its execution constraint across worker
    * claims, clarification waits and restart. Revoked/restored grants fail closed.
    * Local tasks with no resume receipt retain their existing execution policy. */
-  checkExecutionModel(owner: Owner, taskId: string, model: PinnedModel) {
+  checkExecutionModel(
+    owner: Owner,
+    taskId: string,
+    model: PinnedModel,
+    privateAuthority?: (permissionId: string) => void,
+  ) {
     const rows = this.store.db
       .prepare(
         "SELECT id,payload FROM remote_resume_receipts WHERE user_id=? AND tenant_id=? ORDER BY rowid DESC",
@@ -401,6 +416,10 @@ export class RemoteResumes {
       const permission = this.permission(owner, receipt.permissionId);
       if (!permission) throw new StoreError("NOT_FOUND");
       this.current(owner, permission.approval.identity);
+      if (permission.approval.privatePeerBound) {
+        if (!privateAuthority) throw new StoreError("NOT_FOUND");
+        synchronousCheck(() => privateAuthority(receipt.permissionId));
+      }
       const task = this.store.get(owner, taskId);
       if (
         !permission.consumed ||
