@@ -526,3 +526,28 @@ test("tampered encrypted resume permission fails closed without a task effect", 
     f.close();
   }
 });
+
+test("an accidentally asynchronous commit guard cannot authorize resume", async () => {
+  const f = fixture();
+  try {
+    f.store.remoteResumes.approve(owner, f.approval);
+    await assert.rejects(
+      f.store.remoteResumes.execute(
+        owner,
+        f.identity,
+        f.command,
+        async () => async () => {
+          throw Error("late access rejection");
+        },
+      ),
+      /INVALID_INPUT/,
+    );
+    unchanged(f);
+    assert.equal(
+      f.store.remoteResumes.history(owner)[0]!.permission!.consumed,
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});

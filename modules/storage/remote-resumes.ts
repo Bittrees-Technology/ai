@@ -222,6 +222,15 @@ export class RemoteResumes {
       structuredClone(this.store.profile(owner, task.input.modelProfileId)),
     );
     if (typeof check !== "function") throw new StoreError("NOT_FOUND");
+    const runCheck = () => {
+      const result: unknown = check();
+      // TypeScript's void callback type can accept an async function. Never let
+      // an accidentally asynchronous guard finish after the transaction commits.
+      if (result !== undefined) {
+        void Promise.resolve(result).catch(() => {});
+        throw new StoreError("INVALID_INPUT");
+      }
+    };
     return this.store.db
       .transaction(() => {
         const current = this.current(owner, identity),
@@ -236,7 +245,7 @@ export class RemoteResumes {
         const before = this.eligible(owner, current.approval);
         if (this.snapshot(owner, before) !== current.snapshot)
           throw new StoreError("CONFLICT");
-        check();
+        runCheck();
         const count = this.store.db
           .prepare(
             "SELECT count(*) AS n FROM remote_resume_receipts WHERE user_id=? AND tenant_id=?",
@@ -282,7 +291,7 @@ export class RemoteResumes {
             identity.permissionId,
           );
         // Any failure rolls back the task transition, receipt and permission use.
-        check();
+        runCheck();
         checkLease();
         this.current(owner, identity);
         if (
