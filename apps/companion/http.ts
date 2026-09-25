@@ -1361,7 +1361,7 @@ export function localApi({
   app.get("/v1/requests/:id", async (req, res) =>
     res.json(finalProject(await project(store.get(owner, req.params.id)))),
   );
-  const checkFeedbackAccess = async (id: string) => {
+  const checkFeedbackAccess = async (id: string, destination?: string) => {
     const initial = store.get(owner, id),
       binding = store.sourceBinding(owner, id);
     const dependencies = await taskDependencyGuard(
@@ -1370,6 +1370,9 @@ export function localApi({
       id,
       memory,
       sourceRouter,
+      undefined,
+      undefined,
+      destination,
     );
     if (initial.input.sourceRefs.length && !binding)
       throw new ConnectorError("SOURCE_DENIED");
@@ -1507,7 +1510,8 @@ export function localApi({
   });
   if (memory) {
     app.post("/v1/requests/:id/memory-suggestions", async (req, res) => {
-      const check = await checkFeedbackAccess(req.params.id);
+      // Extraction runs as a local task, so inherited memories must permit local use.
+      const check = await checkFeedbackAccess(req.params.id, "local");
       res
         .status(201)
         .json(
