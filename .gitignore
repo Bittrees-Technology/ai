@@ -72,3 +72,4 @@ tests/browser/fixture/public/legacy-resume/
 
 .legacy-browser-resume-delivery/
 tests/browser/fixture/public/legacy-resume-delivery/
+.vercel

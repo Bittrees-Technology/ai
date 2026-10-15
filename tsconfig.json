@@ -23,6 +23,7 @@
     "apps/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts",
-    "apps/**/*.tsx"
+    "apps/**/*.tsx",
+    "api/**/*.ts"
   ]
 }

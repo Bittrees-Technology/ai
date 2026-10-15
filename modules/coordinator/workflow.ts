@@ -1,3 +1,8 @@
+import {
+  PostgresRunStore,
+  type RunStore,
+  type RunStep as Step,
+} from "./run-store.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Pool } from "pg";
@@ -11,20 +16,16 @@ const batch = z.strictObject({
     .min(1)
     .max(20),
 });
-type Step = {
-  source: "crm" | "mercado";
-  operationId: string;
-  payload: Record<string, unknown>;
-  state: string;
-  receipt?: unknown;
-};
 export type Connection = { ownerId: string; token: string; expiresAt: number };
 export class MarketplaceCoordinator {
+  private store: RunStore;
   constructor(
-    private pool: Pool,
+    pool: Pool | RunStore,
     private connections: Connection[],
     private request: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.store = "query" in pool ? new PostgresRunStore(pool) : pool;
+  }
   private connection(owner: string) {
     const c = this.connections.find((c) => c.ownerId === owner);
     if (
@@ -56,26 +57,12 @@ export class MarketplaceCoordinator {
         state: "pending",
       })),
     ];
-    await this.pool.query(
-      "INSERT INTO marketplace_runs(id,owner_id,input,steps) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING",
-      [input.id, owner, input, JSON.stringify(steps)],
-    );
-    const result = await this.pool.query(
-      "SELECT input=$3::jsonb AS same FROM marketplace_runs WHERE id=$1 AND owner_id=$2",
-      [input.id, owner, input],
-    );
-    if (!result.rows[0]?.same) throw new Error("Run ID conflict");
+    await this.store.create(owner, input.id, input, steps);
     return this.get(owner, input.id);
   }
   async get(owner: string, id: string) {
     z.uuid().parse(id);
-    const row = (
-      await this.pool.query(
-        "SELECT id,steps,updated_at FROM marketplace_runs WHERE id=$1 AND owner_id=$2",
-        [id, owner],
-      )
-    ).rows[0];
-    if (!row) throw new Error("Run not found");
+    const row = await this.store.get(owner, id);
     return {
       ...row,
       steps: (row.steps as Step[]).map(({ payload, ...s }) => s),
@@ -121,14 +108,8 @@ export class MarketplaceCoordinator {
     const c = this.connection(owner);
     z.uuid().parse(id);
     const lease = randomUUID();
-    const row = (
-      await this.pool.query(
-        "UPDATE marketplace_runs SET lease=$3,lease_until=now()+interval '90 seconds' WHERE id=$1 AND owner_id=$2 AND (lease_until IS NULL OR lease_until<now()) RETURNING steps",
-        [id, owner, lease],
-      )
-    ).rows[0];
-    if (!row) throw new Error("Run unavailable or already running");
-    const steps = row.steps as Step[];
+    const steps = await this.store.claim(owner, id, lease);
+    if (!steps) throw Error("Run unavailable or already running");
     // One source per invocation bounds runtime and permits independent retries.
     const step = steps.find((s) => s.state !== "decided");
     try {
@@ -151,15 +132,9 @@ export class MarketplaceCoordinator {
         steps.splice(steps.indexOf(step), 1);
         steps.push(step);
       }
-      await this.pool.query(
-        "UPDATE marketplace_runs SET steps=$3,updated_at=now() WHERE id=$1 AND lease=$2",
-        [id, lease, JSON.stringify(steps)],
-      );
+      await this.store.save(id, lease, steps);
     } finally {
-      await this.pool.query(
-        "UPDATE marketplace_runs SET lease=NULL,lease_until=NULL WHERE id=$1 AND lease=$2",
-        [id, lease],
-      );
+      await this.store.release(id, lease);
     }
     return this.get(owner, id);
   }
