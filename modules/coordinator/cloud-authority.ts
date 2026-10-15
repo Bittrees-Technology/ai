@@ -19,7 +19,9 @@ export async function cloudAuthority(pool: Pool, token: string, raw: unknown) {
       await pool.query(
         `UPDATE workflow_credentials c SET last_used_at=now() FROM workflow_authorities a
       WHERE c.authority_id=a.id AND c.token_hash=$1 AND c.audience=$2 AND c.scopes ? $3
-      AND a.revoked_at IS NULL AND (c.expires_at IS NULL OR c.expires_at>now())
+      AND a.revoked_at IS NULL AND a.paused_at IS NULL
+      AND (NOT a.require_wallet OR (a.signed_at IS NOT NULL AND (a.approval_payload->'credentialHashes') ? c.token_hash AND a.approval_payload->>'deviceId'=a.device_id::text AND a.approval_payload->>'deviceLabel'=a.device_label AND a.approval_payload->>'modelLabel'=a.model_label AND (a.approval_expires_at IS NULL OR a.approval_expires_at>now()) AND a.signed_scopes ? (c.audience || ':' || $3)))
+      AND (c.expires_at IS NULL OR c.expires_at>now())
       RETURNING a.id,a.owner_id`,
         [hash, input.audience, input.scope],
       )
@@ -32,7 +34,7 @@ export async function cloudAuthority(pool: Pool, token: string, raw: unknown) {
     await client.query("BEGIN");
     const row = (
       await client.query(
-        "SELECT id,owner_id,revoked_at FROM workflow_authorities WHERE control_hash=$1 FOR UPDATE",
+        "SELECT id,owner_id,revoked_at,paused_at,require_wallet,signed_at,approval_expires_at FROM workflow_authorities WHERE control_hash=$1 FOR UPDATE",
         [hash],
       )
     ).rows[0];
@@ -51,7 +53,16 @@ export async function cloudAuthority(pool: Pool, token: string, raw: unknown) {
     return {
       authorityId: row.id,
       ownerId: row.owner_id,
-      active: input.action !== "revoke" && !row.revoked_at,
+      active:
+        input.action !== "revoke" &&
+        !row.revoked_at &&
+        !row.paused_at &&
+        (!row.require_wallet ||
+          (!!row.signed_at &&
+            (!row.approval_expires_at ||
+              new Date(row.approval_expires_at).getTime() > Date.now()))),
+      paused: !!row.paused_at,
+      walletApprovalRequired: row.require_wallet && !row.signed_at,
     };
   } catch (error) {
     await client.query("ROLLBACK");

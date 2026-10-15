@@ -73,6 +73,7 @@ export interface LocalApiOptions {
   templateReceiver?: RemoteTemplateReceiver;
   executionControls?: ExecutionControls;
   activeTasks?: () => number;
+  workflows?: ReturnType<typeof import("./workflows.js").localWorkflows>;
   deviceStatus?: () => Promise<import("./device.js").DeviceStatus>;
   imports?: ImportJobs;
   news?: NewsConnector;
@@ -121,6 +122,7 @@ export function localApi({
   autonoteApproval,
   autonoteSources,
   cancelSourceRun,
+  workflows,
   deviceStatus,
   executionControls,
   activeTasks,
@@ -665,6 +667,17 @@ export function localApi({
       executionControls.update(req.body);
       res.json(executionControls.admission(activeTasks?.() ?? 0));
     });
+  }
+  if (workflows) {
+    app.get("/v1/workflows", async (_req, res) =>
+      res.json(await workflows.status()),
+    );
+    app.post("/v1/workflows/register", async (req, res) =>
+      res.json(await workflows.register(req.body)),
+    );
+    app.post("/v1/workflows/control", async (req, res) =>
+      res.json(await workflows.control(req.body)),
+    );
   }
   if (deviceStatus)
     app.get("/v1/device", async (_req, res) => res.json(await deviceStatus()));

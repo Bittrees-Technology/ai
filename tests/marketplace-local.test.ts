@@ -19,6 +19,12 @@ test("Local encrypted runs preserve leases and only sync allowlisted progress af
       source: "crm" as const,
       operationId: randomUUID(),
       payload: { secret: "private evidence" },
+      receipt: {
+        held: true,
+        reason: "Public stock requires review",
+        secret: "private evidence",
+        reviewId: randomUUID(),
+      },
       state: "pending",
     },
   ];
@@ -43,8 +49,15 @@ test("Local encrypted runs preserve leases and only sync allowlisted progress af
   assert.equal(store.pending(owner).length, 1);
   await syncLocalStatus(store, owner, "x", async (_u, init) => {
     const body = JSON.parse(String(init?.body));
-    assert.deepEqual(Object.keys(body), ["runId", "revision", "counts"]);
+    assert.deepEqual(Object.keys(body), [
+      "runId",
+      "revision",
+      "outcomes",
+      "counts",
+    ]);
     assert(!JSON.stringify(body).includes("private evidence"));
+    assert.equal(body.outcomes[0].reason, "Public stock requires review");
+    assert.equal(body.outcomes[0].held, true);
     return new Response(JSON.stringify(body));
   });
   assert.equal(store.pending(owner).length, 0);

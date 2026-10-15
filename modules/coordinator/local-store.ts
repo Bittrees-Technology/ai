@@ -108,6 +108,23 @@ export class LocalRunStore implements RunStore {
     ).map((row) => ({
       runId: row.id,
       revision: row.revision,
+      outcomes: this.decode(row).steps.map((s: any) => ({
+        source: s.source,
+        state: s.state,
+        ...(s.receipt?.reviewId
+          ? { reviewId: String(s.receipt.reviewId).slice(0, 80) }
+          : {}),
+        ...(s.receipt?.decision
+          ? { decision: String(s.receipt.decision).slice(0, 40) }
+          : {}),
+        ...(s.receipt?.held ? { held: true } : {}),
+        ...(s.receipt?.reason
+          ? { reason: String(s.receipt.reason).slice(0, 500) }
+          : {}),
+        ...(s.receipt?.productId
+          ? { productId: String(s.receipt.productId).slice(0, 160) }
+          : {}),
+      })),
       counts: this.decode(row).steps.reduce(
         (counts: Record<string, number>, s) => {
           const key = s.source + ":" + s.state;

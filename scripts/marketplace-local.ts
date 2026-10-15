@@ -116,6 +116,38 @@ try {
       "CREATE TABLE IF NOT EXISTS marketplace_schedule(owner TEXT PRIMARY KEY,last_research INTEGER NOT NULL)",
     );
     do {
+      if (settings.controlToken) {
+        const heartbeat = await fetch("https://ai.bittrees.org/api/workflows", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer " + settings.controlToken,
+          },
+          body: JSON.stringify({
+            action: "device",
+            input: { action: "heartbeat" },
+          }),
+          signal: AbortSignal.timeout(15000),
+          redirect: "error",
+        });
+        if (!heartbeat.ok) throw Error("Workflow device unavailable");
+        const { grant } = await heartbeat.json();
+        if (
+          grant.revoked_at ||
+          grant.paused_at ||
+          (grant.require_wallet && !grant.signed_at) ||
+          (grant.approval_expires_at &&
+            new Date(grant.approval_expires_at).getTime() <= Date.now())
+        ) {
+          console.log(
+            JSON.stringify({
+              workflowPaused: true,
+              walletApprovalRequired: !grant.signed_at,
+            }),
+          );
+          break;
+        }
+      }
       authorize(settings.ownerId, "sync");
       if (
         command === "research" ||
@@ -130,7 +162,8 @@ try {
               )
               .get(settings.ownerId) as { last_research: number } | undefined
           )?.last_research || 0;
-        const due = command === "research" || Date.now() - last >= 6 * 60 * 60 * 1000;
+        const due =
+          command === "research" || Date.now() - last >= 6 * 60 * 60 * 1000;
         const openRuns = (
           await Promise.all(
             store
