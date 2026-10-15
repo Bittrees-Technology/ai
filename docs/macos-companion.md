@@ -28,7 +28,7 @@ The bundle includes Node, its full distribution license notices, and production 
 
 Initial build verification: Swift compilation, ad-hoc signature verification, bundled Node execution, actual SQLite/native-keyring module loading, TypeScript/dashboard build and 130 shared-engine/process tests. Process tests exercise actual child-process exit on parent-pipe closure and on repeated quit signals with the parent pipe still open. Rebuild checks seed obsolete outputs and verify that neither compiled nor bundled stale files survive. These do not prove native UI acceptance.
 
-Still required: hands-on pairing, Keychain prompts, confirmation/download panels, native-window stop/restart and crash handling; signed Developer ID distribution and notarization; tested update integrity and recovery. Local browser automation was unavailable under the administrator policy, so this build must not be described as visually or interactively accepted.
+The October 15 installed-app review confirmed an authenticated native workspace, workflow status, and a synthetic local task that completed successfully. This is bounded pilot evidence, not complete native acceptance. Remaining checks include Keychain prompts, confirmation/download panels, native-window stop/restart and crash handling, plus Developer ID signing, notarization, and update recovery. Each newly published archive requires its own provenance and signature verification.
 
 This is an ad-hoc-signed local development build, not a notarized public installer. No updater is installed. For development updates, quit the app, rebuild and replace the bundle, retaining the Application Support directory and Keychain entries. Public automatic updates remain disabled until signed verification and rollback are implemented.
 
@@ -43,3 +43,9 @@ For a reviewable clean development archive, build from a clean merged checkout, 
 ## Download provenance
 
 The manual [verified development download workflow](mac-download-provenance.md) adds GitHub attestations and a source-bound download manifest after successful checks for an exact main revision. It does not change the ad-hoc development signature, install an updater, publish a release or complete the remaining native/signing acceptance.
+
+## Current workflow setup
+
+The optional focused CRM summary uses only the records selected through the CRM connection and returns a referenced draft or an explicit stop decision. Connect CRM and select the pilot records yourself; updating the companion does not select records or grant source access. See [CRM decision layer](crm-decision-layer.md).
+
+Workflows & permissions shows approved workflow status and stop controls. Supplier discovery is eligible every six hours, with up to 20 offers per pass and three per approved supplier; the five-minute local runner advances existing work while the Mac is awake and logged in. Source limits and review rules still apply. See [qualified supplier workflow](marketplace-qualified-workflow.md). The installed scheduler is separate from the downloadable bundle; replacing the app does not install or reconfigure that scheduler.
