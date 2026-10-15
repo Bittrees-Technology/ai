@@ -73,7 +73,7 @@ export const suppliers = [
     adapter: "shopify",
   },
 ] as const;
-export const WEEKLY_PRODUCT_LIMIT = 20;
+export const RESEARCH_PRODUCT_LIMIT = 20;
 export const PRODUCTS_PER_VENDOR = 3;
 export const PRODUCTS_PER_BATCH = 10; // One organization and linked task per offer: CRM permits 20 candidates.
 // Business contact pages are primary evidence; no inferred personal contacts.
@@ -217,7 +217,7 @@ export async function researchBatches(
   let visited = 0;
   for (
     ;
-    visited < sources.length && selected.length < WEEKLY_PRODUCT_LIMIT;
+    visited < sources.length && selected.length < RESEARCH_PRODUCT_LIMIT;
     visited++
   ) {
     const vendor = sources[(cursor + visited) % sources.length]!;
@@ -249,7 +249,7 @@ export async function researchBatches(
     for (const product of products) {
       if (
         vendorCount >= PRODUCTS_PER_VENDOR ||
-        selected.length >= WEEKLY_PRODUCT_LIMIT
+        selected.length >= RESEARCH_PRODUCT_LIMIT
       )
         break;
       const rawTitle = product.title ?? product.name;

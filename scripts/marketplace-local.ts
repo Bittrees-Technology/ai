@@ -130,7 +130,7 @@ try {
               )
               .get(settings.ownerId) as { last_research: number } | undefined
           )?.last_research || 0;
-        const due = command === "research" || Date.now() - last >= 7 * 86400000;
+        const due = command === "research" || Date.now() - last >= 6 * 60 * 60 * 1000;
         const openRuns = (
           await Promise.all(
             store
@@ -140,7 +140,7 @@ try {
         ).filter((run) =>
           run.steps.some((step) => step.state !== "decided"),
         ).length;
-        // Reserve room for both weekly batches inside the source's ten-preview limit.
+        // Reserve room for both research batches inside the source's ten-preview limit.
         if (due && openRuns > 8)
           console.log(
             JSON.stringify({

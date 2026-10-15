@@ -1,6 +1,6 @@
 # Mercado supplier workflow
 
-AI coordinates this workflow on the Mac through MCP Connect. The weekly discovery limit remains 20 product offers, at most three per approved supplier. The five-minute runner resumes durable work after sleep, offline periods or restarts. ai.bittrees.org holds revocable authority and minimal progress; it does not host the local model or publish through a browser session.
+AI coordinates this workflow on the Mac through MCP Connect. Discovery runs every six hours, with up to 20 product offers per run and at most three per approved supplier. This permits up to 80 offers per day when enough new qualifying offers are available; it is a ceiling, not a publication target. The five-minute runner resumes durable work after sleep, offline periods or restarts. ai.bittrees.org holds revocable authority and minimal progress; it does not host the local model or publish through a browser session.
 
 1. Research approved US, Mexican and western European suppliers within Bitcoin mining, local AI/GPU and server scope.
 2. Prepare immutable Mercado proposals and CRM vendor/task batches with stable operation IDs and source evidence.
