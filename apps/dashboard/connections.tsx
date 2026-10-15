@@ -1,3 +1,4 @@
+import { CrmDatasetPanel } from "./crm-dataset.js";
 import { AutoNoteApprovalPanel } from "./autonote-approval.js";
 import { PrivateRelayPanel } from "./private-relay.js";
 import { MailSendPanel } from "./mail-send.js";
@@ -294,6 +295,7 @@ export function Connections(props: {
       <PrivatePeerPanel api={props.api} />
       <PrivateCheckPanel api={props.api} />
       <PrivatePermissionPanel api={props.api} />
+      <CrmDatasetPanel api={props.api} onError={props.onError} />
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
       <AutoNoteApprovalPanel api={props.api} />
