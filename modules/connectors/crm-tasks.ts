@@ -1,3 +1,4 @@
+import { crmDecisionPlan } from "../models/crm-decision.js";
 import { createHash } from "node:crypto";
 import { CrmConnector, ConnectorError } from "./crm.js";
 import type { SourceBinding, TaskInput } from "../contracts/index.js";
@@ -65,6 +66,7 @@ export class CrmTasks {
       expiresAt: status.expiresAt,
       projectionHash: fingerprint(snapshot.records),
     };
+    crmDecisionPlan({ ...input, sourceRefs: refs }, binding);
     beforeCommit();
     return store.create(
       this.owner,

@@ -241,6 +241,10 @@
         "allowQuestions": {
           "type": "boolean"
         },
+        "workflow": {
+          "type": "string",
+          "const": "crm-summary-v1"
+        },
         "memorySelection": {
           "type": "object",
           "properties": {
