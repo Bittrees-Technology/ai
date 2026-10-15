@@ -23,7 +23,17 @@ export function createProjectAdministration(project,{env=process.env,fetcher=fet
  return async function handle(req){
   const u=new URL(req.url),path=u.pathname;
   if(u.origin!==origin)return response({error:'Unexpected application origin'},403);
-  if(path.startsWith('/api/project-admin/sso/'))return sso(req);
+  if(path.startsWith('/api/project-admin/sso/')){
+   // Keep the native account's same-origin handoff cookies untouched (Wallet
+   // already has its own SSO client). Reuse the canonical protocol internally.
+   const names=['bt-sso-flow','bt-sso-proof','bt-sso-published','bt-sso-skip'];
+   const nativeName=name=>name.replace(/^__Host-/,'');
+   const headers=new Headers(req.headers),jar=(req.headers.get('cookie')||'').split(';').map(v=>v.trim()).filter(Boolean).filter(v=>!names.includes(nativeName(v.split('=')[0]))).map(v=>v.replace(/^(__Host-)?project-admin-(bt-sso-(?:flow|proof|published|skip))=/,'$1$2='));
+   headers.set('cookie',jar.join('; '));
+   const result=await sso(new Request(req,{headers})),out=new Headers(result.headers);out.delete('set-cookie');
+   for(const c of result.headers.getSetCookie())out.append('Set-Cookie',c.replace(/^(__Host-)?(bt-sso-(?:flow|proof|published|skip))=/,'$1project-admin-$2='));
+   return new Response(result.body,{status:result.status,headers:out});
+  }
   if(path==='/api/project-admin/logout'){
    if(req.method!=='POST'||req.headers.get('origin')!==origin)return response({error:'Request rejected'},403);
    const r=response({ok:true});r.headers.append('Set-Cookie',cookie('project-admin-session','',0,origin));return r;
