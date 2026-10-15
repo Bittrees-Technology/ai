@@ -116,14 +116,14 @@ export async function researchBatches(
           continue;
         // Fetch the individual product again: stale catalog entries cannot become proposals.
         await authorize();
-        const fresh = await json(`${url}.json`, request);
+        const fresh = await json(`${url}.js`, request);
         if (
-          fresh.product?.id !== product.id ||
-          !fresh.product.variants?.some(
+          fresh.id !== product.id ||
+          !fresh.variants?.some(
             (v: any) =>
               v.id === variant.id &&
               v.available === true &&
-              v.price === variant.price,
+              v.price === Math.round(Number(variant.price) * 100),
           )
         )
           continue;

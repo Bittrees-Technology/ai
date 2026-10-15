@@ -40,8 +40,16 @@ export class MarketplaceCoordinator {
       throw new Error("Workflow connection unavailable");
     return c;
   }
+  private async cloud(c: Connection) {
+    if (!c.managed) return;
+    try {
+      await checkWorkflowAuthority(c.token, "mcp", "sources:propose");
+    } catch {
+      throw new AuthorityDenied("Cloud workflow authority unavailable");
+    }
+  }
   async create(owner: string, raw: unknown) {
-    this.connection(owner);
+    await this.cloud(this.connection(owner));
     this.authorize(owner, "create");
     const input = batch.parse(raw);
     if (JSON.stringify(input).length > 55000)
@@ -74,8 +82,7 @@ export class MarketplaceCoordinator {
   private async call(c: Connection, step: Step, action: "preview" | "status") {
     this.connection(c.ownerId);
     this.authorize(c.ownerId, `${step.source}:${action}`);
-    if (c.managed)
-      await checkWorkflowAuthority(c.token, "mcp", "sources:propose");
+    await this.cloud(c);
     this.authorize(c.ownerId, `${step.source}:${action}`);
     const response = await this.request(
       "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",
@@ -116,6 +123,7 @@ export class MarketplaceCoordinator {
   }
   async advance(owner: string, id: string) {
     const c = this.connection(owner);
+    await this.cloud(c);
     z.uuid().parse(id);
     const lease = randomUUID();
     const steps = await this.store.claim(owner, id, lease);

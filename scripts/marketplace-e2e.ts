@@ -187,7 +187,7 @@ const localFetch: typeof fetch = (input, init) => {
   return fetch(`http://127.0.0.1:${mcpPort}${u.pathname}${u.search}`, init);
 };
 const connections = [
-  { ownerId: owner, token: mcpToken, expiresAt: Date.now() + 3600000 },
+  { ownerId: owner, token: mcpToken, expiresAt: null, managed: true },
 ];
 let ai = new MarketplaceCoordinator(pool, connections, localFetch);
 const c = {
@@ -338,6 +338,8 @@ try {
     },
   );
   assert.equal(denied.status, 403);
+  await assert.rejects(ai.advance(owner, input.id));
+  await assert.rejects(ai.create(owner, { ...input, id: randomUUID() }));
   actor.permissions = [];
   await assert.rejects(
     sourceConnections.call(actor, ["crm"], "source_crm_status", {
