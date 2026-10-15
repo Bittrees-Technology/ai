@@ -129,9 +129,12 @@ export class LocalRunStore implements RunStore {
     return (
       this.db
         .prepare(
-          "SELECT id FROM marketplace_local_runs WHERE owner=? ORDER BY updated_at LIMIT 20",
+          "SELECT * FROM marketplace_local_runs WHERE owner=? ORDER BY updated_at",
         )
-        .all(owner) as { id: string }[]
-    ).map((r) => r.id);
+        .all(owner) as any[]
+    )
+      .filter((r) => this.decode(r).steps.some((s) => s.state !== "decided"))
+      .slice(0, 20)
+      .map((r) => r.id);
   }
 }

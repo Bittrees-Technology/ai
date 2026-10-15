@@ -72,8 +72,10 @@ export async function syncLocalStatus(
   owner: string,
   token: string,
   request: typeof fetch = fetch,
+  authorize: () => void = () => {},
 ) {
   for (const value of store.pending(owner)) {
+    authorize();
     const response = await request(
       "https://ai.bittrees.org/api/workflow-status",
       {

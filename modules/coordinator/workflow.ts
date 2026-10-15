@@ -3,6 +3,7 @@ import {
   type RunStore,
   type RunStep as Step,
 } from "./run-store.js";
+import { AuthorityDenied } from "./local-authority.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Pool } from "pg";
@@ -23,6 +24,7 @@ export class MarketplaceCoordinator {
     pool: Pool | RunStore,
     private connections: Connection[],
     private request: typeof fetch = fetch,
+    private authorize: (owner: string, action: string) => void = () => {},
   ) {
     this.store = "query" in pool ? new PostgresRunStore(pool) : pool;
   }
@@ -40,6 +42,7 @@ export class MarketplaceCoordinator {
   }
   async create(owner: string, raw: unknown) {
     this.connection(owner);
+    this.authorize(owner, "create");
     const input = batch.parse(raw);
     if (JSON.stringify(input).length > 55000)
       throw new Error("Batch too large");
@@ -69,6 +72,8 @@ export class MarketplaceCoordinator {
     };
   }
   private async call(c: Connection, step: Step, action: "preview" | "status") {
+    this.connection(c.ownerId);
+    this.authorize(c.ownerId, `${step.source}:${action}`);
     const response = await this.request(
       "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",
       {
@@ -94,6 +99,8 @@ export class MarketplaceCoordinator {
         signal: AbortSignal.timeout(25000),
       },
     );
+    if ([401, 403].includes(response.status))
+      throw new AuthorityDenied("Source authority denied; automation stopped");
     if (!response.ok) throw new Error("Connection or source unavailable");
     const value = (await response.json()) as any;
     if (
@@ -115,6 +122,10 @@ export class MarketplaceCoordinator {
     try {
       if (step) {
         try {
+          if ((step.failures ?? 0) >= 5)
+            throw new AuthorityDenied(
+              "Retry limit reached; inspect the source before resuming",
+            );
           this.connection(owner);
           let receipt = await this.call(c, step, "status");
           if (receipt.state === "not_found")
@@ -124,9 +135,12 @@ export class MarketplaceCoordinator {
             !["awaiting_review", "decided"].includes(receipt.state)
           )
             throw new Error("Unknown source state");
+          step.failures = 0;
           step.state = receipt.state;
           step.receipt = receipt;
-        } catch {
+        } catch (error) {
+          if (error instanceof AuthorityDenied) throw error;
+          step.failures = (step.failures ?? 0) + 1;
           step.state = "uncertain";
         }
         steps.splice(steps.indexOf(step), 1);
