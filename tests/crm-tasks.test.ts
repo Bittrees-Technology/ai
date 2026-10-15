@@ -1316,3 +1316,88 @@ test("crm conversation access uses a fresh source read and fences local removal"
     store.close();
   }
 });
+
+test("focused CRM workflow binds scope, validates citations and stops without actions", async () => {
+  for (const outcome of [
+    "summary",
+    "stop",
+    "foreign-citation",
+    "tool-call",
+    "revoked",
+    "interrupted",
+  ] as const) {
+    const f = await fixture();
+    const store = new Store(":memory:", new Vault(randomBytes(32)));
+    try {
+      const task = await f.adapter.create(
+        store,
+        {
+          ...input,
+          kind: "summarize",
+          workflow: "crm-summary-v1",
+        },
+        [f.record.id],
+        outcome,
+      );
+      let calls = 0;
+      const worker = new LocalWorker(
+        store,
+        owner,
+        {
+          pin: async () => ({ profile, digest: "c".repeat(64) }),
+          generate: async (_model, prompt, _signal, format) => {
+            calls++;
+            assert.ok(format);
+            assert.match(prompt, /fixed crm-summary-v1/);
+            assert.match(prompt, /SYNTHETIC_SOURCE_SENTINEL/);
+            assert.ok(!prompt.includes(f.grant.token));
+            if (outcome === "revoked") f.deny();
+            if (outcome === "interrupted") worker.stop();
+            if (outcome === "stop")
+              return JSON.stringify({
+                decision: "stop",
+                reason: "outside_scope",
+              });
+            if (outcome === "tool-call")
+              return JSON.stringify({ decision: "tool", tool: "mail.send" });
+            return JSON.stringify({
+              decision: "summary",
+              claims: [
+                {
+                  text: "The project is open.",
+                  recordIds: [
+                    outcome === "foreign-citation" ? randomUUID() : f.record.id,
+                  ],
+                },
+              ],
+              missingInformation: ["No deadline provided."],
+            });
+          },
+        },
+        () => profile,
+        "focused-worker",
+        undefined,
+        f.adapter,
+      );
+      await worker.runOnce();
+      assert.equal(calls, 1);
+      const result = store.get(owner, task.id).result as any;
+      if (outcome === "summary") {
+        assert.equal(result.crmDecision.decision, "summary");
+        assert.deepEqual(result.crmDecision.claims[0].citations, [
+          { recordId: f.record.id, revision: "1" },
+        ]);
+        assert.equal(result.crmDecision.factualReview, "required");
+      } else if (outcome === "stop") {
+        assert.equal(result.crmDecision.decision, "stop");
+        assert.match(result.text, /^Stopped:/);
+      } else assert.equal(result, null);
+      assert.equal(store.publications(owner, task.id).length, 0);
+      const model = store.runHistory(owner, task.id)[0]!.model as any;
+      assert.equal(model.decisionPlan.maxModelCallsPerRun, 1);
+      assert.equal(model.decisionPlan.externalWrites, false);
+    } finally {
+      store.close();
+    }
+  }
+});
