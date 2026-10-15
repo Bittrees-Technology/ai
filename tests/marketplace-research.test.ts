@@ -98,6 +98,7 @@ test("scope separates miners, GPUs and complete servers from accessories and alt
     "Antminer L7 DOGE miner",
     "PowerEdge rail kit",
     "Raspberry Pi cable",
+    "Bitcoin Merch - AxeDash: Desktop Display for Your Bitaxe Miners",
   ])
     assert.equal(productCollection(title), null);
 });
@@ -161,13 +162,13 @@ test("mixed regional batches rotate vendors, verify Woo stock and link every tas
     );
   assert.deepEqual(
     batches.map((b) => b.mercado.length),
-    [3, 3, 1],
+    [10],
   );
   assert.equal(
     new Set(
       batches.flatMap((b) => b.mercado.map((p: any) => p.product.source_name)),
     ).size,
-    7,
+    10,
   );
   for (const b of batches)
     b.crm.candidates.forEach((c: any, i: number) => {
@@ -251,5 +252,77 @@ test("revocation after discovery stops submission, and currency or stale stock c
     [suppliers[6]],
   );
   assert.equal(creates, 0);
+  db.close();
+});
+
+test("weekly capacity splits twenty products into bounded CRM batches with shared vendor organizations", async () => {
+  const db = new Database(":memory:"),
+    batches: any[] = [];
+  const sources = suppliers.filter((s) => s.adapter === "shopify");
+  const request: typeof fetch = async (input) => {
+    const u = new URL(String(input));
+    if (u.host === "mercado.bittrees.org") return Response.json({ items: [] });
+    const vendor = sources.find((s) => s.host === u.host);
+    if (!vendor) return new Response("contact");
+    if (u.pathname === "/cart.js")
+      return Response.json({ currency: vendor.currency });
+    const products = Array.from({ length: 4 }, (_, i) => ({
+      id: i + 1,
+      title: `Jetson module ${i + 1}`,
+      handle: `jetson-${i + 1}`,
+      variants: [{ id: i + 1, price: "100.00", available: true }],
+    }));
+    if (u.pathname === "/products.json") return Response.json({ products });
+    if (u.pathname.endsWith(".js")) {
+      const p = products[Number(u.pathname.match(/(\d+)\.js/)?.[1]) - 1]!;
+      return Response.json({
+        ...p,
+        variants: [{ ...p.variants[0], price: 10000 }],
+      });
+    }
+    return new Response(
+      "sales@serverdepotus.com business@thepihut.com support@miners.de",
+    );
+  };
+  await researchBatches(
+    db,
+    "owner",
+    async (b) => {
+      batches.push(b);
+    },
+    async () => {},
+    request,
+    sources,
+  );
+  assert.deepEqual(
+    batches.map((b) => b.mercado.length),
+    [10, 10],
+  );
+  for (const b of batches) {
+    assert(b.crm.candidates.length <= 20);
+    const orgs = b.crm.candidates.filter(
+      (c: any) => c.kind === "organizations",
+    );
+    assert.equal(new Set(orgs.map((c: any) => c.website)).size, orgs.length);
+    assert.equal(
+      b.crm.candidates.filter((c: any) => c.kind === "tasks").length,
+      b.mercado.length,
+    );
+    for (const task of b.crm.candidates.filter((c: any) => c.kind === "tasks"))
+      assert.equal(
+        b.crm.candidates[task.organizationIndex].website,
+        task.website,
+      );
+  }
+  const all = batches.flatMap((b) => b.mercado);
+  for (const v of sources)
+    assert(all.filter((p) => p.product.source_name === v.name).length <= 3);
+  assert.equal(batches[0].crm.candidates[0].email, "sales@serverdepotus.com");
+  const cursor = (
+    db
+      .prepare("SELECT cursor FROM marketplace_vendor_rotation WHERE owner=?")
+      .get("owner") as any
+  ).cursor;
+  assert(cursor > 0);
   db.close();
 });

@@ -51,7 +51,65 @@ export const suppliers = [
     region: "US",
     adapter: "shopify",
   },
+  {
+    host: "thepihut.com",
+    name: "The Pi Hut",
+    currency: "GBP",
+    region: "UK",
+    adapter: "shopify",
+  },
+  {
+    host: "shop.pimoroni.com",
+    name: "Pimoroni",
+    currency: "GBP",
+    region: "UK",
+    adapter: "shopify",
+  },
+  {
+    host: "miners.de",
+    name: "Miners.de",
+    currency: "EUR",
+    region: "Germany",
+    adapter: "shopify",
+  },
 ] as const;
+export const WEEKLY_PRODUCT_LIMIT = 20;
+export const PRODUCTS_PER_VENDOR = 3;
+export const PRODUCTS_PER_BATCH = 10; // One organization and linked task per offer: CRM permits 20 candidates.
+// Business contact pages are primary evidence; no inferred personal contacts.
+export const vendorContacts: Record<string, { url: string; email?: string }> = {
+  "serverdepotus.com": {
+    url: "https://serverdepotus.com/pages/contact-us",
+    email: "sales@serverdepotus.com",
+  },
+  "mercadominero.com.mx": {
+    url: "https://mercadominero.com.mx/pages/nosotros",
+    email: "contacto@mercadominero.com.mx",
+  },
+  "dtvelectronics.com": {
+    url: "https://dtvelectronics.com/contact-us/",
+    email: "info@dtvelectronics.com",
+  },
+  "bitcoinmerch.com": {
+    url: "https://bitcoinmerch.com",
+    email: "support@bitcoinmerch.com",
+  },
+  "www.noxar.mx": { url: "https://www.noxar.mx/pages/nosotros" },
+  "bitshopper.de": {
+    url: "https://www.bitshopper.de/en/legal-topics/privacy-and-data-protection/",
+    email: "info@bitshopper.de",
+  },
+  "vilros.com": { url: "https://vilros.com/pages/contact-us" },
+  "thepihut.com": {
+    url: "https://business.thepihut.com/",
+    email: "business@thepihut.com",
+  },
+  "shop.pimoroni.com": { url: "https://shop.pimoroni.com/pages/contact-us" },
+  "miners.de": {
+    url: "https://miners.de/pages/contact",
+    email: "support@miners.de",
+  },
+};
 export function productCollection(title: string): string | null {
   if (
     /\b(case|adapter)$/i.test(title) &&
@@ -59,7 +117,7 @@ export function productCollection(title: string): string | null {
   )
     return null;
   if (
-    /\b(blower|silencer|ventilador|enclosure|cable|sticker|heatsink|replacement|rail kit|power supply|fuente de poder|refacciones)\b|\b(case|adapter)\s*(for|only)/i.test(
+    /\b(axedash|display for|screen for|fan|splitter|stand|upgrade|plate|bithalo kit|blower|silencer|ventilador|enclosure|cable|sticker|heatsink|replacement|rail kit|power supply|fuente de poder|refacciones)\b|\b(case|adapter)\s*(for|only)/i.test(
       title,
     )
   )
@@ -157,7 +215,11 @@ export async function researchBatches(
     )?.cursor ?? 0;
   const selected: any[] = [];
   let visited = 0;
-  for (; visited < sources.length && selected.length < 3; visited++) {
+  for (
+    ;
+    visited < sources.length && selected.length < WEEKLY_PRODUCT_LIMIT;
+    visited++
+  ) {
     const vendor = sources[(cursor + visited) % sources.length]!;
     // Authority failures must abort the entire pass, never be treated as supplier outages.
     await authorize(vendor.host);
@@ -183,7 +245,13 @@ export async function researchBatches(
       console.warn(`Research source unavailable: ${vendor.host}`);
       continue;
     }
+    let vendorCount = 0;
     for (const product of products) {
+      if (
+        vendorCount >= PRODUCTS_PER_VENDOR ||
+        selected.length >= WEEKLY_PRODUCT_LIMIT
+      )
+        break;
       const rawTitle = product.title ?? product.name;
       const title =
         typeof rawTitle === "string"
@@ -202,6 +270,10 @@ export async function researchBatches(
               .replace(/&apos;/g, "'")
           : rawTitle;
       if (typeof title !== "string" || title.length > 160) continue;
+      if (
+        selected.some((p) => p.vendor.host === vendor.host && p.title === title)
+      )
+        continue;
       const collection = productCollection(title);
       if (!collection) continue;
       let url: string, price: string;
@@ -290,22 +362,68 @@ export async function researchBatches(
         continue;
       }
       selected.push({ vendor, title, collection, url, price });
-      break; // One offering per vendor per pass prevents large catalogs monopolizing the queue.
+      existing.add(canonical(url));
+      vendorCount++;
     }
   }
   const runs: string[] = [];
-  if (selected.length) {
+  for (let offset = 0; offset < selected.length; offset += PRODUCTS_PER_BATCH) {
+    const chunk = selected.slice(offset, offset + PRODUCTS_PER_BATCH);
     const time = new Date().toISOString();
     const id = uuid(
-      `${owner}:${selected
+      `${owner}:${chunk
         .map((p) => p.url)
         .sort()
         .join("|")}`,
     );
     const candidates: any[] = [];
+    const organizationIndexes = new Map<string, number>();
     const mercado: any[] = [];
-    for (const { vendor, title, collection, url, price } of selected) {
-      await authorize(vendor.host);
+    const authorized = new Set<string>();
+    const contactEvidence = new Map<string, { url: string; email?: string }>();
+    for (const { vendor, title, collection, url, price } of chunk) {
+      if (!authorized.has(vendor.host)) {
+        await authorize(vendor.host);
+        authorized.add(vendor.host);
+      }
+      const contact = vendorContacts[vendor.host];
+      if (contact && !contactEvidence.has(vendor.host)) {
+        // Only include email if this pass retrieves it from the approved public contact page.
+        try {
+          const response = await request(contact.url, {
+            redirect: "error",
+            signal: AbortSignal.timeout(10000),
+          });
+          if (response.ok) {
+            const reader = response.body?.getReader();
+            let text = "",
+              bytes = 0;
+            if (reader) {
+              try {
+                for (;;) {
+                  const r = await reader.read();
+                  if (r.done) break;
+                  bytes += r.value.length;
+                  if (bytes > 1000000) throw Error("Contact page too large");
+                  text += new TextDecoder().decode(r.value);
+                }
+              } finally {
+                await reader.cancel();
+              }
+            }
+            contactEvidence.set(vendor.host, {
+              url: contact.url,
+              ...(contact.email &&
+              text.toLowerCase().includes(contact.email.toLowerCase())
+                ? { email: contact.email }
+                : {}),
+            });
+          }
+        } catch {
+          /* Missing contacts become follow-up work, never fabricated data. */
+        }
+      }
+      const verifiedContact = contactEvidence.get(vendor.host);
       const evidence = {
         researchMethod: "agent",
         category: "Vendor",
@@ -314,21 +432,33 @@ export async function researchBatches(
         relevance:
           "Bitcoin mining, local AI or server equipment supplier for Mercado.",
         uncertainties:
-          "Confirm dealer terms, actual stock, fulfillment to Nevada and Portugal, shipping, taxes and warranty. Vendor region does not establish product origin or warehouse location.",
+          "Verify business contact details and confirm dealer terms, actual stock, fulfillment to Nevada and Portugal, shipping, taxes and warranty. Vendor region does not establish product origin or warehouse location.",
         fit: "high",
         evidence: "primary",
-        sources: [{ url, retrievedAt: time }],
+        sources: [
+          { url, retrievedAt: time },
+          ...(verifiedContact
+            ? [{ url: verifiedContact.url, retrievedAt: time }]
+            : []),
+        ],
       };
-      const organizationIndex = candidates.length;
-      candidates.push(
-        { ...evidence, kind: "organizations", name: vendor.name },
-        {
+      let organizationIndex = organizationIndexes.get(vendor.host);
+      if (organizationIndex === undefined) {
+        organizationIndex = candidates.length;
+        organizationIndexes.set(vendor.host, organizationIndex);
+        candidates.push({
           ...evidence,
-          kind: "tasks",
-          name: `Verify dealer terms: ${title}`.slice(0, 200),
-          organizationIndex,
-        },
-      );
+          kind: "organizations",
+          name: vendor.name,
+          email: verifiedContact?.email ?? "",
+        });
+      }
+      candidates.push({
+        ...evidence,
+        kind: "tasks",
+        name: `${vendor.name}: verify ${title}`.slice(0, 200),
+        organizationIndex,
+      });
       mercado.push({
         product: {
           product_id: collection,
@@ -345,7 +475,7 @@ export async function researchBatches(
     await authorize();
     await create({ id, crm: { candidates }, mercado });
     db.transaction(() => {
-      for (const p of selected)
+      for (const p of chunk)
         db.prepare(
           "INSERT OR IGNORE INTO marketplace_researched VALUES(?,?,?,?)",
         ).run(owner, p.url, id, Date.now());
