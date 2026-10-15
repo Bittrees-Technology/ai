@@ -1034,6 +1034,7 @@ export function localApi({
           prompt: z.string().min(1).max(32000),
           modelProfileId: z.string().min(1).max(128),
           allowQuestions: z.boolean().optional(),
+          workflow: z.literal("crm-summary-v1").optional(),
           memorySelection: memorySelectionSchema.optional(),
         })
         .parse(req.body);
@@ -1050,7 +1051,8 @@ export function localApi({
         store,
         {
           conversationId: body.conversationId,
-          kind: "draft",
+          kind: body.workflow ? "summarize" : "draft",
+          ...(body.workflow ? { workflow: body.workflow } : {}),
           prompt: body.prompt,
           modelProfileId: body.modelProfileId,
           ...(body.memorySelection

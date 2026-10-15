@@ -29,12 +29,13 @@ export function CrmDrafts({
       "Create a concise brief of these selected records. Cite record IDs and flag missing information.",
     ),
     [profile, setProfile] = useState(profiles[0]?.id ?? ""),
+    [focused, setFocused] = useState(false),
     [allowQuestions, setAllowQuestions] = useState(false),
     [busy, setBusy] = useState(false);
   const draftMemory = useAppMemory(
     api,
     "crm",
-    JSON.stringify({ selected, prompt, profile, allowQuestions }),
+    JSON.stringify({ selected, prompt, profile, allowQuestions, focused }),
     busy,
   );
   const viewEpoch = useRef(0);
@@ -98,8 +99,11 @@ export function CrmDrafts({
           onSubmit={(e) => {
             e.preventDefault();
             void act(async () => {
-              const memorySelection = draftMemory.request();
+              const memorySelection = focused
+                ? undefined
+                : draftMemory.request();
               const fingerprint = JSON.stringify({
+                focused,
                 memorySelection,
                 selected: [...selected].sort(),
                 prompt,
@@ -116,6 +120,7 @@ export function CrmDrafts({
                 "/v1/connections/crm/drafts",
                 "POST",
                 {
+                  ...(focused ? { workflow: "crm-summary-v1" } : {}),
                   recordIds: [...selected].sort(),
                   prompt,
                   modelProfileId: profile,
@@ -177,7 +182,27 @@ export function CrmDrafts({
             {selected.length} records selected. CRM permissions and record
             versions are checked again during generation.
           </p>
-          {draftMemory.panel}
+          <label>
+            <input
+              type="checkbox"
+              checked={focused}
+              disabled={busy}
+              onChange={(event) => {
+                setFocused(event.target.checked);
+                draftMemory.clear();
+              }}
+            />
+            Use focused CRM summary
+          </label>
+          {focused ? (
+            <p>
+              Summarizes only these records, checks record citations and stops
+              if the request needs another workflow. No memory or external
+              actions are used. Claims still require your review.
+            </p>
+          ) : (
+            draftMemory.panel
+          )}
           <QuestionChoice
             checked={allowQuestions}
             onChange={setAllowQuestions}
@@ -186,7 +211,7 @@ export function CrmDrafts({
           <button
             disabled={
               busy ||
-              draftMemory.blocked ||
+              (!focused && draftMemory.blocked) ||
               !profile ||
               !selected.length ||
               !prompt.trim()
@@ -291,7 +316,9 @@ export function SourceDraftDetail({
             <p>No result yet. Task status: {detail.task.status}.</p>
           )}
           <p>
-            Unreviewed draft. Verify citations and claims before use.
+            {detail.task.result?.crmDecision?.decision === "stop"
+              ? "The workflow stopped without producing a summary. Create a new task with a summary request or different selected records."
+              : "Unreviewed draft. Verify citations and claims before use."}
             {sourceApp === "memory"
               ? "Source-linked memories are checked again before this result is opened or exported."
               : sourceApp === "crm"
@@ -398,9 +425,15 @@ export function SourceDraftDetail({
       {sourceApp === "autonote" && (
         <AutoNoteReviewControls key={id} id={id} api={api} onError={onError} />
       )}
-      {sourceApp === "crm" && (
-        <CrmPublicationControls key={id} id={id} api={api} onError={onError} />
-      )}
+      {sourceApp === "crm" &&
+        detail?.task?.result?.crmDecision?.decision !== "stop" && (
+          <CrmPublicationControls
+            key={id}
+            id={id}
+            api={api}
+            onError={onError}
+          />
+        )}
     </section>
   );
 }

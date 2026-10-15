@@ -80,6 +80,7 @@ export const requestSchema = z.strictObject({
   prompt: z.string().min(1).max(32_000),
   modelProfileId: id,
   allowQuestions: z.boolean().optional(),
+  workflow: z.literal("crm-summary-v1").optional(),
   memorySelection: memorySelectionSchema.optional(),
   memoryIds: z
     .array(id)

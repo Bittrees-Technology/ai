@@ -226,6 +226,25 @@ for (const source of ["crm", "autonote", "mail"] as const) {
     });
     expect(posts[0].modelProfileId).toBe("local");
     if (source === "crm") expect(posts[0].recordIds).toEqual([id]);
+    if (source === "crm") {
+      await page
+        .getByRole("checkbox", { name: "Use focused CRM summary" })
+        .check();
+      await expect(
+        page.getByRole("button", {
+          name: "Load permitted memories",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await page
+        .getByRole("button", { name: "Create local draft", exact: true })
+        .click();
+      await expect.poll(() => posts.length).toBe(2);
+      expect(posts[1].workflow).toBe("crm-summary-v1");
+      expect(posts[1].memorySelection).toBeUndefined();
+      expect(posts[1].recordIds).toEqual([id]);
+      await screenshots(page, "crm-focused", info.project.name);
+    }
     if (source === "autonote") expect(posts[0].meetingId).toBe(id);
     if (source === "mail") expect(posts[0].content).toBe("metadata");
   });
