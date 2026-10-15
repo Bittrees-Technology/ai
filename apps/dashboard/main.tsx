@@ -1006,7 +1006,9 @@ function App() {
             <div hidden={page !== "Inbox"}>
               <Inbox key={epoch.current} api={api} onError={fail} />
             </div>
-            {page === "Workflows & permissions" && <Workflows api={api} />}
+            {page === "Workflows & permissions" && (
+              <Workflows api={createLocalApi(fetch, 30000)} />
+            )}
             {page === "Connections" && (
               <Connections
                 api={api}
