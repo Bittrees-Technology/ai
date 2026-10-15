@@ -1,3 +1,8 @@
+import React from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { LoginPanel, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
+let loginRoot: Root | undefined;
+let chooseWallet = false;
 type Provider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<any>;
   on?: (event: string, fn: () => void) => void;
@@ -284,26 +289,31 @@ function grantView(g: any, code?: string) {
   return panel;
 }
 function render() {
+  loginRoot?.unmount();
+  loginRoot = undefined;
   root.replaceChildren();
-  if (error) root.append(el("p", error, "workflow-notice workflow-error"));
+  if (error && wallet) root.append(el("p", error, "workflow-notice workflow-error"));
   if (notice) root.append(el("p", notice, "workflow-notice"));
   if (!wallet) {
-    root.append(
-      el("h2", "Connect your wallet"),
-      el(
-        "p",
-        "Use your own Ethereum wallet. A sign-in signature opens your account; a separate approval delegates the workflow.",
-      ),
-    );
-    if (!wallets.length)
-      root.append(
-        el(
-          "p",
-          "Open this page in your wallet’s browser or install a browser wallet. Smart-contract wallets and QR pairing are not supported by this initial release.",
-        ),
-      );
-    for (const w of wallets)
-      root.append(button(`Sign in with ${w.name}`, () => login(w.provider)));
+    const mount = el("div", "", "workflow-login");
+    root.append(mount);
+    loginRoot = createRoot(mount);
+    const start = () => {
+      if (wallets.length === 1) void act(() => login(wallets[0]!.provider));
+      else { chooseWallet = true; render(); }
+    };
+    loginRoot.render(React.createElement(LoginPanel, {
+      product: "AI", icon: "/favicon-32x32.png", description: "Use your Ethereum wallet.",
+      wallet: React.createElement(EthereumSignIn, { onClick: start, busy }),
+      notice: error ? React.createElement("p", { role: "alert" }, error) : undefined,
+      footer: React.createElement("p", null, "A separate wallet approval is required to delegate workflow permissions.")
+    }));
+    if (chooseWallet) {
+      const picker = el("div", "", "workflow-wallet-picker");
+      picker.append(el("p", wallets.length ? "Choose your Ethereum wallet." : "Open this page in your wallet’s browser or enable an Ethereum wallet extension."));
+      for (const w of wallets) picker.append(button(w.name, () => login(w.provider)));
+      root.append(picker);
+    }
     return;
   }
   const account = el("div", "", "workflow-actions");
