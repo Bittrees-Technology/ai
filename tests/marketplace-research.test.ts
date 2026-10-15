@@ -84,6 +84,7 @@ test("scope separates miners, GPUs and complete servers from accessories and alt
   for (const title of [
     "Bitaxe Gamma with PSU and case",
     "CANAAN AVALON Q 90TH/S",
+    "Antminer S21 200TH/s",
     "Bitcoin Merch® Nexus S1 Hydro Bitcoin Miner",
   ])
     assert.equal(productCollection(title), "asic");

@@ -67,7 +67,7 @@ export function productCollection(title: string): string | null {
   if (/\b(doge|scrypt|litecoin|kaspa|ks[0-9]|l[379]\b)/i.test(title))
     return null;
   if (
-    /\b(bitaxe|nerd[qa]*xe|bitforge|gekko\s*science|bitfortun|nexus s1|avalon|whatsminer|antminer s\d|antminer t\d)\b|bitcoin miner/i.test(
+    /\b(bitaxe|nerd[qa]*xe|bitforge|gekko\s*science|bitfortun|nexus s1|avalon|whatsminer|antminer s\d+|antminer t\d+)\b|bitcoin miner/i.test(
       title,
     )
   )
