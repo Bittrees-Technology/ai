@@ -124,6 +124,7 @@ export function RolesConnection({
   const hasPolicy = connection?.actions?.includes("read_own_policy") === true;
   return (
     <article className="card roles-connection">
+      <p><a href="https://ai.bittrees.org/administration" target="_blank" rel="noopener noreferrer">Project administration and roles</a></p>
       <h3>Roles</h3>
       <p>
         View your own linked-wallet observations. Reported roles and permissions
