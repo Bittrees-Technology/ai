@@ -183,6 +183,11 @@ export function localApi({
     "/v1/connections/mail-send/prepare",
     express.json({ limit: 1500000, strict: true }),
   );
+  // Match the bounded CRM dataset envelope without widening other local routes.
+  app.post(
+    "/v1/connections/dataset/save",
+    express.json({ limit: 120000, strict: true }),
+  );
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/private-relay", (_req, res) =>
     res.json(
