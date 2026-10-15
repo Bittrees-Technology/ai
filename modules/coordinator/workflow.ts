@@ -23,6 +23,7 @@ export type Connection = {
   token: string;
   expiresAt: number | null;
   managed?: boolean;
+  automatic?: boolean;
 };
 export class MarketplaceCoordinator {
   private store: RunStore;
@@ -79,10 +80,19 @@ export class MarketplaceCoordinator {
       steps: (row.steps as Step[]).map(({ payload, ...s }) => s),
     };
   }
-  private async call(c: Connection, step: Step, action: "preview" | "status") {
+  private async call(
+    c: Connection,
+    step: Step,
+    action: "preview" | "status" | "execute",
+  ) {
     this.connection(c.ownerId);
     this.authorize(c.ownerId, `${step.source}:${action}`);
     await this.cloud(c);
+    if (action === "execute") {
+      if (!c.managed || !c.automatic)
+        throw new AuthorityDenied("Automatic workflow not enabled");
+      await checkWorkflowAuthority(c.token, "mcp", "sources:execute");
+    }
     this.authorize(c.ownerId, `${step.source}:${action}`);
     const response = await this.request(
       "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",
@@ -119,7 +129,11 @@ export class MarketplaceCoordinator {
       !value.result?.structuredContent
     )
       throw new Error("Source response unconfirmed");
-    return value.result.structuredContent as { state?: string };
+    return value.result.structuredContent as {
+      state?: string;
+      held?: boolean;
+      reason?: string;
+    };
   }
   async advance(owner: string, id: string) {
     const c = this.connection(owner);
@@ -129,7 +143,11 @@ export class MarketplaceCoordinator {
     const steps = await this.store.claim(owner, id, lease);
     if (!steps) throw Error("Run unavailable or already running");
     // One source per invocation bounds runtime and permits independent retries.
-    const step = steps.find((s) => s.state !== "decided");
+    const step = steps.find(
+      (s) =>
+        s.state !== "decided" &&
+        !(s.receipt as { held?: boolean } | undefined)?.held,
+    );
     try {
       if (step) {
         try {
@@ -146,8 +164,13 @@ export class MarketplaceCoordinator {
             !["awaiting_review", "decided"].includes(receipt.state)
           )
             throw new Error("Unknown source state");
+          if (receipt.state === "awaiting_review" && c.automatic) {
+            receipt = await this.call(c, step, "execute");
+            if (!["awaiting_review", "decided"].includes(receipt.state || ""))
+              throw Error("Unknown execution state");
+          }
           step.failures = 0;
-          step.state = receipt.state;
+          step.state = receipt.state!;
           step.receipt = receipt;
         } catch (error) {
           if (error instanceof AuthorityDenied) throw error;

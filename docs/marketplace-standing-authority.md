@@ -1,5 +1,7 @@
 # Local marketplace automation authority
 
+> Automatic execution is now available as a separate opt-in capability. See [Mercado supplier workflow](marketplace-qualified-workflow.md). Proposal-only grants described below retain their original limits.
+
 The Mac runner can process prepared batches repeatedly with a durable, owner-bound local grant. This is not a permanent browser login and does not grant publication, CRM approval, arbitrary tool execution, or outreach rights.
 
 From the AI checkout, use the existing Keychain-protected connection:
