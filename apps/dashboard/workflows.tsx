@@ -54,7 +54,6 @@ export function Workflows({
             : "Operator configured — not wallet signed";
   return (
     <section>
-      <h2>Workflows &amp; permissions</h2>
       <p>
         Delegate work to this Mac with your wallet. Your app connections keep
         their own access rules.
