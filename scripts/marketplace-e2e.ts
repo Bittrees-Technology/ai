@@ -1,3 +1,4 @@
+import { cloudAuthority } from "../modules/coordinator/cloud-authority.js";
 // Dedicated disposable database only. Requires sibling source checkouts for all three apps.
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
@@ -34,6 +35,28 @@ await pool.query(
     "utf8",
   ),
 );
+await pool.query(
+  await readFile("modules/remote/migrations/workflow-authority.sql", "utf8"),
+);
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  if (String(url) === "https://ai.bittrees.org/api/workflow-authority") {
+    try {
+      return new Response(
+        JSON.stringify(
+          await cloudAuthority(
+            pool,
+            new Headers(init?.headers).get("authorization")!.slice(7),
+            JSON.parse(String(init?.body)),
+          ),
+        ),
+      );
+    } catch {
+      return new Response("{}", { status: 403 });
+    }
+  }
+  return nativeFetch(url, init);
+};
 const owner = randomUUID(),
   workspace = randomUUID();
 await pool.query("INSERT INTO users(id,name) VALUES($1,$2)", [
@@ -59,13 +82,13 @@ const brief = await crm.createSearch(owner, {
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const sourceToken = "d".repeat(64),
   mcpToken = "e".repeat(64);
-const grant = {
+const grant: any = {
   identity: `coordinator:${owner}`,
   tokenHash: hash(sourceToken),
   expiresAt: Date.now() + 3600000,
   collections: ["asic"],
 };
-const actor = {
+const actor: any = {
   tenant: "test",
   subject: owner,
   tokenHash: hash(mcpToken),
@@ -74,6 +97,31 @@ const actor = {
   projectIds: ["crm", "mercado"],
   permissions: ["catalog:read", "sources:propose"],
 };
+const authorityId = randomUUID(),
+  control = "f".repeat(64) + randomUUID().replaceAll("-", "");
+const controlToken = createHash("sha256").update(control).digest("hex");
+await pool.query(
+  "INSERT INTO workflow_authorities(id,owner_id,control_hash) VALUES($1,$2,$3)",
+  [authorityId, owner, hash(controlToken)],
+);
+for (const [token, audience, scopes] of [
+  [mcpToken, "mcp", ["sources:propose"]],
+  [sourceToken, "mercado", ["propose"]],
+  [brief.token, "crm", ["propose"]],
+] as const) {
+  await pool.query(
+    "INSERT INTO workflow_credentials(token_hash,authority_id,audience,scopes) VALUES($1,$2,$3,$4) ON CONFLICT(token_hash) DO UPDATE SET authority_id=excluded.authority_id",
+    [hash(token), authorityId, audience, JSON.stringify(scopes)],
+  );
+}
+actor.managed = true;
+actor.expiresAt = null;
+grant.managed = true;
+grant.expiresAt = null;
+await pool.query(
+  "UPDATE lead_searches SET standing=true,authority_managed=true,expires_at=NULL WHERE id=$1",
+  [brief.id],
+);
 const sql = async (strings: TemplateStringsArray, ...values: unknown[]) =>
   (
     await pool.query(
@@ -245,6 +293,51 @@ try {
     ).rows[0].count,
     "1",
   );
+  const second = await crm.prepare(brief.token, {
+    operationId: randomUUID(),
+    candidates: input.crm.candidates,
+  });
+  assert.equal(second.state, "awaiting_review");
+  await pool.query(
+    "UPDATE members SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",
+    [workspace, owner],
+  );
+  await assert.rejects(crm.agentBrief(brief.token));
+  await pool.query(
+    "UPDATE members SET role='owner' WHERE workspace_id=$1 AND user_id=$2",
+    [workspace, owner],
+  );
+  await assert.rejects(
+    cloudAuthority(pool, mcpToken, {
+      action: "check",
+      audience: "crm",
+      scope: "propose",
+    }),
+  );
+  await cloudAuthority(pool, controlToken, { action: "revoke" });
+  await assert.rejects(crm.agentBrief(brief.token));
+  await assert.rejects(
+    coordinatorRequest(sql, { ...grant, bearer: sourceToken }, "status", {
+      operationId: product.operationId,
+    }),
+  );
+  await assert.rejects(
+    sourceConnections.call(actor, ["crm", "mercado"], "source_crm_status", {
+      operationId: crmStep!.operationId,
+    }),
+  );
+  const denied = await localFetch(
+    "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${mcpToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    },
+  );
+  assert.equal(denied.status, 403);
   actor.permissions = [];
   await assert.rejects(
     sourceConnections.call(actor, ["crm"], "source_crm_status", {
@@ -257,6 +350,7 @@ try {
 } finally {
   await new Promise<void>((r) => server.close(() => r()));
   await new Promise<void>((r) => sourceServer.close(() => r()));
+  globalThis.fetch = nativeFetch;
   await pool.end();
   await crmDb.pool().end();
 }

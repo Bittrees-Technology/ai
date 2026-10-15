@@ -1,3 +1,4 @@
+import { activeExpiry, checkWorkflowAuthority } from "./authority-client.js";
 import {
   PostgresRunStore,
   type RunStore,
@@ -17,7 +18,12 @@ const batch = z.strictObject({
     .min(1)
     .max(20),
 });
-export type Connection = { ownerId: string; token: string; expiresAt: number };
+export type Connection = {
+  ownerId: string;
+  token: string;
+  expiresAt: number | null;
+  managed?: boolean;
+};
 export class MarketplaceCoordinator {
   private store: RunStore;
   constructor(
@@ -30,13 +36,7 @@ export class MarketplaceCoordinator {
   }
   private connection(owner: string) {
     const c = this.connections.find((c) => c.ownerId === owner);
-    if (
-      !c ||
-      !Number.isFinite(c.expiresAt) ||
-      c.expiresAt <= Date.now() ||
-      !c.token ||
-      c.token.length < 16
-    )
+    if (!c || !activeExpiry(c) || !c.token || c.token.length < 16)
       throw new Error("Workflow connection unavailable");
     return c;
   }
@@ -73,6 +73,9 @@ export class MarketplaceCoordinator {
   }
   private async call(c: Connection, step: Step, action: "preview" | "status") {
     this.connection(c.ownerId);
+    this.authorize(c.ownerId, `${step.source}:${action}`);
+    if (c.managed)
+      await checkWorkflowAuthority(c.token, "mcp", "sources:propose");
     this.authorize(c.ownerId, `${step.source}:${action}`);
     const response = await this.request(
       "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",

@@ -1,3 +1,4 @@
+import { cloudAuthority } from "../modules/coordinator/cloud-authority.js";
 import { Pool } from "pg";
 import {
   syncAuthority,
@@ -39,6 +40,12 @@ export default async function handler(req: any, res: any) {
     statement_timeout: 10000,
   });
   try {
+    if (grant.managed)
+      await cloudAuthority(pool, req.headers.authorization.slice(7), {
+        action: "check",
+        audience: "sync",
+        scope: "sync",
+      });
     return res.status(200).json(await acceptStatus(pool, grant.ownerId, input));
   } catch {
     return res
