@@ -120,6 +120,17 @@ export function MailConnection({
     <article className="card">
       <h3>Mail</h3>
       <p>
+        Background reply access is separate and starts in draft-only mode.{" "}
+        <a
+          href="https://mail.bittrees.org/automations"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Manage reply scope in Mail
+        </a>
+        .
+      </p>
+      <p>
         Choose one message in Mail. Summaries and suggested replies stay on this
         Mac. Creating a draft does not send or save it into your mailbox.
       </p>

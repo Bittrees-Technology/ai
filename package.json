@@ -18,7 +18,8 @@
     "test:browser-private": "playwright test --config scripts/private-browser.config.ts",
     "build:remote": "vite build --config scripts/remote-web.config.ts",
     "build:site": "vite build apps/site --outDir ../../dist/site --emptyOutDir",
-    "start:remote": "node dist/apps/api/start.js"
+    "start:remote": "node dist/apps/api/start.js",
+    "build:mail-replies": "esbuild apps/mail-replies/start.ts --bundle --platform=node --format=cjs --outfile=dist/mail-replies/service.cjs"
   },
   "dependencies": {
     "@hpke/core": "1.9.0",
@@ -40,6 +41,7 @@
     "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
     "prettier": "3.9.8",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
