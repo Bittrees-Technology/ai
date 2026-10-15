@@ -1,19 +1,90 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-// Operator-approved suppliers only. Catalog text is data, never executable instructions.
+// Fixed public sources only; catalog text never grants authority or executes instructions.
 export const suppliers = [
+  {
+    host: "serverdepotus.com",
+    name: "Server Depot US",
+    currency: "USD",
+    region: "US",
+    adapter: "shopify",
+  },
+  {
+    host: "mercadominero.com.mx",
+    name: "Mercado Minero",
+    currency: "MXN",
+    region: "Mexico",
+    adapter: "shopify",
+  },
+  {
+    host: "dtvelectronics.com",
+    name: "DTV Electronics",
+    currency: "USD",
+    region: "UK",
+    adapter: "woo",
+  },
+  {
+    host: "bitcoinmerch.com",
+    name: "Bitcoin Merch",
+    currency: "USD",
+    region: "US",
+    adapter: "shopify",
+  },
+  {
+    host: "www.noxar.mx",
+    name: "NOXAR",
+    currency: "MXN",
+    region: "Mexico",
+    adapter: "shopify",
+  },
+  {
+    host: "bitshopper.de",
+    name: "bitshopper",
+    currency: "EUR",
+    region: "Germany",
+    adapter: "woo",
+  },
   {
     host: "vilros.com",
     name: "Vilros",
-    collection: "ai-compute",
     currency: "USD",
     region: "US",
+    adapter: "shopify",
   },
 ] as const;
-const eligible =
-  /\b(jetson|dgx|bitaxe|nerdqaxe|hailo)\b|raspberry pi.*(ai (hat|kit|camera)|llm kit)/i;
-const excluded =
-  /\b(case|cable|adapter|slides|lesson|book|sticker|heatsink)\b/i;
+export function productCollection(title: string): string | null {
+  if (
+    /\b(case|adapter)$/i.test(title) &&
+    !/\bwith\b.*\b(case|adapter)$/i.test(title)
+  )
+    return null;
+  if (
+    /\b(blower|silencer|ventilador|enclosure|cable|sticker|heatsink|replacement|rail kit|power supply|fuente de poder|refacciones)\b|\b(case|adapter)\s*(for|only)/i.test(
+      title,
+    )
+  )
+    return null;
+  if (/\b(doge|scrypt|litecoin|kaspa|ks[0-9]|l[379]\b)/i.test(title))
+    return null;
+  if (
+    /\b(bitaxe|nerd[qa]*xe|bitforge|gekko\s*science|bitfortun|nexus s1|avalon|whatsminer|antminer s\d+|antminer t\d+)\b|bitcoin miner/i.test(
+      title,
+    )
+  )
+    return "asic";
+  if (
+    /\b(jetson|dgx|hailo)\b|raspberry pi.*(ai (hat|kit|camera)|llm kit)|(?:geforce|nvidia|quadro).*\brtx\s*[0-9a-z]+/i.test(
+      title,
+    )
+  )
+    return "ai-compute";
+  if (
+    /\b(poweredge|proliant)\b|supermicro.*server/i.test(title) &&
+    /\b(server|servidor|xeon)\b/i.test(title)
+  )
+    return "servers";
+  return null;
+}
 const uuid = (input: string) => {
   const h = createHash("sha256").update(input).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
@@ -46,12 +117,14 @@ async function json(url: string, request: typeof fetch) {
 export async function researchBatches(
   db: Database.Database,
   owner: string,
-  create: (batch: unknown) => Promise<unknown>,
-  authorize: () => Promise<void>,
+  create: (batch: any) => Promise<unknown>,
+  authorize: (host?: string) => Promise<void>,
   request: typeof fetch = fetch,
+  sources: readonly (typeof suppliers)[number][] = suppliers,
 ) {
+  if (!sources.length) return [];
   db.exec(
-    "CREATE TABLE IF NOT EXISTS marketplace_researched(owner TEXT NOT NULL,url TEXT NOT NULL,run_id TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(owner,url))",
+    "CREATE TABLE IF NOT EXISTS marketplace_researched(owner TEXT NOT NULL,url TEXT NOT NULL,run_id TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(owner,url)); CREATE TABLE IF NOT EXISTS marketplace_vendor_rotation(owner TEXT PRIMARY KEY,cursor INTEGER NOT NULL)",
   );
   await authorize();
   const catalog = await json(
@@ -62,7 +135,10 @@ export async function researchBatches(
     throw Error("Marketplace catalog unavailable");
   const canonical = (url: string) => {
     const u = new URL(url);
-    return u.origin + u.pathname.replace(/\/$/, "");
+    return (
+      u.hostname.replace(/^www\./, "") +
+      decodeURI(u.pathname).replace(/\/$/, "")
+    );
   };
   const existing = new Set(
     catalog.items.flatMap((item: any) => {
@@ -73,111 +149,211 @@ export async function researchBatches(
       }
     }),
   );
-  const runs: string[] = [];
-  for (const vendor of suppliers) {
-    await authorize();
-    const cart = await json(`https://${vendor.host}/cart.js`, request);
-    if (cart.currency !== vendor.currency)
-      throw Error("Supplier currency changed; operator review required");
-    for (let page = 1; page <= 4; page++) {
-      await authorize();
-      const data = await json(
-        `https://${vendor.host}/products.json?limit=250&page=${page}`,
-        request,
-      );
-      if (!Array.isArray(data.products))
-        throw Error("Unexpected catalog format");
-      for (const product of data.products) {
-        if (runs.length >= 3) return runs; // Three proposals per scheduled discovery pass.
+  const cursor =
+    (
+      db
+        .prepare("SELECT cursor FROM marketplace_vendor_rotation WHERE owner=?")
+        .get(owner) as { cursor: number } | undefined
+    )?.cursor ?? 0;
+  const selected: any[] = [];
+  let visited = 0;
+  for (; visited < sources.length && selected.length < 3; visited++) {
+    const vendor = sources[(cursor + visited) % sources.length]!;
+    // Authority failures must abort the entire pass, never be treated as supplier outages.
+    await authorize(vendor.host);
+    let products: any[] = [];
+    try {
+      if (vendor.adapter === "shopify") {
+        const cart = await json(`https://${vendor.host}/cart.js`, request);
+        if (cart.currency !== vendor.currency) throw Error("Currency mismatch");
+      }
+      for (let page = 1; page <= 4; page++) {
+        const data = await json(
+          vendor.adapter === "shopify"
+            ? `https://${vendor.host}/products.json?limit=250&page=${page}`
+            : `https://${vendor.host}/wp-json/wc/store/v1/products?per_page=100&page=${page}`,
+          request,
+        );
+        const items = vendor.adapter === "shopify" ? data.products : data;
+        if (!Array.isArray(items)) throw Error("Unexpected catalog format");
+        products.push(...items);
+        if (items.length < (vendor.adapter === "shopify" ? 250 : 100)) break;
+      }
+    } catch {
+      console.warn(`Research source unavailable: ${vendor.host}`);
+      continue;
+    }
+    for (const product of products) {
+      const rawTitle = product.title ?? product.name;
+      const title =
+        typeof rawTitle === "string"
+          ? rawTitle
+              .replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_: string, n: string) => {
+                const code =
+                  n[0]?.toLowerCase() === "x"
+                    ? parseInt(n.slice(1), 16)
+                    : Number(n);
+                return code > 0 && code <= 0x10ffff
+                  ? String.fromCodePoint(code)
+                  : "";
+              })
+              .replace(/&amp;/g, "&")
+              .replace(/&quot;/g, '"')
+              .replace(/&apos;/g, "'")
+          : rawTitle;
+      if (typeof title !== "string" || title.length > 160) continue;
+      const collection = productCollection(title);
+      if (!collection) continue;
+      let url: string, price: string;
+      let variant: any;
+      if (vendor.adapter === "shopify") {
         if (
-          typeof product.title !== "string" ||
-          product.title.length > 160 ||
-          !eligible.test(product.title) ||
-          excluded.test(product.title) ||
-          !/^[a-z0-9-]+$/.test(product.handle)
+          typeof product.handle !== "string" ||
+          !/^[\p{L}\p{N}®™_-]+$/u.test(product.handle)
         )
           continue;
-        const variant = product.variants?.find(
+        variant = product.variants?.find(
           (v: any) =>
             v.available === true &&
             /^\d+(\.\d{1,2})?$/.test(v.price) &&
             Number(v.price) > 0,
         );
         if (!variant) continue;
-        const url = `https://${vendor.host}/products/${product.handle}`;
-        if (existing.has(canonical(url))) continue;
+        url = `https://${vendor.host}/products/${encodeURIComponent(product.handle)}`;
+        price = variant.price;
+      } else {
         if (
-          db
-            .prepare(
-              "SELECT 1 FROM marketplace_researched WHERE owner=? AND url=?",
-            )
-            .get(owner, url)
+          product.type !== "simple" ||
+          product.is_in_stock !== true ||
+          product.is_purchasable !== true ||
+          product.prices?.currency_code !== vendor.currency ||
+          product.prices?.currency_minor_unit !== 2 ||
+          !/^\d+$/.test(product.prices.price) ||
+          Number(product.prices.price) <= 0
         )
           continue;
-        // Fetch the individual product again: stale catalog entries cannot become proposals.
-        await authorize();
-        const fresh = await json(`${url}.js`, request);
-        if (
-          fresh.id !== product.id ||
-          !fresh.variants?.some(
-            (v: any) =>
-              v.id === variant.id &&
-              v.available === true &&
-              v.price === Math.round(Number(variant.price) * 100),
+        try {
+          const u = new URL(product.permalink);
+          if (
+            u.protocol !== "https:" ||
+            u.username ||
+            u.password ||
+            u.port ||
+            u.hostname.replace(/^www\./, "") !==
+              vendor.host.replace(/^www\./, "")
           )
+            continue;
+          url = u.href;
+        } catch {
+          continue;
+        }
+        price = (Number(product.prices.price) / 100).toFixed(2);
+      }
+      if (
+        existing.has(canonical(url)) ||
+        db
+          .prepare(
+            "SELECT 1 FROM marketplace_researched WHERE owner=? AND url=?",
+          )
+          .get(owner, url)
+      )
+        continue;
+      await authorize();
+      try {
+        const fresh = await json(
+          vendor.adapter === "shopify"
+            ? `${url}.js`
+            : `https://${vendor.host}/wp-json/wc/store/v1/products/${product.id}`,
+          request,
+        );
+        if (fresh.id !== product.id) continue;
+        if (vendor.adapter === "shopify") {
+          if (
+            !fresh.variants?.some(
+              (v: any) =>
+                v.id === variant.id &&
+                v.available === true &&
+                v.price === Math.round(Number(price) * 100),
+            )
+          )
+            continue;
+        } else if (
+          fresh.type !== "simple" ||
+          fresh.is_in_stock !== true ||
+          fresh.is_purchasable !== true ||
+          fresh.prices?.currency_code !== vendor.currency ||
+          fresh.prices?.currency_minor_unit !== 2 ||
+          fresh.prices?.price !== product.prices.price
         )
           continue;
-        const time = new Date().toISOString(),
-          id = uuid(`${owner}:${url}`);
-        const evidence = {
-          researchMethod: "agent",
-          category: "Vendor",
-          website: `https://${vendor.host}`,
-          summary: `Public ${vendor.name} catalog lists ${product.title}.`,
-          relevance: "Local AI hardware supplier for Mercado.",
-          uncertainties:
-            "Dealer terms, stock reservation, shipping and tax require confirmation.",
-          fit: "high",
-          evidence: "primary",
-          sources: [{ url, retrievedAt: time }],
-        };
-        const batch = {
-          id,
-          crm: {
-            candidates: [
-              { ...evidence, kind: "organizations", name: vendor.name },
-              {
-                ...evidence,
-                kind: "tasks",
-                name: `Verify dealer terms: ${product.title}`.slice(0, 200),
-                organizationIndex: 0,
-              },
-            ],
-          },
-          mercado: [
-            {
-              product: {
-                product_id: vendor.collection,
-                name: product.title,
-                description: `${product.title}, offered by ${vendor.name}. Public vendor listing checked ${time.slice(0, 10)}; stock and fulfillment require confirmation.`,
-                source_name: vendor.name,
-                source_url: url,
-                price: variant.price,
-                currency: vendor.currency,
-                price_checked: time.slice(0, 10),
-              },
-            },
-          ],
-        };
-        await authorize();
-        await create(batch); // Durable run before dedup marker; retries keep the same run ID.
-        db.prepare(
-          "INSERT OR IGNORE INTO marketplace_researched VALUES(?,?,?,?)",
-        ).run(owner, url, id, Date.now());
-        runs.push(id);
+      } catch {
+        continue;
       }
-      if (data.products.length < 250) break;
+      selected.push({ vendor, title, collection, url, price });
+      break; // One offering per vendor per pass prevents large catalogs monopolizing the queue.
     }
   }
+  const runs: string[] = [];
+  if (selected.length) {
+    const time = new Date().toISOString();
+    const id = uuid(
+      `${owner}:${selected
+        .map((p) => p.url)
+        .sort()
+        .join("|")}`,
+    );
+    const candidates: any[] = [];
+    const mercado: any[] = [];
+    for (const { vendor, title, collection, url, price } of selected) {
+      await authorize(vendor.host);
+      const evidence = {
+        researchMethod: "agent",
+        category: "Vendor",
+        website: `https://${vendor.host}`,
+        summary: `${vendor.name} (${vendor.region}) lists ${title} at ${price} ${vendor.currency}; publicly available when checked.`,
+        relevance:
+          "Bitcoin mining, local AI or server equipment supplier for Mercado.",
+        uncertainties:
+          "Confirm dealer terms, actual stock, fulfillment to Nevada and Portugal, shipping, taxes and warranty. Vendor region does not establish product origin or warehouse location.",
+        fit: "high",
+        evidence: "primary",
+        sources: [{ url, retrievedAt: time }],
+      };
+      const organizationIndex = candidates.length;
+      candidates.push(
+        { ...evidence, kind: "organizations", name: vendor.name },
+        {
+          ...evidence,
+          kind: "tasks",
+          name: `Verify dealer terms: ${title}`.slice(0, 200),
+          organizationIndex,
+        },
+      );
+      mercado.push({
+        product: {
+          product_id: collection,
+          name: title,
+          description: `${title}, offered by ${vendor.name}. Public listing checked ${time.slice(0, 10)}; stock and fulfillment require confirmation.`,
+          source_name: vendor.name,
+          source_url: url,
+          price,
+          currency: vendor.currency,
+          price_checked: time.slice(0, 10),
+        },
+      });
+    }
+    await authorize();
+    await create({ id, crm: { candidates }, mercado });
+    db.transaction(() => {
+      for (const p of selected)
+        db.prepare(
+          "INSERT OR IGNORE INTO marketplace_researched VALUES(?,?,?,?)",
+        ).run(owner, p.url, id, Date.now());
+    })();
+    runs.push(id);
+  }
+  db.prepare(
+    "INSERT INTO marketplace_vendor_rotation VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET cursor=excluded.cursor",
+  ).run(owner, (cursor + visited) % sources.length);
   return runs;
 }
