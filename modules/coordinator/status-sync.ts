@@ -1,3 +1,4 @@
+import { activeExpiry } from "./authority-client.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { Pool } from "pg";
@@ -18,7 +19,8 @@ const snapshot = z.strictObject({
 export type SyncGrant = {
   ownerId: string;
   tokenHash: string;
-  expiresAt: number;
+  expiresAt: number | null;
+  managed?: boolean;
 };
 export function syncAuthority(
   bearer: string,
@@ -33,12 +35,7 @@ export function syncAuthority(
       /^[a-f0-9]{64}$/.test(g.tokenHash) &&
       timingSafeEqual(hash, Buffer.from(g.tokenHash, "hex")),
   );
-  if (
-    !g ||
-    !Number.isFinite(g.expiresAt) ||
-    g.expiresAt <= now ||
-    !z.uuid().safeParse(g.ownerId).success
-  )
+  if (!g || !activeExpiry(g, now) || !z.uuid().safeParse(g.ownerId).success)
     throw Error("Denied");
   return g;
 }
@@ -72,8 +69,10 @@ export async function syncLocalStatus(
   owner: string,
   token: string,
   request: typeof fetch = fetch,
+  authorize: () => void = () => {},
 ) {
   for (const value of store.pending(owner)) {
+    authorize();
     const response = await request(
       "https://ai.bittrees.org/api/workflow-status",
       {

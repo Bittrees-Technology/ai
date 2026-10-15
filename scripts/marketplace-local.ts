@@ -1,3 +1,7 @@
+import { researchBatches } from "../modules/coordinator/research.js";
+import { checkWorkflowAuthority } from "../modules/coordinator/authority-client.js";
+import { LocalAuthority } from "../modules/coordinator/local-authority.js";
+import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { readFile, mkdir, stat, chmod } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,36 +36,186 @@ const settings = vault.open<{
   ownerId: string;
   mcpToken: string;
   syncToken: string;
-  expiresAt: number;
+  expiresAt: number | null;
+  managed?: boolean;
+  controlToken?: string;
 }>(await readFile(join(dir, "connection.enc")), "marketplace-connection");
 const db = new Database(file);
 await chmod(file, 0o600);
 try {
   const store = new LocalRunStore(db, vault);
-  const coordinator = new MarketplaceCoordinator(store, [
-    {
-      ownerId: settings.ownerId,
-      token: settings.mcpToken,
-      expiresAt: settings.expiresAt,
-    },
-  ]);
+  const authority = new LocalAuthority(db);
   const [command, path] = process.argv.slice(2);
-  if (command === "create" && path) {
-    const input = JSON.parse(await readFile(path, "utf8"));
-    console.log(
-      JSON.stringify(await coordinator.create(settings.ownerId, input)),
+  if (command === "revoke-cloud" || command === "cloud-status") {
+    if (!settings.controlToken)
+      throw Error("Cloud control credential unavailable");
+    const response = await fetch(
+      "https://ai.bittrees.org/api/workflow-authority",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${settings.controlToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: command === "revoke-cloud" ? "revoke" : "status",
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10000),
+      },
     );
-  } else if (command === "advance") {
-    for (const id of store.ids(settings.ownerId)) {
-      const run = await coordinator.get(settings.ownerId, id);
-      if (run.steps.some((s) => s.state !== "decided"))
+    if (!response.ok)
+      throw Error("Cloud control failed; do not assume revocation succeeded");
+    console.log(JSON.stringify(await response.json()));
+  } else if (
+    command === "grant" ||
+    command === "revoke" ||
+    command === "grants"
+  ) {
+    if (command === "grant") {
+      if (path !== "until-revoked") throw Error("Use grant until-revoked");
+      console.log(
+        JSON.stringify({ grantId: authority.grant(settings.ownerId, path) }),
+      );
+    } else if (command === "revoke") {
+      if (!path) throw Error("Grant ID required");
+      authority.revoke(settings.ownerId, path);
+      console.log("Grant revoked (if present).");
+    } else console.log(JSON.stringify(authority.list(settings.ownerId)));
+  } else {
+    const grantId = process.env.MARKETPLACE_GRANT_ID;
+    if (!grantId)
+      throw Error(
+        "MARKETPLACE_GRANT_ID is required; create an explicit local grant first",
+      );
+    const authorize = (owner: string, action: string) =>
+      authority.check(owner, grantId, action);
+    const coordinator = new MarketplaceCoordinator(
+      store,
+      [
+        {
+          ownerId: settings.ownerId,
+          token: settings.mcpToken,
+          expiresAt: settings.expiresAt,
+          managed: settings.managed,
+        },
+      ],
+      fetch,
+      authorize,
+    );
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS marketplace_schedule(owner TEXT PRIMARY KEY,last_research INTEGER NOT NULL)",
+    );
+    do {
+      authorize(settings.ownerId, "sync");
+      if (
+        command === "research" ||
+        command === "watch" ||
+        command === "cycle"
+      ) {
+        const last =
+          (
+            db
+              .prepare(
+                "SELECT last_research FROM marketplace_schedule WHERE owner=?",
+              )
+              .get(settings.ownerId) as { last_research: number } | undefined
+          )?.last_research || 0;
+        if (command === "research" || Date.now() - last >= 7 * 86400000) {
+          const guard = async () => {
+            authorize(settings.ownerId, "create");
+            if (settings.managed)
+              await checkWorkflowAuthority(
+                settings.mcpToken,
+                "mcp",
+                "sources:propose",
+              );
+            const r = await fetch(
+              "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",
+              {
+                method: "POST",
+                headers: {
+                  authorization: `Bearer ${settings.mcpToken}`,
+                  "content-type": "application/json",
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: "brief",
+                  method: "tools/call",
+                  params: { name: "source_crm_brief", arguments: {} },
+                }),
+                redirect: "error",
+                signal: AbortSignal.timeout(20000),
+              },
+            );
+            const value = (await r.json()) as any;
+            const brief = value.result?.structuredContent?.brief;
+            if (
+              !r.ok ||
+              !brief?.allowTasks ||
+              !brief.sourceDomains?.includes("vilros.com")
+            )
+              throw Error("Research brief authority unavailable");
+          };
+          const runs = await researchBatches(
+            db,
+            settings.ownerId,
+            async (input) => {
+              try {
+                return await coordinator.get(
+                  settings.ownerId,
+                  (input as { id: string }).id,
+                );
+              } catch (error) {
+                if (
+                  !(error instanceof Error) ||
+                  error.message !== "Run not found"
+                )
+                  throw error;
+              }
+              return coordinator.create(settings.ownerId, input);
+            },
+            guard,
+          );
+          db.prepare(
+            "INSERT INTO marketplace_schedule VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET last_research=excluded.last_research",
+          ).run(settings.ownerId, Date.now());
+          console.log(JSON.stringify({ researchRuns: runs }));
+        }
+      }
+      if (command === "create" && path) {
+        const input = JSON.parse(await readFile(path, "utf8"));
         console.log(
-          JSON.stringify(await coordinator.advance(settings.ownerId, id)),
+          JSON.stringify(await coordinator.create(settings.ownerId, input)),
         );
-    }
-  } else if (command !== "sync")
-    throw Error("Use create <batch.json>, advance, or sync");
-  await syncLocalStatus(store, settings.ownerId, settings.syncToken);
+      } else if (
+        command === "advance" ||
+        command === "watch" ||
+        command === "cycle"
+      ) {
+        for (const id of store.ids(settings.ownerId)) {
+          const run = await coordinator.get(settings.ownerId, id);
+          if (run.steps.some((s) => s.state !== "decided"))
+            console.log(
+              JSON.stringify(await coordinator.advance(settings.ownerId, id)),
+            );
+        }
+      } else if (command !== "sync" && command !== "research")
+        throw Error(
+          "Use create <batch.json>, advance, watch, sync, grant until-revoked, grants, or revoke <id>",
+        );
+      authorize(settings.ownerId, "sync");
+      await syncLocalStatus(
+        store,
+        settings.ownerId,
+        settings.syncToken,
+        fetch,
+        () => authorize(settings.ownerId, "sync"),
+      );
+      if (command === "watch") await delay(60000);
+    } while (command === "watch");
+  }
 } finally {
   db.close();
   key.fill(0);

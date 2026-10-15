@@ -1,3 +1,4 @@
+import { activeExpiry } from "../modules/coordinator/authority-client.js";
 // Run from the AI service scheduler. Bounded pass; no credentials accepted from jobs.
 import { Pool } from "pg";
 import {
@@ -16,7 +17,7 @@ const pool = new Pool({
 const coordinator = new MarketplaceCoordinator(pool, connections);
 try {
   const owners = connections
-    .filter((c) => c.expiresAt > Date.now())
+    .filter((c) => activeExpiry(c))
     .map((c) => c.ownerId);
   const runs = await pool.query(
     "SELECT id,owner_id FROM marketplace_runs WHERE owner_id=ANY($1::text[]) AND EXISTS(SELECT 1 FROM jsonb_array_elements(steps) s WHERE s->>'state'<>'decided') AND (lease_until IS NULL OR lease_until<now()) ORDER BY updated_at LIMIT 20",

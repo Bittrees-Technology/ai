@@ -5,6 +5,7 @@ export type RunStep = {
   payload: Record<string, unknown>;
   state: string;
   receipt?: unknown;
+  failures?: number;
 };
 export interface RunStore {
   create(
