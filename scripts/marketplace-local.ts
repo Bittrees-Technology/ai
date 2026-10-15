@@ -194,7 +194,7 @@ try {
         command === "watch" ||
         command === "cycle"
       ) {
-        for (const id of store.ids(settings.ownerId)) {
+        for (const id of store.ids(settings.ownerId).slice(0, 5)) {
           const run = await coordinator.get(settings.ownerId, id);
           if (run.steps.some((s) => s.state !== "decided"))
             console.log(

@@ -15,7 +15,7 @@ npx tsx scripts/marketplace-local.ts revoke <returned-id>
 
 The runner re-reads authority immediately before each source request and each status-sync request. Revoking a grant prevents subsequent dispatches, including a proposal following a status request already in flight. It cannot recall a request already accepted by a server. Revocation is permanent for that grant; resuming requires an explicit new grant. Grants and revocations are recorded locally.
 
-Watch mode processes at most 20 unfinished runs per pass, one step each, then waits 60 seconds. Completed runs do not block later work. It reconciles stable operation IDs before submitting, stops on HTTP authorization denial, and stops a step after five unconfirmed attempts. Network or sync failures may stop the process; there is no automatic restart service. Review failures before restarting. Publication and CRM approval remain in the source applications.
+Watch mode processes at most five unfinished runs per pass, one step each, then waits 60 seconds. Completed runs do not block later work. It reconciles stable operation IDs before submitting, stops on HTTP authorization denial, and stops a step after five unconfirmed attempts. Network or sync failures may stop the process; there is no automatic restart service. Review failures before restarting. Publication and CRM approval remain in the source applications.
 
 ## Managed cloud grants and scheduled discovery
 
@@ -28,3 +28,5 @@ CRM standing assignments still check the assigning owner's current workspace rol
 Discovery initially supports the approved Vilros public catalog feed for local AI hardware. It validates currency, title scope, stock and price against the individual product feed, produces at most three proposals per pass, and records source URLs and retrieval dates. It never executes vendor page instructions, infers email addresses, or sends outreach. New supplier adapters require operator review. This is deterministic catalog research; it does not call a cloud model or change the installed local model.
 
 `marketplace-local cycle` performs discovery when seven days have elapsed, advances pending proposals, and syncs minimal status. A Mac LaunchAgent may run this command every five minutes; sleep/offline delays execution. Unconfirmed source actions retain operation IDs and stop after five attempts. Review queues remain the approval boundary. Cloud status sync contains counts, not research or CRM records.
+
+Each cycle advances at most five runs in oldest-update order, keeping reconciliation within source rate limits while rotating through larger queues. CRM actions perform their own membership check; Mercado dispatches additionally revalidate the CRM authority anchor.
