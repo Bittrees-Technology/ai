@@ -13,6 +13,7 @@ export function localWorkflows(
   models: () => string[],
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
+  let coordinatorVault: Promise<Vault> | undefined;
   async function settings() {
     const existing = join(directory, "marketplace/connection.enc");
     if (
@@ -21,11 +22,16 @@ export function localWorkflows(
         () => false,
       )
     ) {
-      const key = await loadStorageKey(
+      coordinatorVault ??= loadStorageKey(
         macKeychainEntry("marketplace-coordinator"),
         true,
-      );
-      const c = new Vault(key).open<any>(
+      )
+        .then((key) => new Vault(key))
+        .catch((error) => {
+          coordinatorVault = undefined;
+          throw error;
+        });
+      const c = (await coordinatorVault).open<any>(
         await readFile(existing),
         "marketplace-connection",
       );
