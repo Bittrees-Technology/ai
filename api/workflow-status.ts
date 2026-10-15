@@ -46,6 +46,10 @@ export default async function handler(req: any, res: any) {
         audience: "sync",
         scope: "sync",
       });
+  } catch {
+    return res.status(403).json({ error: "Workflow authority unavailable" });
+  }
+  try {
     return res.status(200).json(await acceptStatus(pool, grant.ownerId, input));
   } catch {
     return res

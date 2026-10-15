@@ -33,7 +33,10 @@ test("catalog research filters products, verifies stock, generates linked propos
                     },
                   ],
                 }
-              : { product },
+              : {
+                  ...product,
+                  variants: [{ ...product.variants[0], price: 10000 }],
+                },
       ),
     );
   const create = async (b: any) => {
