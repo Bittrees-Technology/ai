@@ -1,3 +1,4 @@
+import {profileEnvelope} from './profile-model.mjs';
 import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 export const digest=value=>createHash('sha256').update(value).digest('hex');
 export const random=()=>randomBytes(32).toString('base64url');
@@ -22,7 +23,7 @@ export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,f
  if(configured){safeOrigin(origin);safeOrigin(issuer);}
  if(!['/api/sso/callback','/api/project-admin/sso/callback'].includes(callbackPath))throw Error('Invalid callback path');
  const callback=()=>origin+callbackPath;
- async function call(action,data){const r=await fetcher(issuer+'/api/sso/'+action,{method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),headers:{'Content-Type':'application/json',Authorization:'Bearer '+secret},body:JSON.stringify({...data,client_id:clientId,redirect_uri:callback()})});if(!r.ok)throw Error('Shared sign-in unavailable');return r.json();}
+ async function call(action,data){const r=await fetcher(issuer+'/api/sso/'+action,{method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),headers:{'Content-Type':'application/json',Authorization:'Bearer '+secret},body:JSON.stringify({...data,client_id:clientId,redirect_uri:callback()})});if(!r.ok)throw Error('Shared sign-in unavailable');return action==='profile-read'?body(r):r.json();}
  function transaction(req){const t=unseal(readCookie(req,'bt-sso-flow',origin),secret);if(!t||!Number.isFinite(t.expires)||t.expires<Date.now()||!equal(t.state,new URL(req.url).searchParams.get('state')))throw Error('Sign-in request expired');return t;}
  return async function handle(req){
   const url=new URL(req.url),action=url.pathname.split('/').pop();
@@ -35,6 +36,13 @@ export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,f
    let session=await adapter.current(req);
    const proof=unseal(readCookie(req,'bt-sso-proof',origin),secret);
    if(session&&proof&&equal(proof.sessionHash,digest(session.key))&&Number.isFinite(proof.authTime))session={...session,authTime:Math.min(session.authTime,proof.authTime)};
+   if(action==='profile'){
+    if(!session)return json({error:'Sign in required'},401);
+    const result=await call('profile-read',{identity:identity(session.identity),auth_time:session.authTime});
+    const current=await adapter.current(req);
+    if(!current||!equal(current.key,session.key)||identity(current.identity)!==identity(session.identity))return json({error:'Session changed'},401);
+    return json(profileEnvelope(result));
+   }
    if(action==='status'){
     const published=readCookie(req,'bt-sso-published',origin),suppressed=readCookie(req,'bt-sso-skip',origin);
     const next=session?(published===digest(session.key)?null:'publish'):(suppressed?null:'resume');
@@ -71,6 +79,7 @@ export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,f
    return json({error:'Not found'},404);
   }catch{
    // Ordinary local sign-in remains available, including when the issuer is down.
+   if(action==='profile')return json({error:'Shared profile unavailable'},503);
    if(action==='status')return json({configured:true,action:null});
    return redirect(origin+returnPath(t?.returnTo),[cookie('bt-sso-flow','',0,origin),cookie('bt-sso-skip','once',300,origin)]);
   }
