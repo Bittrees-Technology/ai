@@ -1,0 +1,67 @@
+/* Bittrees shared login v1. Scoped so the surrounding product stays independent. */
+.bt-login-page { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:32px 20px; margin:0; background:#f3f7f5; }
+.bt-login-panel { --bt-ink:#172a26; --bt-muted:#53655d; --bt-line:#d9e3dd; --bt-green:#157a50; --bt-dark:#075137; box-sizing:border-box; width:100%; max-width:440px; margin:0; padding:32px; border:1px solid var(--bt-line); border-radius:16px; background:#fff; color:var(--bt-ink); font-family:Arial,Helvetica,sans-serif; font-size:16px; font-weight:400; line-height:1.5; text-align:left; box-shadow:0 12px 40px #173e2910; color-scheme:light; }
+.bt-login-panel *, .bt-login-panel *::before, .bt-login-panel *::after { box-sizing:border-box; }
+.bt-login-panel .bt-login-brand { display:flex; align-items:center; gap:10px; margin:0 0 28px; color:var(--bt-dark); font-size:20px; font-weight:400; letter-spacing:-.4px; }
+.bt-login-panel .bt-login-brand strong { font-weight:650; }
+.bt-login-panel .bt-login-brand svg { flex:none; }
+.bt-login-panel .bt-login-title { margin:0 0 8px; color:var(--bt-ink); font:600 28px/1.2 Arial,Helvetica,sans-serif; letter-spacing:-.6px; }
+.bt-login-panel p { margin:0 0 16px; color:var(--bt-muted); font-size:14px; line-height:1.6; overflow-wrap:anywhere; }
+.bt-login-panel .bt-login-description { margin-bottom:24px; }
+.bt-login-panel form { display:flex; flex-direction:column; gap:12px; margin:0; padding:0; }
+.bt-login-panel label { display:block; margin:0; color:var(--bt-ink); font-size:14px; font-weight:600; line-height:1.5; }
+.bt-login-panel input:not([type=checkbox]), .bt-login-panel select { display:block; width:100%; min-width:0; height:48px; margin:6px 0 0; padding:10px 12px; border:1px solid var(--bt-line); border-radius:8px; background:#fff; color:var(--bt-ink); font:400 16px/1.5 Arial,Helvetica,sans-serif; box-shadow:none; }
+.bt-login-panel label + input { margin:0; }
+.bt-login-panel input::placeholder { color:#69796f; opacity:1; }
+.bt-login-panel input:disabled { color:var(--bt-muted); background:#f3f7f5; }
+.bt-login-panel button { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; min-height:48px; height:auto; margin:0; padding:12px 16px; border:1px solid var(--bt-line); border-radius:8px; background:#fff; color:var(--bt-ink); font:600 14px/1.5 Arial,Helvetica,sans-serif; text-transform:none; letter-spacing:0; cursor:pointer; box-shadow:none; white-space:normal; }
+.bt-login-panel .bt-login-email button:not([type=button]), .bt-login-panel .bt-login-email button.primary { background:var(--bt-green); border-color:var(--bt-green); color:#fff; }
+.bt-login-panel button.text-button { min-height:36px; padding:4px 0; border:0; background:transparent; color:var(--bt-dark); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
+.bt-login-panel button:disabled { opacity:.55; cursor:not-allowed; }
+.bt-login-panel button:not(:disabled):hover { border-color:var(--bt-green); background:#eef6f1; color:var(--bt-dark); }
+.bt-login-panel .bt-login-email button:not([type=button]):not(:disabled):hover, .bt-login-panel .bt-login-email button.primary:not(:disabled):hover { background:var(--bt-dark); color:#fff; }
+.bt-login-panel :is(button,a,input,select,summary):focus-visible { outline:3px solid var(--bt-green); outline-offset:3px; }
+.bt-login-panel .bt-login-divider { display:flex; align-items:center; gap:12px; margin:20px 0; padding:0; border:0; color:var(--bt-muted); font-size:13px; line-height:1; text-transform:none; }
+.bt-login-panel .bt-login-divider::before, .bt-login-panel .bt-login-divider::after { content:''; flex:1; height:1px; background:var(--bt-line); }
+.bt-login-panel .bt-login-wallet { display:flex; flex-direction:column; gap:12px; }
+.bt-login-panel .bt-login-wallet > button { width:100%; }
+.bt-login-panel .bt-login-footer { display:block; margin:24px 0 0; padding:16px 0 0; border-top:1px solid var(--bt-line); }
+.bt-login-panel .bt-login-footer p, .bt-login-panel .bt-login-footer a, .bt-login-panel .bt-login-footer span { font-size:12px; line-height:1.6; color:var(--bt-muted); }
+.bt-login-panel .bt-login-footer p:last-child { margin-bottom:0; }
+.bt-login-panel .bt-login-notice { margin-top:16px; }
+.bt-login-panel [role=alert] { color:#a32b28; background:#fff3f2; padding:12px; border:1px solid #edcbc8; border-radius:8px; font-size:14px; }
+.bt-login-panel a { color:var(--bt-dark); }
+.bt-login-panel .button-row { display:flex; flex-direction:column; align-items:stretch; gap:12px; margin:0; }
+.bt-login-panel .field { margin:0 0 12px; }
+.bt-login-panel .wallet-picker { display:flex; flex-direction:column; gap:12px; }
+.bt-login-panel .wallet-picker p, .bt-login-panel .wallet-picker small { margin:0; color:var(--bt-muted); font-size:13px; }
+.bt-login-panel .identity-wallet-access { margin:0; padding:0; border:0; background:transparent; }
+.bt-login-panel .identity-wallet-access > button + button { margin-top:12px; }
+.bt-login-panel .identity-wallet-access h3 { font-size:16px; }
+/* Every first-screen control uses this markup and these metrics. */
+.bt-login-stack {box-sizing:border-box;width:100%;max-width:440px;margin:0;padding:0;text-align:left;}
+.bt-login-panel .bt-login-icon {display:block;flex:none;width:28px;height:28px;max-width:none;object-fit:contain;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;}
+.bt-login-panel .bt-login-email-form {display:flex;flex-direction:column;gap:12px;margin:0;padding:0;}
+.bt-login-panel .bt-login-email-form label {display:block;margin:0;padding:0;border:0;font:600 14px/21px Arial,Helvetica,sans-serif;letter-spacing:0;}
+.bt-login-panel .bt-login-email-form label input {height:48px;min-height:48px;max-height:48px;margin:6px 0 0;padding:10px 12px;border:1px solid var(--bt-line);border-radius:8px;font:400 16px/24px Arial,Helvetica,sans-serif;letter-spacing:0;}
+.bt-login-panel .bt-login-email-form .bt-login-email-submit {height:48px;min-height:48px;padding:12px 16px;margin:0;border:1px solid var(--bt-green);background:var(--bt-green);color:white;font:600 14px/21px Arial,Helvetica,sans-serif;letter-spacing:0;}
+.bt-login-panel .bt-login-wallet .bt-login-ethereum-submit {height:48px;min-height:48px;padding:12px 16px;margin:0;border:1px solid var(--bt-line);border-radius:8px;background:white;color:var(--bt-ink);font:600 14px/21px Arial,Helvetica,sans-serif;letter-spacing:0;}
+.bt-login-panel .bt-login-notice:empty,.bt-login-context:empty {display:none;}
+.bt-login-context {margin:16px 0 0;padding:0;color:#53655d;font:400 12px/1.6 Arial,Helvetica,sans-serif;}
+.bt-login-context p {margin:0 0 8px;padding:0;font:inherit;color:inherit;}
+.bt-login-context a {color:#075137;}
+/* A dialog hosts the same 440px card, with its close control outside the card. */
+dialog.bt-login-dialog {box-sizing:border-box;width:min(440px,calc(100vw - 24px));max-width:440px;padding:0;border:0;border-radius:16px;background:transparent;color:#172a26;overflow:visible;}
+dialog.bt-login-dialog > header {position:absolute;right:0;top:-42px;display:flex;justify-content:flex-end;margin:0;padding:0;border:0;}
+dialog.bt-login-dialog > header h2 {position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);}
+dialog.bt-login-dialog > header button {width:32px;height:32px;padding:6px;background:white;border:1px solid #d9e3dd;border-radius:8px;color:#172a26;}
+dialog.bt-login-dialog .bt-login-panel {width:100%;max-width:440px;padding:32px;border:1px solid #d9e3dd;border-radius:16px;box-shadow:0 12px 40px #173e2910;}
+@media(max-width:480px) {.bt-login-page{padding:20px 12px}.bt-login-panel,dialog.bt-login-dialog .bt-login-panel{padding:24px}.bt-login-panel .bt-login-title{font-size:26px}}
+@media(prefers-reduced-motion:reduce) {.bt-login-panel *,.bt-login-panel *::before,.bt-login-panel *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+.bt-login-panel .bt-login-description {margin:0 0 24px;padding:0;color:var(--bt-muted);font:400 14px/1.6 Arial,Helvetica,sans-serif;letter-spacing:0;}
+.modal.bt-login-host {width:440px;max-width:100%;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;max-height:none;}
+.modal.bt-login-host > .close {top:-42px;right:0;background:white;color:#172a26;border:1px solid #d9e3dd;border-radius:8px;width:32px;height:32px;padding:6px;}
+.modal-backdrop:has(.bt-login-host) {padding:48px 12px 32px;}
+
+.bt-login-panel .bt-login-email-form label {color:var(--bt-ink);}
