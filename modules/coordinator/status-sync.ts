@@ -15,6 +15,20 @@ const snapshot = z.strictObject({
   runId: z.uuid(),
   revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   counts,
+  outcomes: z
+    .array(
+      z.strictObject({
+        source: z.enum(["crm", "mercado"]),
+        state: z.string().max(30),
+        reviewId: z.string().max(80).optional(),
+        decision: z.string().max(40).optional(),
+        held: z.boolean().optional(),
+        reason: z.string().max(500).optional(),
+        productId: z.string().max(160).optional(),
+      }),
+    )
+    .max(21)
+    .optional(),
 });
 export type SyncGrant = {
   ownerId: string;
@@ -43,19 +57,33 @@ export async function acceptStatus(pool: Pool, owner: string, raw: unknown) {
   const value = snapshot.parse(raw);
   // Same sequence must describe the same snapshot; older updates never overwrite newer ones.
   await pool.query(
-    "INSERT INTO marketplace_status(owner_id,run_id,revision,counts) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,run_id) DO UPDATE SET revision=EXCLUDED.revision,counts=EXCLUDED.counts,updated_at=now() WHERE marketplace_status.revision<EXCLUDED.revision",
-    [owner, value.runId, value.revision, value.counts],
+    "INSERT INTO marketplace_status(owner_id,run_id,revision,counts,outcomes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_id,run_id) DO UPDATE SET revision=EXCLUDED.revision,counts=EXCLUDED.counts,outcomes=EXCLUDED.outcomes,updated_at=now() WHERE marketplace_status.revision<EXCLUDED.revision",
+    [
+      owner,
+      value.runId,
+      value.revision,
+      value.counts,
+      JSON.stringify(value.outcomes || []),
+    ],
   );
   const row = (
     await pool.query(
-      "SELECT revision,counts FROM marketplace_status WHERE owner_id=$1 AND run_id=$2",
+      "SELECT revision,counts,outcomes FROM marketplace_status WHERE owner_id=$1 AND run_id=$2",
       [owner, value.runId],
     )
   ).rows[0];
   if (
     Number(row.revision) === value.revision &&
-    JSON.stringify(Object.entries(row.counts).sort()) !==
-      JSON.stringify(Object.entries(value.counts).sort())
+    (JSON.stringify(Object.entries(row.counts).sort()) !==
+      JSON.stringify(Object.entries(value.counts).sort()) ||
+      JSON.stringify(
+        row.outcomes.map((o: Record<string, unknown>) =>
+          Object.entries(o).sort(),
+        ),
+      ) !==
+        JSON.stringify(
+          (value.outcomes || []).map((o) => Object.entries(o).sort()),
+        ))
   )
     throw Error("Revision conflict");
   return {

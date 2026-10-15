@@ -1,3 +1,4 @@
+import { Workflows } from "./workflows.js";
 import { MemoryAppScope } from "./app-memory.js";
 import { SourceMemoryCapture } from "./source-memory-capture.js";
 import { ResumePermissions } from "./resume-permissions.js";
@@ -309,6 +310,7 @@ function App() {
             "Models",
             "Device",
             "Connections",
+            "Workflows & permissions",
           ].map((name) => (
             <button
               key={name}
@@ -359,8 +361,8 @@ function App() {
             <p>
               In the macOS menu bar at the top of your screen, choose{" "}
               <strong>Bittrees AI → Copy pairing code</strong>. Paste the code
-              below, then select <strong>Open workspace</strong>. The menu copies
-              the code without displaying it; the field hides it as dots.
+              below, then select <strong>Open workspace</strong>. The menu
+              copies the code without displaying it; the field hides it as dots.
             </p>
             <details>
               <summary>Started the companion from a terminal?</summary>
@@ -1004,6 +1006,9 @@ function App() {
             <div hidden={page !== "Inbox"}>
               <Inbox key={epoch.current} api={api} onError={fail} />
             </div>
+            {page === "Workflows & permissions" && (
+              <Workflows api={createLocalApi(fetch, 30000)} />
+            )}
             {page === "Connections" && (
               <Connections
                 api={api}

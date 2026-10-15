@@ -376,18 +376,26 @@ test("built browser discards a late resume inspection after leaving its review w
     await panel(page)
       .getByLabel("Encrypted resume offer from your Mac", { exact: true })
       .fill(JSON.stringify(f.offer.envelope));
-    const lateResponse = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/browser/registration/identity",
+    const lateRequest = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === "/browser/registration/identity",
     );
     identityServer.hold();
     await panel(page)
       .getByRole("button", { name: "Open selected Mac offer", exact: true })
       .click();
     await expect.poll(() => identityServer.held()).toBe(true);
+    const request = await lateRequest;
+    // Leaving the window may cancel the fetch after response headers arrive.
+    // Wait for either terminal request event; Response.finished() can remain
+    // pending for that Chromium cancellation until the page closes.
+    const settled = Promise.race([
+      page.waitForEvent("requestfinished", (value) => value === request),
+      page.waitForEvent("requestfailed", (value) => value === request),
+    ]);
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     identityServer.release();
-    await (await lateResponse).finished();
+    await settled;
     await expect(panel(page).getByRole("status")).toContainText(
       "leaving this window",
     );

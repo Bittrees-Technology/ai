@@ -38,6 +38,7 @@ const settings = vault.open<{
   syncToken: string;
   expiresAt: number | null;
   managed?: boolean;
+  automatic?: boolean;
   controlToken?: string;
 }>(await readFile(join(dir, "connection.enc")), "marketplace-connection");
 const db = new Database(file);
@@ -73,9 +74,16 @@ try {
     command === "grants"
   ) {
     if (command === "grant") {
-      if (path !== "until-revoked") throw Error("Use grant until-revoked");
+      if (!["until-revoked", "automatic-until-revoked"].includes(path || ""))
+        throw Error("Choose a grant mode");
       console.log(
-        JSON.stringify({ grantId: authority.grant(settings.ownerId, path) }),
+        JSON.stringify({
+          grantId: authority.grant(
+            settings.ownerId,
+            "until-revoked",
+            path === "automatic-until-revoked",
+          ),
+        }),
       );
     } else if (command === "revoke") {
       if (!path) throw Error("Grant ID required");
@@ -98,6 +106,7 @@ try {
           token: settings.mcpToken,
           expiresAt: settings.expiresAt,
           managed: settings.managed,
+          automatic: settings.automatic,
         },
       ],
       fetch,
@@ -107,6 +116,38 @@ try {
       "CREATE TABLE IF NOT EXISTS marketplace_schedule(owner TEXT PRIMARY KEY,last_research INTEGER NOT NULL)",
     );
     do {
+      if (settings.controlToken) {
+        const heartbeat = await fetch("https://ai.bittrees.org/api/workflows", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer " + settings.controlToken,
+          },
+          body: JSON.stringify({
+            action: "device",
+            input: { action: "heartbeat" },
+          }),
+          signal: AbortSignal.timeout(15000),
+          redirect: "error",
+        });
+        if (!heartbeat.ok) throw Error("Workflow device unavailable");
+        const { grant } = await heartbeat.json();
+        if (
+          grant.revoked_at ||
+          grant.paused_at ||
+          (grant.require_wallet && !grant.signed_at) ||
+          (grant.approval_expires_at &&
+            new Date(grant.approval_expires_at).getTime() <= Date.now())
+        ) {
+          console.log(
+            JSON.stringify({
+              workflowPaused: true,
+              walletApprovalRequired: !grant.signed_at,
+            }),
+          );
+          break;
+        }
+      }
       authorize(settings.ownerId, "sync");
       if (
         command === "research" ||
@@ -121,8 +162,27 @@ try {
               )
               .get(settings.ownerId) as { last_research: number } | undefined
           )?.last_research || 0;
-        if (command === "research" || Date.now() - last >= 7 * 86400000) {
-          const guard = async () => {
+        const due =
+          command === "research" || Date.now() - last >= 6 * 60 * 60 * 1000;
+        const openRuns = (
+          await Promise.all(
+            store
+              .ids(settings.ownerId)
+              .map((id) => coordinator.get(settings.ownerId, id)),
+          )
+        ).filter((run) =>
+          run.steps.some((step) => step.state !== "decided"),
+        ).length;
+        // Reserve room for both research batches inside the source's ten-preview limit.
+        if (due && openRuns > 8)
+          console.log(
+            JSON.stringify({
+              researchDeferred:
+                "Review backlog: resolve existing batches before researching more.",
+            }),
+          );
+        if (due && openRuns <= 8) {
+          const guard = async (host?: string) => {
             authorize(settings.ownerId, "create");
             if (settings.managed)
               await checkWorkflowAuthority(
@@ -130,6 +190,7 @@ try {
                 "mcp",
                 "sources:propose",
               );
+            if (!host) return; // Cloud/local checks still run; domain permissions are checked per vendor and before batching.
             const r = await fetch(
               "https://mcp.bittrees.org/mcp?mode=selected&projects=crm,mercado",
               {
@@ -154,7 +215,7 @@ try {
             if (
               !r.ok ||
               !brief?.allowTasks ||
-              !brief.sourceDomains?.includes("vilros.com")
+              (host && !brief.sourceDomains?.includes(host))
             )
               throw Error("Research brief authority unavailable");
           };

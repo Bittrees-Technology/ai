@@ -11,7 +11,7 @@ export class LocalAuthority {
       CREATE TABLE IF NOT EXISTS marketplace_authority_events (
       id INTEGER PRIMARY KEY, grant_id TEXT NOT NULL, event TEXT NOT NULL, at INTEGER NOT NULL);`);
   }
-  grant(owner: string, duration: "until-revoked" | number) {
+  grant(owner: string, duration: "until-revoked" | number, automatic = false) {
     if (
       !owner ||
       (duration !== "until-revoked" &&
@@ -30,6 +30,7 @@ export class LocalAuthority {
             Date.now(),
           );
         this.event(id, "granted");
+        if (automatic) this.event(id, "qualified_execution_enabled");
       })
       .immediate();
     return id;
@@ -59,11 +60,21 @@ export class LocalAuthority {
       .prepare("SELECT * FROM marketplace_authority WHERE id=? AND owner=?")
       .get(id, owner) as
       { revoked_at: number | null; expires_at: number | null } | undefined;
+    const executionAllowed =
+      !action.endsWith(":execute") ||
+      !!this.db
+        .prepare(
+          "SELECT 1 FROM marketplace_authority_events WHERE grant_id=? AND event='qualified_execution_enabled'",
+        )
+        .get(id);
     if (
+      !executionAllowed ||
       !grant ||
       grant.revoked_at !== null ||
       (grant.expires_at !== null && grant.expires_at <= Date.now()) ||
       ![
+        "crm:execute",
+        "mercado:execute",
         "create",
         "crm:status",
         "crm:preview",

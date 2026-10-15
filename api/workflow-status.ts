@@ -26,10 +26,10 @@ export default async function handler(req: any, res: any) {
   let input = req.body;
   try {
     if (typeof input === "string") {
-      if (input.length > 4096) throw Error();
+      if (input.length > 24576) throw Error();
       input = JSON.parse(input);
     }
-    if (JSON.stringify(input).length > 4096) throw Error();
+    if (JSON.stringify(input).length > 24576) throw Error();
   } catch {
     return res.status(400).json({ error: "Invalid snapshot" });
   }
