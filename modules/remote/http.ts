@@ -1,3 +1,4 @@
+import { MarketplaceCoordinator } from "../coordinator/workflow.js";
 import { createHash, timingSafeEqual, randomUUID } from "node:crypto";
 import { RemoteMcpDelegationStore } from "./mcp-delegations.js";
 import { mountPrivateRelayRoutes } from "./private-relay-http.js";
@@ -262,6 +263,20 @@ export function createRemoteApp(
       throw new RemoteStatusError("DENIED");
     return auth;
   };
+  // Disabled unless an operator installs an explicit owner-bound MCP connection.
+  const coordinator = new MarketplaceCoordinator(pool, JSON.parse(process.env.AI_MARKETPLACE_CONNECTIONS_JSON || "[]"));
+  app.post("/browser/marketplace/create", async (req,res) => {
+    const auth = await owner(req);
+    res.json(await coordinator.create(auth.ownerId,req.body));
+  });
+  app.post("/browser/marketplace/status", async (req,res) => {
+    const auth = await owner(req);
+    res.json(await coordinator.get(auth.ownerId,req.body.id));
+  });
+  app.post("/browser/marketplace/advance", async (req,res) => {
+    const auth = await owner(req);
+    res.json(await coordinator.advance(auth.ownerId,req.body.id));
+  });
   app.post("/browser/login/challenge", async (req, res) => {
     const input = parse(
       z.strictObject({ address: z.string().max(42) }),
