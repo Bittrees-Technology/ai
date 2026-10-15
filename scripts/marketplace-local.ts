@@ -38,6 +38,7 @@ const settings = vault.open<{
   syncToken: string;
   expiresAt: number | null;
   managed?: boolean;
+  automatic?: boolean;
   controlToken?: string;
 }>(await readFile(join(dir, "connection.enc")), "marketplace-connection");
 const db = new Database(file);
@@ -73,9 +74,16 @@ try {
     command === "grants"
   ) {
     if (command === "grant") {
-      if (path !== "until-revoked") throw Error("Use grant until-revoked");
+      if (!["until-revoked", "automatic-until-revoked"].includes(path || ""))
+        throw Error("Choose a grant mode");
       console.log(
-        JSON.stringify({ grantId: authority.grant(settings.ownerId, path) }),
+        JSON.stringify({
+          grantId: authority.grant(
+            settings.ownerId,
+            "until-revoked",
+            path === "automatic-until-revoked",
+          ),
+        }),
       );
     } else if (command === "revoke") {
       if (!path) throw Error("Grant ID required");
@@ -98,6 +106,7 @@ try {
           token: settings.mcpToken,
           expiresAt: settings.expiresAt,
           managed: settings.managed,
+          automatic: settings.automatic,
         },
       ],
       fetch,

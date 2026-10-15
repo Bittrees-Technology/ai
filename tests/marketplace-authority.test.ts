@@ -97,3 +97,16 @@ test("expired grants fail closed and remote denial stops without retry", async (
   assert.equal(calls, 1);
   db.close();
 });
+
+test("Existing local grants cannot execute; explicit automatic grants can and revoke immediately", () => {
+  const db = new Database(":memory:");
+  const authority = new LocalAuthority(db);
+  const old = authority.grant("owner", "until-revoked");
+  assert.throws(() => authority.check("owner", old, "mercado:execute"));
+  const automatic = authority.grant("owner", "until-revoked", true);
+  authority.check("owner", automatic, "mercado:execute");
+  authority.check("owner", automatic, "crm:execute");
+  authority.revoke("owner", automatic);
+  assert.throws(() => authority.check("owner", automatic, "crm:execute"));
+  db.close();
+});

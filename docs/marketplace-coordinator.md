@@ -1,5 +1,7 @@
 # Mercado and CRM coordinator pilot
 
+> Automatic execution is now available as a separate opt-in capability. See [Mercado supplier workflow](marketplace-qualified-workflow.md). Proposal-only grants described below retain their original limits.
+
 AI owns durable runs and retries. MCP Connect owns account-bound source routing. Mercado owns product proposals and catalog review. CRM owns research assignments, organizations, contacts, follow-up tasks and import approval.
 
 ## Implemented

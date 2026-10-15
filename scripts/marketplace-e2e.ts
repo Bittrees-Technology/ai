@@ -55,6 +55,17 @@ globalThis.fetch = async (url, init) => {
       return new Response("{}", { status: 403 });
     }
   }
+  if (String(url) === "https://miners.de/cart.js")
+    return Response.json({ currency: "EUR" });
+  if (String(url).startsWith("https://miners.de/products/auto-test-"))
+    return Response.json({
+      title: "Antminer S21 200TH/s " + owner,
+      description: String(url).includes("hold")
+        ? "PRE-ORDER ships December 2026"
+        : "200 TH/s SHA-256 miner, 3500W.",
+      variants: [{ id: 1, available: true, price: 100000 }],
+      images: ["https://cdn.shopify.com/s/files/test.jpg"],
+    });
   return nativeFetch(url, init);
 };
 const owner = randomUUID(),
@@ -75,7 +86,7 @@ const brief = await crm.createSearch(owner, {
   workspaceId: workspace,
   brief: {
     target: "Mining equipment vendors",
-    sourceDomains: ["bittrees.org"],
+    sourceDomains: ["bittrees.org", "miners.de"],
     allowTasks: true,
   },
 });
@@ -141,9 +152,11 @@ const sourceServer = createServer(async (req, res) => {
       const token = req.headers.authorization!.slice(7);
       data = path.endsWith("/status")
         ? await crm.agentStatus(token, body)
-        : path.endsWith("/brief")
-          ? await crm.agentBrief(token)
-          : await crm.prepare(token, body);
+        : path.endsWith("/execute")
+          ? await crm.executeQualifiedLeads(token, body)
+          : path.endsWith("/brief")
+            ? await crm.agentBrief(token)
+            : await crm.prepare(token, body);
     } else
       data = await coordinatorRequest(
         sql,
@@ -289,6 +302,120 @@ try {
       await pool.query(
         "SELECT count(*) FROM marcada.product_submissions WHERE identity=$1",
         [grant.identity],
+      )
+    ).rows[0].count,
+    "1",
+  );
+  await assert.rejects(
+    coordinatorRequest(sql, { ...grant, bearer: sourceToken }, "execute", {
+      operationId: product.operationId,
+    }),
+  );
+  actor.permissions.push("sources:execute");
+  grant.automaticPolicy = "mercado-qualified-v1";
+  process.env.CRM_MARKETPLACE_EXECUTION_ASSIGNMENTS = JSON.stringify([
+    brief.id,
+  ]);
+  for (const [token, scopes] of [
+    [mcpToken, ["sources:propose", "sources:execute"]],
+    [sourceToken, ["propose", "publish:qualified"]],
+    [brief.token, ["propose", "import:qualified"]],
+  ] as const)
+    await pool.query(
+      "UPDATE workflow_credentials SET scopes=$2 WHERE token_hash=$1",
+      [hash(token), JSON.stringify(scopes)],
+    );
+  ai = new MarketplaceCoordinator(
+    pool,
+    connections.map((c) => ({ ...c, automatic: true })),
+    localFetch,
+  );
+  const vendor = {
+    ...c,
+    kind: "organizations",
+    name: "Miners.de",
+    website: "https://miners.de",
+    sources: [
+      { url: "https://miners.de", retrievedAt: new Date().toISOString() },
+    ],
+  };
+  const autoInput = {
+    id: randomUUID(),
+    crm: {
+      candidates: [
+        vendor,
+        {
+          ...vendor,
+          kind: "tasks",
+          name: "Miners.de: verify automatic test",
+          organizationIndex: 0,
+        },
+      ],
+    },
+    mercado: ["good", "hold"].map((suffix) => ({
+      product: {
+        product_id: "asic",
+        name: "Antminer S21 200TH/s " + owner,
+        description: "Source verification required",
+        source_url:
+          "https://miners.de/products/auto-test-" + suffix + "-" + owner,
+        source_name: "Miners.de",
+        price: 1000,
+        currency: "EUR",
+      },
+    })),
+  };
+  await ai.create(owner, autoInput);
+  for (let i = 0; i < 6; i++) await ai.advance(owner, autoInput.id);
+  const autoRun = await ai.get(owner, autoInput.id);
+  assert(
+    autoRun.steps.every((s) => s.state === "decided"),
+    JSON.stringify(autoRun),
+  );
+  const autoItems = (
+    await pool.query("SELECT * FROM marcada.items WHERE source_url LIKE $1", [
+      "https://miners.de/products/auto-test-%" + owner,
+    ])
+  ).rows;
+  assert.equal(autoItems.length, 1);
+  assert.equal(autoItems[0].active, true);
+  assert.equal(autoItems[0].hashrate, "200TH/S");
+  assert.equal(
+    autoRun.steps.filter(
+      (s: any) => s.receipt?.decision === "changes_requested",
+    ).length,
+    1,
+  );
+  const repeatOperation = randomUUID();
+  await crm.prepare(brief.token, {
+    operationId: repeatOperation,
+    candidates: autoInput.crm.candidates,
+  });
+  const replay = await crm.executeQualifiedLeads(brief.token, {
+    operationId: repeatOperation,
+  });
+  assert.equal(replay.state, "decided");
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM records WHERE workspace_id=$1 AND data->>'website'='https://miners.de'",
+        [workspace],
+      )
+    ).rows[0].count,
+    "2",
+  );
+  for (const step of autoRun.steps)
+    await sourceConnections.call(
+      actor,
+      ["crm", "mercado"],
+      "source_" + step.source + "_execute",
+      { operationId: step.operationId },
+    );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM marcada.items WHERE source_url LIKE $1",
+        ["https://miners.de/products/auto-test-%" + owner],
       )
     ).rows[0].count,
     "1",
