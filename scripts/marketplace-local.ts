@@ -121,7 +121,25 @@ try {
               )
               .get(settings.ownerId) as { last_research: number } | undefined
           )?.last_research || 0;
-        if (command === "research" || Date.now() - last >= 7 * 86400000) {
+        const due = command === "research" || Date.now() - last >= 7 * 86400000;
+        const openRuns = (
+          await Promise.all(
+            store
+              .ids(settings.ownerId)
+              .map((id) => coordinator.get(settings.ownerId, id)),
+          )
+        ).filter((run) =>
+          run.steps.some((step) => step.state !== "decided"),
+        ).length;
+        // Reserve room for both weekly batches inside the source's ten-preview limit.
+        if (due && openRuns > 8)
+          console.log(
+            JSON.stringify({
+              researchDeferred:
+                "Review backlog: resolve existing batches before researching more.",
+            }),
+          );
+        if (due && openRuns <= 8) {
           const guard = async (host?: string) => {
             authorize(settings.ownerId, "create");
             if (settings.managed)
