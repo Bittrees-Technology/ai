@@ -1,0 +1,131 @@
+.workflow-intro {
+  padding-block: 40px 20px;
+}
+.workflow-intro h1 {
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  max-width: 22ch;
+}
+.workflow-panel {
+  padding: 24px 0;
+  border-top: 1px solid #aabec5;
+}
+.workflow-panel h2 {
+  margin-top: 0;
+}
+.workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-block: 20px;
+}
+button,
+input,
+select {
+  font: inherit;
+  border: 1px solid #78949e;
+  border-radius: 5px;
+  padding: 10px 14px;
+  background: #fff;
+  color: #183945;
+  max-width: 100%;
+}
+button {
+  cursor: pointer;
+  font-weight: 600;
+}
+button:hover {
+  background: #dde9ee;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid #28685c;
+  outline-offset: 3px;
+}
+.workflow-actions .primary {
+  margin: 0;
+  border-color: #245e79;
+}
+.danger {
+  color: #92352e;
+}
+.workflow-meta {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 8px 20px;
+}
+.workflow-meta dt {
+  font-weight: 600;
+}
+.workflow-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-state {
+  color: #28685c;
+  font-weight: 700;
+}
+.workflow-notice {
+  padding: 16px;
+  background: #fff;
+  border-left: 4px solid #28685c;
+  overflow-wrap: anywhere;
+}
+.workflow-error {
+  border-color: #92352e;
+  color: #92352e;
+}
+details {
+  margin: 16px 0;
+}
+summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  padding: 16px;
+  background: #fff;
+}
+label {
+  display: grid;
+  gap: 6px;
+}
+ul {
+  padding-left: 22px;
+}
+li {
+  padding-left: 0;
+  margin-bottom: 12px;
+}
+.wallet-line {
+  overflow-wrap: anywhere;
+}
+.workflow-small {
+  font-size: 0.9rem;
+  color: #3c5d69;
+}
+@media (max-width: 600px) {
+  .workflow-meta {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .workflow-meta dd {
+    margin-bottom: 12px;
+  }
+  .workflow-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.workflow-panel > label + button {
+  margin-top: 12px;
+}

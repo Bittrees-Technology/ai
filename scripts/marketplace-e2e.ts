@@ -38,6 +38,12 @@ await pool.query(
 await pool.query(
   await readFile("modules/remote/migrations/workflow-authority.sql", "utf8"),
 );
+await pool.query(
+  await readFile(
+    "modules/remote/migrations/workflow-wallet-permissions.sql",
+    "utf8",
+  ),
+);
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = async (url, init) => {
   if (String(url) === "https://ai.bittrees.org/api/workflow-authority") {

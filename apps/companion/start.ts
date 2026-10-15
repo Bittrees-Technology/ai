@@ -1,3 +1,4 @@
+import { localWorkflows } from "./workflows.js";
 import {
   AutoNoteApprovalConnector,
   autonoteApprovalKeychainEntry,
@@ -282,6 +283,9 @@ server.on(
     privateRelay,
     retainedCopies: retainedContent(directory, content.directory),
     backupDownload: localBackupDownload(store, memory, new Vault(key)),
+    workflows: localWorkflows(directory, new Vault(key), () =>
+      store.profiles(owner).map((p) => p.model),
+    ),
     deviceStatus: () =>
       deviceStatus(directory, executionControls.admission(worker.activeTasks)),
     executionControls,

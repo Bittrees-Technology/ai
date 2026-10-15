@@ -25,3 +25,7 @@ No new database schema is required. Existing proposal, catalog, CRM audit and au
 ## Verification
 
 `scripts/marketplace-e2e.ts` exercises the actual AI → MCP HTTP → source handlers with disposable local PostgreSQL and deterministic supplier fixtures. It checks publishing, holds, linked CRM import, repeated vendor/task deduplication, lost responses, restart, proposal-only denial and revocation. Production activation needs a separate real-source run and receipt verification; synthetic products must never be published live.
+
+## Wallet approval and controls
+
+The website and Mac app now expose **Workflows & permissions**. See [wallet approvals, device pairing and revocation](workflows-permissions.md). The Raging workflow waits for the owner’s actual signature before wallet-authorized execution resumes. Other users pair their own device and connect their own source permissions.
