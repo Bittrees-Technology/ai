@@ -1,3 +1,4 @@
+import { CrmTaskEditor } from "./crm-task-editor.js";
 import React, { useState, useEffect } from "react";
 export function ProjectWorkPanel({ api, onError, profiles }: any) {
   const [status, setStatus] = useState<any>(null),
@@ -124,6 +125,7 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
         review” are eligible. Ordinary tasks stay with you. Pause investor
         research before running project tasks; both use the same local model.
       </p>
+      {project && <CrmTaskEditor key={project} api={api} projectId={project} />}
       {status.jobs.map((j: any) => (
         <section key={j.id}>
           <h4>

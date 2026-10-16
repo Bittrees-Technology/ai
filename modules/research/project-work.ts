@@ -91,6 +91,38 @@ export class ProjectWork {
     );
     return this.projectChoices;
   }
+  async tasks(projectId: string) {
+    z.uuid().parse(projectId);
+    const c = await this.connector.status();
+    if (!c) throw new Error("Connect CRM first.");
+    return this.connector.project("tasks.list", { projectId }, c.datasetId);
+  }
+  async saveTask(raw: unknown) {
+    const a = z
+      .strictObject({
+        projectId: z.uuid(),
+        operationId: z.uuid(),
+        taskId: z.uuid().optional(),
+        version: z.number().int().positive().optional(),
+        name: z.string().trim().min(1).max(200),
+        description: z.string().max(4000),
+        mode: z.enum(["AI draft", "AI review"]),
+        dueDate: z.union([z.iso.date(), z.literal("")]),
+        status: z.enum(["Open", "Done"]),
+      })
+      .parse(raw);
+    if (a.taskId && !a.version)
+      throw new Error("Refresh the task before editing.");
+    const c = await this.connector.status();
+    if (!c) throw new Error("Connect CRM first.");
+    const { taskId, version, status, ...create } = a;
+    if (!taskId && status !== "Open") throw new Error("New tasks start open.");
+    return this.connector.project(
+      taskId ? "tasks.update" : "tasks.create",
+      taskId ? a : create,
+      c.datasetId,
+    );
+  }
   async create(raw: unknown) {
     const a = input.parse(raw);
     if (a.mode === "plan" && a.prompt.trim().length < 10)

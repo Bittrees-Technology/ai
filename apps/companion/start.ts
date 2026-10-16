@@ -322,14 +322,20 @@ const workflows = localWorkflows(
   () => store.profiles(owner).map((p) => p.model),
   () => [
     ...store.templates(owner),
-    ...investorResearch
-      .list()
-      .map((job) => ({
-        id: job.id,
-        revision: Math.max(1, Date.parse(job.updatedAt)),
-        definition: { kind: "investor-research" },
-        state: job.state,
-      })),
+    ...projectWork.status().map((job) => ({
+      id: job.id,
+      revision: Math.max(1, Date.parse(job.updatedAt)),
+      definition: {
+        kind: job.input.mode === "plan" ? "crm-task-planning" : "crm-task-work",
+      },
+      state: job.state,
+    })),
+    ...investorResearch.list().map((job) => ({
+      id: job.id,
+      revision: Math.max(1, Date.parse(job.updatedAt)),
+      definition: { kind: "investor-research" },
+      state: job.state,
+    })),
   ],
 );
 server.on(

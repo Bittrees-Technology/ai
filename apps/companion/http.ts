@@ -744,6 +744,12 @@ export function localApi({
     }),
   );
   if (projectWork) {
+    app.get("/v1/crm-projects/:projectId/tasks", async (req, res) =>
+      res.json(await projectWork.tasks(req.params.projectId)),
+    );
+    app.post("/v1/crm-projects/tasks", async (req, res) =>
+      res.json(await projectWork.saveTask(req.body)),
+    );
     app.post("/v1/crm-projects/start", async (req, res) =>
       res.json(await projectWork.create(req.body)),
     );

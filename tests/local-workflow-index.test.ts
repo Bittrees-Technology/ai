@@ -69,3 +69,28 @@ test("a local workspace without workflow pairing never registers or uploads auto
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("project-task catalogue accepts only safe metadata", async () => {
+  const { localCatalogueSchema } =
+    await import("../modules/coordinator/workflow-catalogue.js");
+  const input = {
+    action: "catalogue",
+    observedAt: Date.now(),
+    entries: [
+      { id: randomUUID(), revision: 1, kind: "crm-task-work", state: "paused" },
+      {
+        id: randomUUID(),
+        revision: 2,
+        kind: "crm-task-planning",
+        state: "complete",
+      },
+    ],
+  };
+  assert.equal(localCatalogueSchema.parse(input).entries.length, 2);
+  assert.throws(() =>
+    localCatalogueSchema.parse({
+      ...input,
+      entries: [{ ...input.entries[0], taskText: "private" }],
+    }),
+  );
+});
