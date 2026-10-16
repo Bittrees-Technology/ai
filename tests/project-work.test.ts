@@ -11,7 +11,14 @@ import { Vault } from "../modules/storage/vault.js";
 async function fixture(
   mode: "plan" | "work",
   outcome:
-    "ok" | "refuse" | "conflict" | "verbose" | "alwaysVerbose" | "unlinked",
+    | "ok"
+    | "refuse"
+    | "conflict"
+    | "verbose"
+    | "alwaysVerbose"
+    | "unlinked"
+    | "review"
+    | "inventedReview",
 ) {
   const dir = mkdtempSync(join(tmpdir(), "project-work-"));
   const projectId = randomUUID(),
@@ -67,8 +74,14 @@ async function fixture(
             data: {
               personId: outcome === "unlinked" ? "" : personId,
               name: "Draft questions",
-              description: "Do not send them",
-              category: "AI draft",
+              description:
+                outcome === "review" || outcome === "inventedReview"
+                  ? "Saved source claim: Selected subject investment role"
+                  : "Do not send them",
+              category:
+                outcome === "review" || outcome === "inventedReview"
+                  ? "AI review"
+                  : "AI draft",
             },
           },
         };
@@ -118,16 +131,29 @@ async function fixture(
                 },
               ],
             }
-          : {
-              canComplete: outcome !== "refuse",
-              result:
-                outcome === "alwaysVerbose" ||
-                (outcome === "verbose" && generations === 1)
-                  ? "Long result. ".repeat(400)
-                  : outcome === "refuse"
-                    ? "This task requires sending a message."
-                    : "Draft: Which geographies do you invest in?",
-            },
+          : outcome === "review" || outcome === "inventedReview"
+            ? {
+                canComplete: true,
+                excerpts: [
+                  {
+                    sourceId: "task-1",
+                    quote:
+                      outcome === "review"
+                        ? "Selected subject investment role"
+                        : "Selected subject lives in Miami",
+                  },
+                ],
+              }
+            : {
+                canComplete: outcome !== "refuse",
+                result:
+                  outcome === "alwaysVerbose" ||
+                  (outcome === "verbose" && generations === 1)
+                    ? "Long result. ".repeat(400)
+                    : outcome === "refuse"
+                      ? "This task requires sending a message."
+                      : "Draft: Which geographies do you invest in?",
+              },
       );
     },
   };
@@ -430,4 +456,16 @@ test("a legacy paused claim is replaced before generating while confirmed saves 
 test("task generation excludes unrelated firm facts and same-name people", async () => {
   assert.equal((await fixture("work", "ok")).status.completed, 1);
   assert.equal((await fixture("work", "unlinked")).status.completed, 1);
+});
+
+test("review tasks save only validated excerpts and hold invented claims", async () => {
+  const good = await fixture("work", "review");
+  assert.equal(good.status.completed, 1);
+  assert.match(
+    good.calls.find((c) => c.name === "tasks.finish").args.result,
+    /NOT INDEPENDENT VERIFICATION/,
+  );
+  const bad = await fixture("work", "inventedReview");
+  assert.equal(bad.status.state, "needs_attention");
+  assert.equal(bad.calls.filter((c) => c.name === "tasks.finish").length, 0);
 });
