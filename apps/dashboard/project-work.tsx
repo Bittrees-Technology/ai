@@ -66,7 +66,11 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       <fieldset disabled={busy || running}>
         <label>
           Project
-          <select value={project} onChange={(e) => setProject(e.target.value)}>
+          <select
+            aria-label="Project"
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+          >
             <option value="">Choose a connected project</option>
             {status.projects
               .filter((p: any) => p.tasks)
@@ -79,7 +83,11 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
         </label>
         <label>
           Local model profile
-          <select value={profile} onChange={(e) => setProfile(e.target.value)}>
+          <select
+            aria-label="Local model profile"
+            value={profile}
+            onChange={(e) => setProfile(e.target.value)}
+          >
             <option value="">Choose a model</option>
             {profiles.map((p: any) => (
               <option key={p.id} value={p.id}>
