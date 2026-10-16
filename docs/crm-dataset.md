@@ -21,3 +21,9 @@ The source reader pins public IPv4 DNS results, denies private addresses and off
 Small append-only batches use MCP with current versions and stable IDs. Conflicts stop the job with its pending batch retained. Resume reads current state and reconciles exact retries; it never silently replaces records. Jobs/checkpoints are encrypted in the active local content directory. Restart pauses work; resume is explicit. Source exhaustion is reported honestly, even below target. The source connection must remain on the original dataset. An expired or revoked connection stops further saves.
 
 Local execution limits apply per model call; ordinary queued tasks are not started during research. The UI polls only local progress every 10 seconds while a run is active. No CRM polling occurs while idle. Research saves private entries only; publication, sharing, outreach and training approval remain separate human actions.
+
+## Research saves versus CRM records
+
+Work activity labels the run count as **people saved as research**. This counts private dataset entries, not CRM contacts. **In CRM** uses confirmed dataset links and reviewed import mappings returned by CRM; it displays dataset-wide people/organization totals and the last check time. Missing historical status is shown as not checked, never as zero confirmed imports. During a run, these counts refresh on source dataset reads and after saves.
+
+Enable automatic additions for an explicit destination project at CRM → Local AI. With that permission, new appended entries become CRM People/Organizations without per-batch approval, retain unverified-research labeling and follow project sharing. Task access is separate. Permissions expire within 30 days and can be revoked. Existing research is not imported retroactively; selected older entries use the existing import flow. Duplicates and changed authority stop the operation rather than silently overwriting records.

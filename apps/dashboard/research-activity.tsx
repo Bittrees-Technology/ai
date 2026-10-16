@@ -37,8 +37,10 @@ export function ResearchActivity({
     <section aria-label="Work activity">
       <h2>Work activity</h2>
       <p>
-        Local model research and confirmed saves to your private CRM dataset.
-        Supplier automation runs separately using rules.
+        Research saves and CRM additions are separate. Research is stored in
+        your private dataset; connected project permissions control automatic
+        additions to People and Organizations. Supplier automation runs
+        separately using rules.
       </p>
       <button onClick={onConnections}>
         Manage research and CRM connection
@@ -67,13 +69,39 @@ export function ResearchActivity({
                         ? "Needs attention"
                         : "Paused"}
               </strong>{" "}
-              · {j.added} of {j.input.target} people saved
+              · {j.added} of {j.input.target} people saved as research
             </p>
             <progress
               value={j.added}
               max={j.input.target}
-              aria-label="People saved"
+              aria-label="People saved as research"
             />
+            {j.crmProgress ? (
+              <div aria-label="CRM addition status">
+                <p>
+                  <strong>
+                    In CRM: {j.crmProgress.crmPeople} people ·{" "}
+                    {j.crmProgress.crmOrganizations} organizations
+                  </strong>
+                </p>
+                <p>
+                  Connected dataset totals: {j.crmProgress.researchPeople}{" "}
+                  people and {j.crmProgress.researchOrganizations} organizations
+                  saved as research. These totals include other runs and manual
+                  additions.
+                </p>
+                <p>
+                  CRM checked:{" "}
+                  {new Date(j.crmProgress.checkedAt).toLocaleString()}. Counts
+                  update when this run reads or saves research.
+                </p>
+              </div>
+            ) : (
+              <p>
+                CRM additions have not been checked for this run. The research
+                count does not confirm a CRM import.
+              </p>
+            )}
             <p>Model: {j.modelName || "Recorded profile"} · On this Mac</p>
             <p>
               {j.done.length} pages processed · {j.queue.length} queued ·{" "}
@@ -107,8 +135,25 @@ export function ResearchActivity({
               target="_blank"
               rel="noreferrer"
             >
-              Open CRM datasets and approvals
+              Open private research dataset
             </a>
+            <p>
+              <a
+                href="https://crm.bittrees.org/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open CRM People and Organizations
+              </a>
+              {" · "}
+              <a
+                href="https://crm.bittrees.org/connect/ai/projects"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Automatic addition permissions
+              </a>
+            </p>
             <p>
               Saved research is preliminary. Source-supported names and roles do
               not establish investment interest, eligibility or mandate fit.
@@ -121,7 +166,10 @@ export function ResearchActivity({
                     <a href={r.url} target="_blank" rel="noreferrer">
                       Source
                     </a>{" "}
-                    · Saved {new Date(r.savedAt).toLocaleString()}
+                    · Saved as research {new Date(r.savedAt).toLocaleString()} ·{" "}
+                    {j.crmProgress?.entryIds.includes(r.id)
+                      ? "In CRM"
+                      : "CRM addition not confirmed"}
                   </li>
                 ))}
               </ul>
