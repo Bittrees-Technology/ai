@@ -357,7 +357,10 @@ export class ProjectWork {
       const tasks = await this.call(j, "tasks.list", {
         projectId: j.input.projectId,
       });
-      if (!tasks.tasks.some((t: any) => t.status === "Open")) {
+      if (
+        !tasks.truncated &&
+        !tasks.tasks.some((t: any) => t.status === "Open")
+      ) {
         j.state = "waiting";
         j.nextCheckAt = Date.now() + 60000;
         this.phase(j, "Watching CRM for eligible tasks");
