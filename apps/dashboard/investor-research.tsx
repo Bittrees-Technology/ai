@@ -321,6 +321,29 @@ export function InvestorResearchPanel({
               </fieldset>
             </details>
           )}
+          {!!j.locationReviews?.length && (
+            <details>
+              <summary>
+                {j.locationReviews.length} people need location research
+              </summary>
+              <p>
+                These candidates remain outside CRM additions until a source
+                establishes their current personal US base. A company address is
+                insufficient.
+              </p>
+              <ul>
+                {j.locationReviews.map((r: any, i: number) => (
+                  <li key={i}>
+                    <strong>{r.name}</strong> · {r.reason}
+                    {" · "}
+                    <a href={r.url} target="_blank" rel="noreferrer">
+                      Source
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {!!j.duplicateReviews?.length && (
             <details>
               <summary>
