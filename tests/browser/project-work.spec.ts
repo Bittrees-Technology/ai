@@ -136,6 +136,50 @@ test("CRM task editor preserves drafts on conflict and writes current versions",
   expect(saved.projectId).toBe("project");
 });
 
+test("running job progress does not repeatedly discover remote CRM projects", async ({
+  page,
+}) => {
+  let discoveries = 0,
+    polls = 0;
+  await page.clock.install();
+  await page.route("**/v1/crm-projects**", async (route) => {
+    const local = route.request().url().endsWith("/status");
+    if (local) polls++;
+    else discoveries++;
+    await route.fulfill({
+      json: {
+        available: true,
+        ...(local
+          ? {}
+          : {
+              projects: [
+                { id: "project", name: "Connected project", tasks: true },
+              ],
+            }),
+        jobs: [
+          {
+            id: "run",
+            state: "running",
+            input: { mode: "work" },
+            completed: polls,
+            receipts: [],
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/?project-work");
+  await expect(page.getByLabel("Project", { exact: true })).toContainText(
+    "Connected project",
+  );
+  await page.clock.runFor(30000);
+  expect(polls).toBeGreaterThanOrEqual(2);
+  expect(discoveries).toBe(1);
+  await expect(page.getByLabel("Project", { exact: true })).toContainText(
+    "Connected project",
+  );
+});
+
 test("a confirmed task save stays confirmed when its refresh is rate limited", async ({
   page,
 }) => {

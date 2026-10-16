@@ -101,3 +101,46 @@ test("local HTTP rejects unauthenticated access, hostile origins and source sele
     store.close();
   }
 });
+
+test("project progress polling stays local and requires authentication", async () => {
+  const store = new Store(":memory:", new Vault(randomBytes(32)));
+  const token = randomBytes(32).toString("hex");
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  let remoteReads = 0;
+  const jobs = [{ id: "run", state: "running", completed: 2 }];
+  const projectWork = {
+    status: () => jobs,
+    projects: async () => {
+      remoteReads++;
+      return { projects: [] };
+    },
+  } as any;
+  server.on(
+    "request",
+    localApi({
+      store,
+      token,
+      port,
+      owner: { userId: "a", tenantId: "t" },
+      projectWork,
+    }),
+  );
+  const url = `http://127.0.0.1:${port}/v1/crm-projects`;
+  const headers = { Authorization: `Bearer ${token}` };
+  try {
+    assert.equal((await fetch(url + "/status")).status, 401);
+    for (let i = 0; i < 60; i++) {
+      const response = await fetch(url + "/status", { headers });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { available: true, jobs });
+    }
+    assert.equal(remoteReads, 0);
+    assert.equal((await fetch(url, { headers })).status, 200);
+    assert.equal(remoteReads, 1);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+  }
+});
