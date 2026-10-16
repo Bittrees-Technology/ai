@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 const blank = () => ({
   operationId: crypto.randomUUID(),
   name: "",
@@ -8,11 +8,11 @@ const blank = () => ({
   status: "Open",
 });
 export function CrmTaskEditor({ api, projectId }: any) {
+  const refreshNow = useRef<() => Promise<void>>(async () => {});
   const [snapshot, setSnapshot] = useState<any>(null),
     [draft, setDraft] = useState<any>(null),
     [error, setError] = useState(""),
     [syncError, setSyncError] = useState(""),
-    [deferred, setDeferred] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let current = true,
@@ -21,35 +21,37 @@ export function CrmTaskEditor({ api, projectId }: any) {
     setDraft(null);
     setError("");
     const refresh = async () => {
-      if (inFlight) return;
+      if (inFlight || document.visibilityState === "hidden") return;
       inFlight = true;
       try {
         const s = await api(`/v1/crm-projects/${projectId}/tasks`);
         if (current) {
-          setDeferred(!!s.deferred);
-          if (s.deferred) {
-            setSyncError(
-              "Task refresh is waiting for local work to pause or finish. The last snapshot is retained.",
-            );
-          } else {
-            setSnapshot(s);
-            setSyncError("");
-          }
+          setSnapshot(s);
+          setSyncError("");
         }
-      } catch {
+      } catch (error) {
         if (current)
           setSyncError(
-            "CRM refresh unavailable. Saved drafts remain here; wait and refresh before editing.",
+            String(error).includes("SOURCE_RATE_LIMITED")
+              ? "CRM is temporarily limiting requests. Refresh will resume after its cooldown; your draft is preserved."
+              : "CRM refresh unavailable. Saved drafts remain here; wait and refresh before editing.",
           );
       } finally {
         inFlight = false;
       }
     };
     void refresh();
-    const timer = setInterval(() => void refresh(), 15000);
+    refreshNow.current = refresh;
+    const visibleRefresh = () => void refresh();
+    document.addEventListener("visibilitychange", visibleRefresh);
+    window.addEventListener("focus", visibleRefresh);
+    const timer = setInterval(visibleRefresh, 60000);
     return () => {
       current = false;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", visibleRefresh);
+      window.removeEventListener("focus", visibleRefresh);
+      refreshNow.current = async () => {};
     };
   }, [projectId]);
   const edit = (patch: any) =>
@@ -70,10 +72,21 @@ export function CrmTaskEditor({ api, projectId }: any) {
     try {
       await api("/v1/crm-projects/tasks", "POST", { ...draft, projectId });
       setDraft(null);
-      setSnapshot(await api(`/v1/crm-projects/${projectId}/tasks`));
-    } catch {
+      try {
+        setSnapshot(await api(`/v1/crm-projects/${projectId}/tasks`));
+        setSyncError("");
+      } catch (error) {
+        setSyncError(
+          String(error).includes("SOURCE_RATE_LIMITED")
+            ? "Task saved to CRM. The list will refresh after CRM's request cooldown."
+            : "Task saved to CRM. List refresh is temporarily unavailable.",
+        );
+      }
+    } catch (error) {
       setError(
-        "Save could not be confirmed. Your draft is preserved. Retry unchanged for the same operation, or reload the task if CRM has changed.",
+        String(error).includes("SOURCE_RATE_LIMITED")
+          ? "CRM is temporarily limiting saves. Your draft is preserved; retry after the cooldown."
+          : "Save could not be confirmed. Your draft is preserved. Retry unchanged for the same operation, or reload the task if CRM has changed.",
       );
     } finally {
       setBusy(false);
@@ -83,9 +96,13 @@ export function CrmTaskEditor({ api, projectId }: any) {
     <section aria-label="Synced CRM tasks">
       <h4>CRM tasks</h4>
       <p>
-        Tasks are saved directly in CRM. This list checks for changes every 15
-        seconds. Editing preserves assignment, sharing and linked records.
+        Tasks are saved directly in CRM. This list checks for changes every
+        minute while visible, including while research runs. Editing preserves
+        assignment, sharing and linked records.
       </p>
+      <button disabled={busy} onClick={() => void refreshNow.current()}>
+        Refresh CRM tasks
+      </button>
       {snapshot && (
         <p>
           Last synced: {new Date(snapshot.checkedAt).toLocaleTimeString()}
@@ -94,10 +111,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
       )}
       {syncError && <p role="status">{syncError}</p>}
       {error && <p role="status">{error}</p>}
-      <button
-        disabled={busy || deferred || !!draft}
-        onClick={() => setDraft(blank())}
-      >
+      <button disabled={busy || !!draft} onClick={() => setDraft(blank())}>
         New CRM task
       </button>
       {snapshot?.tasks.map((t: any) => (
@@ -106,7 +120,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
             {t.name} · {t.status} · {t.mode}
           </span>
           <button
-            disabled={busy || deferred || !!draft}
+            disabled={busy || !!draft}
             onClick={() =>
               setDraft({
                 operationId: crypto.randomUUID(),
@@ -184,7 +198,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
             </label>
           )}
           <button
-            disabled={!draft.name.trim() || stale || deferred}
+            disabled={!draft.name.trim() || stale}
             onClick={() => void save()}
           >
             Save task to CRM

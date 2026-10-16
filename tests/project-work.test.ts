@@ -108,8 +108,8 @@ async function fixture(
       await runner.projects();
       assert.equal(
         calls.filter((c) => c.name === "projects.list").length,
-        before,
-        "progress refresh must not compete for the active connector",
+        before + 1,
+        "project refresh remains available during model work",
       );
     }
     while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
@@ -147,16 +147,18 @@ test("a changed source preserves the pending result and pauses", async () => {
   assert.equal(status.completed, 0);
 });
 
-test("task refresh and edits cannot interrupt an active research connection", async () => {
+test("task CRUD remains available during research", async () => {
   const dir = mkdtempSync(join(tmpdir(), "task-refresh-"));
-  let calls = 0;
+  const calls: string[] = [];
+  const projectId = randomUUID();
   const runner = new ProjectWork(
     join(dir, "work.db"),
     new Vault(randomBytes(32)),
     {
-      status: async () => {
-        calls++;
-        throw Error("Shared connector must remain free");
+      status: async () => ({ datasetId: randomUUID() }),
+      project: async (name: string) => {
+        calls.push(name);
+        return { projects: [], tasks: [] };
       },
     } as any,
     {} as any,
@@ -164,10 +166,25 @@ test("task refresh and edits cannot interrupt an active research connection", as
     () => ({ reason: "investor research running", seconds: 60 }),
   );
   try {
-    assert.deepEqual(await runner.tasks(randomUUID()), { deferred: true });
-    assert.deepEqual(await runner.projects(), { projects: [] });
-    await assert.rejects(() => runner.saveTask({}), /Pause local work/);
-    assert.equal(calls, 0);
+    await runner.tasks(projectId);
+    await runner.projects();
+    const draft = {
+      projectId,
+      operationId: randomUUID(),
+      name: "Research follow-up",
+      description: "Review findings",
+      mode: "AI review",
+      dueDate: "",
+      status: "Open",
+    };
+    await runner.saveTask(draft);
+    await runner.saveTask({ ...draft, taskId: randomUUID(), version: 1 });
+    assert.deepEqual(calls, [
+      "tasks.list",
+      "projects.list",
+      "tasks.create",
+      "tasks.update",
+    ]);
   } finally {
     await runner.close();
     rmSync(dir, { recursive: true, force: true });
