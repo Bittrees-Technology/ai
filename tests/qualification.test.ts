@@ -343,3 +343,59 @@ test("personal location must attach to the selected name, not another person in 
     "supported",
   );
 });
+
+test("named investment director titles support only the role requirement", () => {
+  for (const title of [
+    "Managing Director of Investments",
+    "Managing Director Investments",
+    "Director of Investments",
+    "Managing Director, Investments",
+    "Managing Director — Investments",
+    "Managing Director\n of\tInvestments",
+  ]) {
+    const evidence = `Jane Smith ${title}`;
+    const q = output();
+    q.gates.investmentRole = { status: "supported", evidence, url };
+    const result = validateQualification(
+      q,
+      [{ ...page, text: evidence }],
+      "BBRF-PT | Priority research",
+      "Jane Smith",
+    );
+    assert.equal(result.gates.investmentRole.status, "supported", title);
+    assert.equal(result.status, "Priority research");
+    for (const key of gates.filter((k) => k !== "investmentRole"))
+      assert.equal(result.gates[key].status, "unknown");
+  }
+});
+
+test("director title expansion retains person, quotation and current-role requirements", () => {
+  for (const evidence of [
+    "Jane Smith Managing Director",
+    "Jane Smith Managing Director of Investor Relations",
+    "Jane Smith Director of Investment Operations",
+    "Jane Smith former Managing Director of Investments",
+    "Jane Smith is not Managing Director of Investments",
+    "Other Person Managing Director of Investments",
+  ]) {
+    const q = output();
+    q.gates.investmentRole = { status: "supported", evidence, url };
+    assert.equal(
+      validateQualification(q, [{ ...page, text: evidence }], "", "Jane Smith")
+        .gates.investmentRole.status,
+      "unknown",
+      evidence,
+    );
+  }
+  const q = output();
+  q.gates.investmentRole = {
+    status: "supported",
+    evidence: "Jane Smith Managing Director of Investments",
+    url,
+  };
+  assert.equal(
+    validateQualification(q, [page], "", "Jane Smith").gates.investmentRole
+      .status,
+    "unknown",
+  );
+});

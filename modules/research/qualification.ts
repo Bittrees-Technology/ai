@@ -116,8 +116,11 @@ function explicitRequirement(
     );
   switch (key) {
     case "investmentRole":
-      return /chief investment officer|\bcio\b|investment (?:partner|director|committee|responsibility)|managing partner|portfolio manager|invests? (?:private |family |institutional )*capital/i.test(
-        quote,
+      // Named investment leadership titles also put the responsibility after
+      // the position (e.g. "Managing Director of Investments"). Do not treat
+      // an unqualified "Managing Director" as investment-role evidence.
+      return /chief investment officer|\bcio\b|investment (?:partner|director|committee|responsibility)|\b(?:managing\s+)?director(?:\s+(?:of\s+)?|\s*[,–—-]\s*)investments\b|managing partner|portfolio manager|invests? (?:private |family |institutional )*capital/i.test(
+        norm(quote),
       );
     case "individualUS":
       // A separately named person plus a firm address is insufficient.
