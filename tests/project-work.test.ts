@@ -10,11 +10,14 @@ import { LocalModelTurns } from "../modules/models/local-turns.js";
 import { Vault } from "../modules/storage/vault.js";
 async function fixture(
   mode: "plan" | "work",
-  outcome: "ok" | "refuse" | "conflict" | "verbose" | "alwaysVerbose",
+  outcome:
+    "ok" | "refuse" | "conflict" | "verbose" | "alwaysVerbose" | "unlinked",
 ) {
   const dir = mkdtempSync(join(tmpdir(), "project-work-"));
   const projectId = randomUUID(),
     datasetId = randomUUID();
+  const personId = randomUUID(),
+    organizationId = randomUUID();
   const calls: any[] = [];
   let claimed = false;
   const connector: any = {
@@ -28,6 +31,29 @@ async function fixture(
         return {
           records: [
             { id: projectId, data: { name: "Private project reference" } },
+            {
+              id: personId,
+              kind: "people",
+              data: { name: "Selected subject", organizationId },
+            },
+            {
+              id: organizationId,
+              kind: "organizations",
+              data: { name: "Linked firm" },
+            },
+            {
+              id: randomUUID(),
+              kind: "organizations",
+              data: { name: "Custom Capital", address: "1200 Brickell Miami" },
+            },
+            {
+              id: randomUUID(),
+              kind: "people",
+              data: {
+                name: "Selected subject",
+                description: "Unrelated name match from Chicago",
+              },
+            },
           ],
         };
       if (name === "tasks.create") return { id: randomUUID(), version: 1 };
@@ -39,6 +65,7 @@ async function fixture(
             id: randomUUID(),
             version: 1,
             data: {
+              personId: outcome === "unlinked" ? "" : personId,
               name: "Draft questions",
               description: "Do not send them",
               category: "AI draft",
@@ -69,6 +96,16 @@ async function fixture(
         !JSON.stringify(format).includes("maxLength"),
         "large string bounds are validated after generation, not compiled into Ollama grammar",
       );
+      if (mode === "work") {
+        assert.doesNotMatch(
+          _prompt,
+          /1200 Brickell|Custom Capital|Unrelated name match/,
+        );
+        assert.match(_prompt, /Private project reference/);
+        if (outcome === "unlinked")
+          assert.doesNotMatch(_prompt, /Selected subject|Linked firm/);
+        else assert.match(_prompt, /Selected subject.*Linked firm/);
+      }
       generations++;
       return JSON.stringify(
         mode === "plan"
@@ -388,4 +425,9 @@ test("a legacy paused claim is replaced before generating while confirmed saves 
     await runner.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("task generation excludes unrelated firm facts and same-name people", async () => {
+  assert.equal((await fixture("work", "ok")).status.completed, 1);
+  assert.equal((await fixture("work", "unlinked")).status.completed, 1);
 });
