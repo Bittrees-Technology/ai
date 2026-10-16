@@ -270,7 +270,7 @@ jobs:
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build:remote
       - name: Verify CRM dataset preview and sync controls
-        run: npx playwright test --config scripts/private-browser.config.ts crm-dataset.spec.ts investor-research.spec.ts
+        run: npx playwright test --config scripts/private-browser.config.ts crm-dataset.spec.ts investor-research.spec.ts project-work.spec.ts
       - name: Verify MCP owner connection controls
         if: ${{ !cancelled() }}
         run: |
