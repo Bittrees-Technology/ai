@@ -56,8 +56,17 @@ async function fixture(
       digest: "pinned",
       profile: { contextTokens: 16384, maxOutputTokens: 3000 },
     }),
-    generate: async () =>
-      JSON.stringify(
+    generate: async (
+      _model: any,
+      _prompt: string,
+      _signal: any,
+      format: any,
+    ) => {
+      assert.ok(
+        !JSON.stringify(format).includes("maxLength"),
+        "large string bounds are validated after generation, not compiled into Ollama grammar",
+      );
+      return JSON.stringify(
         mode === "plan"
           ? {
               tasks: [
@@ -75,7 +84,8 @@ async function fixture(
                   ? "This task requires sending a message."
                   : "Draft: Which geographies do you invest in?",
             },
-      ),
+      );
+    },
   };
   const runner = new ProjectWork(
     join(dir, "jobs.db"),
@@ -93,6 +103,15 @@ async function fixture(
       mode,
       prompt: "Plan qualification tasks.",
     });
+    if (runner.isRunning) {
+      const before = calls.filter((c) => c.name === "projects.list").length;
+      await runner.projects();
+      assert.equal(
+        calls.filter((c) => c.name === "projects.list").length,
+        before,
+        "progress refresh must not compete for the active connector",
+      );
+    }
     while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
     return { calls, status: runner.status()[0] };
   } finally {

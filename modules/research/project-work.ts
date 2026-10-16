@@ -29,6 +29,7 @@ const answer = z.strictObject({
 });
 export class ProjectWork {
   private db: Database.Database;
+  private projectChoices: any = { projects: [] };
   private active?: { abort: AbortController; done: Promise<void> };
   constructor(
     path: string,
@@ -79,9 +80,16 @@ export class ProjectWork {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
   async projects() {
+    // Progress polling must not compete with the active worker for its connector.
+    if (this.active) return this.projectChoices;
     const c = await this.connector.status();
     if (!c) return { projects: [] };
-    return this.connector.project("projects.list", {}, c.datasetId);
+    this.projectChoices = await this.connector.project(
+      "projects.list",
+      {},
+      c.datasetId,
+    );
+    return this.projectChoices;
   }
   async create(raw: unknown) {
     const a = input.parse(raw);
@@ -156,7 +164,12 @@ export class ProjectWork {
         j.model,
         prompt,
         AbortSignal.any([signal, AbortSignal.timeout(a.seconds * 1000)]),
-        z.toJSONSchema(schema),
+        // Large string bounds exceed Ollama grammar limits; validate them after generation.
+        JSON.parse(
+          JSON.stringify(z.toJSONSchema(schema), (key, value) =>
+            key === "maxLength" ? undefined : value,
+          ),
+        ),
       ),
     );
   }
