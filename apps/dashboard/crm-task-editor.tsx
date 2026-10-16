@@ -12,7 +12,6 @@ export function CrmTaskEditor({ api, projectId }: any) {
     [draft, setDraft] = useState<any>(null),
     [error, setError] = useState(""),
     [syncError, setSyncError] = useState(""),
-    [deferred, setDeferred] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let current = true,
@@ -26,15 +25,8 @@ export function CrmTaskEditor({ api, projectId }: any) {
       try {
         const s = await api(`/v1/crm-projects/${projectId}/tasks`);
         if (current) {
-          setDeferred(!!s.deferred);
-          if (s.deferred) {
-            setSyncError(
-              "Task refresh is waiting for local work to pause or finish. The last snapshot is retained.",
-            );
-          } else {
-            setSnapshot(s);
-            setSyncError("");
-          }
+          setSnapshot(s);
+          setSyncError("");
         }
       } catch {
         if (current)
@@ -84,7 +76,8 @@ export function CrmTaskEditor({ api, projectId }: any) {
       <h4>CRM tasks</h4>
       <p>
         Tasks are saved directly in CRM. This list checks for changes every 15
-        seconds. Editing preserves assignment, sharing and linked records.
+        seconds, including while research runs. Editing preserves assignment,
+        sharing and linked records.
       </p>
       {snapshot && (
         <p>
@@ -94,10 +87,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
       )}
       {syncError && <p role="status">{syncError}</p>}
       {error && <p role="status">{error}</p>}
-      <button
-        disabled={busy || deferred || !!draft}
-        onClick={() => setDraft(blank())}
-      >
+      <button disabled={busy || !!draft} onClick={() => setDraft(blank())}>
         New CRM task
       </button>
       {snapshot?.tasks.map((t: any) => (
@@ -106,7 +96,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
             {t.name} · {t.status} · {t.mode}
           </span>
           <button
-            disabled={busy || deferred || !!draft}
+            disabled={busy || !!draft}
             onClick={() =>
               setDraft({
                 operationId: crypto.randomUUID(),
@@ -184,7 +174,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
             </label>
           )}
           <button
-            disabled={!draft.name.trim() || stale || deferred}
+            disabled={!draft.name.trim() || stale}
             onClick={() => void save()}
           >
             Save task to CRM

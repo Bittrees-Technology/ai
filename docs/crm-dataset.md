@@ -20,7 +20,7 @@ The source reader pins public IPv4 DNS results, denies private addresses and off
 
 Small append-only batches use MCP with current versions and stable IDs. Conflicts stop the job with its pending batch retained. Resume reads current state and reconciles exact retries; it never silently replaces records. Jobs/checkpoints are encrypted in the active local content directory. Restart pauses work; resume is explicit. Source exhaustion is reported honestly, even below target. The source connection must remain on the original dataset. An expired or revoked connection stops further saves.
 
-Local execution limits apply per model call; ordinary queued tasks are not started during research. The UI polls only local progress every 10 seconds while a run is active. No CRM polling occurs while idle. Research saves private entries and, when enabled for a destination project, automatically adds new CRM records. Sharing, outreach and training approval remain separate actions.
+Local execution limits apply per model call; ordinary queued tasks are not started during research. The UI polls only local progress every 10 seconds while a run is active. Research does not poll CRM while idle; an open task editor refreshes its task list separately. Research saves private entries and, when enabled for a destination project, automatically adds new CRM records. Sharing, outreach and training approval remain separate actions.
 
 ## Research saves versus CRM records
 
@@ -30,8 +30,8 @@ Enable automatic additions for an explicit destination project at CRM → Local 
 
 ## Task editing and synchronization
 
-In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every 15 seconds while visible and local work is idle. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
+In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every 15 seconds while visible, including during research. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
 
 CRM remains authoritative. Every edit includes the version you read and a retry identifier. Conflicts preserve the local draft and require reopening the current task; exact retries do not create duplicates. A changed task also blocks a stale worker result. Closed app/offline state cannot continuously sync; the last successful sync time is displayed. Task runs appear in the owner-only workflow catalogue as metadata; names, briefs and results are not copied there. The catalogue does not start task execution. Existing project grants still govern access.
 
-Task-list refresh and manual edits wait while investor research or project work is running, so dashboard polling cannot interrupt the shared CRM connection. Existing snapshots remain visible until the next successful refresh.
+Task editing and research share a bounded FIFO queue of individual CRM requests. Research need not pause for task creation, edits or refresh. Connection replacement or removal invalidates queued requests from the old connection; failed requests release the queue without automatically retrying writes. Task version checks still reject stale edits and late worker results. Model execution retains its existing single-worker admission rules.

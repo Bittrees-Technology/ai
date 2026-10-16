@@ -43,21 +43,36 @@ export function datasetKeychainEntry(profile: string): ConnectorSecret {
 }
 /** A single dataset and fixed source URL; project authority is checked by CRM for every operation. */
 export class CrmDatasetConnector {
-  private busy = false;
+  private tail: Promise<void> = Promise.resolve();
+  private pending = 0;
+  private generation = 0;
   constructor(
     private owner: string,
     private secret: ConnectorSecret,
     private request: typeof fetch = fetch,
   ) {}
   private async exclusive<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.busy) throw new ConnectorError("CONNECTION_BUSY");
-    this.busy = true;
+    // Queue individual source requests, not whole model runs. A failed request
+    // releases the queue; writes are never retried by this layer.
+    if (this.pending >= 32) throw new ConnectorError("CONNECTION_BUSY");
+    const generation = this.generation;
+    this.pending++;
+    const result = this.tail.then(async () => {
+      if (generation !== this.generation)
+        throw new ConnectorError("INVALID_CONNECTION");
+      return fn();
+    });
+    this.tail = result.then(
+      () => {},
+      () => {},
+    );
     try {
-      return await fn();
+      return await result;
     } finally {
-      this.busy = false;
+      this.pending--;
     }
   }
+
   private async saved() {
     const bytes = await this.secret.getSecret();
     if (!bytes) throw new ConnectorError("CONNECTION_REQUIRED");
@@ -170,6 +185,9 @@ export class CrmDatasetConnector {
       const snapshot = snapshotSchema.parse(
         await this.call(token, "dataset.read", {}),
       );
+      // Invalidate queued operations before changing the credential, even if
+      // the credential store reports an uncertain failure.
+      this.generation++;
       await this.secret.setSecret(
         Buffer.from(
           JSON.stringify({
@@ -249,6 +267,7 @@ export class CrmDatasetConnector {
   }
   async forget() {
     return this.exclusive(async () => {
+      this.generation++;
       await this.secret.deleteCredential();
       return { removed: true };
     });

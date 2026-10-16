@@ -190,3 +190,106 @@ test("research append fences connection replacement before any source write", as
   );
   assert.equal(f.calls.length, before);
 });
+
+function gate() {
+  let release!: () => void;
+  const promise = new Promise<void>((r) => {
+    release = r;
+  });
+  return { promise, release };
+}
+test("research and task requests queue in order, and a failed write does not stop research", async () => {
+  const f = fixture(),
+    held = gate(),
+    entered = gate();
+  let block = false;
+  const names: string[] = [];
+  const connector = new CrmDatasetConnector(
+    "owner",
+    f.secret,
+    async (url, init) => {
+      const rpc = JSON.parse(String(init?.body));
+      names.push(rpc.params.name);
+      if (block && rpc.params.name === "dataset.read") {
+        entered.release();
+        await held.promise;
+      }
+      if (rpc.params.name.startsWith("tasks.")) {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            ...(rpc.params.name === "tasks.update" ? { isError: true } : {}),
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ id: randomUUID(), version: 1 }),
+              },
+            ],
+          },
+        });
+      }
+      return f.request(url, init);
+    },
+  );
+  await connector.connect({ token: f.token });
+  block = true;
+  const read = connector.read();
+  await entered.promise;
+  const create = connector.project("tasks.create", {}, f.id);
+  const update = assert.rejects(
+    connector.project("tasks.update", {}, f.id),
+    /SOURCE_CONFLICT/,
+  );
+  const nextRead = connector.read();
+  assert.deepEqual(names, ["dataset.read", "dataset.read"]);
+  held.release();
+  await Promise.all([read, create, update, nextRead]);
+  assert.deepEqual(names, [
+    "dataset.read",
+    "dataset.read",
+    "tasks.create",
+    "tasks.update",
+    "dataset.read",
+  ]);
+});
+for (const change of ["connect", "forget"] as const) {
+  test(`queued writes cannot cross a ${change} credential boundary`, async () => {
+    const f = fixture(),
+      held = gate(),
+      entered = gate();
+    let block = false;
+    const connector = new CrmDatasetConnector(
+      "owner",
+      f.secret,
+      async (url, init) => {
+        if (block) {
+          block = false;
+          entered.release();
+          await held.promise;
+        }
+        return f.request(url, init);
+      },
+    );
+    await connector.connect({ token: f.token });
+    block = true;
+    const read = connector.read();
+    await entered.promise;
+    const mutation =
+      change === "connect"
+        ? connector.connect({ token: "c".repeat(64) })
+        : connector.forget();
+    const save = assert.rejects(
+      connector.save({ version: 1, name: "Old draft", entries: [] }),
+      /INVALID_CONNECTION/,
+    );
+    held.release();
+    await Promise.all([read, mutation, save]);
+    assert.equal(
+      f.calls.filter(
+        (c) => JSON.parse(String(c.init.body)).params.name === "dataset.save",
+      ).length,
+      0,
+    );
+  });
+}
