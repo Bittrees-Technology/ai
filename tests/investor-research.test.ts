@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
   InvestorResearch,
+  investmentRole,
   supported,
   stableId,
 } from "../modules/research/investors.js";
@@ -47,7 +48,9 @@ test("public research refuses private addresses, credentials and unapproved redi
     false,
   );
 });
-async function fixture(kind: "success" | "conflict" | "unsupported") {
+async function fixture(
+  kind: "success" | "conflict" | "unsupported" | "unconfirmed",
+) {
   const dir = mkdtempSync(join(tmpdir(), "investor-research-"));
   const dataset = "bcb0d794-42bc-4171-b29e-55898a891c14";
   let rows: any[] = [];
@@ -57,7 +60,7 @@ async function fixture(kind: "success" | "conflict" | "unsupported") {
     append: async (a: any) => {
       saves++;
       if (kind === "conflict") throw new Error("SOURCE_CONFLICT");
-      rows = a.entries;
+      if (kind !== "unconfirmed") rows = a.entries;
       return { id: dataset, version: 2, added: rows.length };
     },
   };
@@ -118,11 +121,16 @@ test("local model extracts grounded linked entries and saves only private pendin
   assert.equal(job.state, "complete");
   assert.equal(job.added, 1);
   assert.equal(saves, 1);
+  assert.equal(job.results?.[0]?.name, "Jane Smith");
+  assert.equal(job.results?.[0]?.id, rows[1].id);
   assert.equal(rows.length, 2);
   assert.equal(rows[1].organizationId, rows[0].id);
   assert.equal(rows[1].research.training, "pending");
   assert.equal(rows[1].research.verification, "unverified");
-  assert.equal(rows[1].research.relevance, "Publicly listed investment professional; BBRF-PT mandate fit and investment interest require qualification.");
+  assert.equal(
+    rows[1].research.relevance,
+    "Publicly listed investment professional; BBRF-PT mandate fit and investment interest require qualification.",
+  );
   assert.equal(rows[1].id, stableId(dataset, "people", "Jane Smith"));
 });
 test("source conflict retains pending entries and pauses instead of overwriting", async () => {
@@ -137,4 +145,35 @@ test("unsupported model claims do not reach CRM", async () => {
   assert.equal(job.state, "sources_exhausted");
   assert.equal(saves, 0);
   assert.equal(job.skipped, 1);
+});
+
+test("a save without confirmed source records is not counted as completed work", async () => {
+  const { job } = await fixture("unconfirmed");
+  assert.equal(job.state, "needs_attention");
+  assert.equal(job.added, 0);
+  assert.equal(job.pendingEntries, 2);
+  assert.match(job.error!, /could not be confirmed/);
+  assert.equal(job.results, undefined);
+});
+
+test("decision-maker research excludes support and ambiguous junior roles", () => {
+  for (const title of [
+    "Client Service Associate",
+    "Account Administration Specialist",
+    "CFO",
+    "COO",
+    "Vice President",
+    "Investment Analyst",
+    "Investor Relations Partner",
+    "Assistant Managing Director",
+  ])
+    assert.equal(investmentRole(title), false, title);
+  for (const title of [
+    "CEO & Chief Investment Officer",
+    "Managing Director Investments",
+    "Managing Director (Public Assets)",
+    "Managing Partner",
+    "Director of Acquisitions",
+  ])
+    assert.equal(investmentRole(title), true, title);
 });
