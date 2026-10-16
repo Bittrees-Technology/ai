@@ -296,6 +296,12 @@ const templateReceiver = remote
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
 const codePath = join(directory, "pairing-code.txt");
+const workflows = localWorkflows(
+  directory,
+  new Vault(key),
+  () => store.profiles(owner).map((p) => p.model),
+  () => store.templates(owner),
+);
 server.on(
   "request",
   dashboardServer({
@@ -303,9 +309,7 @@ server.on(
     privateRelay,
     retainedCopies: retainedContent(directory, content.directory),
     backupDownload: localBackupDownload(store, memory, new Vault(key)),
-    workflows: localWorkflows(directory, new Vault(key), () =>
-      store.profiles(owner).map((p) => p.model),
-    ),
+    workflows,
     deviceStatus: () =>
       deviceStatus(directory, executionControls.admission(worker.activeTasks)),
     executionControls,
@@ -354,6 +358,7 @@ async function stop() {
   process.stdin.pause();
   clearInterval(timer);
   clearInterval(importMaintenance);
+  clearInterval(workflowSync);
   worker.stop();
   await investorResearch.close();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
@@ -391,6 +396,9 @@ const importMaintenance = setInterval(() => {
       );
     });
 }, 60000);
+const workflowSync = setInterval(() => {
+  if (started && !stopping) void workflows.sync().catch(() => {});
+}, 60000);
 const requestShutdown = bindProcessLifetime(stop);
 {
   pairingWrite = writeFile(codePath, pairCode + "\n", { mode: 0o600 });
@@ -398,6 +406,7 @@ const requestShutdown = bindProcessLifetime(stop);
   // A parent exit or signal during the write must not announce a stopped server.
   if (!stopping) {
     started = true;
+    void workflows.sync().catch(() => {});
     receiver?.start();
     templateReceiver?.start();
     console.log(

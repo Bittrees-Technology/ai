@@ -1,3 +1,4 @@
+import { syncLocalCatalogue } from "../modules/coordinator/workflow-catalogue.js";
 import { suppressSso } from "../shared/sso/client.mjs";
 import { Pool } from "pg";
 import { randomBytes } from "node:crypto";
@@ -63,7 +64,11 @@ export default async function handler(req: any, res: any) {
         return res.json(await registerDevice(pool, body.input));
       }
       return res.json(
-        await deviceControl(
+        await (
+          body.input?.action === "catalogue"
+            ? syncLocalCatalogue
+            : deviceControl
+        )(
           pool,
           String(req.headers.authorization || "").replace(/^Bearer /, ""),
           body.input,
@@ -103,7 +108,8 @@ export default async function handler(req: any, res: any) {
         [hash(cookie(req, sessionName))],
       );
       res.setHeader("Set-Cookie", setCookie(sessionName, "", 0));
-      if(process.env.BITTREES_SSO_ENABLED==="1")suppressSso(res,workflowOrigin,"bt-sso-ai");
+      if (process.env.BITTREES_SSO_ENABLED === "1")
+        suppressSso(res, workflowOrigin, "bt-sso-ai");
       return res.json({ ok: true });
     }
     if (body.action === "list") return res.json(await portalList(pool, wallet));
