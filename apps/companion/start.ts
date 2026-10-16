@@ -1,3 +1,4 @@
+import { LocalModelTurns } from "../../modules/models/local-turns.js";
 import { ProjectWork } from "../../modules/research/project-work.js";
 import { InvestorResearch } from "../../modules/research/investors.js";
 import {
@@ -189,6 +190,7 @@ const crm = new CrmConnector(
       });
     },
   );
+const modelTurns = new LocalModelTurns();
 const investorResearch = new InvestorResearch(
   join(content.directory, "investor-research.db"),
   new Vault(key),
@@ -198,10 +200,12 @@ const investorResearch = new InvestorResearch(
   () => {
     const a = executionControls.admission(worker.activeTasks);
     return {
-      reason: projectWork?.isRunning ? "project tasks running" : a.reason,
+      reason: a.reason,
       seconds: a.limits.maxTaskSeconds,
     };
   },
+  undefined,
+  modelTurns.run,
 );
 const projectWork = new ProjectWork(
   join(content.directory, "project-work.db"),
@@ -212,12 +216,11 @@ const projectWork = new ProjectWork(
   () => {
     const a = executionControls.admission(worker.activeTasks);
     return {
-      reason: investorResearch.isRunning
-        ? "investor research running"
-        : a.reason,
+      reason: a.reason,
       seconds: a.limits.maxTaskSeconds,
     };
   },
+  modelTurns.run,
 );
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
@@ -328,7 +331,7 @@ const workflows = localWorkflows(
       definition: {
         kind: job.input.mode === "plan" ? "crm-task-planning" : "crm-task-work",
       },
-      state: job.state,
+      state: job.state === "waiting" ? "ready" : job.state,
     })),
     ...investorResearch.list().map((job) => ({
       id: job.id,
@@ -394,6 +397,7 @@ async function stop() {
   stopping = true;
   process.stdin.pause();
   clearInterval(timer);
+  clearInterval(automaticProjectWork);
   clearInterval(importMaintenance);
   clearInterval(workflowSync);
   worker.stop();
@@ -431,6 +435,20 @@ const timer = setInterval(() => {
     runs.add(running);
   }
 }, 500);
+let automaticErrorReported = false;
+const automaticProjectWork = setInterval(() => {
+  if (started && !stopping)
+    void projectWork
+      .tickAutomatic()
+      .then(() => {
+        automaticErrorReported = false;
+      })
+      .catch(() => {
+        if (!automaticErrorReported)
+          console.error("Automatic CRM task check could not start.");
+        automaticErrorReported = true;
+      });
+}, 10000);
 const importMaintenance = setInterval(() => {
   if (started && !stopping)
     void imports.maintain().catch(() => {

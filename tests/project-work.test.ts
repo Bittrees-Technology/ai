@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, randomBytes } from "node:crypto";
 import { ProjectWork } from "../modules/research/project-work.js";
+import { LocalModelTurns } from "../modules/models/local-turns.js";
 import { Vault } from "../modules/storage/vault.js";
 async function fixture(
   mode: "plan" | "work",
@@ -185,6 +186,114 @@ test("task CRUD remains available during research", async () => {
       "tasks.create",
       "tasks.update",
     ]);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("automatic CRM worker completes real results, resumes watching after restart, and honors disable", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "auto-project-")),
+    path = join(dir, "work.db"),
+    vault = new Vault(randomBytes(32));
+  const projectId = randomUUID(),
+    datasetId = randomUUID();
+  let available = true,
+    claims = 0,
+    finishes = 0;
+  const connector: any = {
+    status: async () => ({ datasetId }),
+    project: async (name: string, args: any) => {
+      if (name === "projects.list")
+        return { projects: [{ id: projectId, tasks: true }] };
+      if (name === "project.read") return { records: [] };
+      if (name === "tasks.list")
+        return { tasks: available ? [{ status: "Open" }] : [] };
+      if (name === "tasks.claim") {
+        claims++;
+        return {
+          task: available
+            ? {
+                id: randomUUID(),
+                version: 1,
+                data: {
+                  name: "Draft questions",
+                  description: "Draft only",
+                  category: "AI draft",
+                },
+              }
+            : null,
+        };
+      }
+      if (name === "tasks.finish") {
+        assert.match(args.result, /Actual draft/);
+        finishes++;
+        available = false;
+        return { taskId: randomUUID(), noteId: randomUUID() };
+      }
+      throw Error(name);
+    },
+  };
+  const runtime: any = {
+    pin: async () => ({
+      digest: "same",
+      profile: { contextTokens: 16384, maxOutputTokens: 3000 },
+    }),
+    generate: async () =>
+      JSON.stringify({
+        canComplete: true,
+        result: "Actual draft: What is your investment mandate?",
+      }),
+  };
+  const turns = new LocalModelTurns();
+  let releaseResearch!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseResearch = resolve;
+  });
+  const research = turns.run(new AbortController().signal, () => held);
+  const make = () =>
+    new ProjectWork(
+      path,
+      vault,
+      connector,
+      runtime,
+      () => ({}),
+      () => ({ reason: "ready", seconds: 5 }),
+      turns.run,
+    );
+  let runner = make();
+  try {
+    await runner.configureAutomatic({
+      enabled: true,
+      confirmed: true,
+      projectId,
+      profileId: "test",
+    });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(
+      claims,
+      0,
+      "CRM waits before claiming while research owns the model",
+    );
+    await runner.close();
+    runner = make();
+    assert.equal(runner.automaticStatus().enabled, true);
+    await runner.tickAutomatic();
+    releaseResearch();
+    await research;
+    while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(finishes, 1);
+    assert.equal(runner.status()[0].state, "waiting");
+    const before = claims;
+    await runner.tickAutomatic();
+    assert.equal(claims, before, "idle polling is paced");
+    await runner.close();
+    runner = make();
+    assert.equal(runner.automaticStatus().enabled, true);
+    await runner.configureAutomatic({ enabled: false });
+    await runner.tickAutomatic();
+    assert.equal(claims, before);
+    assert.equal(runner.automaticStatus().enabled, false);
   } finally {
     await runner.close();
     rmSync(dir, { recursive: true, force: true });

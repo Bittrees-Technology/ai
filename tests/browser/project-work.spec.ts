@@ -226,3 +226,66 @@ test("a confirmed task save stays confirmed when its refresh is rate limited", a
     page.getByText("Save could not be confirmed", { exact: false }),
   ).toHaveCount(0);
 });
+
+test("automatic CRM task work is explicitly enabled and shows waiting and saved progress", async ({
+  page,
+}) => {
+  let automatic: any = { enabled: false };
+  await page.route("**/v1/crm-projects**", async (route) => {
+    if (route.request().url().endsWith("/automatic")) {
+      const body = route.request().postDataJSON();
+      automatic = { ...body, jobId: "auto" };
+      await route.fulfill({ json: automatic });
+      return;
+    }
+    if (route.request().url().endsWith("/tasks")) {
+      await route.fulfill({
+        json: { tasks: [], checkedAt: new Date().toISOString() },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        available: true,
+        projects: [{ id: "project", name: "Connected project", tasks: true }],
+        automatic,
+        jobs: automatic.enabled
+          ? [
+              {
+                id: "auto",
+                state: "waiting",
+                phase: "Watching CRM for eligible tasks",
+                completed: 2,
+                input: { mode: "work" },
+                receipts: [],
+              },
+            ]
+          : [],
+      },
+    });
+  });
+  await page.goto("/?project-work");
+  await page.getByLabel("Project", { exact: true }).selectOption("project");
+  await page.getByLabel("Local model profile").selectOption("local-test");
+  page.once("dialog", (d) => d.dismiss());
+  await page
+    .getByRole("button", { name: "Turn on automatic task work" })
+    .click();
+  expect(automatic.enabled).toBe(false);
+  page.once("dialog", (d) => d.accept());
+  await page
+    .getByRole("button", { name: "Turn on automatic task work" })
+    .click();
+  await expect(page.getByText("Watching CRM for eligible tasks")).toBeVisible();
+  await expect(page.getByText("waiting · 2 confirmed CRM saves")).toBeVisible();
+  expect(automatic).toMatchObject({
+    enabled: true,
+    confirmed: true,
+    projectId: "project",
+    profileId: "local-test",
+  });
+  await page
+    .getByRole("button", { name: "Turn off automatic task work" })
+    .click();
+  await expect(page.getByText("Automatic task worker: Off")).toBeVisible();
+});

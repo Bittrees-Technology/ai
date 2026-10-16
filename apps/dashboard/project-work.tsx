@@ -16,7 +16,7 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
   }, []);
   const running = status?.jobs?.some((j: any) => j.state === "running");
   useEffect(() => {
-    if (!running) return;
+    if (!running && !status?.automatic?.enabled) return;
     let active = true,
       inFlight = false;
     const poll = async () => {
@@ -39,7 +39,7 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       clearInterval(id);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [running]);
+  }, [running, status?.automatic?.enabled]);
   async function act(fn: () => Promise<any>) {
     setBusy(true);
     try {
@@ -68,6 +68,27 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       prompt,
     });
   }
+  async function automatic(enabled: boolean) {
+    if (
+      enabled &&
+      !confirm(
+        "Automatically work on your open AI draft/review tasks in this project, including while research runs and after app restarts? Results are saved to CRM. Outside actions still require separate approval.",
+      )
+    )
+      return;
+    await api(
+      "/v1/crm-projects/automatic",
+      "POST",
+      enabled
+        ? {
+            enabled: true,
+            confirmed: true,
+            projectId: project,
+            profileId: profile,
+          }
+        : { enabled: false },
+    );
+  }
   if (!status?.available) return null;
   return (
     <article className="card crm-dataset-panel" aria-label="CRM project tasks">
@@ -88,6 +109,23 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       <button onClick={() => void act(refresh)}>
         Refresh connected projects
       </button>
+      <p role="status">
+        Automatic task worker:{" "}
+        {status.automatic?.enabled
+          ? status.jobs?.find((j: any) => j.id === status.automatic.jobId)
+              ?.state === "needs_attention"
+            ? "Needs attention — see the task run below"
+            : "On — watches the selected project, including during research"
+          : "Off"}
+      </p>
+      {status.automatic?.enabled && (
+        <button
+          disabled={busy}
+          onClick={() => void act(() => automatic(false))}
+        >
+          Turn off automatic task work
+        </button>
+      )}
       <fieldset disabled={busy || running}>
         <label>
           Project
@@ -122,6 +160,14 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
             ))}
           </select>
         </label>
+        {!status.automatic?.enabled && (
+          <button
+            disabled={!project || !profile}
+            onClick={() => void act(() => automatic(true))}
+          >
+            Turn on automatic task work
+          </button>
+        )}
         <label>
           What tasks should the local AI create?
           <textarea
@@ -158,6 +204,12 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
           <p>
             {j.state} · {j.completed} confirmed CRM saves
           </p>
+          {j.phase && (
+            <p>
+              {j.phase}
+              {j.currentTask ? ` · ${j.currentTask}` : ""}
+            </p>
+          )}
           {j.error && <p role="status">{j.error}</p>}
           {j.state === "running" ? (
             <button

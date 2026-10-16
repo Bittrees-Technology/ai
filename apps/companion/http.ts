@@ -737,16 +737,24 @@ export function localApi({
     }),
   );
   app.get("/v1/crm-projects/status", (_req, res) =>
-    res.json({ available: !!projectWork, jobs: projectWork?.status() || [] }),
+    res.json({
+      available: !!projectWork,
+      jobs: projectWork?.status() || [],
+      automatic: projectWork?.automaticStatus?.() || { enabled: false },
+    }),
   );
   app.get("/v1/crm-projects", async (_req, res) =>
     res.json({
       available: !!projectWork,
       ...(projectWork ? await projectWork.projects() : { projects: [] }),
       jobs: projectWork?.status() || [],
+      automatic: projectWork?.automaticStatus?.() || { enabled: false },
     }),
   );
   if (projectWork) {
+    app.post("/v1/crm-projects/automatic", async (req, res) =>
+      res.json(await projectWork.configureAutomatic(req.body)),
+    );
     app.get("/v1/crm-projects/:projectId/tasks", async (req, res) =>
       res.json(await projectWork.tasks(req.params.projectId)),
     );
