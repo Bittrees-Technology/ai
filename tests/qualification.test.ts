@@ -258,3 +258,24 @@ test("qualification excerpts retain a buried biography without inventing contigu
     "unknown",
   );
 });
+
+test("another person's role or a firm address cannot establish the selected person's role or location", () => {
+  const p = {
+    ...page,
+    text: "Other Person is an investment partner in New York. Our office is in Miami, Florida.",
+  };
+  const q = output();
+  q.gates.investmentRole = {
+    status: "supported",
+    evidence: "Other Person is an investment partner in New York.",
+    url,
+  };
+  q.gates.individualUS = {
+    status: "supported",
+    evidence: "Our office is in Miami, Florida.",
+    url,
+  };
+  const result = validateQualification(q, [p], "", "Jane Smith");
+  assert.equal(result.gates.investmentRole.status, "unknown");
+  assert.equal(result.gates.individualUS.status, "unknown");
+});
