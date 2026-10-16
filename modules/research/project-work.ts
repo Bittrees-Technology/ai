@@ -60,10 +60,14 @@ export class ProjectWork {
         j.state === "running" ||
         (j.state === "paused" &&
           this.automaticStatus().enabled &&
-          this.automaticStatus().jobId === j.id)
+          this.automaticProjects().some((a: any) => a.jobId === j.id))
       ) {
         const auto = this.automaticStatus();
-        j.state = auto.enabled && auto.jobId === j.id ? "waiting" : "paused";
+        j.state =
+          auto.enabled &&
+          this.automaticProjects().some((a: any) => a.jobId === j.id)
+            ? "waiting"
+            : "paused";
         if (j.state === "paused") j.error = "App restarted; resume this run.";
         this.save(j);
       }
@@ -75,6 +79,15 @@ export class ProjectWork {
     return row
       ? this.vault.open(row.payload, "project-work:automatic")
       : { enabled: false };
+  }
+  private automaticProjects(): any[] {
+    const a = this.automaticStatus();
+    return (
+      a.projects ||
+      (a.jobId
+        ? [{ jobId: a.jobId, projectId: a.projectId, profileId: a.profileId }]
+        : [])
+    );
   }
   private saveAutomatic(value: any) {
     this.db
@@ -90,6 +103,7 @@ export class ProjectWork {
         z.strictObject({
           enabled: z.literal(true),
           confirmed: z.literal(true),
+          additional: z.boolean().optional(),
           projectId: z.uuid(),
           profileId: z.string().min(1),
         }),
@@ -107,7 +121,24 @@ export class ProjectWork {
       prior.profileId === a.profileId
     )
       return prior;
-    if (this.active || prior.enabled)
+    const configured = this.automaticProjects();
+    if (
+      a.additional &&
+      prior.enabled &&
+      configured.some((p: any) => p.projectId === a.projectId)
+    ) {
+      if (
+        configured.some(
+          (p: any) =>
+            p.projectId === a.projectId && p.profileId === a.profileId,
+        )
+      )
+        return prior;
+      throw new Error(
+        "Turn off automatic work before changing a watched project’s model.",
+      );
+    }
+    if (!a.additional && (this.active || prior.enabled))
       throw new Error(
         "Pause the current task worker before changing its project or model.",
       );
@@ -131,8 +162,7 @@ export class ProjectWork {
     this.profile(a.profileId);
     if (
       epoch !== this.configurationEpoch ||
-      this.active ||
-      this.automaticStatus().enabled
+      (!a.additional && (this.active || this.automaticStatus().enabled))
     )
       throw new Error("Task-worker settings changed; refresh before enabling.");
     const j = existing || {
@@ -157,12 +187,14 @@ export class ProjectWork {
     j.nextCheckAt = 0;
     delete j.error;
     this.save(j);
-    this.saveAutomatic({
-      enabled: true,
+    const entry = {
       jobId: j.id,
       projectId: a.projectId,
       profileId: a.profileId,
-    });
+    };
+    const projects =
+      a.additional && prior.enabled ? [...configured, entry] : [entry];
+    this.saveAutomatic({ enabled: true, ...projects[0], projects });
     await this.tickAutomatic();
     return this.automaticStatus();
   }
@@ -170,9 +202,16 @@ export class ProjectWork {
     const auto = this.automaticStatus();
     if (!auto.enabled || this.active || this.admission().reason !== "ready")
       return;
-    const j = this.list().find((j) => j.id === auto.jobId);
-    if (!j || j.state !== "waiting" || (j.nextCheckAt || 0) > Date.now())
-      return;
+    const ids = new Set(this.automaticProjects().map((p: any) => p.jobId));
+    const j = this.list()
+      .filter(
+        (j) =>
+          ids.has(j.id) &&
+          j.state === "waiting" &&
+          (j.nextCheckAt || 0) <= Date.now(),
+      )
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
+    if (!j) return;
     await this.resume(j.id);
   }
   private phase(j: any, phase: string) {
@@ -285,13 +324,13 @@ export class ProjectWork {
       await this.active.done;
     }
     if (disableAutomatic) {
-      const auto = this.automaticStatus();
-      const j = this.list().find((j) => j.id === auto.jobId);
-      if (j?.state === "waiting") {
-        j.state = "paused";
-        j.phase = "Automatic task work is off";
-        this.save(j);
-      }
+      const ids = new Set(this.automaticProjects().map((p: any) => p.jobId));
+      for (const j of this.list())
+        if (ids.has(j.id) && j.state === "waiting") {
+          j.state = "paused";
+          j.phase = "Automatic task work is off";
+          this.save(j);
+        }
     }
     return { paused: true };
   }
@@ -438,7 +477,9 @@ export class ProjectWork {
       j.planned = true;
       this.save(j);
     }
-    const batchLimit = j.automatic ? j.completed + 20 : 20;
+    const batchLimit = j.automatic
+      ? j.completed + (this.automaticProjects().length > 1 ? 1 : 20)
+      : 20;
     while (j.completed < batchLimit) {
       signal.throwIfAborted();
       if (j.pending?.length) {
