@@ -134,7 +134,11 @@ test("project progress polling stays local and requires authentication", async (
     for (let i = 0; i < 60; i++) {
       const response = await fetch(url + "/status", { headers });
       assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), { available: true, jobs });
+      assert.deepEqual(await response.json(), {
+        available: true,
+        jobs,
+        automatic: { enabled: false },
+      });
     }
     assert.equal(remoteReads, 0);
     assert.equal((await fetch(url, { headers })).status, 200);
