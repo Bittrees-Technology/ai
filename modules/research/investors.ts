@@ -1,3 +1,4 @@
+import { personMatches } from "./person-matches.js";
 import { crmProgress } from "./crm-progress.js";
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
@@ -57,6 +58,11 @@ type Job = {
   skipped: number;
   failures: { url: string; reason: string }[];
   pending?: any[];
+  duplicateReviews?: {
+    name: string;
+    url: string;
+    matches: { id: string; name: string }[];
+  }[];
   version: number;
   model?: PinnedModel;
   error?: string;
@@ -211,6 +217,28 @@ export class InvestorResearch {
     this.save(j);
     return s;
   }
+  private holdDuplicate(
+    j: Job,
+    candidate: { id: string; name: string },
+    entries: { id: string; name: string; kind: string }[],
+    url: string,
+  ) {
+    const matches = personMatches(candidate, entries);
+    if (!matches.length) return false;
+    j.duplicateReviews ??= [];
+    if (
+      !j.duplicateReviews.some(
+        (r) => r.name === candidate.name && r.url === url,
+      )
+    )
+      j.duplicateReviews.push({
+        name: candidate.name,
+        url,
+        matches: matches.map(({ id, name }) => ({ id, name })),
+      });
+    j.skipped++;
+    return true;
+  }
   private activity(j: Job, phase: string, url?: string) {
     j.activity = { phase, url, since: new Date().toISOString() };
     this.save(j);
@@ -236,6 +264,32 @@ export class InvestorResearch {
       const url = j.queue[0]!;
       if (j.pending) {
         s = await this.snapshot(j);
+        // Recheck staged work after pauses/upgrades and against concurrently saved identities.
+        // Keep already-saved IDs intact so uncertain-success retries remain idempotent.
+        const safe: any[] = [];
+        for (const entry of j.pending) {
+          if (
+            entry.kind === "people" &&
+            !s.entries.some((e) => e.id === entry.id) &&
+            this.holdDuplicate(j, entry, [...s.entries, ...safe], url)
+          )
+            continue;
+          safe.push(entry);
+        }
+        const people = safe.filter((e) => e.kind === "people");
+        j.pending = safe.filter(
+          (e) =>
+            e.kind === "people" ||
+            people.some((p) => p.organizationId === e.id),
+        );
+        if (!people.length) {
+          delete j.pending;
+          j.queue.shift();
+          j.done.push(url);
+          this.save(j);
+          continue;
+        }
+        this.save(j);
         this.activity(j, "Saving results to private CRM dataset", url);
         // Existing IDs are reconciled by the source; never overwrite or invent a new ID on conflict.
         const newPeople = j.pending.filter((e) => e.kind === "people").length;
@@ -362,9 +416,6 @@ export class InvestorResearch {
         continue;
       }
       s = await this.snapshot(j);
-      const existingNames = new Set(
-        s.entries.map((e) => e.kind + ":" + norm(e.name)),
-      );
       const org = s.entries.find(
         (e) =>
           e.kind === "organizations" &&
@@ -406,7 +457,6 @@ export class InvestorResearch {
       for (const p of parsed.people) {
         if (rows.length >= j.input.target - j.added) break;
         if (
-          existingNames.has("people:" + norm(p.name)) ||
           !investmentRole(p.title) ||
           !supported(text, p.evidence) ||
           !norm(p.evidence).includes(norm(p.name)) ||
@@ -417,12 +467,17 @@ export class InvestorResearch {
           j.skipped++;
           continue;
         }
-        existingNames.add("people:" + norm(p.name));
         const row = make("people", p.name, p.evidence, {
           title: p.title,
           category: p.category,
           organizationId: orgId,
         });
+        if (s.entries.some((e) => e.id === row.id)) {
+          j.skipped++;
+          continue;
+        }
+        if (this.holdDuplicate(j, row, [...s.entries, ...rows], page.url))
+          continue;
         row.research.relevance =
           "Publicly listed investment professional; BBRF-PT mandate fit and investment interest require qualification.";
         rows.push(row);

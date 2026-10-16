@@ -51,3 +51,56 @@ test("local research requires explicit source and model choices; confirmation do
     ).toBe(true);
   }
 });
+
+test("possible name variants remain visible for review without publication actions", async ({
+  page,
+}) => {
+  await page.route("**/v1/research/investors**", (route) =>
+    route.fulfill({
+      json: {
+        available: true,
+        jobs: [
+          {
+            id: "held",
+            state: "sources_exhausted",
+            input: { brief: "Research investment decision makers" },
+            added: 0,
+            done: ["https://example.org/team"],
+            queue: [],
+            failures: [],
+            skipped: 1,
+            duplicateReviews: [
+              {
+                name: "Christopher S. Calicott",
+                url: "https://example.org/team",
+                matches: [{ id: "canonical", name: "Christopher Calicott" }],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/?investor-research");
+  await page
+    .getByText("1 possible duplicate names held for review", { exact: true })
+    .click();
+  await expect(
+    page.getByText("Christopher S. Calicott", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Possible match: Christopher Calicott/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Source", exact: true }),
+  ).toHaveAttribute("href", "https://example.org/team");
+  await expect(
+    page.getByRole("button", { name: /merge|publish/i }),
+  ).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});

@@ -50,13 +50,27 @@ test("public research refuses private addresses, credentials and unapproved redi
 });
 async function fixture(
   kind: "success" | "conflict" | "unsupported" | "unconfirmed",
+  options: { priorName?: string; concurrentName?: string } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "investor-research-"));
   const dataset = "bcb0d794-42bc-4171-b29e-55898a891c14";
   let rows: any[] = [];
   let saves = 0;
+  let reads = 0;
+  const prior = (name: string) => ({
+    id: stableId(dataset, "people", name),
+    kind: "people",
+    name,
+    organizationId: "a-different-firm",
+  });
+  if (options.priorName) rows.push(prior(options.priorName));
   const connector: any = {
-    read: async () => ({ id: dataset, version: 1, entries: rows }),
+    read: async () => {
+      reads++;
+      if (reads === 3 && options.concurrentName)
+        rows.push(prior(options.concurrentName));
+      return { id: dataset, version: 1, entries: rows };
+    },
     append: async (a: any) => {
       saves++;
       if (kind === "conflict") throw new Error("SOURCE_CONFLICT");
@@ -178,4 +192,28 @@ test("decision-maker research excludes support and ambiguous junior roles", () =
     "Director of Acquisitions",
   ])
     assert.equal(investmentRole(title), true, title);
+});
+
+test("name variation at another organization is held before any CRM append", async () => {
+  const { job, saves, rows } = await fixture("success", {
+    priorName: "Jane A. Smith, CFA",
+  });
+  assert.equal(saves, 0);
+  assert.equal(rows.length, 1);
+  assert.equal(job.added, 0);
+  assert.equal(job.state, "sources_exhausted");
+  assert.equal(
+    job.duplicateReviews?.[0]?.matches[0]?.name,
+    "Jane A. Smith, CFA",
+  );
+});
+test("newly appeared variation blocks a pending batch and its orphan organization", async () => {
+  const { job, saves, rows } = await fixture("success", {
+    concurrentName: "Jane A. Smith",
+  });
+  assert.equal(saves, 0);
+  assert.equal(rows.length, 1);
+  assert.equal(job.pendingEntries, 0);
+  assert.equal(job.added, 0);
+  assert.equal(job.duplicateReviews?.length, 1);
 });
