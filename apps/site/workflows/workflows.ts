@@ -3,6 +3,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { LoginPanel, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
 let loginRoot: Root | undefined;
 let chooseWallet = false;
+let sharedCheck:AbortController|undefined;
+let sharedRevision:string|undefined;
+async function sharedSignIn() {
+  if(sharedRevision===wallet)return;
+  sharedRevision=wallet;sharedCheck?.abort();const check=new AbortController();sharedCheck=check;
+  try{const r=await fetch("/api/sso/status",{credentials:"same-origin",cache:"no-store",signal:check.signal});const v=await r.json();if(check.signal.aborted||!r.ok||!v.configured||!["publish","resume"].includes(v.action))return;
+    location.replace("/api/sso/start?"+new URLSearchParams({mode:v.action,return_to:location.pathname+location.search+location.hash}));
+  }catch{/* The local wallet sign-in remains available. */}
+}
 type Provider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<any>;
   on?: (event: string, fn: () => void) => void;
@@ -36,7 +45,7 @@ async function api(action: string, input?: unknown) {
     signal: AbortSignal.timeout(20000),
   });
   const data = await r.json();
-  if (!r.ok) throw Error(data.error || "REQUEST_REJECTED");
+  if (!r.ok) throw Object.assign(Error(data.error || "REQUEST_REJECTED"), { status: r.status });
   return data;
 }
 const messages: Record<string, string> = {
@@ -57,6 +66,7 @@ async function act(fn: () => Promise<void>) {
   try {
     await fn();
   } catch (e) {
+    if ((e as Error & {status?:number}).status === 401) { wallet="";grants=[];pending=null;sharedRevision=undefined;void sharedSignIn(); }
     error =
       messages[(e as Error).message] ||
       "The request did not finish. Refresh to check its status before trying again.";
@@ -110,6 +120,7 @@ async function login(provider: Provider) {
     render();
   });
   await refresh();
+  void sharedSignIn();
 }
 async function approve(g: any, code?: string) {
   const c = await api("challenge", {
@@ -321,6 +332,7 @@ function render() {
     el("span", wallet, "wallet-line"),
     button("Refresh", refresh),
     button("Sign out", async () => {
+      sharedCheck?.abort();sharedRevision=undefined;
       await api("logout");
       wallet = "";
       grants = [];
@@ -421,7 +433,7 @@ void api("list")
   .then((v) => {
     wallet = v.wallet;
     grants = v.grants;
-    render();
+    render();void sharedSignIn();
   })
-  .catch(() => render());
+  .catch((e) => {render();if(e.message==="SIGN_IN_REQUIRED")void sharedSignIn();});
 render();

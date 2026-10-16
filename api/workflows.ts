@@ -1,3 +1,4 @@
+import { suppressSso } from "../shared/sso/client.mjs";
 import { Pool } from "pg";
 import { randomBytes } from "node:crypto";
 import {
@@ -102,6 +103,7 @@ export default async function handler(req: any, res: any) {
         [hash(cookie(req, sessionName))],
       );
       res.setHeader("Set-Cookie", setCookie(sessionName, "", 0));
+      if(process.env.BITTREES_SSO_ENABLED==="1")suppressSso(res,workflowOrigin,"bt-sso-ai");
       return res.json({ ok: true });
     }
     if (body.action === "list") return res.json(await portalList(pool, wallet));
