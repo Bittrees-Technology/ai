@@ -389,3 +389,4 @@ if (new URLSearchParams(location.search).has("crm-dataset"))
   void import("./crm-dataset.js");
 
 if (new URLSearchParams(location.search).has("investor-research")) void import("./investor-research.js");
+if (new URLSearchParams(location.search).has("research-activity")) void import("./research-activity.js");

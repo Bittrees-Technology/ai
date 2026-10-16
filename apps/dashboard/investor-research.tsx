@@ -127,7 +127,20 @@ export function InvestorResearchPanel({
             {j.done.length} pages processed · {j.queue.length} queued ·{" "}
             {j.failures.length} source/model failures · {j.skipped} skipped
           </p>
-          {j.error && <p role="status">{j.error}</p>}
+          {j.error && (
+            <p role="status">
+              {j.error === "This operation was aborted"
+                ? "This run was interrupted. Saved progress is preserved."
+                : j.error}
+            </p>
+          )}
+          {j.state !== "running" &&
+            status.jobs.some((job: any) => job.state === "running") && (
+              <p>
+                Another research run is active. Resume this run after it
+                finishes or is paused.
+              </p>
+            )}
           {j.state === "running" ? (
             <button
               onClick={() =>
@@ -139,7 +152,10 @@ export function InvestorResearchPanel({
           ) : (
             j.state !== "complete" && (
               <button
-                disabled={busy}
+                disabled={
+                  busy ||
+                  status.jobs.some((job: any) => job.state === "running")
+                }
                 onClick={() =>
                   void act(() =>
                     api("/v1/research/investors/resume", "POST", { id: j.id }),
