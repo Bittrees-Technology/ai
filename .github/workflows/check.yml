@@ -155,6 +155,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:remote
+      - name: Verify catalogue write suppression and authorization
+        run: npx tsx --test tests/workflow-catalogue-postgres.test.ts
+        env:
+          CATALOGUE_TEST_DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/relay_test
       - run: npx tsx scripts/remote-status-integration-check.ts
         env:
           REMOTE_TEST_DATABASE_URL: postgresql://integration:ci-only@127.0.0.1:5432/relay_test
