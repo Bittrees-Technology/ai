@@ -245,6 +245,6 @@ test("firm address or another person's base cannot automatically publish a candi
     const { rows, job } = await fixture("success", { location });
     assert.equal(rows.length, 0);
     assert.equal(job.state, "sources_exhausted");
-    assert.equal(job.locationReviews.length, 1);
+    assert.equal(job.locationReviews?.length, 1);
   }
 });
