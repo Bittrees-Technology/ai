@@ -192,8 +192,8 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       </fieldset>
       <p>
         Only open tasks assigned to you and categorized “AI draft” or “AI
-        review” are eligible. Ordinary tasks stay with you. Pause investor
-        research before running project tasks; both use the same local model.
+        review” are eligible. Ordinary tasks stay with you. Research and project
+        tasks take turns on the local model; neither needs to be paused.
       </p>
       {project && <CrmTaskEditor key={project} api={api} projectId={project} />}
       {status.jobs.map((j: any) => (
