@@ -9,6 +9,7 @@ import {
   validateQualification,
   retainQualification,
   evidenceExcerpt,
+  roleRetryPages,
   gates,
 } from "../modules/research/qualification.js";
 import { Vault } from "../modules/storage/vault.js";
@@ -51,6 +52,7 @@ async function fixture(
   uncertain = false,
   previous?: any,
   fetched = page,
+  generate?: (call: number) => any,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "qualification-")),
     datasetId = randomUUID(),
@@ -105,12 +107,14 @@ async function fixture(
       return { receipts: [{ recordId: record.id }] };
     },
   };
-  let turns = 0;
+  let turns = 0,
+    calls = 0;
   const runtime: any = {
     pin: async () => ({
       profile: { contextTokens: 16384, maxOutputTokens: 2048 },
     }),
-    generate: async () => JSON.stringify(output()),
+    generate: async () =>
+      JSON.stringify(generate ? generate(++calls) : output()),
   };
   const worker = new QualificationResearch(
     join(dir, "test.db"),
@@ -155,7 +159,7 @@ test("existing profile enrichment verifies CRM readback and uses shared model tu
   try {
     assert.equal(f.worker.status()[0]!.state, "complete");
     assert.equal(f.writes, 1);
-    assert.equal(f.turns, 1);
+    assert.equal(f.turns, 2);
     assert.equal(f.worker.status()[0]!.results.length, 1);
   } finally {
     await f.cleanup();
@@ -179,7 +183,7 @@ test("uncertain save keeps exact payload for resume without generating again", a
       await new Promise((r) => setTimeout(r, 5));
     assert.equal(f.worker.status()[0]!.state, "complete");
     assert.equal(f.writes, 2);
-    assert.equal(f.turns, 1);
+    assert.equal(f.turns, 2);
   } finally {
     await f.cleanup();
   }
@@ -514,4 +518,88 @@ test("pre-upgrade pending assessments cannot bypass retention validation", async
   } finally {
     await f.cleanup();
   }
+});
+
+test("missed named role gets one bounded retry, other model claims cannot escape it", async () => {
+  const f = await fixture(false, false, undefined, page, (call) => {
+    const q = output();
+    if (call === 2) {
+      q.gates.investmentRole = {
+        status: "supported",
+        evidence: page.text,
+        url,
+      };
+      q.gates.ticket = {
+        status: "supported",
+        evidence: "Invented allocation EUR50,000",
+        url,
+      };
+    }
+    return q;
+  });
+  try {
+    const job = f.worker.list()[0]!;
+    assert.equal(job.state, "complete");
+    assert.equal(f.turns, 2);
+    assert.equal(f.writes, 1);
+    const audit = job.results[0].evidenceAudit;
+    assert.equal(audit.attempts.length, 2);
+    assert.equal(audit.attempts[1].accepted.investmentRole.status, "supported");
+    assert.equal(audit.attempts[1].accepted.ticket.status, "unknown");
+    assert.ok(audit.excerpts[0].text.includes("Jane Smith"));
+    assert.equal("evidenceAudit" in f.worker.status()[0]!.results[0], false);
+    assert.equal("evidenceAudit" in f.worker.status()[0]!, false);
+  } finally {
+    await f.cleanup();
+  }
+});
+test("role retry does not manufacture evidence or loop on another unknown", async () => {
+  const f = await fixture(false, false, undefined, page, (call) => {
+    const q = output();
+    if (call === 2)
+      q.gates.investmentRole = {
+        status: "supported",
+        evidence: "Jane Smith Chief Investment Officer",
+        url,
+      };
+    return q;
+  });
+  try {
+    const job = f.worker.list()[0]!;
+    assert.equal(f.turns, 2);
+    assert.equal(
+      job.results[0].evidenceAudit.attempts[1].accepted.investmentRole.status,
+      "unknown",
+    );
+    assert.equal(job.state, "complete");
+  } finally {
+    await f.cleanup();
+  }
+});
+test("role retry source selection excludes other people, history, and navigation", () => {
+  const p = (text: string) => ({ ...page, text });
+  assert.deepEqual(
+    roleRetryPages(
+      [p("Jane Smith was Chief Investment Officer")],
+      "Jane Smith",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    roleRetryPages([p("John Smith Chief Investment Officer")], "Jane Smith"),
+    [],
+  );
+  assert.deepEqual(
+    roleRetryPages([p("Jane Smith Contact About Services")], "Jane Smith"),
+    [],
+  );
+  const jacob = p(
+    "Navigation ".repeat(500) +
+      "JACOB HODES Managing Partner of Private Investments",
+  );
+  assert.ok(
+    roleRetryPages([jacob], "Jacob Hodes")[0]!.text.includes(
+      "JACOB HODES Managing Partner",
+    ),
+  );
 });
