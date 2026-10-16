@@ -1,3 +1,4 @@
+import type { InvestorResearch } from "../../modules/research/investors.js";
 import type { CrmDatasetConnector } from "../../modules/connectors/crm-dataset.js";
 import { memorySelectionSchema } from "../../modules/contracts/index.js";
 import { memorySelectionGuard } from "./memory-selection.js";
@@ -84,6 +85,7 @@ export interface LocalApiOptions {
   mailSources?: MailTasks;
   crm?: CrmConnector;
   dataset?: CrmDatasetConnector;
+  investorResearch?: InvestorResearch;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
   autonoteApproval?: AutoNoteApprovalConnector;
@@ -115,6 +117,7 @@ export function localApi({
   cancelRun,
   crm,
   dataset,
+  investorResearch,
   roles,
   news,
   mail,
@@ -186,7 +189,7 @@ export function localApi({
   // Match the bounded CRM dataset envelope without widening other local routes.
   app.post(
     "/v1/connections/dataset/save",
-    express.json({ limit: 120000, strict: true }),
+    express.json({ limit: 2_000_000, strict: true }),
   );
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/private-relay", (_req, res) =>
@@ -730,6 +733,25 @@ export function localApi({
       connectorsEnabled: !!crm || !!autonote || !!roles || !!mail,
     }),
   );
+  app.get("/v1/research/investors", (_req, res) =>
+    res.json({
+      available: !!investorResearch,
+      jobs: investorResearch?.status() || [],
+    }),
+  );
+  if (investorResearch) {
+    app.post("/v1/research/investors/start", async (req, res) =>
+      res.json(await investorResearch.create(req.body)),
+    );
+    app.post("/v1/research/investors/pause", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await investorResearch.pause());
+    });
+    app.post("/v1/research/investors/resume", async (req, res) => {
+      const a = z.strictObject({ id: z.uuid() }).parse(req.body);
+      res.json(await investorResearch.resume(a.id));
+    });
+  }
   app.get("/v1/connections/dataset", async (_req, res) =>
     res.json({
       available: !!dataset,

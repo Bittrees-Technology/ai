@@ -174,3 +174,19 @@ test("dataset API requires local authentication and rejects origin and publicati
     store.close();
   }
 });
+
+test("research append fences connection replacement before any source write", async () => {
+  const f = fixture();
+  await f.connector.connect({ token: f.token });
+  const before = f.calls.length;
+  await assert.rejects(() =>
+    f.connector.append(
+      {
+        version: 1,
+        entries: [{ id: randomUUID(), kind: "people", name: "Test" }],
+      },
+      randomUUID(),
+    ),
+  );
+  assert.equal(f.calls.length, before);
+});

@@ -1,3 +1,4 @@
+import { InvestorResearchPanel } from "./investor-research.js";
 import { CrmDatasetPanel } from "./crm-dataset.js";
 import { AutoNoteApprovalPanel } from "./autonote-approval.js";
 import { PrivateRelayPanel } from "./private-relay.js";
@@ -296,6 +297,7 @@ export function Connections(props: {
       <PrivateCheckPanel api={props.api} />
       <PrivatePermissionPanel api={props.api} />
       <CrmDatasetPanel api={props.api} onError={props.onError} />
+      <InvestorResearchPanel api={props.api} onError={props.onError} profiles={props.profiles} />
       <ConnectionCard app="crm" {...props} />
       <ConnectionCard app="autonote" {...props} />
       <AutoNoteApprovalPanel api={props.api} />
