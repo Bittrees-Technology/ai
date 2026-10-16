@@ -237,6 +237,69 @@ export function validateQualification(
     sources,
   };
 }
+/** Recheck saved evidence against fresh approved pages before replacing an assessment.
+ * A failed extraction is not evidence of a changed fact. If prior support cannot
+ * be revalidated, hold the write for review rather than erase or silently reuse it.
+ */
+export function retainQualification(
+  raw: unknown,
+  pages: Page[],
+  category: string,
+  personName: string,
+  previous?: any,
+) {
+  const incoming = extraction.parse(raw);
+  if (!previous?.gates)
+    return validateQualification(incoming, pages, category, personName);
+  const prior = extraction.safeParse({
+    summary: previous.summary,
+    gates: previous.gates,
+  });
+  if (!prior.success)
+    throw new Error("Saved evidence needs review; profile unchanged");
+  const refreshed = validateQualification(
+    prior.data,
+    pages,
+    category,
+    personName,
+  );
+  for (const key of gates) {
+    const old = prior.data.gates[key];
+    if (old.status === "unknown") continue;
+    if (
+      old.status === "contradicted" ||
+      incoming.gates[key].status === "contradicted"
+    )
+      throw new Error(
+        `Conflicting evidence for ${key}; review required, profile unchanged`,
+      );
+    const cited = previous.sources?.some(
+      (s: any) =>
+        s.url === old.url &&
+        typeof s.quote === "string" &&
+        norm(s.quote).includes(norm(old.evidence)),
+    );
+    if (!cited || refreshed.gates[key].status !== "supported")
+      throw new Error(
+        `Saved ${key} evidence could not be revalidated; profile unchanged`,
+      );
+  }
+  const current = validateQualification(incoming, pages, category, personName);
+  for (const key of gates) {
+    if (
+      current.gates[key].status === "unknown" &&
+      refreshed.gates[key].status === "supported"
+    )
+      current.gates[key] = refreshed.gates[key];
+  }
+  // Rebuild sources from the merged gates, keeping exact quotes and fresh dates.
+  return validateQualification(
+    { summary: current.summary, gates: current.gates },
+    pages,
+    category,
+    personName,
+  );
+}
 type Job = {
   id: string;
   datasetId: string;
@@ -246,6 +309,7 @@ type Job = {
   results: any[];
   failures: { entryId: string; reason: string }[];
   pending?: any;
+  previousQualification?: any;
   activity?: string;
   error?: string;
   updatedAt: string;
@@ -296,10 +360,15 @@ export class QualificationResearch {
     ).map((r) => this.vault.open<Job>(r.payload, "qualification:" + r.id));
   }
   status() {
-    return this.list().map(({ pending, ...j }) => ({
-      ...j,
-      pendingSave: !!pending,
-    }));
+    return this.list().map(
+      ({ pending, previousQualification: _previous, ...j }) => ({
+        ...j,
+        results: j.results.map(
+          ({ previousQualification: _prior, ...result }) => result,
+        ),
+        pendingSave: !!pending,
+      }),
+    );
   }
   async context(projectId: string) {
     z.uuid().parse(projectId);
@@ -435,6 +504,9 @@ export class QualificationResearch {
           (r: any) => r.entry.id === row.entry.organizationId,
         )?.entry;
         const seeds = [
+          ...gates
+            .map((k) => row.entry.research?.qualification?.gates?.[k]?.url)
+            .filter(Boolean),
           row.entry.website,
           ...(row.entry.research?.sources || []).map((s: any) => s.url),
           org?.website,
@@ -530,11 +602,12 @@ export class QualificationResearch {
             z.toJSONSchema(extraction),
           );
         });
-        const qualification = validateQualification(
+        const qualification = retainQualification(
           JSON.parse(raw),
           pages,
           row.entry.category || "",
           row.entry.name,
+          row.entry.research?.qualification,
         );
         const fresh = await this.ctx(j),
           current = fresh.entries.find((r: any) => r.entry.id === entryId);
@@ -546,6 +619,7 @@ export class QualificationResearch {
           throw new Error(
             "Profile changed during research; review before resuming",
           );
+        j.previousQualification = row.entry.research?.qualification;
         j.pending = {
           projectId: j.input.projectId,
           datasetVersion: fresh.datasetVersion,
@@ -583,9 +657,11 @@ export class QualificationResearch {
         recordId: row.record.id,
         receipt,
         savedAt: new Date().toISOString(),
+        previousQualification: j.previousQualification,
       });
       j.done.push(entryId);
       delete j.pending;
+      delete j.previousQualification;
       this.save(j);
     }
     j.state = "complete";

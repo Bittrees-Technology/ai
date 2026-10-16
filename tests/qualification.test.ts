@@ -7,6 +7,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   QualificationResearch,
   validateQualification,
+  retainQualification,
   evidenceExcerpt,
   gates,
 } from "../modules/research/qualification.js";
@@ -45,7 +46,12 @@ test("qualification rejects invented evidence and never promotes incomplete gate
   q.gates.individualUS = { status: "contradicted", evidence: page.text, url };
   assert.equal(validateQualification(q, [page], "").status, "Needs research");
 });
-async function fixture(conflict = false, uncertain = false) {
+async function fixture(
+  conflict = false,
+  uncertain = false,
+  previous?: any,
+  fetched = page,
+) {
   const dir = mkdtempSync(join(tmpdir(), "qualification-")),
     datasetId = randomUUID(),
     projectId = randomUUID(),
@@ -64,7 +70,10 @@ async function fixture(conflict = false, uncertain = false) {
     name: "Jane Smith",
     website: url,
     category: record.category,
-    research: { training: "pending" },
+    research: {
+      training: "pending",
+      ...(previous ? { qualification: previous } : {}),
+    },
   };
   let failed = false;
   const connector: any = {
@@ -110,7 +119,7 @@ async function fixture(conflict = false, uncertain = false) {
     runtime,
     () => ({}),
     () => ({ reason: "ready", seconds: 10 }),
-    async () => page,
+    async () => fetched,
     async (_s, run) => {
       turns++;
       return run();
@@ -402,4 +411,90 @@ test("director title expansion retains person, quotation and current-role requir
       .status,
     "unknown",
   );
+});
+
+function savedRole() {
+  const raw = output();
+  raw.gates.investmentRole = { status: "supported", evidence: page.text, url };
+  return validateQualification(
+    raw,
+    [page],
+    "BBRF-PT | Priority research",
+    "Jane Smith",
+  );
+}
+test("freshly revalidated prior role survives an unknown new extraction", () => {
+  const previous = savedRole();
+  const fresh = { ...page, retrievedAt: "2026-10-17T12:00:00.000Z" };
+  const result = retainQualification(
+    output(),
+    [fresh],
+    "BBRF-PT | Priority research",
+    "Jane Smith",
+    previous,
+  );
+  assert.equal(result.gates.investmentRole.status, "supported");
+  assert.equal(result.sources[0]!.retrievedAt, fresh.retrievedAt);
+  assert.equal(result.sources[0]!.quote, page.text);
+  assert.equal(result.gates.ticket.status, "unknown");
+  assert.notEqual(result.status, "Qualified");
+});
+test("missing, changed, uncited, wrong-person and contradictory prior evidence holds the write", () => {
+  const previous = savedRole();
+  for (const pages of [
+    [],
+    [{ ...page, text: "A different current biography without the old role." }],
+    [{ ...page, url: "https://other.org/team" }],
+  ])
+    assert.throws(() =>
+      retainQualification(output(), pages, "", "Jane Smith", previous),
+    );
+  assert.throws(() =>
+    retainQualification(output(), [page], "", "Other Person", previous),
+  );
+  assert.throws(() =>
+    retainQualification(output(), [page], "", "Jane Smith", {
+      ...previous,
+      sources: [],
+    }),
+  );
+  const conflicting = output();
+  conflicting.gates.investmentRole = {
+    status: "contradicted",
+    url,
+    evidence: page.text,
+  };
+  assert.throws(
+    () => retainQualification(conflicting, [page], "", "Jane Smith", previous),
+    /Conflicting evidence/,
+  );
+});
+test("worker retains valid support and an encrypted prior-assessment receipt", async () => {
+  const previous = savedRole();
+  const f = await fixture(false, false, previous);
+  try {
+    assert.equal(f.worker.status()[0]!.state, "complete");
+    assert.equal(f.writes, 1);
+    const result = f.worker.list()[0]!.results[0];
+    assert.deepEqual(result.previousQualification, previous);
+    assert.equal(
+      "previousQualification" in f.worker.status()[0]!.results[0],
+      false,
+    );
+    assert.equal(result.status, "Priority research");
+  } finally {
+    await f.cleanup();
+  }
+});
+test("worker does not overwrite CRM when prior evidence disappears", async () => {
+  const f = await fixture(false, false, savedRole(), {
+    ...page,
+    text: "A new navigation page with no investment biography.",
+  });
+  try {
+    assert.equal(f.worker.status()[0]!.state, "needs_attention");
+    assert.equal(f.writes, 0);
+  } finally {
+    await f.cleanup();
+  }
 });
