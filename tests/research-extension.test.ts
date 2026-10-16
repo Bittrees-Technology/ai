@@ -212,6 +212,7 @@ test("verified target is independent of research batch and requires current sour
       },
       valid,
       valid,
+      { ...valid, record: { ...valid.record, id: undefined } },
       {
         ...valid,
         entry: { ...valid.entry, organizationId: "unmapped" },

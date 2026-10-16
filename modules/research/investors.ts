@@ -338,6 +338,7 @@ export class InvestorResearch {
         const q = row.entry?.research?.qualification;
         if (
           row.entry?.kind === "people" &&
+          typeof row.record?.id === "string" &&
           row.record?.investorVerification === "Fully verified" &&
           row.record?.category?.endsWith("| Qualified") &&
           q?.status === "Qualified" &&
