@@ -6,9 +6,9 @@ Read dataset and linked CRM records loads saved research plus current, explicitl
 
 For projects, use `kind: "projects"`, a stable UUID `id`, `name`, `category`, `source`, and `description`. In CRM, select an owned destination workspace and project entries, preview the import, then approve it. New projects start restricted to workspace owners and are linked back to the dataset. Existing names, including archived projects, are blocked rather than silently merged. Import an existing CRM record into the dataset to propose an update instead.
 
-Agent saves never publish CRM records. Review proposed CRM updates in CRM shows field differences and requires a current owner decision. The source rechecks dataset versions, record versions, access and duplicate state at approval. The dataset credential exposes schema/read/save only: it cannot choose new source records, approve, invite, share or publish.
+Without an enabled automatic-addition project permission, agent saves do not create CRM records. Review proposed CRM updates in CRM shows field differences and requires a current owner decision. The source rechecks dataset versions, record versions, access and duplicate state at approval. The dataset credential cannot choose new source records, invite, share or approve training. Explicit project capabilities separately permit automatic additions and eligible task work; shared sign-in alone grants neither.
 
-Reads and saves are manual, with no background polling or model tool execution added. After an uncertain save, retry the exact same payload or read the current dataset before editing again. After an uncertain project approval, refresh the dataset and CRM; linked records prevent duplicate creation. Revocation in CRM stops future reads and saves. Removing the Mac credential does not revoke other copies. Already read data cannot be recalled.
+Manual dataset editing and automated research use the same scoped connection. After an uncertain save, retry the exact same payload or read the current dataset before editing again. After an uncertain project approval, refresh the dataset and CRM; linked records prevent duplicate creation. Revocation in CRM stops future reads and saves. Removing the Mac credential does not revoke other copies. Already read data cannot be recalled.
 
 Validation includes authenticated local HTTP boundaries, fixed-origin MCP transport, source denial, owner binding, conflicting versions, and an isolated full CRM HTTP ↔ companion HTTP/MCP round trip. Tests with synthetic data do not grant access to a personal dataset.
 
@@ -20,7 +20,7 @@ The source reader pins public IPv4 DNS results, denies private addresses and off
 
 Small append-only batches use MCP with current versions and stable IDs. Conflicts stop the job with its pending batch retained. Resume reads current state and reconciles exact retries; it never silently replaces records. Jobs/checkpoints are encrypted in the active local content directory. Restart pauses work; resume is explicit. Source exhaustion is reported honestly, even below target. The source connection must remain on the original dataset. An expired or revoked connection stops further saves.
 
-Local execution limits apply per model call; ordinary queued tasks are not started during research. The UI polls only local progress every 10 seconds while a run is active. No CRM polling occurs while idle. Research saves private entries only; publication, sharing, outreach and training approval remain separate human actions.
+Local execution limits apply per model call; ordinary queued tasks are not started during research. The UI polls only local progress every 10 seconds while a run is active. No CRM polling occurs while idle. Research saves private entries and, when enabled for a destination project, automatically adds new CRM records. Sharing, outreach and training approval remain separate actions.
 
 ## Research saves versus CRM records
 
