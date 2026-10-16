@@ -7,9 +7,10 @@ import assert from "node:assert/strict";
 assert.equal(process.platform, "darwin");
 assert.equal(process.arch, "arm64");
 assert.equal(process.env.GITHUB_REPOSITORY, "Bittrees-Technology/ai");
-assert.equal(process.env.GITHUB_REF, "refs/heads/main");
 const sourceCommit = process.env.GITHUB_SHA;
 assert.match(sourceCommit ?? "", /^[a-f0-9]{40}$/);
+const sourceRef = process.env.GITHUB_REF;
+assert.ok(sourceRef === "refs/heads/main" || sourceRef === `refs/heads/releases/mac/${sourceCommit}`);
 assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), sourceCommit);
 const bundle = "dist/macos/Bittrees AI.app";
 const resources = `${bundle}/Contents/Resources`;
@@ -35,6 +36,7 @@ const manifest = {
   distribution: info.distribution,
   notarized: false,
   sourceCommit,
+  sourceRef,
   workflow: "Bittrees-Technology/ai/.github/workflows/macos-download.yml",
   runUrl: `https://github.com/Bittrees-Technology/ai/actions/runs/${process.env.GITHUB_RUN_ID}`,
   filename,
