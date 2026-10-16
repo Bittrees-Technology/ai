@@ -293,3 +293,44 @@ for (const change of ["connect", "forget"] as const) {
     );
   });
 }
+
+test("source throttling stops repeated reads without starving task writes", async () => {
+  const f = fixture();
+  let limited = false,
+    requests = 0;
+  const connector = new CrmDatasetConnector(
+    "owner",
+    f.secret,
+    async (url, init) => {
+      requests++;
+      const rpc = JSON.parse(String(init?.body));
+      if (limited && rpc.params.name === "dataset.read")
+        return new Response(null, { status: 429 });
+      if (rpc.params.name === "tasks.create")
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ id: randomUUID(), version: 1 }),
+              },
+            ],
+          },
+        });
+      return f.request(url, init);
+    },
+  );
+  await connector.connect({ token: f.token });
+  limited = true;
+  await assert.rejects(connector.read(), /SOURCE_RATE_LIMITED/);
+  const before = requests;
+  await assert.rejects(
+    connector.project("tasks.list", {}, f.id),
+    /SOURCE_RATE_LIMITED/,
+  );
+  assert.equal(requests, before);
+  await connector.project("tasks.create", {}, f.id);
+  assert.equal(requests, before + 1);
+});

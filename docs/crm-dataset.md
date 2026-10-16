@@ -30,8 +30,10 @@ Enable automatic additions for an explicit destination project at CRM → Local 
 
 ## Task editing and synchronization
 
-In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every 15 seconds while visible, including during research. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
+In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every minute while visible (and on focus or manual refresh), including during research. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
 
 CRM remains authoritative. Every edit includes the version you read and a retry identifier. Conflicts preserve the local draft and require reopening the current task; exact retries do not create duplicates. A changed task also blocks a stale worker result. Closed app/offline state cannot continuously sync; the last successful sync time is displayed. Task runs appear in the owner-only workflow catalogue as metadata; names, briefs and results are not copied there. The catalogue does not start task execution. Existing project grants still govern access.
 
 Task editing and research share a bounded FIFO queue of individual CRM requests. Research need not pause for task creation, edits or refresh. Connection replacement or removal invalidates queued requests from the old connection; failed requests release the queue without automatically retrying writes. Task version checks still reject stale edits and late worker results. Model execution retains its existing single-worker admission rules.
+
+Read polling uses a separate bounded CRM budget from mutations. The editor stops background polling when hidden and refreshes immediately after a save. A source429 starts a ten-minute cooldown for that request lane, displays a rate-limit explanation, and preserves the draft without automatically retrying writes.

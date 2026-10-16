@@ -46,6 +46,7 @@ export class CrmDatasetConnector {
   private tail: Promise<void> = Promise.resolve();
   private pending = 0;
   private generation = 0;
+  private cooldown = { read: 0, write: 0 };
   constructor(
     private owner: string,
     private secret: ConnectorSecret,
@@ -84,6 +85,17 @@ export class CrmDatasetConnector {
     return parsed.data;
   }
   private async call(token: string, name: string, args: unknown) {
+    const lane = [
+      "dataset.schema",
+      "dataset.read",
+      "projects.list",
+      "project.read",
+      "tasks.list",
+    ].includes(name)
+      ? "read"
+      : "write";
+    if (Date.now() < this.cooldown[lane])
+      throw new ConnectorError("SOURCE_RATE_LIMITED");
     const id = randomUUID();
     let response: Response;
     try {
@@ -106,6 +118,12 @@ export class CrmDatasetConnector {
       });
     } catch {
       throw new ConnectorError("SOURCE_UNAVAILABLE");
+    }
+    if (response.status === 429) {
+      // CRM has separate read/write budgets. Do not hammer either exhausted
+      // lane or retry an uncertain mutation automatically.
+      this.cooldown[lane] = Date.now() + 600_000;
+      throw new ConnectorError("SOURCE_RATE_LIMITED");
     }
     if (response.status === 401 || response.status === 403)
       throw new ConnectorError("SOURCE_DENIED");
@@ -188,6 +206,7 @@ export class CrmDatasetConnector {
       // Invalidate queued operations before changing the credential, even if
       // the credential store reports an uncertain failure.
       this.generation++;
+      this.cooldown = { read: 0, write: 0 };
       await this.secret.setSecret(
         Buffer.from(
           JSON.stringify({
@@ -268,6 +287,7 @@ export class CrmDatasetConnector {
   async forget() {
     return this.exclusive(async () => {
       this.generation++;
+      this.cooldown = { read: 0, write: 0 };
       await this.secret.deleteCredential();
       return { removed: true };
     });
