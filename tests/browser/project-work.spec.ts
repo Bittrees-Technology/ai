@@ -141,7 +141,7 @@ test("running job progress does not repeatedly discover remote CRM projects", as
 }) => {
   let discoveries = 0,
     polls = 0;
-  await page.clock.install();
+  test.setTimeout(60000);
   await page.route("**/v1/crm-projects**", async (route) => {
     const local = route.request().url().endsWith("/status");
     if (local) polls++;
@@ -172,13 +172,12 @@ test("running job progress does not repeatedly discover remote CRM projects", as
   await expect(page.getByLabel("Project", { exact: true })).toContainText(
     "Connected project",
   );
-  for (let count = 1; count <= 3; count++) {
-    await page.clock.runFor(10000);
-    await expect.poll(() => polls).toBe(count);
-    await expect(
-      page.getByText(`running · ${count} confirmed CRM saves`),
-    ).toBeVisible();
-  }
+  // Exercise real refresh intervals: virtual time can advance before React
+  // installs its passive effect, especially in WebKit.
+  await expect.poll(() => polls, { timeout: 45000 }).toBeGreaterThanOrEqual(3);
+  await expect(
+    page.getByText(`running · ${polls} confirmed CRM saves`),
+  ).toBeVisible();
   expect(discoveries).toBe(1);
   await expect(page.getByLabel("Project", { exact: true })).toContainText(
     "Connected project",
