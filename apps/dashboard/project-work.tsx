@@ -246,6 +246,25 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
             </p>
           )}
           {j.error && <p role="status">{j.error}</p>}
+          {!!j.supplierIssues?.length && (
+            <details>
+              <summary>
+                {j.supplierIssues.length} supplier tasks need evidence
+              </summary>
+              <p>
+                These tasks stay open while other queued work continues.
+                Unavailable evidence is retried after the current CRM claim
+                expires.
+              </p>
+              <ul>
+                {j.supplierIssues.map((issue: any) => (
+                  <li key={issue.taskId}>
+                    {issue.name}: {issue.error}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {j.state === "running" ? (
             <button
               onClick={() =>

@@ -689,3 +689,103 @@ test("prepared supplier child fetches its approved evidence and saves only the c
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("an automatic supplier evidence failure leaves its task open and allows the next task to finish", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "supplier-triage-"));
+  const projectId = randomUUID(),
+    datasetId = randomUUID();
+  const blocked = randomUUID(),
+    good = randomUUID();
+  let claim = 0;
+  const finished: string[] = [];
+  const connector: any = {
+    status: async () => ({ datasetId }),
+    project: async (name: string, args: any) => {
+      if (name === "projects.list")
+        return { projects: [{ id: projectId, tasks: true }] };
+      if (name === "tasks.list") return { tasks: [{ status: "Open" }] };
+      if (name === "tasks.claim") {
+        claim++;
+        return {
+          task:
+            claim <= 2
+              ? {
+                  id: claim === 1 ? blocked : good,
+                  version: 1,
+                  data: {
+                    name:
+                      claim === 1
+                        ? "Unavailable supplier"
+                        : "Readable supplier",
+                    description: "Evidence only",
+                    category: "AI review",
+                    supplierResearch: {
+                      version: 1,
+                      urls: [`https://supplier.example/${claim}`],
+                    },
+                  },
+                }
+              : null,
+        };
+      }
+      if (name === "tasks.finish") {
+        finished.push(good);
+        return { taskId: good, noteId: randomUUID() };
+      }
+      throw Error(name);
+    },
+  };
+  const runtime: any = {
+    pin: async () => ({
+      digest: "same",
+      profile: { contextTokens: 16384, maxOutputTokens: 3000 },
+    }),
+    generate: async () =>
+      JSON.stringify({
+        excerpts: [{ sourceId: "source-1", quote: "Published terms" }],
+      }),
+  };
+  const supplier: any = {
+    sources: async (meta: any) => {
+      if (meta.urls[0].endsWith("/1"))
+        throw Error("Supplier pages unavailable; research remains open.");
+      return {
+        sources: [
+          {
+            id: "source-1",
+            url: meta.urls[0],
+            text: "Published terms",
+            retrievedAt: new Date().toISOString(),
+          },
+        ],
+        unavailable: [],
+      };
+    },
+  };
+  const runner = new ProjectWork(
+    join(dir, "work.db"),
+    new Vault(randomBytes(32)),
+    connector,
+    runtime,
+    () => ({}),
+    () => ({ reason: "ready", seconds: 10 }),
+    undefined,
+    supplier,
+  );
+  try {
+    await runner.configureAutomatic({
+      enabled: true,
+      confirmed: true,
+      projectId,
+      profileId: "test",
+    });
+    while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(runner.status()[0].state, "waiting");
+    assert.deepEqual(finished, [good]);
+    assert.equal(runner.status()[0].supplierIssues[0].taskId, blocked);
+    assert.equal(runner.status()[0].completed, 1);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
