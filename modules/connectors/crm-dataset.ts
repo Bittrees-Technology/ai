@@ -205,7 +205,7 @@ export class CrmDatasetConnector {
       return result;
     });
   }
-  async append(raw: unknown) {
+  async append(raw: unknown, expectedDatasetId: string) {
     return this.exclusive(async () => {
       const args = z
         .strictObject({
@@ -214,6 +214,8 @@ export class CrmDatasetConnector {
         })
         .parse(raw);
       const s = await this.saved();
+      if (s.datasetId !== expectedDatasetId)
+        throw new ConnectorError("INVALID_CONNECTION");
       const result = z
         .object({
           id: z.uuid(),
