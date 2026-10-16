@@ -69,7 +69,7 @@ export function renderGroundedReview(
     "REVIEW OF SUPPLIED RECORDS — NOT INDEPENDENT VERIFICATION",
     "The local model selected the following verbatim excerpts. They are supplied claims, not newly verified facts; no websites were fetched by this task.",
     excerpts.length
-      ? excerpts.join("\n\n")
+      ? [...new Set(excerpts)].join("\n\n")
       : "No usable source excerpt was selected. Evidence is insufficient.",
     investorReview
       ? "Evidence gaps: This review does not establish current role, personal US location, Bitcoin/leverage mandate, Portugal/Luxembourg scope, vehicle eligibility or ticket capacity. Use the source-backed qualification workflow for those checks. No investor qualification label was changed."
