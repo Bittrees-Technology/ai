@@ -293,3 +293,69 @@ test("automatic CRM task work is explicitly enabled and shows waiting and saved 
     .click();
   await expect(page.getByText("Automatic task worker: Off")).toBeVisible();
 });
+
+test("another approved project can be watched while the first is working", async ({
+  page,
+}) => {
+  let submitted: any;
+  let automatic: any = {
+    enabled: true,
+    jobId: "first-job",
+    projectId: "first",
+    profileId: "local-test",
+    projects: [
+      { jobId: "first-job", projectId: "first", profileId: "local-test" },
+    ],
+  };
+  await page.route("**/v1/crm-projects**", async (route) => {
+    if (route.request().url().endsWith("/automatic")) {
+      submitted = route.request().postDataJSON();
+      automatic.projects.push({
+        jobId: "second-job",
+        projectId: submitted.projectId,
+        profileId: submitted.profileId,
+      });
+    }
+    if (route.request().url().endsWith("/tasks")) {
+      await route.fulfill({ json: { tasks: [] } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        available: true,
+        projects: [
+          { id: "first", name: "Investor research", tasks: true },
+          { id: "second", name: "Supplier research", tasks: true },
+        ],
+        automatic,
+        jobs: [
+          {
+            id: "first-job",
+            state: "running",
+            input: { mode: "work" },
+            completed: 2,
+            receipts: [],
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/?project-work");
+  await page.getByLabel("Project", { exact: true }).selectOption("second");
+  await page.getByLabel("Local model profile").selectOption("local-test");
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "Watch this project too" }).click();
+  expect(submitted).toMatchObject({
+    enabled: true,
+    additional: true,
+    projectId: "second",
+    confirmed: true,
+  });
+  await expect(
+    page.getByText("Watching: Investor research, Supplier research"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Watch this project too" }),
+  ).toBeDisabled();
+  expect(automatic.jobId).toBe("first-job");
+});

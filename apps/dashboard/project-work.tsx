@@ -68,11 +68,13 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       prompt,
     });
   }
-  async function automatic(enabled: boolean) {
+  async function automatic(enabled: boolean, additional = false) {
     if (
       enabled &&
       !confirm(
-        "Automatically work on your open AI draft/review tasks in this project, including while research runs and after app restarts? Results are saved to CRM. Outside actions still require separate approval.",
+        additional
+          ? "Also watch this connected project for your AI draft/review tasks, keeping existing projects and research running? Results are saved to CRM; outside actions still require separate approval."
+          : "Automatically work on your open AI draft/review tasks in this project, including while research runs and after app restarts? Results are saved to CRM. Outside actions still require separate approval.",
       )
     )
       return;
@@ -83,6 +85,7 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
         ? {
             enabled: true,
             confirmed: true,
+            additional,
             projectId: project,
             profileId: profile,
           }
@@ -112,12 +115,28 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
       <p role="status">
         Automatic task worker:{" "}
         {status.automatic?.enabled
-          ? status.jobs?.find((j: any) => j.id === status.automatic.jobId)
-              ?.state === "needs_attention"
+          ? status.jobs?.some(
+              (j: any) =>
+                (status.automatic.projects || [status.automatic]).some(
+                  (p: any) => p.jobId === j.id,
+                ) && j.state === "needs_attention",
+            )
             ? "Needs attention — see the task run below"
-            : "On — watches the selected project, including during research"
+            : "On — watches connected projects, including during research"
           : "Off"}
       </p>
+      {status.automatic?.enabled && (
+        <p>
+          Watching:{" "}
+          {(status.automatic.projects || [status.automatic])
+            .map(
+              (p: any) =>
+                status.projects?.find((x: any) => x.id === p.projectId)?.name ||
+                "Connected project",
+            )
+            .join(", ")}
+        </p>
+      )}
       {status.automatic?.enabled && (
         <button
           disabled={busy}
@@ -126,7 +145,7 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
           Turn off automatic task work
         </button>
       )}
-      <fieldset disabled={busy || running}>
+      <fieldset disabled={busy}>
         <label>
           Project
           <select
@@ -168,6 +187,20 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
             Turn on automatic task work
           </button>
         )}
+        {status.automatic?.enabled && (
+          <button
+            disabled={
+              !project ||
+              !profile ||
+              (status.automatic.projects || [status.automatic]).some(
+                (p: any) => p.projectId === project,
+              )
+            }
+            onClick={() => void act(() => automatic(true, true))}
+          >
+            Watch this project too
+          </button>
+        )}
         <label>
           What tasks should the local AI create?
           <textarea
@@ -178,13 +211,15 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
           />
         </label>
         <button
-          disabled={!project || !profile || prompt.trim().length < 10}
+          disabled={
+            running || !project || !profile || prompt.trim().length < 10
+          }
           onClick={() => void act(() => start("plan"))}
         >
           Create tasks with local AI
         </button>
         <button
-          disabled={!project || !profile}
+          disabled={running || !project || !profile}
           onClick={() => void act(() => start("work"))}
         >
           Work on queued AI tasks
@@ -211,6 +246,25 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
             </p>
           )}
           {j.error && <p role="status">{j.error}</p>}
+          {!!j.supplierIssues?.length && (
+            <details>
+              <summary>
+                {j.supplierIssues.length} supplier tasks need evidence
+              </summary>
+              <p>
+                These tasks stay open while other queued work continues.
+                Unavailable evidence is retried after the current CRM claim
+                expires.
+              </p>
+              <ul>
+                {j.supplierIssues.map((issue: any) => (
+                  <li key={issue.taskId}>
+                    {issue.name}: {issue.error}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {j.state === "running" ? (
             <button
               onClick={() =>

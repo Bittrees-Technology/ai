@@ -469,3 +469,323 @@ test("review tasks save only validated excerpts and hold invented claims", async
   assert.equal(bad.status.state, "needs_attention");
   assert.equal(bad.calls.filter((c) => c.name === "tasks.finish").length, 0);
 });
+
+test("additional approved projects share the worker and survive restart without replacing the first", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "multi-project-"));
+  const path = join(dir, "work.db"),
+    vault = new Vault(randomBytes(32));
+  const first = randomUUID(),
+    second = randomUUID(),
+    forbidden = randomUUID(),
+    datasetId = randomUUID();
+  const available = new Set([first, second]);
+  const finished: string[] = [];
+  let admission = "paused";
+  const connector: any = {
+    status: async () => ({ datasetId }),
+    project: async (name: string, args: any) => {
+      if (name === "projects.list")
+        return { projects: [first, second].map((id) => ({ id, tasks: true })) };
+      assert.ok([first, second].includes(args.projectId));
+      if (name === "tasks.list")
+        return {
+          tasks: available.has(args.projectId) ? [{ status: "Open" }] : [],
+        };
+      if (name === "project.read") return { records: [] };
+      if (name === "tasks.claim")
+        return {
+          task: available.has(args.projectId)
+            ? {
+                id: randomUUID(),
+                version: 1,
+                data: {
+                  name: "Draft internal questions",
+                  description: "Draft only; do not send.",
+                  category: "AI draft",
+                },
+              }
+            : null,
+        };
+      if (name === "tasks.finish") {
+        available.delete(args.projectId);
+        finished.push(args.projectId);
+        return { taskId: randomUUID(), noteId: randomUUID() };
+      }
+      throw Error(name);
+    },
+  };
+  const runtime: any = {
+    pin: async () => ({
+      digest: "same",
+      profile: { contextTokens: 16384, maxOutputTokens: 3000 },
+    }),
+    generate: async () =>
+      JSON.stringify({ canComplete: true, result: "Draft internal questions" }),
+  };
+  const make = () =>
+    new ProjectWork(
+      path,
+      vault,
+      connector,
+      runtime,
+      () => ({}),
+      () => ({ reason: admission, seconds: 10 }),
+    );
+  let runner = make();
+  try {
+    await runner.configureAutomatic({
+      enabled: true,
+      confirmed: true,
+      projectId: first,
+      profileId: "local",
+    });
+    const original = runner.automaticStatus().jobId;
+    await assert.rejects(
+      runner.configureAutomatic({
+        enabled: true,
+        additional: true,
+        confirmed: true,
+        projectId: forbidden,
+        profileId: "local",
+      }),
+      /permission/,
+    );
+    await runner.configureAutomatic({
+      enabled: true,
+      additional: true,
+      confirmed: true,
+      projectId: second,
+      profileId: "local",
+    });
+    assert.equal(runner.automaticStatus().jobId, original);
+    assert.equal(runner.automaticStatus().projects.length, 2);
+    await runner.configureAutomatic({
+      enabled: true,
+      additional: true,
+      confirmed: true,
+      projectId: second,
+      profileId: "local",
+    });
+    assert.equal(
+      runner.status().length,
+      2,
+      "idempotent enable does not duplicate jobs",
+    );
+    await runner.close();
+    runner = make();
+    admission = "ready";
+    for (let i = 0; i < 2; i++) {
+      await runner.tickAutomatic();
+      while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.deepEqual(new Set(finished), new Set([first, second]));
+    assert.ok(runner.status().every((j) => j.state === "waiting"));
+    await runner.configureAutomatic({ enabled: false });
+    assert.ok(runner.status().every((j) => j.state === "paused"));
+    assert.equal(runner.automaticStatus().enabled, false);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("prepared supplier child fetches its approved evidence and saves only the child result", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "supplier-child-"));
+  const projectId = randomUUID(),
+    datasetId = randomUUID(),
+    childId = randomUUID();
+  let claimed = false;
+  const calls: string[] = [];
+  const connector: any = {
+    status: async () => ({ datasetId }),
+    project: async (name: string, args: any) => {
+      calls.push(name);
+      if (name === "projects.list")
+        return { projects: [{ id: projectId, tasks: true }] };
+      if (name === "tasks.claim") {
+        if (claimed) return { task: null };
+        claimed = true;
+        return {
+          task: {
+            id: childId,
+            version: 1,
+            data: {
+              name: "Supplier public evidence",
+              description: "Research only. Parent confirmation stays open.",
+              category: "AI review",
+              supplierResearch: {
+                version: 1,
+                urls: ["https://supplier.example/terms"],
+              },
+            },
+          },
+        };
+      }
+      if (name === "tasks.finish") {
+        assert.match(
+          args.result,
+          /Original supplier confirmation tasks remain open/,
+        );
+        assert.match(args.result, /Published warranty terms/);
+        return { taskId: childId, noteId: randomUUID() };
+      }
+      throw Error("Unexpected operation " + name);
+    },
+  };
+  const runtime: any = {
+    pin: async () => ({
+      digest: "same",
+      profile: { contextTokens: 16384, maxOutputTokens: 3000 },
+    }),
+    generate: async () =>
+      JSON.stringify({
+        excerpts: [{ sourceId: "source-1", quote: "Published warranty terms" }],
+      }),
+  };
+  const sources: any = {
+    sources: async (_raw: unknown, scope: string) => {
+      assert.equal(scope, JSON.stringify([datasetId, projectId]));
+      return {
+        sources: [
+          {
+            id: "source-1",
+            url: "https://supplier.example/terms",
+            text: "Published warranty terms",
+            retrievedAt: new Date().toISOString(),
+          },
+        ],
+        unavailable: [],
+      };
+    },
+  };
+  const runner = new ProjectWork(
+    join(dir, "work.db"),
+    new Vault(randomBytes(32)),
+    connector,
+    runtime,
+    () => ({}),
+    () => ({ reason: "ready", seconds: 10 }),
+    undefined,
+    sources,
+  );
+  try {
+    await runner.create({
+      confirmed: true,
+      projectId,
+      profileId: "test",
+      mode: "work",
+    });
+    while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(runner.status()[0].state, "complete");
+    assert.equal(runner.status()[0].receipts[0].taskId, childId);
+    assert.deepEqual(calls, [
+      "projects.list",
+      "tasks.claim",
+      "tasks.finish",
+      "tasks.claim",
+    ]);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an automatic supplier evidence failure leaves its task open and allows the next task to finish", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "supplier-triage-"));
+  const projectId = randomUUID(),
+    datasetId = randomUUID();
+  const blocked = randomUUID(),
+    good = randomUUID();
+  let claim = 0;
+  const finished: string[] = [];
+  const connector: any = {
+    status: async () => ({ datasetId }),
+    project: async (name: string, args: any) => {
+      if (name === "projects.list")
+        return { projects: [{ id: projectId, tasks: true }] };
+      if (name === "tasks.list") return { tasks: [{ status: "Open" }] };
+      if (name === "tasks.claim") {
+        claim++;
+        return {
+          task:
+            claim <= 2
+              ? {
+                  id: claim === 1 ? blocked : good,
+                  version: 1,
+                  data: {
+                    name:
+                      claim === 1
+                        ? "Unavailable supplier"
+                        : "Readable supplier",
+                    description: "Evidence only",
+                    category: "AI review",
+                    supplierResearch: {
+                      version: 1,
+                      urls: [`https://supplier.example/${claim}`],
+                    },
+                  },
+                }
+              : null,
+        };
+      }
+      if (name === "tasks.finish") {
+        finished.push(good);
+        return { taskId: good, noteId: randomUUID() };
+      }
+      throw Error(name);
+    },
+  };
+  const runtime: any = {
+    pin: async () => ({
+      digest: "same",
+      profile: { contextTokens: 16384, maxOutputTokens: 3000 },
+    }),
+    generate: async () =>
+      JSON.stringify({
+        excerpts: [{ sourceId: "source-1", quote: "Published terms" }],
+      }),
+  };
+  const supplier: any = {
+    sources: async (meta: any) => {
+      if (meta.urls[0].endsWith("/1"))
+        throw Error("Supplier pages unavailable; research remains open.");
+      return {
+        sources: [
+          {
+            id: "source-1",
+            url: meta.urls[0],
+            text: "Published terms",
+            retrievedAt: new Date().toISOString(),
+          },
+        ],
+        unavailable: [],
+      };
+    },
+  };
+  const runner = new ProjectWork(
+    join(dir, "work.db"),
+    new Vault(randomBytes(32)),
+    connector,
+    runtime,
+    () => ({}),
+    () => ({ reason: "ready", seconds: 10 }),
+    undefined,
+    supplier,
+  );
+  try {
+    await runner.configureAutomatic({
+      enabled: true,
+      confirmed: true,
+      projectId,
+      profileId: "test",
+    });
+    while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(runner.status()[0].state, "waiting");
+    assert.deepEqual(finished, [good]);
+    assert.equal(runner.status()[0].supplierIssues[0].taskId, blocked);
+    assert.equal(runner.status()[0].completed, 1);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

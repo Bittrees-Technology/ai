@@ -56,3 +56,15 @@ Idle checks use tasks.list once per minute without consuming mutation quota. Mod
 ### Evidence interpretation limits
 
 The BBRF-PT worker checks source quotations against each compound requirement. A global team is not evidence of Portugal/Luxembourg investments, investment services are not an external preferred-share mandate, and assets under management are not a per-investment ticket. Partial statements, negative/ambiguous claims and unestablished personal locations remain unknown. These deliberately narrow checks can miss valid evidence; they are not a general semantic verification system. Model-written biography summaries are discarded in favor of a deterministic evidence-check summary. Confirmed CRM saves report delivery, not independent factual verification.
+
+### More than one project
+
+Select another task-enabled project and a local model, then choose **Watch this project too**. Existing project work continues. The same worker rotates between project queues and shares model turns with investor research. The panel lists watched projects. Turning automatic work off pauses all watched project queues; it does not revoke CRM permissions.
+
+### Supplier evidence tasks
+
+CRM prepares separate supplier research tasks from reviewed confirmation tasks and explicitly approved source URLs. This requires a connected supplier project with task permission; the BBRF-PT grant does not expose unassigned supplier tasks. Ordinary task descriptions cannot authorize website retrieval.
+
+Prepared supplier reviews read their approved public pages and save exact model-selected quotations with URLs and retrieval times. Public pages may be reused for up to one hour within the same connection, project and supplier, retaining their original dates. Unavailable pages remain unresolved; no stale fallback is used after expiry. If all pages fail or quotations cannot be validated, the research task remains open with a visible evidence issue. Automatic work continues with other tasks; the source claim lease prevents immediate repeated attempts, and unresolved tasks are retried after it expires.
+
+Completing the research child does not complete the original supplier confirmation tasks. Public listings do not establish negotiated dealer prices, reserved stock, export commitments or image permissions. No outreach, purchases or publication is performed by this worker. CRM's supplier preparation and approval interface must be deployed before this capability can be activated.
