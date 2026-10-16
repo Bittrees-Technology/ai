@@ -11,6 +11,12 @@ export function localWorkflows(
   directory: string,
   vault: Vault,
   models: () => string[],
+  templates: () => {
+    id: string;
+    revision: number;
+    definition: { kind: string };
+    state?: string;
+  }[] = () => [],
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
   let coordinatorVault: Promise<Vault> | undefined;
@@ -58,7 +64,47 @@ export function localWorkflows(
     if (!r.ok) throw Error("WORKFLOW_UNAVAILABLE");
     return r.json();
   }
+  let syncing: Promise<unknown> | undefined;
+  let catalogue: { status: string; checkedAt?: string } = { status: "pending" };
+  async function sync() {
+    if (syncing) return syncing;
+    syncing = (async () => {
+      const s = await settings();
+      if (!s) return { synced: false, reason: "NOT_CONNECTED" };
+      const result = await call(
+        "device",
+        {
+          action: "catalogue",
+          observedAt: Date.now(),
+          entries: templates().map((t) => ({
+            id: t.id,
+            revision: t.revision,
+            kind: t.definition.kind,
+            ...(t.state ? { state: t.state } : {}),
+          })),
+        },
+        s.controlToken,
+      );
+      catalogue = {
+        status: result.synced ? "synced" : result.reason,
+        checkedAt: new Date().toISOString(),
+      };
+      return result;
+    })()
+      .catch((error) => {
+        catalogue = {
+          status: "unavailable",
+          checkedAt: new Date().toISOString(),
+        };
+        throw error;
+      })
+      .finally(() => {
+        syncing = undefined;
+      });
+    return syncing;
+  }
   return {
+    sync,
     async status() {
       const s = await settings();
       if (!s)
@@ -70,6 +116,7 @@ export function localWorkflows(
       );
       return {
         connected: true,
+        catalogue,
         ...result,
         models: models(),
         ...(s.pairCode
