@@ -43,10 +43,7 @@ test("qualification rejects invented evidence and never promotes incomplete gate
   const unknown = validateQualification(output(), [page], "");
   assert.equal(unknown.status, "Needs research");
   q.gates.individualUS = { status: "contradicted", evidence: page.text, url };
-  assert.equal(
-    validateQualification(q, [page], "").status,
-    "Outside US target",
-  );
+  assert.equal(validateQualification(q, [page], "").status, "Needs research");
 });
 async function fixture(conflict = false, uncertain = false) {
   const dir = mkdtempSync(join(tmpdir(), "qualification-")),
@@ -278,4 +275,71 @@ test("another person's role or a firm address cannot establish the selected pers
   const result = validateQualification(q, [p], "", "Jane Smith");
   assert.equal(result.gates.investmentRole.status, "unknown");
   assert.equal(result.gates.individualUS.status, "unknown");
+});
+
+test("real quotations about global staff and investment services do not prove the mandate", () => {
+  const q = output();
+  q.summary = "Invented biography, wealth and residence must never be saved.";
+  const role =
+    "Mark W. Yusko CEO & Chief Investment Officer, Morgan Creek; Managing Partner, Morgan Creek Digital";
+  const global =
+    "Our investment professionals are globally-based, giving Morgan Creek an advantage by allowing our team to live and work in the same locations as many of our managers.";
+  const services =
+    "Morgan Creek Capital Management, LLC is a SEC-registered investment adviser providing investment management services to institutions and wealthy families.";
+  q.gates.investmentRole = { status: "supported", evidence: role, url };
+  q.gates.crossBorder = { status: "supported", evidence: global, url };
+  q.gates.vehicle = { status: "supported", evidence: services, url };
+  const result = validateQualification(
+    q,
+    [{ ...page, text: [role, global, services].join(" ") }],
+    "BBRF-PT | Priority research",
+    "Mark W. Yusko",
+  );
+  assert.equal(result.gates.investmentRole.status, "supported");
+  assert.equal(result.gates.crossBorder.status, "unknown");
+  assert.equal(result.gates.vehicle.status, "unknown");
+  assert.equal(result.status, "Priority research");
+  assert(!result.summary.includes("Invented"));
+  assert(result.summary.includes("1 of 6"));
+});
+
+test("partial or negated compound requirements cannot establish fit or rejection", () => {
+  for (const [key, evidence] of [
+    ["bitcoinLeverage", "The firm invests in Bitcoin."],
+    ["bitcoinLeverage", "The firm does not invest in leveraged Bitcoin."],
+    ["crossBorder", "The firm invests globally, including Portugal."],
+    ["vehicle", "The firm provides advice on preferred shares."],
+    ["ticket", "The firm manages EUR50,000 million in assets."],
+    [
+      "individualUS",
+      "Jane Smith is CIO. The firm is headquartered in the United States.",
+    ],
+  ] as const) {
+    const q = output();
+    q.gates[key] = { status: "supported", evidence, url };
+    assert.equal(
+      validateQualification(q, [{ ...page, text: evidence }], "", "Jane Smith")
+        .gates[key].status,
+      "unknown",
+    );
+  }
+});
+
+test("personal location must attach to the selected name, not another person in the quote", () => {
+  const q = output();
+  const evidence =
+    "Jane Smith is CIO. Bob Jones is based in the United States.";
+  q.gates.individualUS = { status: "supported", evidence, url };
+  assert.equal(
+    validateQualification(q, [{ ...page, text: evidence }], "", "Jane Smith")
+      .gates.individualUS.status,
+    "unknown",
+  );
+  const direct = "Jane Smith is based in the United States.";
+  q.gates.individualUS.evidence = direct;
+  assert.equal(
+    validateQualification(q, [{ ...page, text: direct }], "", "Jane Smith")
+      .gates.individualUS.status,
+    "supported",
+  );
 });

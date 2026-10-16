@@ -265,7 +265,7 @@ export function QualificationPanel({
       {status.jobs.map((j: any) => (
         <section key={j.id}>
           <h4>
-            {j.state} · {j.results.length} verified saves /{" "}
+            {j.state} · {j.results.length} confirmed CRM saves /{" "}
             {j.input.entryIds.length} people
           </h4>
           <p>{j.activity}</p>
