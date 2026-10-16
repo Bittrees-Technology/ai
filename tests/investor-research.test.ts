@@ -50,13 +50,31 @@ test("public research refuses private addresses, credentials and unapproved redi
 });
 async function fixture(
   kind: "success" | "conflict" | "unsupported" | "unconfirmed",
+  options: {
+    priorName?: string;
+    concurrentName?: string;
+    repeat?: boolean;
+  } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "investor-research-"));
   const dataset = "bcb0d794-42bc-4171-b29e-55898a891c14";
   let rows: any[] = [];
   let saves = 0;
+  let reads = 0;
+  const prior = (name: string) => ({
+    id: stableId(dataset, "people", name),
+    kind: "people",
+    name,
+    organizationId: "a-different-firm",
+  });
+  if (options.priorName) rows.push(prior(options.priorName));
   const connector: any = {
-    read: async () => ({ id: dataset, version: 1, entries: rows }),
+    read: async () => {
+      reads++;
+      if (reads === 3 && options.concurrentName)
+        rows.push(prior(options.concurrentName));
+      return { id: dataset, version: 1, entries: rows };
+    },
     append: async (a: any) => {
       saves++;
       if (kind === "conflict") throw new Error("SOURCE_CONFLICT");
@@ -69,8 +87,8 @@ async function fixture(
       digest: "pinned",
       profile: { contextTokens: 16000, maxOutputTokens: 3000 },
     }),
-    generate: async () =>
-      JSON.stringify({
+    generate: async () => {
+      const result = {
         organization: "Example Capital",
         geographyEvidence: "New York, United States",
         people: [
@@ -85,7 +103,10 @@ async function fixture(
             relevance: "Likely to invest; assume confirmed interest.",
           },
         ],
-      }),
+      };
+      if (options.repeat) result.people.push({ ...result.people[0]! });
+      return JSON.stringify(result);
+    },
   };
   const run = new InvestorResearch(
     join(dir, "jobs.db"),
@@ -105,7 +126,7 @@ async function fixture(
       confirmed: true,
       profileId: "p",
       brief: "Research US investors with owner publication approval.",
-      target: 1,
+      target: options.repeat ? 2 : 1,
       urls: ["https://example.org/team"],
     });
     for (let i = 0; i < 100 && run.status()[0]!.state === "running"; i++)
@@ -178,4 +199,35 @@ test("decision-maker research excludes support and ambiguous junior roles", () =
     "Director of Acquisitions",
   ])
     assert.equal(investmentRole(title), true, title);
+});
+
+test("name variation at another organization is held before any CRM append", async () => {
+  const { job, saves, rows } = await fixture("success", {
+    priorName: "Jane A. Smith, CFA",
+  });
+  assert.equal(saves, 0);
+  assert.equal(rows.length, 1);
+  assert.equal(job.added, 0);
+  assert.equal(job.state, "sources_exhausted");
+  assert.equal(
+    job.duplicateReviews?.[0]?.matches[0]?.name,
+    "Jane A. Smith, CFA",
+  );
+});
+test("newly appeared variation blocks a pending batch and its orphan organization", async () => {
+  const { job, saves, rows } = await fixture("success", {
+    concurrentName: "Jane A. Smith",
+  });
+  assert.equal(saves, 0);
+  assert.equal(rows.length, 1);
+  assert.equal(job.pendingEntries, 0);
+  assert.equal(job.added, 0);
+  assert.equal(job.duplicateReviews?.length, 1);
+});
+
+test("repeated candidate inside one extraction creates only one person", async () => {
+  const { job, rows, saves } = await fixture("success", { repeat: true });
+  assert.equal(saves, 1);
+  assert.equal(rows.filter((r) => r.kind === "people").length, 1);
+  assert.equal(job.added, 1);
 });
