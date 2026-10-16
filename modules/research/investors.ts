@@ -355,7 +355,7 @@ export class InvestorResearch {
           category: p.category,
           organizationId: orgId,
         });
-        row.research.relevance = p.relevance;
+        row.research.relevance = "Publicly listed investment professional; BBRF-PT mandate fit and investment interest require qualification.";
         rows.push(row);
       }
       if (rows.length) {

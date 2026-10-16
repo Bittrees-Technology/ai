@@ -79,7 +79,7 @@ async function fixture(kind: "success" | "conflict" | "unsupported") {
                 ? "Invented person evidence"
                 : "Jane Smith Managing Partner",
             category: "Family office / allocator",
-            relevance: "Possible allocator; mandate unconfirmed.",
+            relevance: "Likely to invest; assume confirmed interest.",
           },
         ],
       }),
@@ -122,6 +122,7 @@ test("local model extracts grounded linked entries and saves only private pendin
   assert.equal(rows[1].organizationId, rows[0].id);
   assert.equal(rows[1].research.training, "pending");
   assert.equal(rows[1].research.verification, "unverified");
+  assert.equal(rows[1].research.relevance, "Publicly listed investment professional; BBRF-PT mandate fit and investment interest require qualification.");
   assert.equal(rows[1].id, stableId(dataset, "people", "Jane Smith"));
 });
 test("source conflict retains pending entries and pauses instead of overwriting", async () => {
