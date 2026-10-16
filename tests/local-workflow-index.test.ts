@@ -150,3 +150,39 @@ test("existing qualification jobs cannot invalidate the whole paired workflow ca
     2,
   );
 });
+
+test("failed catalogue retries remain visible and preserve the last confirmed sync time", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "workflow-sync-status-")),
+    vault = new Vault(randomBytes(32)),
+    original = globalThis.fetch;
+  let fail = false;
+  try {
+    await writeFile(
+      join(dir, "workflow-device.enc"),
+      vault.seal({ controlToken: "a".repeat(64) }, "workflow-device"),
+    );
+    globalThis.fetch = async (_url, init) => {
+      const input = JSON.parse(String(init?.body));
+      if (input.input.action === "catalogue" && fail) throw Error("network");
+      return Response.json(
+        input.input.action === "catalogue"
+          ? { synced: true }
+          : { grant: { wallet_address: "0x" + "1".repeat(40) } },
+      );
+    };
+    const flow = localWorkflows(dir, vault, () => []);
+    await flow.sync();
+    const good = (await flow.status()).catalogue!;
+    assert.equal(good.status, "synced");
+    assert.ok(good.lastSyncedAt);
+    fail = true;
+    await assert.rejects(flow.sync());
+    const bad = (await flow.status()).catalogue!;
+    assert.equal(bad.status, "unavailable");
+    assert.equal(bad.lastSyncedAt, good.lastSyncedAt);
+    assert.ok(bad.checkedAt);
+  } finally {
+    globalThis.fetch = original;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

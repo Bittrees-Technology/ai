@@ -80,7 +80,8 @@ export function localWorkflows(
     return r.json();
   }
   let syncing: Promise<unknown> | undefined;
-  let catalogue: { status: string; checkedAt?: string } = { status: "pending" };
+  let catalogue: { status: string; checkedAt?: string; lastSyncedAt?: string } =
+    { status: "pending" };
   async function sync() {
     if (syncing) return syncing;
     syncing = (async () => {
@@ -104,6 +105,8 @@ export function localWorkflows(
         s.controlToken,
       );
       catalogue = {
+        ...catalogue,
+        ...(result.synced ? { lastSyncedAt: new Date().toISOString() } : {}),
         status: result.synced ? "synced" : result.reason,
         checkedAt: new Date().toISOString(),
       };
@@ -111,6 +114,7 @@ export function localWorkflows(
     })()
       .catch((error) => {
         catalogue = {
+          ...catalogue,
           status: "unavailable",
           checkedAt: new Date().toISOString(),
         };
