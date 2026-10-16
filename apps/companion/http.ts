@@ -686,6 +686,10 @@ export function localApi({
     });
   }
   if (workflows) {
+    app.post("/v1/workflows/sync", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await workflows.sync());
+    });
     app.get("/v1/workflows", async (_req, res) =>
       res.json(await workflows.status()),
     );
@@ -809,6 +813,9 @@ export function localApi({
     }),
   );
   if (investorResearch) {
+    app.post("/v1/research/investors/extend", async (req, res) =>
+      res.json(await investorResearch.extend(req.body)),
+    );
     app.post("/v1/research/investors/start", async (req, res) =>
       res.json(await investorResearch.create(req.body)),
     );

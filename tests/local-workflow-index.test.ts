@@ -39,12 +39,41 @@ test("local synchronization projects only safe metadata and never sends research
               brief: "Private brief",
             },
             state: "running",
+            progress: {
+              peopleSaved: 4,
+              target: 74,
+              datasetPeople: 130,
+              datasetTarget: 200,
+              crmPeople: 126,
+              pagesProcessed: 64,
+              queued: 18,
+              failures: 14,
+              skipped: 153,
+              measuredAt: "2026-10-16T17:00:00.000Z",
+            },
           },
         ] as any,
     );
     await flow.sync();
     assert.deepEqual(captured.input.entries, [
-      { id, revision: 2, kind: "investor-research", state: "running" },
+      {
+        id,
+        revision: 2,
+        kind: "investor-research",
+        state: "running",
+        progress: {
+          peopleSaved: 4,
+          target: 74,
+          datasetPeople: 130,
+          datasetTarget: 200,
+          crmPeople: 126,
+          pagesProcessed: 64,
+          queued: 18,
+          failures: 14,
+          skipped: 153,
+          measuredAt: "2026-10-16T17:00:00.000Z",
+        },
+      },
     ]);
     assert.ok(!JSON.stringify(captured).includes("Private"));
     assert.ok(!JSON.stringify(captured).includes("private.example"));
@@ -93,4 +122,67 @@ test("project-task catalogue accepts only safe metadata", async () => {
       entries: [{ ...input.entries[0], taskText: "private" }],
     }),
   );
+});
+
+test("existing qualification jobs cannot invalidate the whole paired workflow catalogue", async () => {
+  const { localCatalogueSchema } =
+    await import("../modules/coordinator/workflow-catalogue.js");
+  const entries = [
+    {
+      id: randomUUID(),
+      revision: 1,
+      kind: "investor-qualification",
+      state: "complete",
+    },
+    {
+      id: randomUUID(),
+      revision: 2,
+      kind: "investor-research",
+      state: "running",
+    },
+  ];
+  assert.equal(
+    localCatalogueSchema.parse({
+      action: "catalogue",
+      observedAt: Date.now(),
+      entries,
+    }).entries.length,
+    2,
+  );
+});
+
+test("failed catalogue retries remain visible and preserve the last confirmed sync time", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "workflow-sync-status-")),
+    vault = new Vault(randomBytes(32)),
+    original = globalThis.fetch;
+  let fail = false;
+  try {
+    await writeFile(
+      join(dir, "workflow-device.enc"),
+      vault.seal({ controlToken: "a".repeat(64) }, "workflow-device"),
+    );
+    globalThis.fetch = async (_url, init) => {
+      const input = JSON.parse(String(init?.body));
+      if (input.input.action === "catalogue" && fail) throw Error("network");
+      return Response.json(
+        input.input.action === "catalogue"
+          ? { synced: true }
+          : { grant: { wallet_address: "0x" + "1".repeat(40) } },
+      );
+    };
+    const flow = localWorkflows(dir, vault, () => []);
+    await flow.sync();
+    const good = (await flow.status()).catalogue!;
+    assert.equal(good.status, "synced");
+    assert.ok(good.lastSyncedAt);
+    fail = true;
+    await assert.rejects(flow.sync());
+    const bad = (await flow.status()).catalogue!;
+    assert.equal(bad.status, "unavailable");
+    assert.equal(bad.lastSyncedAt, good.lastSyncedAt);
+    assert.ok(bad.checkedAt);
+  } finally {
+    globalThis.fetch = original;
+    await rm(dir, { recursive: true, force: true });
+  }
 });

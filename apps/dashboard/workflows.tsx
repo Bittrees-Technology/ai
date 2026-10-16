@@ -93,6 +93,45 @@ export function Workflows({
           </button>
         </>
       )}
+      {data?.connected && (
+        <section aria-label="Workflow synchronization">
+          <h3>Workflow synchronization</h3>
+          <p role="status">
+            {data.catalogue?.status === "synced"
+              ? "Workflow catalogue synced."
+              : data.catalogue?.status === "unavailable"
+                ? "Workflow sync unavailable. Retrying automatically each minute while this app is running."
+                : "Workflow sync is waiting for confirmation."}
+          </p>
+          {data.catalogue?.lastSyncedAt && (
+            <p>
+              Last confirmed workflow sync:{" "}
+              {new Date(data.catalogue.lastSyncedAt).toLocaleString()}.
+            </p>
+          )}
+          {data.catalogue?.checkedAt && (
+            <p>
+              Last sync attempt:{" "}
+              {new Date(data.catalogue.checkedAt).toLocaleString()}.
+            </p>
+          )}
+          <p>
+            Device connection status does not confirm that workflows synced.
+            Only process metadata and numeric counts are shared with your
+            owner-only directory view.
+          </p>
+          <button
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                await api("/v1/workflows/sync", "POST", {});
+              })
+            }
+          >
+            Sync workflows now
+          </button>
+        </section>
+      )}
       {g && (
         <>
           <h3>{g.device_label}</h3>

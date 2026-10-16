@@ -1,3 +1,7 @@
+import {
+  workflowProgressSchema,
+  type WorkflowProgress,
+} from "../../modules/research/workflow-progress.js";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { hostname } from "node:os";
@@ -11,12 +15,23 @@ export function localWorkflows(
   directory: string,
   vault: Vault,
   models: () => string[],
-  templates: () => {
-    id: string;
-    revision: number;
-    definition: { kind: string };
-    state?: string;
-  }[] = () => [],
+  templates: () =>
+    | {
+        id: string;
+        revision: number;
+        definition: { kind: string };
+        state?: string;
+        progress?: WorkflowProgress;
+      }[]
+    | Promise<
+        {
+          id: string;
+          revision: number;
+          definition: { kind: string };
+          state?: string;
+          progress?: WorkflowProgress;
+        }[]
+      > = () => [],
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
   let coordinatorVault: Promise<Vault> | undefined;
@@ -65,7 +80,8 @@ export function localWorkflows(
     return r.json();
   }
   let syncing: Promise<unknown> | undefined;
-  let catalogue: { status: string; checkedAt?: string } = { status: "pending" };
+  let catalogue: { status: string; checkedAt?: string; lastSyncedAt?: string } =
+    { status: "pending" };
   async function sync() {
     if (syncing) return syncing;
     syncing = (async () => {
@@ -76,16 +92,21 @@ export function localWorkflows(
         {
           action: "catalogue",
           observedAt: Date.now(),
-          entries: templates().map((t) => ({
+          entries: (await templates()).map((t) => ({
             id: t.id,
             revision: t.revision,
             kind: t.definition.kind,
             ...(t.state ? { state: t.state } : {}),
+            ...(t.progress
+              ? { progress: workflowProgressSchema.parse(t.progress) }
+              : {}),
           })),
         },
         s.controlToken,
       );
       catalogue = {
+        ...catalogue,
+        ...(result.synced ? { lastSyncedAt: new Date().toISOString() } : {}),
         status: result.synced ? "synced" : result.reason,
         checkedAt: new Date().toISOString(),
       };
@@ -93,6 +114,7 @@ export function localWorkflows(
     })()
       .catch((error) => {
         catalogue = {
+          ...catalogue,
           status: "unavailable",
           checkedAt: new Date().toISOString(),
         };

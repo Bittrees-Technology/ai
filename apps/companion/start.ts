@@ -1,3 +1,4 @@
+import { researchWorkflowProgress } from "../../modules/research/workflow-progress.js";
 import { QualificationResearch } from "../../modules/research/qualification.js";
 import { LocalModelTurns } from "../../modules/models/local-turns.js";
 import { ProjectWork } from "../../modules/research/project-work.js";
@@ -337,7 +338,7 @@ const workflows = localWorkflows(
   directory,
   new Vault(key),
   () => store.profiles(owner).map((p) => p.model),
-  () => [
+  async () => [
     ...store.templates(owner),
     ...projectWork.status().map((job) => ({
       id: job.id,
@@ -353,7 +354,8 @@ const workflows = localWorkflows(
       definition: { kind: "investor-qualification" },
       state: job.state,
     })),
-    ...investorResearch.list().map((job) => ({
+    ...(await investorResearch.workflowEntries()).map((job) => ({
+      progress: researchWorkflowProgress(job),
       id: job.id,
       revision: Math.max(1, Date.parse(job.updatedAt)),
       definition: { kind: "investor-research" },

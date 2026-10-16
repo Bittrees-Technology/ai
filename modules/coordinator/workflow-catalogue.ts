@@ -1,3 +1,4 @@
+import { workflowProgressSchema } from "../research/workflow-progress.js";
 import { z } from "zod";
 import type { Pool } from "pg";
 import { hash } from "./workflow-portal.js";
@@ -7,6 +8,7 @@ export const localCatalogueSchema = z.strictObject({
   entries: z
     .array(
       z.strictObject({
+        progress: workflowProgressSchema.optional(),
         id: z.uuid(),
         revision: z.number().int().safe().positive(),
         state: z
@@ -27,6 +29,7 @@ export const localCatalogueSchema = z.strictObject({
           "summarize",
           "query",
           "investor-research",
+          "investor-qualification",
           "crm-task-planning",
           "crm-task-work",
         ]),
@@ -83,8 +86,15 @@ export async function syncLocalCatalogue(
     );
     for (const entry of input.entries)
       await db.query(
-        `INSERT INTO workflow_local_catalogue(authority_id,template_id,revision,kind,state) VALUES($1,$2,$3,$4,$5) ON CONFLICT(authority_id,template_id) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,state=excluded.state,removed_at=NULL,updated_at=now() WHERE workflow_local_catalogue.revision<=excluded.revision`,
-        [g.id, entry.id, entry.revision, entry.kind, entry.state],
+        `INSERT INTO workflow_local_catalogue(authority_id,template_id,revision,kind,state,progress) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(authority_id,template_id) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,state=excluded.state,progress=excluded.progress,removed_at=NULL,updated_at=now() WHERE workflow_local_catalogue.revision<=excluded.revision`,
+        [
+          g.id,
+          entry.id,
+          entry.revision,
+          entry.kind,
+          entry.state,
+          entry.progress ? JSON.stringify(entry.progress) : null,
+        ],
       );
     await db.query(
       "UPDATE workflow_authorities SET last_seen_at=now() WHERE id=$1",
