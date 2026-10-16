@@ -1,3 +1,4 @@
+import { QualificationResearch } from "../../modules/research/qualification.js";
 import { LocalModelTurns } from "../../modules/models/local-turns.js";
 import { ProjectWork } from "../../modules/research/project-work.js";
 import { InvestorResearch } from "../../modules/research/investors.js";
@@ -222,6 +223,19 @@ const projectWork = new ProjectWork(
   },
   modelTurns.run,
 );
+const qualificationResearch = new QualificationResearch(
+  join(content.directory, "qualification-research.db"),
+  new Vault(key),
+  dataset,
+  new Ollama("http://127.0.0.1:11434", 1800_000),
+  (id) => store.profile(owner, id),
+  () => {
+    const a = executionControls.admission(worker.activeTasks);
+    return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
+  },
+  undefined,
+  modelTurns.run,
+);
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
     ? new RemoteClient(
@@ -333,6 +347,12 @@ const workflows = localWorkflows(
       },
       state: job.state === "waiting" ? "ready" : job.state,
     })),
+    ...qualificationResearch.status().map((job) => ({
+      id: job.id,
+      revision: Math.max(1, Date.parse(job.updatedAt)),
+      definition: { kind: "investor-qualification" },
+      state: job.state,
+    })),
     ...investorResearch.list().map((job) => ({
       id: job.id,
       revision: Math.max(1, Date.parse(job.updatedAt)),
@@ -363,6 +383,7 @@ server.on(
     crm,
     dataset,
     investorResearch,
+    qualificationResearch,
     projectWork,
     sources,
     autonote,
@@ -402,6 +423,7 @@ async function stop() {
   clearInterval(workflowSync);
   worker.stop();
   await investorResearch.close();
+  await qualificationResearch.close();
   await projectWork.close();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
@@ -421,6 +443,7 @@ const timer = setInterval(() => {
     started &&
     !stopping &&
     !investorResearch.isRunning &&
+    !qualificationResearch.isRunning &&
     !projectWork.isRunning
   ) {
     const running = worker

@@ -388,7 +388,13 @@ if (new URLSearchParams(location.search).has("autonote-browser-review"))
 if (new URLSearchParams(location.search).has("crm-dataset"))
   void import("./crm-dataset.js");
 
-if (new URLSearchParams(location.search).has("investor-research")) void import("./investor-research.js");
-if (new URLSearchParams(location.search).has("research-activity")) void import("./research-activity.js");
+if (new URLSearchParams(location.search).has("investor-research"))
+  void import("./investor-research.js");
+if (new URLSearchParams(location.search).has("research-activity"))
+  void import("./research-activity.js");
 
-if (new URLSearchParams(location.search).has("project-work")) void import("./project-work.js");
+if (new URLSearchParams(location.search).has("project-work"))
+  void import("./project-work.js");
+
+if (new URLSearchParams(location.search).has("qualification"))
+  void import("./qualification.js");

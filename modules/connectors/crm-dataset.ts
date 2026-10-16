@@ -88,6 +88,7 @@ export class CrmDatasetConnector {
     const lane = [
       "dataset.schema",
       "dataset.read",
+      "qualification.context",
       "projects.list",
       "project.read",
       "tasks.list",
@@ -174,6 +175,9 @@ export class CrmDatasetConnector {
   async project(name: string, args: unknown, expectedDatasetId: string) {
     if (
       ![
+        "qualification.context",
+        "qualification.sync",
+        "qualification.enrich",
         "projects.list",
         "project.read",
         "tasks.create",

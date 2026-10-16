@@ -1,3 +1,4 @@
+import type { QualificationResearch } from "../../modules/research/qualification.js";
 import type { ProjectWork } from "../../modules/research/project-work.js";
 import type { InvestorResearch } from "../../modules/research/investors.js";
 import type { CrmDatasetConnector } from "../../modules/connectors/crm-dataset.js";
@@ -87,6 +88,7 @@ export interface LocalApiOptions {
   crm?: CrmConnector;
   dataset?: CrmDatasetConnector;
   investorResearch?: InvestorResearch;
+  qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
@@ -120,6 +122,7 @@ export function localApi({
   crm,
   dataset,
   investorResearch,
+  qualificationResearch,
   projectWork,
   roles,
   news,
@@ -771,6 +774,32 @@ export function localApi({
     app.post("/v1/crm-projects/resume", async (req, res) => {
       const a = z.strictObject({ id: z.uuid() }).parse(req.body);
       res.json(await projectWork.resume(a.id));
+    });
+  }
+  app.get("/v1/research/qualification", (_req, res) =>
+    res.json({
+      available: !!qualificationResearch,
+      jobs: qualificationResearch?.status() || [],
+    }),
+  );
+  if (qualificationResearch) {
+    app.post("/v1/research/qualification/context", async (req, res) => {
+      const a = z.strictObject({ projectId: z.uuid() }).parse(req.body);
+      res.json(await qualificationResearch.context(a.projectId));
+    });
+    app.post("/v1/research/qualification/start", async (req, res) =>
+      res.json(await qualificationResearch.create(req.body)),
+    );
+    app.post("/v1/research/qualification/sync", async (req, res) =>
+      res.json(await qualificationResearch.sync(req.body)),
+    );
+    app.post("/v1/research/qualification/pause", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await qualificationResearch.pause());
+    });
+    app.post("/v1/research/qualification/resume", async (req, res) => {
+      const a = z.strictObject({ id: z.uuid() }).parse(req.body);
+      res.json(await qualificationResearch.resume(a.id));
     });
   }
   app.get("/v1/research/investors", (_req, res) =>

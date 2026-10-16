@@ -38,6 +38,15 @@ Task editing and research share a bounded FIFO queue of individual CRM requests.
 
 Read polling uses a separate bounded CRM budget from mutations. The editor stops background polling when hidden and refreshes immediately after a save. A source429 starts a ten-minute cooldown for that request lane, displays a rate-limit explanation, and preserves the draft without automatically retrying writes.
 
+## Qualification of existing people
+
+Enable **qualification research and label-only updates** for the intended project in CRM → Connected projects. This is a separate permission, disabled by default; it does not grant access to other projects or permission to send messages, delete records, approve training or change sharing.
+
+In the local app, Connections → Investor qualification loads connected projects and previews mapped people and their labels. Select up to 20 people, an installed local model, investment requirements and approved public URLs. The worker reads up to six pages per person on those exact HTTPS hosts, then evaluates investment role, individual US location, Bitcoin/leverage mandate, cross-border mandate, vehicle and ticket. Quotes must match fetched text; unknown evidence cannot qualify a person. These are research labels, not proof of interest or offering eligibility.
+
+`qualification.context` reads stable-ID mappings and versions; `qualification.enrich` saves evidence to the private dataset and updates only the mapped person's category; `qualification.sync` copies existing qualification labels in batches of at most20. Descriptions, organization links, contact details, sharing and owner-private notes are preserved. Enrichment leaves training pending or excluded. An interrupted save retains its exact payload for reconciliation; concurrent edits stop stale results. Local status polling does not call CRM.
+
+Use **Sync previewed labels only** to copy reviewed dataset categories without reimporting profiles. Refresh the preview if data changed. The shared local model scheduler gives enrichment, discovery and project tasks separate turns.
 ## Automatic CRM task execution
 
 Choose a task-enabled project and model profile, then Turn on automatic task work. This separately saved opt-in watches your existing open AI draft/review tasks, including while research runs and after app restarts. It saves actual draft/review results as CRM notes and marks tasks done only after CRM confirms the result. It never sends outreach or performs outside actions. Turn off automatic task work (or Pause project work) stops it; existing project permissions are checked by CRM on every operation.
