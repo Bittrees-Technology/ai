@@ -27,3 +27,11 @@ Local execution limits apply per model call; ordinary queued tasks are not start
 Work activity labels the run count as **people saved as research**. This counts private dataset entries, not CRM contacts. **In CRM** uses confirmed dataset links and reviewed import mappings returned by CRM; it displays dataset-wide people/organization totals and the last check time. Missing historical status is shown as not checked, never as zero confirmed imports. During a run, these counts refresh on source dataset reads and after saves.
 
 Enable automatic additions for an explicit destination project at CRM → Local AI. With that permission, new appended entries become CRM People/Organizations without per-batch approval, retain unverified-research labeling and follow project sharing. Task access is separate. Permissions expire within 30 days and can be revoked. Existing research is not imported retroactively; selected older entries use the existing import flow. Duplicates and changed authority stop the operation rather than silently overwriting records.
+
+## Task editing and synchronization
+
+In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every 15 seconds while visible and local work is idle. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
+
+CRM remains authoritative. Every edit includes the version you read and a retry identifier. Conflicts preserve the local draft and require reopening the current task; exact retries do not create duplicates. A changed task also blocks a stale worker result. Closed app/offline state cannot continuously sync; the last successful sync time is displayed. Task runs appear in the owner-only workflow catalogue as metadata; names, briefs and results are not copied there. The catalogue does not start task execution. Existing project grants still govern access.
+
+Task-list refresh and manual edits wait while investor research or project work is running, so dashboard polling cannot interrupt the shared CRM connection. Existing snapshots remain visible until the next successful refresh.

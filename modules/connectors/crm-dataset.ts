@@ -138,6 +138,8 @@ export class CrmDatasetConnector {
         "projects.list",
         "project.read",
         "tasks.create",
+        "tasks.list",
+        "tasks.update",
         "tasks.claim",
         "tasks.finish",
       ].includes(name)

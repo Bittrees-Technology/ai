@@ -22,10 +22,17 @@ export const localCatalogueSchema = z.strictObject({
             "sources_exhausted",
           ])
           .default("ready"),
-        kind: z.enum(["draft", "summarize", "query", "investor-research"]),
+        kind: z.enum([
+          "draft",
+          "summarize",
+          "query",
+          "investor-research",
+          "crm-task-planning",
+          "crm-task-work",
+        ]),
       }),
     )
-    .max(120),
+    .max(170),
 });
 // Device tokens can publish only an opaque index for their own paired owner.
 // They cannot approve, resume, execute, change scopes, or select another owner.

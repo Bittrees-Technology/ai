@@ -5,6 +5,12 @@ test("project work uses explicit project/model choices and confirms automatic ta
   let submitted: any = null;
   const jobs: any[] = [];
   await page.route("**/v1/crm-projects**", async (route) => {
+    if (route.request().url().endsWith("/tasks")) {
+      await route.fulfill({
+        json: { tasks: [], checkedAt: new Date().toISOString() },
+      });
+      return;
+    }
     if (route.request().url().endsWith("/start")) {
       submitted = route.request().postDataJSON();
       jobs.push({
@@ -64,4 +70,68 @@ test("project work uses explicit project/model choices and confirms automatic ta
       ),
     ).toBe(true);
   }
+});
+
+test("CRM task editor preserves drafts on conflict and writes current versions", async ({
+  page,
+}) => {
+  let version = 1;
+  let saved: any;
+  let conflict = true;
+  await page.route("**/v1/crm-projects**", async (route) => {
+    if (route.request().url().endsWith("/tasks")) {
+      if (route.request().method() === "POST") {
+        saved = route.request().postDataJSON();
+        if (conflict) {
+          await route.fulfill({ status: 409, json: { error: "conflict" } });
+          return;
+        }
+        version++;
+        await route.fulfill({ json: { id: "task", version } });
+        return;
+      }
+      await route.fulfill({
+        json: {
+          tasks: [
+            {
+              id: "task",
+              version,
+              name: "Review evidence",
+              description: "Original",
+              mode: "AI review",
+              status: "Open",
+              dueDate: "",
+            },
+          ],
+          checkedAt: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        available: true,
+        projects: [{ id: "project", name: "Connected project", tasks: true }],
+        jobs: [],
+      },
+    });
+  });
+  await page.goto("/?project-work");
+  await page.getByLabel("Project", { exact: true }).selectOption("project");
+  await page.getByRole("button", { name: "Edit Review evidence" }).click();
+  await page.getByLabel("Task description").fill("Owner's revised brief");
+  await page.getByRole("button", { name: "Save task to CRM" }).click();
+  await expect(
+    page.getByText("Save could not be confirmed", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Task description")).toHaveValue(
+    "Owner's revised brief",
+  );
+  const first = saved;
+  conflict = false;
+  await page.getByRole("button", { name: "Save task to CRM" }).click();
+  await expect(page.getByLabel("Task description")).toHaveCount(0);
+  expect(saved).toEqual(first);
+  expect(saved.version).toBe(1);
+  expect(saved.projectId).toBe("project");
 });

@@ -81,7 +81,8 @@ export class ProjectWork {
   }
   async projects() {
     // Progress polling must not compete with the active worker for its connector.
-    if (this.active) return this.projectChoices;
+    if (this.active || this.admission().reason === "investor research running")
+      return this.projectChoices;
     const c = await this.connector.status();
     if (!c) return { projects: [] };
     this.projectChoices = await this.connector.project(
@@ -90,6 +91,42 @@ export class ProjectWork {
       c.datasetId,
     );
     return this.projectChoices;
+  }
+  async tasks(projectId: string) {
+    z.uuid().parse(projectId);
+    if (this.active || this.admission().reason === "investor research running")
+      return { deferred: true };
+    const c = await this.connector.status();
+    if (!c) throw new Error("Connect CRM first.");
+    return this.connector.project("tasks.list", { projectId }, c.datasetId);
+  }
+  async saveTask(raw: unknown) {
+    if (this.active || this.admission().reason === "investor research running")
+      throw new Error("Pause local work before editing CRM tasks.");
+    const a = z
+      .strictObject({
+        projectId: z.uuid(),
+        operationId: z.uuid(),
+        taskId: z.uuid().optional(),
+        version: z.number().int().positive().optional(),
+        name: z.string().trim().min(1).max(200),
+        description: z.string().max(4000),
+        mode: z.enum(["AI draft", "AI review"]),
+        dueDate: z.union([z.iso.date(), z.literal("")]),
+        status: z.enum(["Open", "Done"]),
+      })
+      .parse(raw);
+    if (a.taskId && !a.version)
+      throw new Error("Refresh the task before editing.");
+    const c = await this.connector.status();
+    if (!c) throw new Error("Connect CRM first.");
+    const { taskId, version, status, ...create } = a;
+    if (!taskId && status !== "Open") throw new Error("New tasks start open.");
+    return this.connector.project(
+      taskId ? "tasks.update" : "tasks.create",
+      taskId ? a : create,
+      c.datasetId,
+    );
   }
   async create(raw: unknown) {
     const a = input.parse(raw);
