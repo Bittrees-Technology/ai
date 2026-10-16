@@ -29,6 +29,7 @@ export const localCatalogueSchema = z.strictObject({
           "summarize",
           "query",
           "investor-research",
+          "investor-qualification",
           "crm-task-planning",
           "crm-task-work",
         ]),

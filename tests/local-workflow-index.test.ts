@@ -123,3 +123,30 @@ test("project-task catalogue accepts only safe metadata", async () => {
     }),
   );
 });
+
+test("existing qualification jobs cannot invalidate the whole paired workflow catalogue", async () => {
+  const { localCatalogueSchema } =
+    await import("../modules/coordinator/workflow-catalogue.js");
+  const entries = [
+    {
+      id: randomUUID(),
+      revision: 1,
+      kind: "investor-qualification",
+      state: "complete",
+    },
+    {
+      id: randomUUID(),
+      revision: 2,
+      kind: "investor-research",
+      state: "running",
+    },
+  ];
+  assert.equal(
+    localCatalogueSchema.parse({
+      action: "catalogue",
+      observedAt: Date.now(),
+      entries,
+    }).entries.length,
+    2,
+  );
+});
