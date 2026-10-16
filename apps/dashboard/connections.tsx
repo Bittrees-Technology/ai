@@ -1,3 +1,4 @@
+import { QualificationPanel } from "./qualification.js";
 import { ProjectWorkPanel } from "./project-work.js";
 import { InvestorResearchPanel } from "./investor-research.js";
 import { CrmDatasetPanel } from "./crm-dataset.js";
@@ -299,6 +300,11 @@ export function Connections(props: {
       <PrivatePermissionPanel api={props.api} />
       <CrmDatasetPanel api={props.api} onError={props.onError} />
       <ProjectWorkPanel
+        api={props.api}
+        onError={props.onError}
+        profiles={props.profiles}
+      />
+      <QualificationPanel
         api={props.api}
         onError={props.onError}
         profiles={props.profiles}

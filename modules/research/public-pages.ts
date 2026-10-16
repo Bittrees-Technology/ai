@@ -124,7 +124,7 @@ export async function publicPage(
   ].flatMap((m) => {
     try {
       const u = sourceURL(new URL(decode(m[1]!), url).href, hosts);
-      return /team|people|leadership|professionals|partners|about|contact|location/i.test(
+      return /team|people|leadership|professionals|partners|about|contact|location|investments|strategies|philosophy/i.test(
         u.pathname,
       )
         ? [u.href]
