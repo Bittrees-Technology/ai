@@ -1,3 +1,4 @@
+import { immediateTurn, type ModelTurn } from "../models/local-turns.js";
 import { personMatches } from "./person-matches.js";
 import { crmProgress } from "./crm-progress.js";
 import Database from "better-sqlite3";
@@ -107,6 +108,7 @@ export class InvestorResearch {
     private profile: (id: string) => unknown,
     private admission: () => { reason: string; seconds: number },
     private fetchPage = publicPage,
+    private turn: ModelTurn = immediateTurn,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -376,19 +378,25 @@ export class InvestorResearch {
       try {
         parsed = extraction.parse(
           JSON.parse(
-            await this.runtime.generate(
-              model,
-              prompt,
-              AbortSignal.any([
-                signal,
-                AbortSignal.timeout(limits.seconds * 1000),
-              ]),
-              z.toJSONSchema(extraction),
-            ),
+            await this.turn(signal, async () => {
+              const current = this.admission();
+              if (current.reason !== "ready")
+                throw new Error("Local execution is " + current.reason);
+              return this.runtime.generate(
+                model,
+                prompt,
+                AbortSignal.any([
+                  signal,
+                  AbortSignal.timeout(current.seconds * 1000),
+                ]),
+                z.toJSONSchema(extraction),
+              );
+            }),
           ),
         );
       } catch (e) {
         signal.throwIfAborted();
+        if (this.admission().reason !== "ready") throw e;
         j.failures.push({
           url,
           reason: "Local model extraction failed or timed out",

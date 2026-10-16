@@ -141,7 +141,7 @@ test("running job progress does not repeatedly discover remote CRM projects", as
 }) => {
   let discoveries = 0,
     polls = 0;
-  await page.clock.install();
+  test.setTimeout(60000);
   await page.route("**/v1/crm-projects**", async (route) => {
     const local = route.request().url().endsWith("/status");
     if (local) polls++;
@@ -172,8 +172,12 @@ test("running job progress does not repeatedly discover remote CRM projects", as
   await expect(page.getByLabel("Project", { exact: true })).toContainText(
     "Connected project",
   );
-  await page.clock.runFor(30000);
-  expect(polls).toBeGreaterThanOrEqual(2);
+  // Exercise real refresh intervals: virtual time can advance before React
+  // installs its passive effect, especially in WebKit.
+  await expect.poll(() => polls, { timeout: 45000 }).toBeGreaterThanOrEqual(3);
+  await expect(
+    page.getByText(`running · ${polls} confirmed CRM saves`),
+  ).toBeVisible();
   expect(discoveries).toBe(1);
   await expect(page.getByLabel("Project", { exact: true })).toContainText(
     "Connected project",
@@ -225,4 +229,67 @@ test("a confirmed task save stays confirmed when its refresh is rate limited", a
   await expect(
     page.getByText("Save could not be confirmed", { exact: false }),
   ).toHaveCount(0);
+});
+
+test("automatic CRM task work is explicitly enabled and shows waiting and saved progress", async ({
+  page,
+}) => {
+  let automatic: any = { enabled: false };
+  await page.route("**/v1/crm-projects**", async (route) => {
+    if (route.request().url().endsWith("/automatic")) {
+      const body = route.request().postDataJSON();
+      automatic = { ...body, jobId: "auto" };
+      await route.fulfill({ json: automatic });
+      return;
+    }
+    if (route.request().url().endsWith("/tasks")) {
+      await route.fulfill({
+        json: { tasks: [], checkedAt: new Date().toISOString() },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        available: true,
+        projects: [{ id: "project", name: "Connected project", tasks: true }],
+        automatic,
+        jobs: automatic.enabled
+          ? [
+              {
+                id: "auto",
+                state: "waiting",
+                phase: "Watching CRM for eligible tasks",
+                completed: 2,
+                input: { mode: "work" },
+                receipts: [],
+              },
+            ]
+          : [],
+      },
+    });
+  });
+  await page.goto("/?project-work");
+  await page.getByLabel("Project", { exact: true }).selectOption("project");
+  await page.getByLabel("Local model profile").selectOption("local-test");
+  page.once("dialog", (d) => d.dismiss());
+  await page
+    .getByRole("button", { name: "Turn on automatic task work" })
+    .click();
+  expect(automatic.enabled).toBe(false);
+  page.once("dialog", (d) => d.accept());
+  await page
+    .getByRole("button", { name: "Turn on automatic task work" })
+    .click();
+  await expect(page.getByText("Watching CRM for eligible tasks")).toBeVisible();
+  await expect(page.getByText("waiting · 2 confirmed CRM saves")).toBeVisible();
+  expect(automatic).toMatchObject({
+    enabled: true,
+    confirmed: true,
+    projectId: "project",
+    profileId: "local-test",
+  });
+  await page
+    .getByRole("button", { name: "Turn off automatic task work" })
+    .click();
+  await expect(page.getByText("Automatic task worker: Off")).toBeVisible();
 });
