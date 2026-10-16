@@ -135,3 +135,50 @@ test("CRM task editor preserves drafts on conflict and writes current versions",
   expect(saved.version).toBe(1);
   expect(saved.projectId).toBe("project");
 });
+
+test("a confirmed task save stays confirmed when its refresh is rate limited", async ({
+  page,
+}) => {
+  let saved = false;
+  await page.route("**/v1/crm-projects**", async (route) => {
+    if (route.request().url().endsWith("/tasks")) {
+      if (route.request().method() === "POST") {
+        saved = true;
+        await route.fulfill({ json: { id: "task", version: 1 } });
+      } else if (saved) {
+        await route.fulfill({
+          status: 429,
+          json: { error: "SOURCE_RATE_LIMITED" },
+        });
+      } else {
+        await route.fulfill({
+          json: { tasks: [], checkedAt: new Date().toISOString() },
+        });
+      }
+      return;
+    }
+    await route.fulfill({
+      json: {
+        available: true,
+        projects: [{ id: "project", name: "Connected project", tasks: true }],
+        jobs: [],
+      },
+    });
+  });
+  await page.goto("/?project-work");
+  await page.getByLabel("Project", { exact: true }).selectOption("project");
+  await page.getByRole("button", { name: "New CRM task" }).click();
+  await page
+    .getByLabel("Task name", { exact: true })
+    .fill("Review new research");
+  await page.getByRole("button", { name: "Save task to CRM" }).click();
+  await expect(
+    page.getByText(
+      "Task saved to CRM. The list will refresh after CRM's request cooldown.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Task name", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText("Save could not be confirmed", { exact: false }),
+  ).toHaveCount(0);
+});
