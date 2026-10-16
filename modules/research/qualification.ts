@@ -313,6 +313,8 @@ export class QualificationResearch {
       (id) => !j.done.includes(id),
     )) {
       signal.throwIfAborted();
+      if (this.admission().reason !== "ready")
+        throw new Error("Local execution paused or unavailable");
       if (!j.pending) {
         const ctx = await this.ctx(j),
           row = ctx.entries.find((r: any) => r.entry.id === entryId);
@@ -439,6 +441,8 @@ export class QualificationResearch {
         this.save(j);
       }
       signal.throwIfAborted();
+      if (this.admission().reason !== "ready")
+        throw new Error("Local execution paused; pending save preserved");
       j.activity = "Saving qualification label and evidence";
       this.save(j);
       const receipt = await this.connector.project(

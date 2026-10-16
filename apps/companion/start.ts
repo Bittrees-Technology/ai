@@ -347,6 +347,12 @@ const workflows = localWorkflows(
       },
       state: job.state === "waiting" ? "ready" : job.state,
     })),
+    ...qualificationResearch.status().map((job) => ({
+      id: job.id,
+      revision: Math.max(1, Date.parse(job.updatedAt)),
+      definition: { kind: "investor-qualification" },
+      state: job.state,
+    })),
     ...investorResearch.list().map((job) => ({
       id: job.id,
       revision: Math.max(1, Date.parse(job.updatedAt)),
