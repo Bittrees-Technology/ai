@@ -1,3 +1,4 @@
+import { ResearchActivity } from "./research-activity.js";
 import { Workflows } from "./workflows.js";
 import { MemoryAppScope } from "./app-memory.js";
 import { SourceMemoryCapture } from "./source-memory-capture.js";
@@ -304,6 +305,7 @@ function App() {
         <nav aria-label="Main">
           {[
             "Tasks",
+            "Work activity",
             "Templates",
             "Inbox",
             "Memory",
@@ -403,6 +405,7 @@ function App() {
           </section>
         ) : (
           <React.Fragment key={epoch.current}>
+            {page === "Work activity" && <ResearchActivity api={api} onConnections={() => setPage("Connections")} />}
             {page === "Tasks" && (
               <div className="workspace">
                 <section className="queue">
