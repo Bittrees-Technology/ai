@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
   InvestorResearch,
+  investmentRole,
   supported,
   stableId,
 } from "../modules/research/investors.js";
@@ -153,4 +154,26 @@ test("a save without confirmed source records is not counted as completed work",
   assert.equal(job.pendingEntries, 2);
   assert.match(job.error!, /could not be confirmed/);
   assert.equal(job.results, undefined);
+});
+
+test("decision-maker research excludes support and ambiguous junior roles", () => {
+  for (const title of [
+    "Client Service Associate",
+    "Account Administration Specialist",
+    "CFO",
+    "COO",
+    "Vice President",
+    "Investment Analyst",
+    "Investor Relations Partner",
+    "Assistant Managing Director",
+  ])
+    assert.equal(investmentRole(title), false, title);
+  for (const title of [
+    "CEO & Chief Investment Officer",
+    "Managing Director Investments",
+    "Managing Director (Public Assets)",
+    "Managing Partner",
+    "Director of Acquisitions",
+  ])
+    assert.equal(investmentRole(title), true, title);
 });

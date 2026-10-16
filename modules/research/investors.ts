@@ -69,6 +69,24 @@ type Job = {
     savedAt: string;
   }[];
 };
+// A sourced title is still only a research lead, not proof of allocation authority.
+export function investmentRole(title: string): boolean {
+  if (
+    /\b(advisor|adviser|assistant|relations|legal|counsel|compliance|marketing|administrat\w*|accountant|cfo|coo|cto|human resources|client service|operating officer|financial officer)\b/i.test(
+      title,
+    )
+  )
+    return false;
+  return (
+    /\b(founder|co-founder|partner|cio|ceo|chief investment officer|chief executive officer|managing director|portfolio manager)\b/i.test(
+      title,
+    ) ||
+    (/\bpresident\b/i.test(title) && !/\bvice\b/i.test(title)) ||
+    (/\b(director|head|chief)\b/i.test(title) &&
+      /\b(investments?|acquisitions|portfolio|assets?)\b/i.test(title))
+  );
+}
+
 export class InvestorResearch {
   private db: Database.Database;
   private active?: { abort: AbortController; done: Promise<void> };
@@ -385,9 +403,7 @@ export class InvestorResearch {
         if (rows.length >= j.input.target - j.added) break;
         if (
           existingNames.has("people:" + norm(p.name)) ||
-          /advisor|adviser|assistant|relations|legal|counsel|compliance|marketing|operating officer|financial officer/i.test(
-            p.title,
-          ) ||
+          !investmentRole(p.title) ||
           !supported(text, p.evidence) ||
           !norm(p.evidence).includes(norm(p.name)) ||
           !norm(p.evidence).includes(norm(p.title)) ||
