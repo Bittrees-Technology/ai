@@ -172,8 +172,13 @@ test("running job progress does not repeatedly discover remote CRM projects", as
   await expect(page.getByLabel("Project", { exact: true })).toContainText(
     "Connected project",
   );
-  await page.clock.runFor(30000);
-  expect(polls).toBeGreaterThanOrEqual(2);
+  for (let count = 1; count <= 3; count++) {
+    await page.clock.runFor(10000);
+    await expect.poll(() => polls).toBe(count);
+    await expect(
+      page.getByText(`running · ${count} confirmed CRM saves`),
+    ).toBeVisible();
+  }
   expect(discoveries).toBe(1);
   await expect(page.getByLabel("Project", { exact: true })).toContainText(
     "Connected project",
