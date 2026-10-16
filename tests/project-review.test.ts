@@ -31,7 +31,7 @@ test("review excludes correction warnings and rejects invented or misattributed 
   );
   assert.match(result, /NOT INDEPENDENT VERIFICATION/);
   assert.doesNotMatch(result, /Miami|likely fit/);
-  assert.match(result, /No source record or permission was changed/);
+  assert.match(result, /No linked profile or permission was changed/);
 });
 test("model prose, refusal and malformed output cannot become a completed review", () => {
   const sources = reviewSources("Review supplied facts", "truncated{");

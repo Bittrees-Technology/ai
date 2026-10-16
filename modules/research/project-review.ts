@@ -73,7 +73,7 @@ export function renderGroundedReview(
       : "No usable source excerpt was selected. Evidence is insufficient.",
     investorReview
       ? "Evidence gaps: This review does not establish current role, personal US location, Bitcoin/leverage mandate, Portugal/Luxembourg scope, vehicle eligibility or ticket capacity. Use the source-backed qualification workflow for those checks. No investor qualification label was changed."
-      : "Evidence gaps: Currency, accuracy and completeness of these supplied records are not independently verified. No source record or permission was changed.",
+      : "Evidence gaps: Currency, accuracy and completeness of these supplied records are not independently verified. No linked profile or permission was changed.",
     investorReview
       ? "Next steps: verify the named person's current biography and obtain an explicit allocation-policy source for missing requirements. Questions remain open; no outreach was performed."
       : "Next steps: resolve missing or conflicting evidence at its source before relying on these excerpts. No outside action was performed.",
