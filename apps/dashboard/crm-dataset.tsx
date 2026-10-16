@@ -51,9 +51,9 @@ export function CrmDatasetPanel({ api, onError }: Props) {
     >
       <h3>CRM dataset</h3>
       <p>
-        Connect one private dataset. Only records explicitly linked in CRM are
-        readable. Saving here changes the private dataset; CRM publication needs
-        your separate approval.
+        Connect one private dataset. CRM access follows your selected project
+        permissions. New researched leads enter CRM automatically only when you
+        enable automatic additions for a destination project.
       </p>
       {!available ? (
         <p>Dataset connections are unavailable in this build.</p>
@@ -61,11 +61,11 @@ export function CrmDatasetPanel({ api, onError }: Props) {
         <fieldset disabled={busy}>
           <p>
             <a
-              href="https://crm.bittrees.org/connect/ai/leads"
+              href="https://crm.bittrees.org/connect/ai/projects"
               target="_blank"
               rel="noreferrer"
             >
-              Open datasets and approvals in CRM
+              Manage Local AI in CRM
             </a>
           </p>
           <label>
