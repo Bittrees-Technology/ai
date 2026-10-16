@@ -13,7 +13,7 @@ export function personUSLocation(
     evidence = normalize(quote);
   if (
     !evidence ||
-    evidence.length > 700 ||
+    evidence.length > 500 ||
     !source.toLowerCase().includes(evidence.toLowerCase())
   )
     return false;

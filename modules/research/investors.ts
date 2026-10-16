@@ -25,7 +25,7 @@ const extraction = z.strictObject({
         name: z.string().min(3).max(120),
         title: z.string().min(2).max(150),
         evidence: z.string().min(10).max(350),
-        locationEvidence: z.string().max(700).default(""),
+        locationEvidence: z.string().max(500).default(""),
         category: z.enum([
           "Bitcoin / digital assets",
           "Family office / allocator",
@@ -61,6 +61,7 @@ type Job = {
   skipped: number;
   failures: { url: string; reason: string }[];
   pending?: any[];
+  locationProofs?: Record<string, { version: number; quote: string }>;
   locationReviews?: { name: string; url: string; reason: string }[];
   duplicateReviews?: {
     name: string;
@@ -157,7 +158,7 @@ export class InvestorResearch {
     ).map((r) => this.vault.open<Job>(r.payload, "investor-research:" + r.id));
   }
   status() {
-    return this.list().map(({ pending, model, ...j }) => ({
+    return this.list().map(({ pending, model, locationProofs, ...j }) => ({
       ...j,
       pendingEntries: pending?.length || 0,
       modelName: model?.profile.model,
@@ -458,7 +459,7 @@ export class InvestorResearch {
             entry.kind === "people" &&
             !s.entries.some((e) => e.id === entry.id)
           ) {
-            const proof = entry.research?.locationEvidence;
+            const proof = j.locationProofs?.[entry.id];
             if (
               proof?.version !== 1 ||
               !personUSLocation(
@@ -723,11 +724,9 @@ export class InvestorResearch {
         }
         if (this.holdDuplicate(j, row, [...s.entries, ...rows], page.url))
           continue;
-        row.research.locationEvidence = {
+        (j.locationProofs ||= {})[row.id] = {
           version: 1,
           quote: p.locationEvidence,
-          url: page.url,
-          retrievedAt: new Date().toISOString(),
         };
         row.research.sources.push({
           url: page.url,

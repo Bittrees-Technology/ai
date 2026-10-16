@@ -150,6 +150,9 @@ test("local model extracts grounded linked entries and saves only private pendin
   assert.equal(rows.length, 2);
   assert.equal(rows[1].organizationId, rows[0].id);
   assert.equal(rows[1].research.training, "pending");
+  assert.equal("locationEvidence" in rows[1].research, false);
+  assert.ok(rows[1].research.sources.every((s: any) => s.claim.length <= 500));
+  assert.equal("locationProofs" in job, false);
   assert.equal(rows[1].research.verification, "unverified");
   assert.equal(
     rows[1].research.relevance,
