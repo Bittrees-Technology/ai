@@ -12,6 +12,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
     [draft, setDraft] = useState<any>(null),
     [error, setError] = useState(""),
     [syncError, setSyncError] = useState(""),
+    [deferred, setDeferred] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let current = true,
@@ -25,8 +26,15 @@ export function CrmTaskEditor({ api, projectId }: any) {
       try {
         const s = await api(`/v1/crm-projects/${projectId}/tasks`);
         if (current) {
-          setSnapshot(s);
-          setSyncError("");
+          setDeferred(!!s.deferred);
+          if (s.deferred) {
+            setSyncError(
+              "Task refresh is waiting for local work to pause or finish. The last snapshot is retained.",
+            );
+          } else {
+            setSnapshot(s);
+            setSyncError("");
+          }
         }
       } catch {
         if (current)
@@ -86,7 +94,10 @@ export function CrmTaskEditor({ api, projectId }: any) {
       )}
       {syncError && <p role="status">{syncError}</p>}
       {error && <p role="status">{error}</p>}
-      <button disabled={busy || !!draft} onClick={() => setDraft(blank())}>
+      <button
+        disabled={busy || deferred || !!draft}
+        onClick={() => setDraft(blank())}
+      >
         New CRM task
       </button>
       {snapshot?.tasks.map((t: any) => (
@@ -95,7 +106,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
             {t.name} · {t.status} · {t.mode}
           </span>
           <button
-            disabled={busy || !!draft}
+            disabled={busy || deferred || !!draft}
             onClick={() =>
               setDraft({
                 operationId: crypto.randomUUID(),
@@ -173,7 +184,7 @@ export function CrmTaskEditor({ api, projectId }: any) {
             </label>
           )}
           <button
-            disabled={!draft.name.trim() || stale}
+            disabled={!draft.name.trim() || stale || deferred}
             onClick={() => void save()}
           >
             Save task to CRM

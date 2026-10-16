@@ -146,3 +146,30 @@ test("a changed source preserves the pending result and pauses", async () => {
   assert.match(status.pendingResults[0], /Which geographies/);
   assert.equal(status.completed, 0);
 });
+
+test("task refresh and edits cannot interrupt an active research connection", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "task-refresh-"));
+  let calls = 0;
+  const runner = new ProjectWork(
+    join(dir, "work.db"),
+    new Vault(randomBytes(32)),
+    {
+      status: async () => {
+        calls++;
+        throw Error("Shared connector must remain free");
+      },
+    } as any,
+    {} as any,
+    () => ({}),
+    () => ({ reason: "investor research running", seconds: 60 }),
+  );
+  try {
+    assert.deepEqual(await runner.tasks(randomUUID()), { deferred: true });
+    assert.deepEqual(await runner.projects(), { projects: [] });
+    await assert.rejects(() => runner.saveTask({}), /Pause local work/);
+    assert.equal(calls, 0);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

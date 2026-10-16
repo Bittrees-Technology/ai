@@ -30,6 +30,8 @@ Enable automatic additions for an explicit destination project at CRM → Local 
 
 ## Task editing and synchronization
 
-In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every15seconds while visible. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
+In Connections, choose a task-enabled project to view its AI draft/review tasks. New CRM task and Edit save directly to CRM; the list refreshes every 15 seconds while visible and local work is idle. You can change the name, brief, due date and Open/Done status without changing the task owner, sharing or linked records. No model is needed for these edits.
 
 CRM remains authoritative. Every edit includes the version you read and a retry identifier. Conflicts preserve the local draft and require reopening the current task; exact retries do not create duplicates. A changed task also blocks a stale worker result. Closed app/offline state cannot continuously sync; the last successful sync time is displayed. Task runs appear in the owner-only workflow catalogue as metadata; names, briefs and results are not copied there. The catalogue does not start task execution. Existing project grants still govern access.
+
+Task-list refresh and manual edits wait while investor research or project work is running, so dashboard polling cannot interrupt the shared CRM connection. Existing snapshots remain visible until the next successful refresh.

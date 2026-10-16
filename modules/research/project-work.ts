@@ -81,7 +81,8 @@ export class ProjectWork {
   }
   async projects() {
     // Progress polling must not compete with the active worker for its connector.
-    if (this.active) return this.projectChoices;
+    if (this.active || this.admission().reason === "investor research running")
+      return this.projectChoices;
     const c = await this.connector.status();
     if (!c) return { projects: [] };
     this.projectChoices = await this.connector.project(
@@ -93,11 +94,15 @@ export class ProjectWork {
   }
   async tasks(projectId: string) {
     z.uuid().parse(projectId);
+    if (this.active || this.admission().reason === "investor research running")
+      return { deferred: true };
     const c = await this.connector.status();
     if (!c) throw new Error("Connect CRM first.");
     return this.connector.project("tasks.list", { projectId }, c.datasetId);
   }
   async saveTask(raw: unknown) {
+    if (this.active || this.admission().reason === "investor research running")
+      throw new Error("Pause local work before editing CRM tasks.");
     const a = z
       .strictObject({
         projectId: z.uuid(),
