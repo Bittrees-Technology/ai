@@ -16,6 +16,8 @@ export function InvestorResearchPanel({
     [brief, setBrief] = useState(
       "Find US investment decision-makers for BBRF-PT, a proposed Bitcoin-reserve and Portuguese real-estate vehicle. Prioritize Bitcoin investors, family-office allocators and alternative real-estate investors. Distinguish direct capital allocators from adjacent prospects; do not infer interest or accredited status.",
     );
+  const [extensions, setExtensions] = useState<Record<string, string>>({});
+  const [totalTargets, setTotalTargets] = useState<Record<string, number>>({});
   const refresh = async () => setStatus(await api("/v1/research/investors"));
   useEffect(() => {
     void refresh().catch(onError);
@@ -129,6 +131,13 @@ export function InvestorResearchPanel({
             {j.done.length} pages processed · {j.queue.length} queued ·{" "}
             {j.failures.length} source/model failures · {j.skipped} skipped
           </p>
+          {j.totalPeopleTarget && (
+            <p>
+              Dataset total: {j.crmProgress?.researchPeople ?? "Not checked"} /{" "}
+              {j.totalPeopleTarget} people. This includes other runs and manual
+              additions; CRM imports are counted separately.
+            </p>
+          )}
           {j.error && (
             <p role="status">
               {j.error === "This operation was aborted"
@@ -167,6 +176,75 @@ export function InvestorResearchPanel({
                 Resume research
               </button>
             )
+          )}
+          {j.state !== "running" && (
+            <details>
+              <summary>Add sources and continue this run</summary>
+              <fieldset
+                disabled={
+                  busy ||
+                  status.jobs.some((job: any) => job.state === "running")
+                }
+              >
+                <label>
+                  Total people target for the connected dataset
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={totalTargets[j.id] ?? j.totalPeopleTarget ?? 200}
+                    onChange={(e) =>
+                      setTotalTargets({
+                        ...totalTargets,
+                        [j.id]: Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Additional approved public sources — one per line
+                  <textarea
+                    rows={8}
+                    value={extensions[j.id] || ""}
+                    onChange={(e) =>
+                      setExtensions({ ...extensions, [j.id]: e.target.value })
+                    }
+                  />
+                </label>
+                <p>
+                  Saved results and duplicate checks are preserved. Only new
+                  HTTPS sources are queued; the same 100 starting-source,
+                  8-page-per-host and 300-page run limits apply. Research stops
+                  at the dataset target or when sources run out.
+                </p>
+                <button
+                  disabled={!extensions[j.id]?.trim()}
+                  onClick={() =>
+                    void act(async () => {
+                      if (
+                        !confirm(
+                          "Add these public sources and continue this saved run toward the dataset total? Existing CRM permissions and qualification requirements remain in effect.",
+                        )
+                      )
+                        return;
+                      await api("/v1/research/investors/extend", "POST", {
+                        confirmed: true,
+                        id: j.id,
+                        urls: extensions[j.id]!.split(/\s+/).filter(Boolean),
+                        totalPeopleTarget:
+                          totalTargets[j.id] ?? j.totalPeopleTarget ?? 200,
+                      });
+                      setExtensions((previous) => ({
+                        ...previous,
+                        [j.id]: "",
+                      }));
+                    })
+                  }
+                >
+                  Add sources and continue research
+                </button>
+              </fieldset>
+            </details>
           )}
           {!!j.duplicateReviews?.length && (
             <details>

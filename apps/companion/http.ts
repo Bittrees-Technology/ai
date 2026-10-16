@@ -809,6 +809,9 @@ export function localApi({
     }),
   );
   if (investorResearch) {
+    app.post("/v1/research/investors/extend", async (req, res) =>
+      res.json(await investorResearch.extend(req.body)),
+    );
     app.post("/v1/research/investors/start", async (req, res) =>
       res.json(await investorResearch.create(req.body)),
     );

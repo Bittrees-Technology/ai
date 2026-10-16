@@ -39,12 +39,41 @@ test("local synchronization projects only safe metadata and never sends research
               brief: "Private brief",
             },
             state: "running",
+            progress: {
+              peopleSaved: 4,
+              target: 74,
+              datasetPeople: 130,
+              datasetTarget: 200,
+              crmPeople: 126,
+              pagesProcessed: 64,
+              queued: 18,
+              failures: 14,
+              skipped: 153,
+              measuredAt: "2026-10-16T17:00:00.000Z",
+            },
           },
         ] as any,
     );
     await flow.sync();
     assert.deepEqual(captured.input.entries, [
-      { id, revision: 2, kind: "investor-research", state: "running" },
+      {
+        id,
+        revision: 2,
+        kind: "investor-research",
+        state: "running",
+        progress: {
+          peopleSaved: 4,
+          target: 74,
+          datasetPeople: 130,
+          datasetTarget: 200,
+          crmPeople: 126,
+          pagesProcessed: 64,
+          queued: 18,
+          failures: 14,
+          skipped: 153,
+          measuredAt: "2026-10-16T17:00:00.000Z",
+        },
+      },
     ]);
     assert.ok(!JSON.stringify(captured).includes("Private"));
     assert.ok(!JSON.stringify(captured).includes("private.example"));

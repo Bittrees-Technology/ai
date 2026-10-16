@@ -14,3 +14,6 @@ CREATE TABLE IF NOT EXISTS workflow_local_catalogue (
 );
 
 ALTER TABLE workflow_local_catalogue ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'ready' CHECK(state IN ('ready','running','paused','completed','failed','cancelled','complete','needs_attention','sources_exhausted'));
+
+-- Bounded numeric telemetry only; the source catalogue is owner-filtered.
+ALTER TABLE workflow_local_catalogue ADD COLUMN IF NOT EXISTS progress jsonb;

@@ -43,7 +43,7 @@ export default async function handler(req: any, res: any) {
       !body ||
       JSON.stringify(body).length >
         (body.action === "device" && body.input?.action === "catalogue"
-          ? 24000
+          ? 64000
           : 12000)
     )
       throw Error("INVALID_INPUT");

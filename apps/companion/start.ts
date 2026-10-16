@@ -1,3 +1,4 @@
+import { researchWorkflowProgress } from "../../modules/research/workflow-progress.js";
 import { QualificationResearch } from "../../modules/research/qualification.js";
 import { LocalModelTurns } from "../../modules/models/local-turns.js";
 import { ProjectWork } from "../../modules/research/project-work.js";
@@ -354,6 +355,7 @@ const workflows = localWorkflows(
       state: job.state,
     })),
     ...investorResearch.list().map((job) => ({
+      progress: researchWorkflowProgress(job),
       id: job.id,
       revision: Math.max(1, Date.parse(job.updatedAt)),
       definition: { kind: "investor-research" },

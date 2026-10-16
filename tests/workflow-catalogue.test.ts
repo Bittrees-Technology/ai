@@ -81,3 +81,43 @@ test("unpaired devices cannot publish a catalogue or acquire execution authority
   assert.ok(queries.includes("ROLLBACK"));
   assert.ok(!queries.some((q) => q.includes("INSERT")));
 });
+
+test("research progress is bounded numeric metadata and rejects content or authority fields", () => {
+  const progress = {
+    peopleSaved: 4,
+    target: 74,
+    datasetPeople: 130,
+    datasetTarget: 200,
+    crmPeople: 126,
+    pagesProcessed: 64,
+    queued: 18,
+    failures: 14,
+    skipped: 153,
+    measuredAt: new Date().toISOString(),
+  };
+  const entry = {
+    id: randomUUID(),
+    revision: 1,
+    kind: "investor-research",
+    progress,
+  };
+  assert.deepEqual(
+    localCatalogueSchema.parse({ ...input, entries: [entry] }).entries[0]!
+      .progress,
+    progress,
+  );
+  for (const patch of [
+    { peopleSaved: -1 },
+    { queued: 10001 },
+    { target: 201 },
+    { names: ["Private Person"] },
+    { urls: ["https://private.example"] },
+    { owner: "other" },
+  ])
+    assert.throws(() =>
+      localCatalogueSchema.parse({
+        ...input,
+        entries: [{ ...entry, progress: { ...progress, ...patch } }],
+      }),
+    );
+});

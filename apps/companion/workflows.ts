@@ -1,3 +1,7 @@
+import {
+  workflowProgressSchema,
+  type WorkflowProgress,
+} from "../../modules/research/workflow-progress.js";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { hostname } from "node:os";
@@ -16,6 +20,7 @@ export function localWorkflows(
     revision: number;
     definition: { kind: string };
     state?: string;
+    progress?: WorkflowProgress;
   }[] = () => [],
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
@@ -81,6 +86,9 @@ export function localWorkflows(
             revision: t.revision,
             kind: t.definition.kind,
             ...(t.state ? { state: t.state } : {}),
+            ...(t.progress
+              ? { progress: workflowProgressSchema.parse(t.progress) }
+              : {}),
           })),
         },
         s.controlToken,
