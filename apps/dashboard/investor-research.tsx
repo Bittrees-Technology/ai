@@ -43,9 +43,10 @@ export function InvestorResearchPanel({
       <p>
         The local model searches the public sites you list and related team,
         about and contact pages on those exact hosts. It adds sourced people and
-        organizations to the connected private CRM dataset through MCP. CRM
-        additions are automatic only for a project you explicitly enabled in
-        CRM. It cannot contact anyone or approve training.
+        organizations to the connected private CRM dataset through MCP. With an
+        enabled destination project, CRM also adds new records automatically to
+        People and Organizations. Otherwise they remain research only. It cannot
+        contact anyone or approve training.
       </p>
       <fieldset
         disabled={busy || status.jobs.some((j: any) => j.state === "running")}
@@ -100,7 +101,7 @@ export function InvestorResearchPanel({
             void act(async () => {
               if (
                 !confirm(
-                  "Start local research and save sourced additions into the connected private dataset? New leads may also be added to the CRM project where you explicitly enabled automatic additions.",
+                  "Start local research? New entries are saved as research. CRM also adds them to People and Organizations when automatic additions are enabled for this dataset.",
                 )
               )
                 return;
@@ -124,7 +125,7 @@ export function InvestorResearchPanel({
         <section key={j.id}>
           <h4>{j.input.brief.slice(0, 80)}</h4>
           <p>
-            {j.state} · {j.added} / {j.input.target} people added ·{" "}
+            {j.state} · {j.added} / {j.input.target} people saved as research ·{" "}
             {j.done.length} pages processed · {j.queue.length} queued ·{" "}
             {j.failures.length} source/model failures · {j.skipped} skipped
           </p>

@@ -159,6 +159,8 @@ test("a save without confirmed source records is not counted as completed work",
 test("decision-maker research excludes support and ambiguous junior roles", () => {
   for (const title of [
     "Client Service Associate",
+    "Executive Business Partner to the CEO",
+    "Chief of Staff",
     "Account Administration Specialist",
     "CFO",
     "COO",

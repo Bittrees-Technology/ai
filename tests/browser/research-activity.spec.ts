@@ -17,6 +17,14 @@ test("activity separates saved research, live model work and interrupted jobs", 
       phase: "Local model extracting source evidence",
       url: "https://example.org/about",
     },
+    crmProgress: {
+      crmPeople: 0,
+      crmOrganizations: 0,
+      researchPeople: 1,
+      researchOrganizations: 1,
+      checkedAt: "2026-10-16T12:00:00Z",
+      entryIds: [],
+    },
     results: [
       {
         id: "person",
@@ -37,6 +45,14 @@ test("activity separates saved research, live model work and interrupted jobs", 
             id: "paused",
             state: "paused",
             added: 0,
+            crmProgress: {
+              crmPeople: 0,
+              crmOrganizations: 0,
+              researchPeople: 1,
+              researchOrganizations: 1,
+              checkedAt: "2026-10-16T12:00:00Z",
+              entryIds: [],
+            },
             results: [],
             error: "This operation was aborted",
           },
@@ -47,7 +63,7 @@ test("activity separates saved research, live model work and interrupted jobs", 
   );
   await page.goto("/?research-activity");
   await expect(
-    page.getByText("1 of 5 people saved", { exact: false }),
+    page.getByText("1 of 5 people saved as research", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByText("Local model extracting source evidence", { exact: false }),
@@ -59,6 +75,12 @@ test("activity separates saved research, live model work and interrupted jobs", 
   await expect(
     page.getByRole("link", { name: "Source", exact: true }),
   ).toHaveAttribute("href", "https://example.org/team");
+  await expect(
+    page.getByText("In CRM: 0 people · 0 organizations").first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("CRM addition not confirmed", { exact: false }),
+  ).toBeVisible();
   for (const width of [1180, 390]) {
     await page.setViewportSize({ width, height: 900 });
     expect(

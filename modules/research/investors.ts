@@ -1,3 +1,4 @@
+import { crmProgress } from "./crm-progress.js";
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -60,6 +61,7 @@ type Job = {
   model?: PinnedModel;
   error?: string;
   updatedAt: string;
+  crmProgress?: ReturnType<typeof crmProgress>;
   activity?: { phase: string; url?: string; since: string };
   results?: {
     id: string;
@@ -72,7 +74,7 @@ type Job = {
 // A sourced title is still only a research lead, not proof of allocation authority.
 export function investmentRole(title: string): boolean {
   if (
-    /\b(advisor|adviser|assistant|relations|legal|counsel|compliance|marketing|administrat\w*|accountant|cfo|coo|cto|human resources|client service|operating officer|financial officer)\b/i.test(
+    /\b(advisor|adviser|assistant|relations|legal|counsel|compliance|marketing|administrat\w*|accountant|cfo|coo|cto|human resources|client service|business partner|chief of staff|operating officer|financial officer)\b/i.test(
       title,
     )
   )
@@ -205,6 +207,8 @@ export class InvestorResearch {
       throw new Error(
         "Dataset connection changed. Restore the original connection before resuming.",
       );
+    j.crmProgress = crmProgress(s);
+    this.save(j);
     return s;
   }
   private activity(j: Job, phase: string, url?: string) {
