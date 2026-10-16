@@ -9,7 +9,7 @@ import { LocalModelTurns } from "../modules/models/local-turns.js";
 import { Vault } from "../modules/storage/vault.js";
 async function fixture(
   mode: "plan" | "work",
-  outcome: "ok" | "refuse" | "conflict",
+  outcome: "ok" | "refuse" | "conflict" | "verbose" | "alwaysVerbose",
 ) {
   const dir = mkdtempSync(join(tmpdir(), "project-work-"));
   const projectId = randomUUID(),
@@ -52,6 +52,7 @@ async function fixture(
       throw Error("Unexpected tool");
     },
   };
+  let generations = 0;
   const runtime: any = {
     pin: async () => ({
       digest: "pinned",
@@ -67,6 +68,7 @@ async function fixture(
         !JSON.stringify(format).includes("maxLength"),
         "large string bounds are validated after generation, not compiled into Ollama grammar",
       );
+      generations++;
       return JSON.stringify(
         mode === "plan"
           ? {
@@ -81,9 +83,12 @@ async function fixture(
           : {
               canComplete: outcome !== "refuse",
               result:
-                outcome === "refuse"
-                  ? "This task requires sending a message."
-                  : "Draft: Which geographies do you invest in?",
+                outcome === "alwaysVerbose" ||
+                (outcome === "verbose" && generations === 1)
+                  ? "Long result. ".repeat(400)
+                  : outcome === "refuse"
+                    ? "This task requires sending a message."
+                    : "Draft: Which geographies do you invest in?",
             },
       );
     },
@@ -114,7 +119,7 @@ async function fixture(
       );
     }
     while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
-    return { calls, status: runner.status()[0] };
+    return { calls, generations, status: runner.status()[0] };
   } finally {
     await runner.close();
     rmSync(dir, { recursive: true, force: true });
@@ -312,4 +317,18 @@ test("automatic CRM worker completes real results, resumes watching after restar
     await runner.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("an oversized result gets one bounded repair before its CRM save", async () => {
+  const { status, generations, calls } = await fixture("work", "verbose");
+  assert.equal(status.state, "complete");
+  assert.equal(generations, 2);
+  assert.equal(calls.filter((c) => c.name === "tasks.finish").length, 1);
+});
+
+test("repeated oversized output is not truncated or marked complete", async () => {
+  const { status, generations, calls } = await fixture("work", "alwaysVerbose");
+  assert.equal(status.state, "needs_attention");
+  assert.equal(generations, 2);
+  assert.equal(calls.filter((c) => c.name === "tasks.finish").length, 0);
 });
