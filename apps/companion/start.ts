@@ -1,3 +1,7 @@
+import {
+  CrmDatasetConnector,
+  datasetKeychainEntry,
+} from "../../modules/connectors/crm-dataset.js";
 import { localWorkflows } from "./workflows.js";
 import {
   AutoNoteApprovalConnector,
@@ -115,6 +119,10 @@ const importDirectory = join(directory, "model-imports");
 await mkdir(importDirectory, { recursive: true, mode: 0o700 });
 const imports = new ImportJobs(importDirectory, new Vault(key), pickModelFiles);
 await imports.maintain();
+const dataset = new CrmDatasetConnector(
+  JSON.stringify(owner),
+  datasetKeychainEntry("personal"),
+);
 const crm = new CrmConnector(
     JSON.stringify(owner),
     crmKeychainEntry("personal"),
@@ -298,6 +306,7 @@ server.on(
     memory,
     owner,
     crm,
+    dataset,
     sources,
     autonote,
     autonoteApproval,

@@ -1,3 +1,4 @@
+import type { CrmDatasetConnector } from "../../modules/connectors/crm-dataset.js";
 import { memorySelectionSchema } from "../../modules/contracts/index.js";
 import { memorySelectionGuard } from "./memory-selection.js";
 import { memoryUseAppsSchema } from "../../modules/memory/scope.js";
@@ -82,6 +83,7 @@ export interface LocalApiOptions {
   mailSend?: MailSendConnector;
   mailSources?: MailTasks;
   crm?: CrmConnector;
+  dataset?: CrmDatasetConnector;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
   autonoteApproval?: AutoNoteApprovalConnector;
@@ -112,6 +114,7 @@ export function localApi({
   runtime,
   cancelRun,
   crm,
+  dataset,
   roles,
   news,
   mail,
@@ -179,6 +182,11 @@ export function localApi({
   app.post(
     "/v1/connections/mail-send/prepare",
     express.json({ limit: 1500000, strict: true }),
+  );
+  // Match the bounded CRM dataset envelope without widening other local routes.
+  app.post(
+    "/v1/connections/dataset/save",
+    express.json({ limit: 120000, strict: true }),
   );
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/private-relay", (_req, res) =>
@@ -722,6 +730,31 @@ export function localApi({
       connectorsEnabled: !!crm || !!autonote || !!roles || !!mail,
     }),
   );
+  app.get("/v1/connections/dataset", async (_req, res) =>
+    res.json({
+      available: !!dataset,
+      connection: dataset ? await dataset.status() : null,
+    }),
+  );
+  if (dataset) {
+    app.post("/v1/connections/dataset/connect", async (req, res) =>
+      res.json(await dataset.connect(req.body)),
+    );
+    app.post("/v1/connections/dataset/read", async (req, res) =>
+      res.json(await dataset.read(req.body)),
+    );
+    app.post("/v1/connections/dataset/schema", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await dataset.schema());
+    });
+    app.post("/v1/connections/dataset/save", async (req, res) =>
+      res.json(await dataset.save(req.body)),
+    );
+    app.post("/v1/connections/dataset/forget", async (req, res) => {
+      z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
+      res.json(await dataset.forget());
+    });
+  }
   for (const [name, connector] of [
     ["crm", crm],
     ["autonote", autonote],

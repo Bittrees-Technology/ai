@@ -384,3 +384,6 @@ if (new URLSearchParams(location.search).has("autonote-browser-approval"))
 
 if (new URLSearchParams(location.search).has("autonote-browser-review"))
   void import("./autonote-browser-review.js");
+
+if (new URLSearchParams(location.search).has("crm-dataset"))
+  void import("./crm-dataset.js");
