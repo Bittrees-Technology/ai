@@ -7,6 +7,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   QualificationResearch,
   validateQualification,
+  evidenceExcerpt,
   gates,
 } from "../modules/research/qualification.js";
 import { Vault } from "../modules/storage/vault.js";
@@ -231,4 +232,29 @@ test("qualification endpoints require local authentication and reject foreign or
     await new Promise<void>((r) => server.close(() => r()));
     store.close();
   }
+});
+
+test("qualification excerpts retain a buried biography without inventing contiguous quotes", () => {
+  const biography = "Jane Smith is the investment partner based in Boston.";
+  const text =
+    "Navigation boilerplate ".repeat(400) +
+    biography +
+    " Filler".repeat(400) +
+    "Bitcoin collateral is not permitted.";
+  const excerpt = evidenceExcerpt(text, "Jane Smith", 2200);
+  assert(excerpt.includes(biography));
+  assert(excerpt.includes("Bitcoin collateral"));
+  assert(excerpt.length <= 2200);
+  const q = output();
+  q.gates.investmentRole = {
+    status: "supported",
+    evidence:
+      "Jane Smith is the investment partner based in Boston. Bitcoin collateral is not permitted.",
+    url,
+  };
+  assert.equal(
+    validateQualification(q, [{ ...page, text }], "", "Jane Smith").gates
+      .investmentRole.status,
+    "unknown",
+  );
 });
