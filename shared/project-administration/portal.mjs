@@ -1,3 +1,4 @@
+import {profileScript} from './profile-view.mjs';
 import {createHmac} from 'node:crypto';
 import {createSsoClient,seal,unseal,cookie,readCookie,nodeRequest,nodeResponse} from '../sso/client.mjs';
 import {ecosystemAccess} from './ecosystem-client.mjs';
@@ -18,7 +19,7 @@ export function createProjectAdministration(project,{env=process.env,fetcher=fet
   async current(req){return session(req);},
   async establish(identity,authTime){const value={project,identity,authTime,key:crypto.randomUUID(),expires:Math.min(now()+ttl,authTime+604800000)};return {key:value.key,cookies:[cookie('project-admin-session',seal(value,sessionSecret),Math.floor((value.expires-now())/1000),origin)]};}
  }});
- const common={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"};
+ const common={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"};
  const response=(body,status=200,type='application/json')=>new Response(type==='application/json'?JSON.stringify(body):body,{status,headers:{...common,'Content-Type':type+'; charset=utf-8'}});
  return async function handle(req){
   const u=new URL(req.url),path=u.pathname;
@@ -40,6 +41,7 @@ export function createProjectAdministration(project,{env=process.env,fetcher=fet
   }
   if(req.method!=='GET')return response({error:'Method not allowed'},405);
   if(path==='/administration'||path==='/administration/')return response(page(project),200,'text/html');
+  if(path==='/api/project-admin/profile.js')return response(profileScript,200,'text/javascript');
   if(path==='/api/project-admin/client.js')return response(clientScript,200,'text/javascript');
   if(path==='/api/project-admin/style.css')return response(styleSheet,200,'text/css');
   if(path==='/api/shared-roles-health')return response({protocol:'bittrees-roles-ecosystem-v1',project,configured:!!env.ROLES_ECOSYSTEM_REQUEST_PRIVATE_KEY&&!!env.ROLES_ECOSYSTEM_DECISION_PUBLIC_KEY,administrationSignInConfigured:!!secret});
