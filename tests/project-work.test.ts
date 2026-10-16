@@ -263,12 +263,26 @@ test("automatic CRM worker completes real results, resumes watching after restar
     );
   let runner = make();
   try {
+    await runner.create({
+      confirmed: true,
+      projectId,
+      profileId: "test",
+      mode: "work",
+    });
+    await runner.pause();
+    const manualId = runner.status()[0].id;
     await runner.configureAutomatic({
       enabled: true,
       confirmed: true,
       projectId,
       profileId: "test",
     });
+    assert.equal(
+      runner.automaticStatus().jobId,
+      manualId,
+      "continues the existing paused run",
+    );
+    assert.equal(runner.status().length, 1);
     await new Promise((r) => setImmediate(r));
     assert.equal(
       claims,

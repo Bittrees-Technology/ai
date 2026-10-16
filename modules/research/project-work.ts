@@ -111,7 +111,17 @@ export class ProjectWork {
     const choices = await this.projects();
     if (!choices.projects.some((p: any) => p.id === a.projectId && p.tasks))
       throw new Error("Enable task permission for this project in CRM first.");
-    if (this.list().length >= 50)
+    const existing = this.list()
+      .filter(
+        (j) =>
+          j.state === "paused" &&
+          j.datasetId === c.datasetId &&
+          j.input.mode === "work" &&
+          j.input.projectId === a.projectId &&
+          j.input.profileId === a.profileId,
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (!existing && this.list().length >= 50)
       throw new Error("Project work history is full.");
     this.profile(a.profileId);
     if (
@@ -120,7 +130,7 @@ export class ProjectWork {
       this.automaticStatus().enabled
     )
       throw new Error("Task-worker settings changed; refresh before enabling.");
-    const j = {
+    const j = existing || {
       id: randomUUID(),
       datasetId: c.datasetId,
       input: {
@@ -136,6 +146,11 @@ export class ProjectWork {
       receipts: [],
       pending: [],
     };
+    // Continue the exact paused run so staged results/claim IDs are not orphaned.
+    j.automatic = true;
+    j.state = "waiting";
+    j.nextCheckAt = 0;
+    delete j.error;
     this.save(j);
     this.saveAutomatic({
       enabled: true,
