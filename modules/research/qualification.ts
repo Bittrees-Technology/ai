@@ -310,6 +310,7 @@ type Job = {
   failures: { entryId: string; reason: string }[];
   pending?: any;
   previousQualification?: any;
+  retentionChecked?: boolean;
   activity?: string;
   error?: string;
   updatedAt: string;
@@ -495,6 +496,10 @@ export class QualificationResearch {
       signal.throwIfAborted();
       if (this.admission().reason !== "ready")
         throw new Error("Local execution paused or unavailable");
+      if (j.pending && !j.retentionChecked)
+        throw new Error(
+          "Pending assessment predates evidence-retention checks; review required before any CRM write",
+        );
       if (!j.pending) {
         const ctx = await this.ctx(j),
           row = ctx.entries.find((r: any) => r.entry.id === entryId);
@@ -619,6 +624,7 @@ export class QualificationResearch {
           throw new Error(
             "Profile changed during research; review before resuming",
           );
+        j.retentionChecked = true;
         j.previousQualification = row.entry.research?.qualification;
         j.pending = {
           projectId: j.input.projectId,
@@ -662,6 +668,7 @@ export class QualificationResearch {
       j.done.push(entryId);
       delete j.pending;
       delete j.previousQualification;
+      delete j.retentionChecked;
       this.save(j);
     }
     j.state = "complete";

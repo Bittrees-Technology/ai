@@ -498,3 +498,20 @@ test("worker does not overwrite CRM when prior evidence disappears", async () =>
     await f.cleanup();
   }
 });
+
+test("pre-upgrade pending assessments cannot bypass retention validation", async () => {
+  const f = await fixture(false, true);
+  try {
+    const old = f.worker.list()[0]!;
+    delete old.retentionChecked;
+    (f.worker as any).save(old);
+    await f.worker.resume(f.created.id);
+    for (let i = 0; i < 100 && f.worker.isRunning; i++)
+      await new Promise((r) => setTimeout(r, 5));
+    assert.equal(f.writes, 1);
+    assert.equal(f.worker.status()[0]!.state, "needs_attention");
+    assert.match(f.worker.status()[0]!.error!, /predates evidence-retention/);
+  } finally {
+    await f.cleanup();
+  }
+});
