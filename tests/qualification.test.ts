@@ -375,6 +375,10 @@ test("director title expansion retains person, quotation and current-role requir
     "Jane Smith Managing Director of Investor Relations",
     "Jane Smith Director of Investment Operations",
     "Jane Smith former Managing Director of Investments",
+    "Jane Smith was Managing Director of Investments",
+    "Jane Smith formerly Managing Director of Investments",
+    "Jane Smith served as Managing Director of Investments",
+    "Jane Smith ex-Managing Director of Investments",
     "Jane Smith is not Managing Director of Investments",
     "Other Person Managing Director of Investments",
   ]) {

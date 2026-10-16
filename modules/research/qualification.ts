@@ -116,6 +116,13 @@ function explicitRequirement(
     );
   switch (key) {
     case "investmentRole":
+      // A verbatim historical title does not establish a current role.
+      if (
+        /\b(was|were|formerly|served)\b|\bex[-\s]+(?:managing\s+)?director/i.test(
+          quote,
+        )
+      )
+        return false;
       // Named investment leadership titles also put the responsibility after
       // the position (e.g. "Managing Director of Investments"). Do not treat
       // an unqualified "Managing Director" as investment-role evidence.
