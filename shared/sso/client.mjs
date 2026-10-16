@@ -18,13 +18,15 @@ export function unseal(value,secret){try{const [payload,signature,...rest]=value
 export async function body(req){if(Number(req.headers.get('content-length')||0)>8192)throw Error('Request too large');const text=await req.text();if(text.length>8192)throw Error('Request too large');return JSON.parse(text||'{}');}
 
 /** Server-side adapter keeps each app's session and authorization model intact. */
-export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,fetcher=fetch,callbackPath='/api/sso/callback'}){
+export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,fetcher=fetch,callbackPath='/api/sso/callback',cookiePrefix='bt-sso'}){
  const configured=enabled===true&&typeof secret==='string'&&secret.length>=32&&!!clientId&&!!origin&&!!issuer;
  if(configured){safeOrigin(origin);safeOrigin(issuer);}
  if(!['/api/sso/callback','/api/project-admin/sso/callback'].includes(callbackPath))throw Error('Invalid callback path');
+ if(!/^[a-z][a-z0-9-]{2,48}$/.test(cookiePrefix))throw Error('Invalid cookie prefix');
+ const name=suffix=>cookiePrefix+'-'+suffix;
  const callback=()=>origin+callbackPath;
  async function call(action,data){const r=await fetcher(issuer+'/api/sso/'+action,{method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),headers:{'Content-Type':'application/json',Authorization:'Bearer '+secret},body:JSON.stringify({...data,client_id:clientId,redirect_uri:callback()})});if(!r.ok)throw Error('Shared sign-in unavailable');return action==='profile-read'?body(r):r.json();}
- function transaction(req){const t=unseal(readCookie(req,'bt-sso-flow',origin),secret);if(!t||!Number.isFinite(t.expires)||t.expires<Date.now()||!equal(t.state,new URL(req.url).searchParams.get('state')))throw Error('Sign-in request expired');return t;}
+ function transaction(req){const t=unseal(readCookie(req,name('flow'),origin),secret);if(!t||!Number.isFinite(t.expires)||t.expires<Date.now()||!equal(t.state,new URL(req.url).searchParams.get('state')))throw Error('Sign-in request expired');return t;}
  return async function handle(req){
   const url=new URL(req.url),action=url.pathname.split('/').pop();
   if(!configured)return action==='status'?json({configured:false}):json({error:'Shared sign-in is not configured'},503);
@@ -34,7 +36,7 @@ export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,f
   let t;
   try{
    let session=await adapter.current(req);
-   const proof=unseal(readCookie(req,'bt-sso-proof',origin),secret);
+   const proof=unseal(readCookie(req,name('proof'),origin),secret);
    if(session&&proof&&equal(proof.sessionHash,digest(session.key))&&Number.isFinite(proof.authTime))session={...session,authTime:Math.min(session.authTime,proof.authTime)};
    if(action==='profile'){
     if(!session)return json({error:'Sign in required'},401);
@@ -44,17 +46,17 @@ export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,f
     return json(profileEnvelope(result));
    }
    if(action==='status'){
-    const published=readCookie(req,'bt-sso-published',origin),suppressed=readCookie(req,'bt-sso-skip',origin);
+    const published=readCookie(req,name('published'),origin),suppressed=readCookie(req,name('skip'),origin);
     const next=session?(published===digest(session.key)?null:'publish'):(suppressed?null:'resume');
     const response=json({configured:true,action:next});
-    if(suppressed==='once')response.headers.append('Set-Cookie',cookie('bt-sso-skip','',0,origin));
+    if(suppressed==='once')response.headers.append('Set-Cookie',cookie(name('skip'),'',0,origin));
     return response;
    }
    if(action==='start'){
     const mode=url.searchParams.get('mode');if(!['publish','resume'].includes(mode)||mode==='publish'&&!session)throw Error('Sign in locally first');
     t={mode,state:random(),verifier:random(),returnTo:returnPath(url.searchParams.get('return_to')),sessionHash:session?digest(session.key):null,expires:Date.now()+300000};
     const auth=new URL(issuer+'/api/sso/authorize');for(const [k,v] of Object.entries({client_id:clientId,redirect_uri:callback(),state:t.state,code_challenge:pkce(t.verifier),code_challenge_method:'S256',mode}))auth.searchParams.set(k,v);
-    return redirect(auth.href,[cookie('bt-sso-flow',seal(t,secret),300,origin)]);
+    return redirect(auth.href,[cookie(name('flow'),seal(t,secret),300,origin)]);
    }
    if(action==='publish'){
     t=transaction(req);if(t.mode!=='publish'||!session||!equal(t.sessionHash,digest(session.key)))throw Error('Local sign-in changed');
@@ -63,29 +65,29 @@ export function createSsoClient({clientId,origin,issuer,secret,enabled,adapter,f
     return redirect(accept.href);
    }
    if(action==='callback'){
-    t=transaction(req);const done=[cookie('bt-sso-flow','',0,origin)];
-    if(url.searchParams.get('error'))return redirect(origin+t.returnTo,[...done,cookie('bt-sso-skip','once',300,origin)]);
+    t=transaction(req);const done=[cookie(name('flow'),'',0,origin)];
+    if(url.searchParams.get('error'))return redirect(origin+t.returnTo,[...done,cookie(name('skip'),'once',300,origin)]);
     if(t.mode==='publish'){
      if(!session||!equal(t.sessionHash,digest(session.key))||url.searchParams.get('published')!=='1')throw Error('Local sign-in changed');
-     return redirect(origin+t.returnTo,[...done,cookie('bt-sso-published',digest(session.key),604800,origin),cookie('bt-sso-skip','',0,origin)]);
+     return redirect(origin+t.returnTo,[...done,cookie(name('published'),digest(session.key),604800,origin),cookie(name('skip'),'',0,origin)]);
     }
     // Do not replace an account signed in while the handoff was in progress.
     if(session)return redirect(origin+t.returnTo,done);
     const proof=await call('redeem',{code:url.searchParams.get('code'),code_verifier:t.verifier});
     if(proof.issuer!==issuer||proof.audience!==clientId||!Number.isFinite(proof.auth_time)||proof.auth_time>Date.now()+30000||proof.auth_time<Date.now()-604800000)throw Error('Invalid shared identity');
     const established=await adapter.establish(identity(proof.identity),proof.auth_time,req);
-    return redirect(origin+t.returnTo,[...done,...established.cookies,cookie('bt-sso-published',digest(established.key),604800,origin),cookie('bt-sso-proof',seal({sessionHash:digest(established.key),authTime:proof.auth_time},secret),604800,origin),cookie('bt-sso-skip','',0,origin)]);
+    return redirect(origin+t.returnTo,[...done,...established.cookies,cookie(name('published'),digest(established.key),604800,origin),cookie(name('proof'),seal({sessionHash:digest(established.key),authTime:proof.auth_time},secret),604800,origin),cookie(name('skip'),'',0,origin)]);
    }
    return json({error:'Not found'},404);
   }catch{
    // Ordinary local sign-in remains available, including when the issuer is down.
    if(action==='profile')return json({error:'Shared profile unavailable'},503);
    if(action==='status')return json({configured:true,action:null});
-   return redirect(origin+returnPath(t?.returnTo),[cookie('bt-sso-flow','',0,origin),cookie('bt-sso-skip','once',300,origin)]);
+   return redirect(origin+returnPath(t?.returnTo),[cookie(name('flow'),'',0,origin),cookie(name('skip'),'once',300,origin)]);
   }
  };
 }
 
 export async function nodeRequest(req,origin){const h=new Headers();for(const [k,v] of Object.entries(req.headers))if(v!==undefined)h.set(k,Array.isArray(v)?v.join(','):String(v));let payload;if(req.method!=='GET'&&req.method!=='HEAD')payload=typeof req.body==='string'?req.body:JSON.stringify(req.body||{});return new Request(new URL(req.url,origin),{method:req.method,headers:h,body:payload});}
 export async function nodeResponse(response,res){res.status(response.status);for(const [k,v] of response.headers)if(k!=='set-cookie')res.setHeader(k,v);const values=response.headers.getSetCookie();if(values.length)res.setHeader('Set-Cookie',values);return res.end(await response.text());}
-export function suppressSso(res,origin){const value=cookie('bt-sso-skip','1',604800,origin);const existing=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(Array.isArray(existing)?existing:existing?[existing]:[]),value,cookie('bt-sso-published','',0,origin)]);}
+export function suppressSso(res,origin,prefix='bt-sso'){const value=cookie(prefix+'-skip','1',604800,origin);const existing=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(Array.isArray(existing)?existing:existing?[existing]:[]),value,cookie(prefix+'-published','',0,origin)]);}
