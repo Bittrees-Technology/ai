@@ -15,10 +15,24 @@ async function setup() {
     readDataset = dataset,
     url = "";
   const seen: string[] = [];
+  let contextEntries: any[] = [];
+  let verificationDenied = false;
+  let projectReads = 0;
   const run = new InvestorResearch(
     join(dir, "jobs.db"),
     new Vault(randomBytes(32)),
     {
+      project: async (name: string, args: any, expected: string) => {
+        projectReads++;
+        assert.equal(name, "qualification.context");
+        assert.equal(expected, dataset);
+        if (verificationDenied) throw Error("SOURCE_DENIED");
+        return {
+          datasetId: dataset,
+          projectId: args.projectId,
+          entries: contextEntries,
+        };
+      },
       read: async () => ({ id: readDataset, version: 1, entries: rows }),
       append: async (a: any) => {
         rows.push(...a.entries);
@@ -85,6 +99,15 @@ async function setup() {
     idle,
     seen,
     rows,
+    setContext(entries: any[]) {
+      contextEntries = entries;
+    },
+    denyVerification() {
+      verificationDenied = true;
+    },
+    projectReads() {
+      return projectReads;
+    },
     changeDataset() {
       readDataset = randomUUID();
     },
@@ -147,6 +170,102 @@ test("extend rejects unconfirmed, insecure, processed, over-budget and changed-d
     f.changeDataset();
     await assert.rejects(f.run.extend(base), /connection changed/);
     assert.deepEqual(f.seen, ["https://old.example/team"]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("verified target is independent of research batch and requires current source labels, all gates and organization mapping", async () => {
+  const f = await setup();
+  try {
+    const project = randomUUID(),
+      org = randomUUID(),
+      record = randomUUID();
+    const gates = Object.fromEntries(
+      [
+        "investmentRole",
+        "individualUS",
+        "bitcoinLeverage",
+        "crossBorder",
+        "vehicle",
+        "ticket",
+      ].map((k) => [k, { status: "supported" }]),
+    );
+    const valid = {
+      entry: {
+        id: randomUUID(),
+        kind: "people",
+        name: "Private Person",
+        organizationId: org,
+        research: { qualification: { status: "Qualified", gates } },
+      },
+      record: {
+        id: record,
+        investorVerification: "Fully verified",
+        category: "BBRF-PT | Qualified",
+      },
+    };
+    f.setContext([
+      {
+        entry: { id: org, kind: "organizations" },
+        record: { id: randomUUID() },
+      },
+      valid,
+      valid,
+      {
+        ...valid,
+        entry: { ...valid.entry, organizationId: "unmapped" },
+        record: {
+          id: randomUUID(),
+          investorVerification: "Fully verified",
+          category: "BBRF-PT | Qualified",
+        },
+      },
+      {
+        ...valid,
+        record: { id: randomUUID(), investorVerification: "Incomplete" },
+      },
+    ]);
+    await f.run.extend({
+      confirmed: true,
+      id: f.run.status()[0]!.id,
+      urls: ["https://new.example/team"],
+      additionalPeople: 1,
+      verificationProjectId: project,
+      verificationTarget: 200,
+    });
+    await f.idle();
+    const j = (await f.run.workflowEntries())[0]!;
+    assert.equal(j.input.target, 1);
+    assert.equal(j.totalPeopleTarget, undefined);
+    assert.equal(j.verificationTarget, 200);
+    assert.equal(j.verificationProgress?.fullyVerifiedPeople, 1);
+    assert.equal(j.verificationProgress?.verificationAvailable, true);
+    f.denyVerification();
+    const stale = (await f.run.workflowEntries())[0]!;
+    assert.equal(stale.verificationProgress?.fullyVerifiedPeople, 1);
+    assert.equal(stale.verificationProgress?.verificationAvailable, false);
+  } finally {
+    await f.close();
+  }
+});
+test("missing qualification permission rejects a verified-target extension without starting research", async () => {
+  const f = await setup();
+  try {
+    f.denyVerification();
+    await assert.rejects(
+      f.run.extend({
+        confirmed: true,
+        id: f.run.status()[0]!.id,
+        urls: ["https://new.example/team"],
+        additionalPeople: 1,
+        verificationProjectId: randomUUID(),
+        verificationTarget: 200,
+      }),
+      /SOURCE_DENIED/,
+    );
+    assert.deepEqual(f.seen, ["https://old.example/team"]);
+    assert.equal(f.run.status()[0]!.input.target, 10);
   } finally {
     await f.close();
   }

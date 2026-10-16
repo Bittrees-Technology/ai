@@ -15,13 +15,23 @@ export function localWorkflows(
   directory: string,
   vault: Vault,
   models: () => string[],
-  templates: () => {
-    id: string;
-    revision: number;
-    definition: { kind: string };
-    state?: string;
-    progress?: WorkflowProgress;
-  }[] = () => [],
+  templates: () =>
+    | {
+        id: string;
+        revision: number;
+        definition: { kind: string };
+        state?: string;
+        progress?: WorkflowProgress;
+      }[]
+    | Promise<
+        {
+          id: string;
+          revision: number;
+          definition: { kind: string };
+          state?: string;
+          progress?: WorkflowProgress;
+        }[]
+      > = () => [],
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
   let coordinatorVault: Promise<Vault> | undefined;
@@ -81,7 +91,7 @@ export function localWorkflows(
         {
           action: "catalogue",
           observedAt: Date.now(),
-          entries: templates().map((t) => ({
+          entries: (await templates()).map((t) => ({
             id: t.id,
             revision: t.revision,
             kind: t.definition.kind,

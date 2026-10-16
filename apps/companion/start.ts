@@ -338,7 +338,7 @@ const workflows = localWorkflows(
   directory,
   new Vault(key),
   () => store.profiles(owner).map((p) => p.model),
-  () => [
+  async () => [
     ...store.templates(owner),
     ...projectWork.status().map((job) => ({
       id: job.id,
@@ -354,7 +354,7 @@ const workflows = localWorkflows(
       definition: { kind: "investor-qualification" },
       state: job.state,
     })),
-    ...investorResearch.list().map((job) => ({
+    ...(await investorResearch.workflowEntries()).map((job) => ({
       progress: researchWorkflowProgress(job),
       id: job.id,
       revision: Math.max(1, Date.parse(job.updatedAt)),

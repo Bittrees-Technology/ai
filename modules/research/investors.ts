@@ -70,6 +70,8 @@ type Job = {
   updatedAt: string;
   crmProgress?: ReturnType<typeof crmProgress>;
   totalPeopleTarget?: number;
+  verificationProjectId?: string;
+  verificationTarget?: number;
   activity?: { phase: string; url?: string; since: string };
   results?: {
     id: string;
@@ -100,6 +102,14 @@ export function investmentRole(title: string): boolean {
 export class InvestorResearch {
   private db: Database.Database;
   private active?: { abort: AbortController; done: Promise<void> };
+  private verificationProgress = new Map<
+    string,
+    {
+      fullyVerifiedPeople?: number;
+      verificationCheckedAt?: string;
+      verificationAvailable: boolean;
+    }
+  >();
   private extending = false;
   private pauseReason = "Paused by request. Resume to continue.";
   constructor(
@@ -217,8 +227,21 @@ export class InvestorResearch {
           confirmed: z.literal(true),
           id: z.uuid(),
           urls: z.array(z.url()).min(1).max(100),
-          totalPeopleTarget: z.number().int().min(1).max(200),
+          totalPeopleTarget: z.number().int().min(1).max(200).optional(),
+          additionalPeople: z.number().int().min(1).max(200).optional(),
+          verificationProjectId: z.uuid().optional(),
+          verificationTarget: z.number().int().min(1).max(200).optional(),
         })
+        .refine(
+          (a) =>
+            (a.totalPeopleTarget === undefined) !==
+            (a.additionalPeople === undefined),
+          "Choose one research batch target",
+        )
+        .refine(
+          (a) => !!a.verificationProjectId === !!a.verificationTarget,
+          "Choose a connected verification project and target together",
+        )
         .parse(raw);
       const j = this.list().find((job) => job.id === input.id);
       if (!j) throw new Error("Research run not found");
@@ -248,9 +271,17 @@ export class InvestorResearch {
       if (fresh.some((u) => counts.get(new URL(u).hostname)! > 8))
         throw new Error("At most eight pages per host are allowed in a run");
       const s = await this.snapshot(j);
+      if (input.verificationProjectId) {
+        await this.refreshVerification(
+          input.verificationProjectId,
+          j.datasetId,
+          true,
+        );
+      }
       const remaining =
-        input.totalPeopleTarget -
-        s.entries.filter((e) => e.kind === "people").length;
+        input.additionalPeople ??
+        input.totalPeopleTarget! -
+          s.entries.filter((e) => e.kind === "people").length;
       if (remaining <= 0)
         throw new Error("The dataset has already reached this target");
       if (j.added + remaining > 200 || s.entries.length + remaining * 2 > 600)
@@ -258,6 +289,8 @@ export class InvestorResearch {
       j.input.urls = approved;
       j.input.target = j.added + remaining;
       j.totalPeopleTarget = input.totalPeopleTarget;
+      j.verificationProjectId = input.verificationProjectId;
+      j.verificationTarget = input.verificationTarget;
       j.queue.push(...fresh);
       j.state = "paused";
       delete j.error;
@@ -267,6 +300,82 @@ export class InvestorResearch {
     } finally {
       this.extending = false;
     }
+  }
+  private async refreshVerification(
+    projectId: string,
+    datasetId: string,
+    required = false,
+  ) {
+    const key = projectId + ":" + datasetId;
+    const previous = this.verificationProgress.get(key);
+    try {
+      const context = await this.connector.project(
+        "qualification.context",
+        { projectId },
+        datasetId,
+      );
+      if (
+        context.datasetId !== datasetId ||
+        context.projectId !== projectId ||
+        !Array.isArray(context.entries)
+      )
+        throw new Error("Invalid verification context");
+      const organizations = new Set(
+        context.entries
+          .filter((r: any) => r.entry?.kind === "organizations" && r.record?.id)
+          .map((r: any) => r.entry.id),
+      );
+      const recordIds = new Set<string>();
+      const gates = [
+        "investmentRole",
+        "individualUS",
+        "bitcoinLeverage",
+        "crossBorder",
+        "vehicle",
+        "ticket",
+      ];
+      for (const row of context.entries) {
+        const q = row.entry?.research?.qualification;
+        if (
+          row.entry?.kind === "people" &&
+          row.record?.investorVerification === "Fully verified" &&
+          row.record?.category?.endsWith("| Qualified") &&
+          q?.status === "Qualified" &&
+          gates.every((k) => q.gates?.[k]?.status === "supported") &&
+          organizations.has(row.entry.organizationId)
+        )
+          recordIds.add(row.record.id);
+      }
+      this.verificationProgress.set(key, {
+        fullyVerifiedPeople: recordIds.size,
+        verificationCheckedAt: new Date().toISOString(),
+        verificationAvailable: true,
+      });
+    } catch (error) {
+      this.verificationProgress.set(key, {
+        ...previous,
+        verificationAvailable: false,
+      });
+      if (required) throw error;
+    }
+  }
+  async workflowEntries() {
+    const jobs = this.list();
+    const projects = new Map(
+      jobs
+        .filter((j) => j.verificationProjectId)
+        .map((j) => [j.verificationProjectId!, j.datasetId]),
+    );
+    for (const [project, dataset] of projects)
+      await this.refreshVerification(project, dataset);
+    return this.list().map((job) => ({
+      ...job,
+      verificationProgress: job.verificationProjectId
+        ? this.verificationProgress.get(
+            job.verificationProjectId + ":" + job.datasetId,
+          )
+        : undefined,
+    }));
   }
   async pause(reason = "Paused by request. Resume to continue.") {
     this.pauseReason = reason;

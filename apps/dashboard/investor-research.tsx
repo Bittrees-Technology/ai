@@ -18,6 +18,17 @@ export function InvestorResearchPanel({
     );
   const [extensions, setExtensions] = useState<Record<string, string>>({});
   const [totalTargets, setTotalTargets] = useState<Record<string, number>>({});
+  const [batchTargets, setBatchTargets] = useState<Record<string, number>>({});
+  const [verificationProjects, setVerificationProjects] = useState<
+    Record<string, string>
+  >({});
+  const [projectChoices, setProjectChoices] = useState<any[]>([]);
+  useEffect(() => {
+    if (status?.available)
+      void api("/v1/crm-projects")
+        .then((r) => setProjectChoices(r.projects || []))
+        .catch(onError);
+  }, [status?.available]);
   const refresh = async () => setStatus(await api("/v1/research/investors"));
   useEffect(() => {
     void refresh().catch(onError);
@@ -131,6 +142,14 @@ export function InvestorResearchPanel({
             {j.done.length} pages processed · {j.queue.length} queued ·{" "}
             {j.failures.length} source/model failures · {j.skipped} skipped
           </p>
+          {j.verificationTarget && (
+            <p>
+              Separate verification target: {j.verificationTarget} fully
+              verified investors in the connected CRM project. Research saves do
+              not count as verified. Source-confirmed progress syncs to
+              Workflows while this Mac is online.
+            </p>
+          )}
           {j.totalPeopleTarget && (
             <p>
               Dataset total: {j.crmProgress?.researchPeople ?? "Not checked"} /{" "}
@@ -187,12 +206,55 @@ export function InvestorResearchPanel({
                 }
               >
                 <label>
-                  Total people target for the connected dataset
+                  Additional people to research in this batch
                   <input
                     type="number"
                     min={1}
                     max={200}
-                    value={totalTargets[j.id] ?? j.totalPeopleTarget ?? 200}
+                    value={batchTargets[j.id] ?? 20}
+                    onChange={(e) =>
+                      setBatchTargets({
+                        ...batchTargets,
+                        [j.id]: Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Track verified investor progress in a connected project
+                  <select
+                    value={
+                      verificationProjects[j.id] ??
+                      j.verificationProjectId ??
+                      ""
+                    }
+                    onChange={(e) =>
+                      setVerificationProjects({
+                        ...verificationProjects,
+                        [j.id]: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="">Research counts only</option>
+                    {projectChoices
+                      .filter((p) => p.qualification)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Fully verified investor target in CRM
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    disabled={
+                      !(verificationProjects[j.id] ?? j.verificationProjectId)
+                    }
+                    value={totalTargets[j.id] ?? j.verificationTarget ?? 200}
                     onChange={(e) =>
                       setTotalTargets({
                         ...totalTargets,
@@ -214,8 +276,10 @@ export function InvestorResearchPanel({
                 <p>
                   Saved results and duplicate checks are preserved. Only new
                   HTTPS sources are queued; the same 100 starting-source,
-                  8-page-per-host and 300-page run limits apply. Research stops
-                  at the dataset target or when sources run out.
+                  8-page-per-host and 300-page run limits apply. This batch
+                  stops at its research limit or when sources run out. Only
+                  source-confirmed fully verified CRM records count toward the
+                  separate verification target.
                 </p>
                 <button
                   disabled={!extensions[j.id]?.trim()}
@@ -223,7 +287,7 @@ export function InvestorResearchPanel({
                     void act(async () => {
                       if (
                         !confirm(
-                          "Add these public sources and continue this saved run toward the dataset total? Existing CRM permissions and qualification requirements remain in effect.",
+                          "Add these public sources and continue this saved run with the selected research batch and verification target? Existing CRM permissions and qualification requirements remain in effect.",
                         )
                       )
                         return;
@@ -231,8 +295,19 @@ export function InvestorResearchPanel({
                         confirmed: true,
                         id: j.id,
                         urls: extensions[j.id]!.split(/\s+/).filter(Boolean),
-                        totalPeopleTarget:
-                          totalTargets[j.id] ?? j.totalPeopleTarget ?? 200,
+                        additionalPeople: batchTargets[j.id] ?? 20,
+                        ...((verificationProjects[j.id] ??
+                        j.verificationProjectId)
+                          ? {
+                              verificationProjectId:
+                                verificationProjects[j.id] ??
+                                j.verificationProjectId,
+                              verificationTarget:
+                                totalTargets[j.id] ??
+                                j.verificationTarget ??
+                                200,
+                            }
+                          : {}),
                       });
                       setExtensions((previous) => ({
                         ...previous,
