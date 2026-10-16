@@ -54,6 +54,7 @@ async function fixture(
     priorName?: string;
     concurrentName?: string;
     repeat?: boolean;
+    location?: string;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "investor-research-"));
@@ -99,6 +100,8 @@ async function fixture(
               kind === "unsupported"
                 ? "Invented person evidence"
                 : "Jane Smith Managing Partner",
+            locationEvidence:
+              options.location ?? "Jane Smith is based in New York.",
             category: "Family office / allocator",
             relevance: "Likely to invest; assume confirmed interest.",
           },
@@ -117,7 +120,7 @@ async function fixture(
     () => ({ reason: "ready", seconds: 10 }),
     async (url) => ({
       url,
-      text: "Example Capital. Jane Smith Managing Partner. New York, United States",
+      text: "Example Capital. Jane Smith Managing Partner. Jane Smith is based in New York. New York, United States",
       links: [],
     }),
   );
@@ -230,4 +233,18 @@ test("repeated candidate inside one extraction creates only one person", async (
   assert.equal(saves, 1);
   assert.equal(rows.filter((r) => r.kind === "people").length, 1);
   assert.equal(job.added, 1);
+});
+
+test("firm address or another person's base cannot automatically publish a candidate", async () => {
+  for (const location of [
+    "New York, United States",
+    "John Smith is based in New York.",
+    "",
+    "Jane Smith is based in London.",
+  ]) {
+    const { rows, job } = await fixture("success", { location });
+    assert.equal(rows.length, 0);
+    assert.equal(job.state, "sources_exhausted");
+    assert.equal(job.locationReviews.length, 1);
+  }
 });
