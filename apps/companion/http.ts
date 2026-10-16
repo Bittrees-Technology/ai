@@ -736,6 +736,9 @@ export function localApi({
       connectorsEnabled: !!crm || !!autonote || !!roles || !!mail,
     }),
   );
+  app.get("/v1/crm-projects/status", (_req, res) =>
+    res.json({ available: !!projectWork, jobs: projectWork?.status() || [] }),
+  );
   app.get("/v1/crm-projects", async (_req, res) =>
     res.json({
       available: !!projectWork,

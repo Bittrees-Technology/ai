@@ -7,20 +7,44 @@ export function ProjectWorkPanel({ api, onError, profiles }: any) {
     [prompt, setPrompt] = useState(""),
     [busy, setBusy] = useState(false);
   const refresh = async () => setStatus(await api("/v1/crm-projects"));
+  const refreshJobs = async () => {
+    const local = await api("/v1/crm-projects/status");
+    setStatus((previous: any) => ({ ...previous, ...local }));
+  };
   useEffect(() => {
     void refresh().catch(onError);
   }, []);
   const running = status?.jobs?.some((j: any) => j.state === "running");
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(() => void refresh().catch(onError), 10000);
-    return () => clearInterval(id);
+    let active = true,
+      inFlight = false;
+    const poll = async () => {
+      if (!active || inFlight || document.visibilityState === "hidden") return;
+      inFlight = true;
+      try {
+        const local = await api("/v1/crm-projects/status");
+        if (active) setStatus((previous: any) => ({ ...previous, ...local }));
+      } catch (error) {
+        if (active) onError(error);
+      } finally {
+        inFlight = false;
+      }
+    };
+    const visible = () => void poll();
+    const id = setInterval(visible, 10000);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      active = false;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", visible);
+    };
   }, [running]);
   async function act(fn: () => Promise<any>) {
     setBusy(true);
     try {
       await fn();
-      await refresh();
+      await refreshJobs();
     } catch (e) {
       onError(e);
     } finally {
