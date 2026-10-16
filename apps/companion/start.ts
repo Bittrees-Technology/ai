@@ -300,7 +300,17 @@ const workflows = localWorkflows(
   directory,
   new Vault(key),
   () => store.profiles(owner).map((p) => p.model),
-  () => store.templates(owner),
+  () => [
+    ...store.templates(owner),
+    ...investorResearch
+      .list()
+      .map((job) => ({
+        id: job.id,
+        revision: Math.max(1, Date.parse(job.updatedAt)),
+        definition: { kind: "investor-research" },
+        state: job.state,
+      })),
+  ],
 );
 server.on(
   "request",

@@ -30,7 +30,7 @@ test("local workflow index excludes names, prompts, model settings, output and s
   assert.throws(() =>
     localCatalogueSchema.parse({
       ...input,
-      entries: Array(101).fill(input.entries[0]),
+      entries: Array(121).fill(input.entries[0]),
     }),
   );
 });

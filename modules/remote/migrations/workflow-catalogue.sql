@@ -12,3 +12,5 @@ CREATE TABLE IF NOT EXISTS workflow_local_catalogue (
  updated_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(authority_id,template_id)
 );
+
+ALTER TABLE workflow_local_catalogue ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'ready' CHECK(state IN ('ready','running','paused','completed','failed','cancelled','complete','needs_attention','sources_exhausted'));

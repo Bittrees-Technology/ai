@@ -15,6 +15,7 @@ export function localWorkflows(
     id: string;
     revision: number;
     definition: { kind: string };
+    state?: string;
   }[] = () => [],
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
@@ -79,6 +80,7 @@ export function localWorkflows(
             id: t.id,
             revision: t.revision,
             kind: t.definition.kind,
+            ...(t.state ? { state: t.state } : {}),
           })),
         },
         s.controlToken,

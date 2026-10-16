@@ -9,10 +9,23 @@ export const localCatalogueSchema = z.strictObject({
       z.strictObject({
         id: z.uuid(),
         revision: z.number().int().safe().positive(),
-        kind: z.enum(["draft", "summarize", "query"]),
+        state: z
+          .enum([
+            "ready",
+            "running",
+            "paused",
+            "completed",
+            "failed",
+            "cancelled",
+            "complete",
+            "needs_attention",
+            "sources_exhausted",
+          ])
+          .default("ready"),
+        kind: z.enum(["draft", "summarize", "query", "investor-research"]),
       }),
     )
-    .max(100),
+    .max(120),
 });
 // Device tokens can publish only an opaque index for their own paired owner.
 // They cannot approve, resume, execute, change scopes, or select another owner.
@@ -63,8 +76,8 @@ export async function syncLocalCatalogue(
     );
     for (const entry of input.entries)
       await db.query(
-        `INSERT INTO workflow_local_catalogue(authority_id,template_id,revision,kind) VALUES($1,$2,$3,$4) ON CONFLICT(authority_id,template_id) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,removed_at=NULL,updated_at=now() WHERE workflow_local_catalogue.revision<=excluded.revision`,
-        [g.id, entry.id, entry.revision, entry.kind],
+        `INSERT INTO workflow_local_catalogue(authority_id,template_id,revision,kind,state) VALUES($1,$2,$3,$4,$5) ON CONFLICT(authority_id,template_id) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,state=excluded.state,removed_at=NULL,updated_at=now() WHERE workflow_local_catalogue.revision<=excluded.revision`,
+        [g.id, entry.id, entry.revision, entry.kind, entry.state],
       );
     await db.query(
       "UPDATE workflow_authorities SET last_seen_at=now() WHERE id=$1",
