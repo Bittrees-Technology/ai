@@ -122,7 +122,13 @@ export class CrmDatasetConnector {
     if (response.status === 429) {
       // CRM has separate read/write budgets. Do not hammer either exhausted
       // lane or retry an uncertain mutation automatically.
-      this.cooldown[lane] = Date.now() + 600_000;
+      const retry = response.headers.get("retry-after");
+      const seconds = retry === null ? NaN : Number(retry);
+      const delay =
+        Number.isFinite(seconds) && seconds > 0
+          ? Math.min(seconds, 600) * 1000
+          : 600_000;
+      this.cooldown[lane] = Date.now() + delay;
       throw new ConnectorError("SOURCE_RATE_LIMITED");
     }
     if (response.status === 401 || response.status === 403)

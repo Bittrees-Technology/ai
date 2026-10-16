@@ -72,7 +72,16 @@ export function CrmTaskEditor({ api, projectId }: any) {
     try {
       await api("/v1/crm-projects/tasks", "POST", { ...draft, projectId });
       setDraft(null);
-      setSnapshot(await api(`/v1/crm-projects/${projectId}/tasks`));
+      try {
+        setSnapshot(await api(`/v1/crm-projects/${projectId}/tasks`));
+        setSyncError("");
+      } catch (error) {
+        setSyncError(
+          String(error).includes("SOURCE_RATE_LIMITED")
+            ? "Task saved to CRM. The list will refresh after CRM's request cooldown."
+            : "Task saved to CRM. List refresh is temporarily unavailable.",
+        );
+      }
     } catch (error) {
       setError(
         String(error).includes("SOURCE_RATE_LIMITED")
