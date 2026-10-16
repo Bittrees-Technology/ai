@@ -50,7 +50,11 @@ test("public research refuses private addresses, credentials and unapproved redi
 });
 async function fixture(
   kind: "success" | "conflict" | "unsupported" | "unconfirmed",
-  options: { priorName?: string; concurrentName?: string } = {},
+  options: {
+    priorName?: string;
+    concurrentName?: string;
+    repeat?: boolean;
+  } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "investor-research-"));
   const dataset = "bcb0d794-42bc-4171-b29e-55898a891c14";
@@ -83,8 +87,8 @@ async function fixture(
       digest: "pinned",
       profile: { contextTokens: 16000, maxOutputTokens: 3000 },
     }),
-    generate: async () =>
-      JSON.stringify({
+    generate: async () => {
+      const result = {
         organization: "Example Capital",
         geographyEvidence: "New York, United States",
         people: [
@@ -99,7 +103,10 @@ async function fixture(
             relevance: "Likely to invest; assume confirmed interest.",
           },
         ],
-      }),
+      };
+      if (options.repeat) result.people.push({ ...result.people[0]! });
+      return JSON.stringify(result);
+    },
   };
   const run = new InvestorResearch(
     join(dir, "jobs.db"),
@@ -216,4 +223,11 @@ test("newly appeared variation blocks a pending batch and its orphan organizatio
   assert.equal(job.pendingEntries, 0);
   assert.equal(job.added, 0);
   assert.equal(job.duplicateReviews?.length, 1);
+});
+
+test("repeated candidate inside one extraction creates only one person", async () => {
+  const { job, rows, saves } = await fixture("success", { repeat: true });
+  assert.equal(saves, 1);
+  assert.equal(rows.filter((r) => r.kind === "people").length, 1);
+  assert.equal(job.added, 1);
 });

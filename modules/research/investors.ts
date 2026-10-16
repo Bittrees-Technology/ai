@@ -472,7 +472,7 @@ export class InvestorResearch {
           category: p.category,
           organizationId: orgId,
         });
-        if (s.entries.some((e) => e.id === row.id)) {
+        if ([...s.entries, ...rows].some((e) => e.id === row.id)) {
           j.skipped++;
           continue;
         }
