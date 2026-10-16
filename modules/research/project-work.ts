@@ -164,7 +164,12 @@ export class ProjectWork {
         j.model,
         prompt,
         AbortSignal.any([signal, AbortSignal.timeout(a.seconds * 1000)]),
-        z.toJSONSchema(schema),
+        // Large string bounds exceed Ollama grammar limits; validate them after generation.
+        JSON.parse(
+          JSON.stringify(z.toJSONSchema(schema), (key, value) =>
+            key === "maxLength" ? undefined : value,
+          ),
+        ),
       ),
     );
   }
