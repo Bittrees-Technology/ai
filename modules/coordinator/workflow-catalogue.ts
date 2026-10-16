@@ -86,7 +86,9 @@ export async function syncLocalCatalogue(
     );
     for (const entry of input.entries)
       await db.query(
-        `INSERT INTO workflow_local_catalogue(authority_id,template_id,revision,kind,state,progress) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(authority_id,template_id) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,state=excluded.state,progress=excluded.progress,removed_at=NULL,updated_at=now() WHERE workflow_local_catalogue.revision<=excluded.revision`,
+        `INSERT INTO workflow_local_catalogue(authority_id,template_id,revision,kind,state,progress) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(authority_id,template_id) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,state=excluded.state,progress=excluded.progress,removed_at=NULL,updated_at=now() WHERE workflow_local_catalogue.revision<=excluded.revision
+          AND (workflow_local_catalogue.revision,workflow_local_catalogue.kind,workflow_local_catalogue.state,workflow_local_catalogue.progress,workflow_local_catalogue.removed_at)
+              IS DISTINCT FROM (excluded.revision,excluded.kind,excluded.state,excluded.progress,NULL::timestamptz)`,
         [
           g.id,
           entry.id,
