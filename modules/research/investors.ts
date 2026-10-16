@@ -667,7 +667,7 @@ export class InvestorResearch {
             },
           ],
           relevance:
-            "US investment organization; evaluate BBRF-PT instrument fit.",
+            "Investment organization; evaluate BBRF-PT instrument fit.",
           uncertainties:
             "US office evidence does not prove each person is US-based. Bitcoin/Portugal mandate, ticket size, allocation authority and interest require confirmation.",
           verification: "unverified",
@@ -744,7 +744,7 @@ export class InvestorResearch {
             make(
               "organizations",
               parsed.organization,
-              parsed.geographyEvidence,
+              parsed.organization,
               {},
             ),
           );
