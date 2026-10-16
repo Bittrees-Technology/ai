@@ -1,6 +1,8 @@
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { LoginPanel, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
+import {SharedProfileCard} from '../../../shared/sso/SharedProfileCard.jsx';
+let profileRoot: Root | undefined;
 let loginRoot: Root | undefined;
 let chooseWallet = false;
 let sharedCheck:AbortController|undefined;
@@ -300,6 +302,7 @@ function grantView(g: any, code?: string) {
   return panel;
 }
 function render() {
+  profileRoot?.unmount(); profileRoot = undefined;
   loginRoot?.unmount();
   loginRoot = undefined;
   root.replaceChildren();
@@ -341,6 +344,9 @@ function render() {
     }),
   );
   root.append(account);
+  const profileMount = el("div"); root.append(profileMount);
+  profileRoot = createRoot(profileMount);
+  profileRoot.render(React.createElement(SharedProfileCard, {sessionRevision:wallet}));
   if (!selected) {
     root.append(
       el(

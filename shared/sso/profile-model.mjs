@@ -1,5 +1,5 @@
 // Display data only. Never pass this object into authorization or account linking.
-export const profileApps=['roles','insights','workflow','mercado','crm','autonote','news','wallet'];
+export const profileApps=['roles','insights','workflow','mercado','crm','autonote','news','wallet','ai','mail','bounties','tld','mcp','chat'];
 export function profileFields(value){
  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!['name','avatar','bio','website'].includes(k)))throw Error('Only name, avatar, bio and website can be shared');
  const out={};for(const [key,max] of Object.entries({name:120,avatar:2048,bio:1000,website:2048})){
@@ -18,3 +18,6 @@ export function profileEnvelope(value){
  if(!value||!['shared','not-shared'].includes(value.status)||(value.status==='shared'&&(!Number.isSafeInteger(value.revision)||value.revision<1)))throw Error('Invalid profile response');
  return value.status==='shared'?{status:'shared',fields:profileFields(value.fields),revision:value.revision,maxAgeMs:60000}:{status:'not-shared',fields:null,maxAgeMs:60000};
 }
+
+// Only these registered staff clients share their parent app’s explicit consent.
+export const profileAppForClient=id=>new Map([['ai-admin','ai'],['mcp-admin','mcp'],['chat-admin','chat'],['wallet-admin','wallet']]).get(id)||id;
