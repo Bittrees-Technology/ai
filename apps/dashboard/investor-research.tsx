@@ -168,6 +168,31 @@ export function InvestorResearchPanel({
               </button>
             )
           )}
+          {!!j.duplicateReviews?.length && (
+            <details>
+              <summary>
+                {j.duplicateReviews.length} possible duplicate names held for
+                review
+              </summary>
+              <p>
+                These candidates were not added or merged. Different
+                organizations do not prove two names are different people.
+                Review the sources before creating another profile.
+              </p>
+              <ul>
+                {j.duplicateReviews.map((r: any, i: number) => (
+                  <li key={i}>
+                    <strong>{r.name}</strong> · Possible match:{" "}
+                    {r.matches.map((m: any) => m.name).join(", ")}
+                    {" · "}
+                    <a href={r.url} target="_blank" rel="noreferrer">
+                      Source
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <details>
             <summary>Source failures and run details</summary>
             <pre>{JSON.stringify(j, null, 2)}</pre>
