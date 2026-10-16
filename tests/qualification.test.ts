@@ -114,7 +114,13 @@ async function fixture(
       profile: { contextTokens: 16384, maxOutputTokens: 2048 },
     }),
     generate: async () =>
-      JSON.stringify(generate ? generate(++calls) : output()),
+      JSON.stringify(
+        generate
+          ? generate(++calls)
+          : ++calls === 1
+            ? output()
+            : { selectedCandidate: null, reason: "No supported role" },
+      ),
   };
   const worker = new QualificationResearch(
     join(dir, "test.db"),
@@ -523,18 +529,8 @@ test("pre-upgrade pending assessments cannot bypass retention validation", async
 test("missed named role gets one bounded retry, other model claims cannot escape it", async () => {
   const f = await fixture(false, false, undefined, page, (call) => {
     const q = output();
-    if (call === 2) {
-      q.gates.investmentRole = {
-        status: "supported",
-        evidence: page.text,
-        url,
-      };
-      q.gates.ticket = {
-        status: "supported",
-        evidence: "Invented allocation EUR50,000",
-        url,
-      };
-    }
+    if (call === 2)
+      return { selectedCandidate: 0, reason: "Current named role" };
     return q;
   });
   try {
@@ -557,11 +553,7 @@ test("role retry does not manufacture evidence or loop on another unknown", asyn
   const f = await fixture(false, false, undefined, page, (call) => {
     const q = output();
     if (call === 2)
-      q.gates.investmentRole = {
-        status: "supported",
-        evidence: "Jane Smith Chief Investment Officer",
-        url,
-      };
+      return { selectedCandidate: 99, reason: "Unavailable candidate" };
     return q;
   });
   try {
@@ -581,6 +573,20 @@ test("role retry source selection excludes other people, history, and navigation
   assert.deepEqual(
     roleRetryPages(
       [p("Jane Smith was Chief Investment Officer")],
+      "Jane Smith",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    roleRetryPages(
+      [p("Former Jane Smith Chief Investment Officer")],
+      "Jane Smith",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    roleRetryPages(
+      [p("Jane Smith Analyst Bob Jones Chief Investment Officer")],
       "Jane Smith",
     ),
     [],
