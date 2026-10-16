@@ -2051,31 +2051,33 @@ export function localApi({
             ? "INVALID_INPUT"
             : "INTERNAL";
     const status =
-      code === "PAYLOAD_TOO_LARGE"
-        ? 413
-        : code === "MODEL_UNAVAILABLE" ||
-            ((err instanceof CompanionRelayError ||
-              err instanceof PrivateKeyError ||
-              err instanceof PrivateKeyLifecycleError ||
-              err instanceof ConversationOfferError ||
-              err instanceof ResumeOfferError ||
-              err instanceof ApprovalOutboxError ||
-              err instanceof AutoNotePeerApprovalError ||
-              err instanceof AutoNoteDecisionError ||
-              err instanceof ConversationContentError ||
-              err instanceof PrivateResumeConsentError ||
-              err instanceof PrivateResumeDeliveryError) &&
-              code === "STORAGE_UNAVAILABLE")
-          ? 503
-          : code === "NOT_FOUND"
-            ? 404
-            : code === "CONFLICT" ||
-                code === "STALE_CLAIM" ||
-                code === "PARENT_PENDING"
-              ? 409
-              : code === "INTERNAL"
-                ? 500
-                : 400;
+      code === "SOURCE_RATE_LIMITED"
+        ? 429
+        : code === "PAYLOAD_TOO_LARGE"
+          ? 413
+          : code === "MODEL_UNAVAILABLE" ||
+              ((err instanceof CompanionRelayError ||
+                err instanceof PrivateKeyError ||
+                err instanceof PrivateKeyLifecycleError ||
+                err instanceof ConversationOfferError ||
+                err instanceof ResumeOfferError ||
+                err instanceof ApprovalOutboxError ||
+                err instanceof AutoNotePeerApprovalError ||
+                err instanceof AutoNoteDecisionError ||
+                err instanceof ConversationContentError ||
+                err instanceof PrivateResumeConsentError ||
+                err instanceof PrivateResumeDeliveryError) &&
+                code === "STORAGE_UNAVAILABLE")
+            ? 503
+            : code === "NOT_FOUND"
+              ? 404
+              : code === "CONFLICT" ||
+                  code === "STALE_CLAIM" ||
+                  code === "PARENT_PENDING"
+                ? 409
+                : code === "INTERNAL"
+                  ? 500
+                  : 400;
     // Do not echo parser errors, submitted content, headers or secrets into responses/logs.
     res
       .status(status)
