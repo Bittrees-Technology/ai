@@ -93,6 +93,15 @@ async function fixture(
       mode,
       prompt: "Plan qualification tasks.",
     });
+    if (runner.isRunning) {
+      const before = calls.filter((c) => c.name === "projects.list").length;
+      await runner.projects();
+      assert.equal(
+        calls.filter((c) => c.name === "projects.list").length,
+        before,
+        "progress refresh must not compete for the active connector",
+      );
+    }
     while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
     return { calls, status: runner.status()[0] };
   } finally {
