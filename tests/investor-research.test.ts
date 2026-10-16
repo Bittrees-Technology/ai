@@ -126,7 +126,7 @@ async function fixture(
       confirmed: true,
       profileId: "p",
       brief: "Research US investors with owner publication approval.",
-      target: 1,
+      target: options.repeat ? 2 : 1,
       urls: ["https://example.org/team"],
     });
     for (let i = 0; i < 100 && run.status()[0]!.state === "running"; i++)
