@@ -26,15 +26,15 @@ const snapshotSchema = z
           })
           .passthrough(),
       )
-      .max(20),
+      .max(600),
     crm: z.array(z.unknown()).max(100),
-    links: z.array(z.unknown()).max(20),
+    links: z.array(z.unknown()).max(600),
   })
   .passthrough();
 export const datasetSaveSchema = z.strictObject({
   version: z.number().int().positive(),
   name: z.string().trim().min(1).max(200),
-  entries: z.array(z.record(z.string(), z.unknown())).max(20),
+  entries: z.array(z.record(z.string(), z.unknown())).max(600),
 });
 export function datasetKeychainEntry(profile: string): ConnectorSecret {
   if (process.platform !== "darwin" || !/^[A-Za-z0-9_-]{1,80}$/.test(profile))
@@ -104,7 +104,7 @@ export class CrmDatasetConnector {
         const next = await reader.read();
         if (next.done) break;
         bytes += next.value.length;
-        if (bytes > 256000) {
+        if (bytes > 4_000_000) {
           await reader.cancel();
           throw new Error("large");
         }
@@ -201,6 +201,26 @@ export class CrmDatasetConnector {
       const result = z
         .object({ id: z.uuid(), version: z.number().int().positive() })
         .parse(await this.call(s.token, "dataset.save", args));
+      if (result.id !== s.datasetId) throw new ConnectorError("INVALID_SOURCE");
+      return result;
+    });
+  }
+  async append(raw: unknown) {
+    return this.exclusive(async () => {
+      const args = z
+        .strictObject({
+          version: z.number().int().positive(),
+          entries: z.array(z.record(z.string(), z.unknown())).min(1).max(20),
+        })
+        .parse(raw);
+      const s = await this.saved();
+      const result = z
+        .object({
+          id: z.uuid(),
+          version: z.number().int().positive(),
+          added: z.number().int().nonnegative(),
+        })
+        .parse(await this.call(s.token, "dataset.append", args));
       if (result.id !== s.datasetId) throw new ConnectorError("INVALID_SOURCE");
       return result;
     });

@@ -188,11 +188,11 @@ export function CrmDatasetPanel({ api, onError }: Props) {
                     const p = JSON.parse(text);
                     if (
                       !Array.isArray(p.entries) ||
-                      p.entries.length > 20 ||
+                      p.entries.length > 600 ||
                       p.version !== snapshot.version
                     )
                       throw new Error(
-                        "Keep the loaded version and use at most 20 entries.",
+                        "Keep the loaded version and use at most 600 entries.",
                       );
                     setPreview(p);
                   })

@@ -1,0 +1,7 @@
+import {mkdtempSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';import {randomBytes} from 'node:crypto';
+import {InvestorResearch} from '../modules/research/investors.js';import {Vault} from '../modules/storage/vault.js';import {Ollama} from '../modules/models/ollama.js';
+const dir=mkdtempSync(join(tmpdir(),'research-live-model-'));let entries:any[]=[];let version=1;
+const source:any={read:async()=>({id:'17f226a9-5a63-45cc-8542-0a1d644fe7e7',version,entries}),append:async(a:any)=>{entries.push(...a.entries);version++;return {id:'17f226a9-5a63-45cc-8542-0a1d644fe7e7',version,added:a.entries.length};}};
+const model={id:'local-smoke',runtime:'ollama',model:'huihui_ai/qwen3.5-abliterated:9b',contextTokens:16384,maxOutputTokens:3000,temperature:0};
+const runner=new InvestorResearch(join(dir,'jobs.db'),new Vault(randomBytes(32)),source,new Ollama('http://127.0.0.1:11434',300000),()=>model,()=>({reason:'ready',seconds:300}));
+try{await runner.create({confirmed:true,profileId:model.id,brief:'Find US investment decision-makers for BBRF-PT Bitcoin reserves and Portuguese real estate; no interest or eligibility assumptions.',target:2,urls:['https://morgancreekcap.com/our-team/']});while(runner.isRunning)await new Promise(r=>setTimeout(r,1000));console.log(JSON.stringify({jobs:runner.status(),entries},null,2));}finally{await runner.close();rmSync(dir,{recursive:true,force:true});}

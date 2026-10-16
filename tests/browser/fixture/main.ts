@@ -387,3 +387,5 @@ if (new URLSearchParams(location.search).has("autonote-browser-review"))
 
 if (new URLSearchParams(location.search).has("crm-dataset"))
   void import("./crm-dataset.js");
+
+if (new URLSearchParams(location.search).has("investor-research")) void import("./investor-research.js");

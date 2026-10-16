@@ -1,3 +1,4 @@
+import { InvestorResearch } from "../../modules/research/investors.js";
 import {
   CrmDatasetConnector,
   datasetKeychainEntry,
@@ -187,6 +188,17 @@ const crm = new CrmConnector(
       });
     },
   );
+const investorResearch = new InvestorResearch(
+  join(content.directory, "investor-research.db"),
+  new Vault(key),
+  dataset,
+  new Ollama("http://127.0.0.1:11434", 1800_000),
+  (id) => store.profile(owner, id),
+  () => {
+    const a = executionControls.admission(worker.activeTasks);
+    return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
+  },
+);
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
     ? new RemoteClient(
@@ -307,6 +319,7 @@ server.on(
     owner,
     crm,
     dataset,
+    investorResearch,
     sources,
     autonote,
     autonoteApproval,
@@ -342,6 +355,7 @@ async function stop() {
   clearInterval(timer);
   clearInterval(importMaintenance);
   worker.stop();
+  await investorResearch.close();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
   await Promise.all([receiver?.shutdown(), templateReceiver?.shutdown()]);
@@ -356,7 +370,7 @@ async function stop() {
 }
 const runs = new Set<Promise<unknown>>();
 const timer = setInterval(() => {
-  if (started && !stopping) {
+  if (started && !stopping && !investorResearch.isRunning) {
     const running = worker
       .runOnce()
       .catch(() => {
