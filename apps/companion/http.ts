@@ -1,3 +1,4 @@
+import type { ProjectWork } from "../../modules/research/project-work.js";
 import type { InvestorResearch } from "../../modules/research/investors.js";
 import type { CrmDatasetConnector } from "../../modules/connectors/crm-dataset.js";
 import { memorySelectionSchema } from "../../modules/contracts/index.js";
@@ -86,6 +87,7 @@ export interface LocalApiOptions {
   crm?: CrmConnector;
   dataset?: CrmDatasetConnector;
   investorResearch?: InvestorResearch;
+  projectWork?: ProjectWork;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
   autonoteApproval?: AutoNoteApprovalConnector;
@@ -118,6 +120,7 @@ export function localApi({
   crm,
   dataset,
   investorResearch,
+  projectWork,
   roles,
   news,
   mail,
@@ -733,6 +736,26 @@ export function localApi({
       connectorsEnabled: !!crm || !!autonote || !!roles || !!mail,
     }),
   );
+  app.get("/v1/crm-projects", async (_req, res) =>
+    res.json({
+      available: !!projectWork,
+      ...(projectWork ? await projectWork.projects() : { projects: [] }),
+      jobs: projectWork?.status() || [],
+    }),
+  );
+  if (projectWork) {
+    app.post("/v1/crm-projects/start", async (req, res) =>
+      res.json(await projectWork.create(req.body)),
+    );
+    app.post("/v1/crm-projects/pause", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await projectWork.pause());
+    });
+    app.post("/v1/crm-projects/resume", async (req, res) => {
+      const a = z.strictObject({ id: z.uuid() }).parse(req.body);
+      res.json(await projectWork.resume(a.id));
+    });
+  }
   app.get("/v1/research/investors", (_req, res) =>
     res.json({
       available: !!investorResearch,

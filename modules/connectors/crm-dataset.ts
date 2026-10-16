@@ -27,7 +27,7 @@ const snapshotSchema = z
           .passthrough(),
       )
       .max(600),
-    crm: z.array(z.unknown()).max(100),
+    crm: z.array(z.unknown()).max(600),
     links: z.array(z.unknown()).max(600),
   })
   .passthrough();
@@ -41,7 +41,7 @@ export function datasetKeychainEntry(profile: string): ConnectorSecret {
     throw new Error("Invalid dataset profile");
   return new AsyncEntry("org.bittrees.ai.connector.crm-dataset", profile);
 }
-/** A single dataset, fixed source URL, no workspace or publication authority. */
+/** A single dataset and fixed source URL; project authority is checked by CRM for every operation. */
 export class CrmDatasetConnector {
   private busy = false;
   constructor(
@@ -131,6 +131,24 @@ export class CrmDatasetConnector {
     } catch {
       throw new ConnectorError("SOURCE_CONFLICT");
     }
+  }
+  async project(name: string, args: unknown, expectedDatasetId: string) {
+    if (
+      ![
+        "projects.list",
+        "project.read",
+        "tasks.create",
+        "tasks.claim",
+        "tasks.finish",
+      ].includes(name)
+    )
+      throw new ConnectorError("SOURCE_DENIED");
+    return this.exclusive(async () => {
+      const saved = await this.saved();
+      if (saved.datasetId !== expectedDatasetId)
+        throw new ConnectorError("SOURCE_DENIED");
+      return this.call(saved.token, name, args);
+    });
   }
   async status() {
     try {

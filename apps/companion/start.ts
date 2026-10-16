@@ -1,3 +1,4 @@
+import { ProjectWork } from "../../modules/research/project-work.js";
 import { InvestorResearch } from "../../modules/research/investors.js";
 import {
   CrmDatasetConnector,
@@ -196,7 +197,26 @@ const investorResearch = new InvestorResearch(
   (id) => store.profile(owner, id),
   () => {
     const a = executionControls.admission(worker.activeTasks);
-    return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
+    return {
+      reason: projectWork?.isRunning ? "project tasks running" : a.reason,
+      seconds: a.limits.maxTaskSeconds,
+    };
+  },
+);
+const projectWork = new ProjectWork(
+  join(content.directory, "project-work.db"),
+  new Vault(key),
+  dataset,
+  new Ollama("http://127.0.0.1:11434", 1800_000),
+  (id) => store.profile(owner, id),
+  () => {
+    const a = executionControls.admission(worker.activeTasks);
+    return {
+      reason: investorResearch.isRunning
+        ? "investor research running"
+        : a.reason,
+      seconds: a.limits.maxTaskSeconds,
+    };
   },
 );
 const remote =
@@ -334,6 +354,7 @@ server.on(
     crm,
     dataset,
     investorResearch,
+    projectWork,
     sources,
     autonote,
     autonoteApproval,
@@ -371,6 +392,7 @@ async function stop() {
   clearInterval(workflowSync);
   worker.stop();
   await investorResearch.close();
+  await projectWork.close();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   server.closeIdleConnections();
   await Promise.all([receiver?.shutdown(), templateReceiver?.shutdown()]);
@@ -385,7 +407,12 @@ async function stop() {
 }
 const runs = new Set<Promise<unknown>>();
 const timer = setInterval(() => {
-  if (started && !stopping && !investorResearch.isRunning) {
+  if (
+    started &&
+    !stopping &&
+    !investorResearch.isRunning &&
+    !projectWork.isRunning
+  ) {
     const running = worker
       .runOnce()
       .catch(() => {
