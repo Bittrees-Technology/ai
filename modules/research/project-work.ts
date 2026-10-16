@@ -397,8 +397,8 @@ export class ProjectWork {
       j.planned = true;
       this.save(j);
     }
-    const startedWith = j.completed;
-    while (j.completed - startedWith < 20) {
+    const batchLimit = j.automatic ? j.completed + 20 : 20;
+    while (j.completed < batchLimit) {
       signal.throwIfAborted();
       if (j.pending?.length) {
         const pending = j.pending[0];
