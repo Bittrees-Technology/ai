@@ -430,8 +430,17 @@ export class ProjectWork {
       this.phase(j, "Waiting for local model");
       const found = await this.turn(signal, async () => {
         signal.throwIfAborted();
+        // Leave enough of the source's 15-minute lease for the full model turn.
+        // Legacy runs have no timestamp. Reclaim unfinished work rather than
+        // submitting against an expired lease; staged writes remain untouched.
+        if (
+          j.claim &&
+          (!j.claim.startedAt || Date.now() - j.claim.startedAt >= 300000)
+        ) {
+          delete j.claim;
+        }
         if (!j.claim) {
-          j.claim = { runId: randomUUID() };
+          j.claim = { runId: randomUUID(), startedAt: Date.now() };
           this.save(j);
         }
         const claimed = await this.call(j, "tasks.claim", {

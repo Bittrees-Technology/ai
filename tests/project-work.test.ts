@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, randomBytes } from "node:crypto";
+import Database from "better-sqlite3";
 import { ProjectWork } from "../modules/research/project-work.js";
 import { LocalModelTurns } from "../modules/models/local-turns.js";
 import { Vault } from "../modules/storage/vault.js";
@@ -331,4 +332,60 @@ test("repeated oversized output is not truncated or marked complete", async () =
   assert.equal(status.state, "needs_attention");
   assert.equal(generations, 2);
   assert.equal(calls.filter((c) => c.name === "tasks.finish").length, 0);
+});
+
+test("a legacy paused claim is replaced before generating while confirmed saves survive", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "legacy-claim-"));
+  const path = join(dir, "work.db"),
+    vault = new Vault(randomBytes(32));
+  const oldClaim = randomUUID(),
+    jobId = randomUUID(),
+    projectId = randomUUID(),
+    datasetId = randomUUID();
+  const seed = new Database(path);
+  seed.exec("CREATE TABLE jobs(id TEXT PRIMARY KEY,payload BLOB NOT NULL)");
+  seed.prepare("INSERT INTO jobs VALUES(?,?)").run(
+    jobId,
+    vault.seal(
+      {
+        id: jobId,
+        datasetId,
+        state: "paused",
+        completed: 5,
+        receipts: [{ noteId: "existing" }],
+        pending: [],
+        input: { mode: "work", projectId, profileId: "test" },
+        claim: { runId: oldClaim },
+        updatedAt: new Date().toISOString(),
+      },
+      "project-work:" + jobId,
+    ),
+  );
+  seed.close();
+  let claimed = "";
+  const runner = new ProjectWork(
+    path,
+    vault,
+    {
+      project: async (name: string, args: any) => {
+        assert.equal(name, "tasks.claim");
+        claimed = args.runId;
+        return { task: null };
+      },
+    } as any,
+    { pin: async () => ({ digest: "same", profile: {} }) } as any,
+    () => ({}),
+    () => ({ reason: "ready", seconds: 600 }),
+  );
+  try {
+    await runner.resume(jobId);
+    while (runner.isRunning) await new Promise((r) => setTimeout(r, 5));
+    assert.notEqual(claimed, oldClaim);
+    assert.ok(claimed);
+    assert.equal(runner.status()[0].completed, 5);
+    assert.deepEqual(runner.status()[0].receipts, [{ noteId: "existing" }]);
+  } finally {
+    await runner.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
