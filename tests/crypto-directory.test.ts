@@ -127,3 +127,90 @@ test("enabled validation saves grounded local results, respects cadence, preserv
     await rm(root, { recursive: true });
   }
 });
+
+test("discovery hands off durably, validation receipts prove model execution, failures never complete", async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "directory-chain-")),
+  );
+  await mkdir(join(root, "content/projects"), { recursive: true });
+  await writeFile(
+    join(root, "content/projects/example.md"),
+    "---\nname: Example\nprimary_url: https://existing.org\ntags: [DeFi]\n---\n",
+  );
+  const vault = new Vault(randomBytes(32));
+  let calls = 0,
+    fail = false;
+  const runtime: any = {
+    pin: async () => ({
+      profile: { model: "local", contextTokens: 32000, maxOutputTokens: 2000 },
+      digest: "digest",
+    }),
+    generate: async () => {
+      calls++;
+      if (fail) throw Error("Model failed");
+      return JSON.stringify(answer);
+    },
+  };
+  const make = () =>
+    new CryptoDirectoryResearch(
+      join(root, "state.db"),
+      vault,
+      runtime,
+      () => ({}),
+      () => ({ reason: "ready", seconds: 60 }),
+      async (_s, work) => work(),
+      {
+        page: async (url) => ({ url, text, links: [] }),
+        feed: async () => [{ url: "https://new.org" }],
+      },
+    );
+  let worker = make();
+  try {
+    await worker.configure({
+      confirmed: true,
+      enabled: true,
+      repository: root,
+      profileId: "test",
+    });
+    await worker.tick(); // existing validation
+    await worker.tick(); // discovery
+    assert.equal(calls, 2);
+    assert.equal(worker.status().followups.length, 1);
+    assert.equal(worker.status().followups[0].state, "queued");
+    await worker.close();
+    worker = make();
+    await worker.tick(); // follow-up ignores hourly delay
+    assert.equal(calls, 3);
+    const q = worker.status().followups[0];
+    assert.equal(q.state, "completed");
+    const r = worker.status().receipts.find((r: any) => r.id === q.receiptId);
+    assert.equal(r.state, "completed");
+    assert.ok(
+      r.modelStartedAt && r.modelFinishedAt && r.evidenceHash && r.sourceHash,
+    );
+    assert.equal(r.parentId, q.parentId);
+    await worker.tick();
+    assert.equal(calls, 3); // idempotent
+    await worker.close();
+    worker = make();
+    await worker.tick();
+    assert.equal(calls, 3); // completed stays completed
+    // Fresh discovery parent schedules an independent follow-up for failure testing.
+    (worker as any).enqueue("https://failure.org", "test-parent");
+    fail = true;
+    await worker.tick();
+    const failed = worker
+      .status()
+      .followups.find((q: any) => q.parentId === "test-parent");
+    assert.equal(failed.state, "queued");
+    assert.equal(failed.attempts, 1);
+    assert.ok(failed.nextAt > Date.now());
+    assert.equal(worker.status().receipts[0].state, "needs-research");
+    assert.equal(worker.status().receipts[0].resultId, undefined);
+    await worker.tick();
+    assert.equal(calls, 4); // retry backoff
+  } finally {
+    await worker.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
