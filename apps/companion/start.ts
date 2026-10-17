@@ -1,3 +1,4 @@
+import { CryptoDirectoryResearch } from "../../modules/research/crypto-directory.js";
 import { researchWorkflowProgress } from "../../modules/research/workflow-progress.js";
 import { QualificationResearch } from "../../modules/research/qualification.js";
 import { LocalModelTurns } from "../../modules/models/local-turns.js";
@@ -237,6 +238,17 @@ const qualificationResearch = new QualificationResearch(
   undefined,
   modelTurns.run,
 );
+const directoryResearch = new CryptoDirectoryResearch(
+  join(content.directory, "crypto-directory.db"),
+  new Vault(key),
+  new Ollama("http://127.0.0.1:11434", 1800_000),
+  (id) => store.profile(owner, id),
+  () => {
+    const a = executionControls.admission(worker.activeTasks);
+    return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
+  },
+  modelTurns.run,
+);
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
     ? new RemoteClient(
@@ -340,6 +352,7 @@ const workflows = localWorkflows(
   () => store.profiles(owner).map((p) => p.model),
   async () => [
     ...store.templates(owner),
+    ...directoryResearch.entries(),
     ...projectWork.status().map((job) => ({
       id: job.id,
       revision: Math.max(1, Date.parse(job.updatedAt)),
@@ -385,6 +398,7 @@ server.on(
     crm,
     dataset,
     investorResearch,
+    directoryResearch,
     qualificationResearch,
     projectWork,
     sources,
@@ -423,6 +437,8 @@ async function stop() {
   clearInterval(automaticProjectWork);
   clearInterval(importMaintenance);
   clearInterval(workflowSync);
+  clearInterval(directoryTimer);
+  await directoryResearch.close();
   worker.stop();
   await investorResearch.close();
   await qualificationResearch.close();
@@ -446,7 +462,8 @@ const timer = setInterval(() => {
     !stopping &&
     !investorResearch.isRunning &&
     !qualificationResearch.isRunning &&
-    !projectWork.isRunning
+    !projectWork.isRunning &&
+    !directoryResearch.isRunning
   ) {
     const running = worker
       .runOnce()
@@ -482,6 +499,12 @@ const importMaintenance = setInterval(() => {
       );
     });
 }, 60000);
+const directoryTimer = setInterval(() => {
+  if (started && !stopping)
+    void directoryResearch
+      .tick()
+      .catch(() => console.error("Directory workflow check failed"));
+}, 30000);
 const workflowSync = setInterval(() => {
   if (started && !stopping) void workflows.sync().catch(() => {});
 }, 60000);
