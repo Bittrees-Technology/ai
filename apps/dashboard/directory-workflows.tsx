@@ -90,7 +90,7 @@ export function DirectoryWorkflows({
             >
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.model}
+                  {p.model} · {p.contextTokens.toLocaleString()} context
                 </option>
               ))}
             </select>

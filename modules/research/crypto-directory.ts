@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { readFile, readdir, realpath, lstat } from "node:fs/promises";
 import { join, isAbsolute } from "node:path";
@@ -10,7 +11,7 @@ import { publicPage } from "./public-pages.js";
 export const directoryAnswer = z.strictObject({
   fits: z.boolean(),
   tags: z.array(z.string().max(100)).max(8),
-  name: z.string().max(160),
+  name: z.string().min(1).max(160),
   summary: z.string().max(800),
   claims: z
     .array(
@@ -129,6 +130,19 @@ export class CryptoDirectoryResearch {
         "INSERT INTO directory_state VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
       )
       .run(id, this.vault.seal(value, "directory:" + id));
+  }
+  private record(result: any) {
+    const results = this.get("results") || [];
+    this.save("result:" + randomUUID(), result);
+    this.save(
+      "results",
+      [
+        result,
+        ...results.filter(
+          (x: any) => x.mode !== result.mode || x.url !== result.url,
+        ),
+      ].slice(0, 100),
+    );
   }
   private async catalogue(repository: string) {
     const dir = join(repository, "content/projects");
@@ -370,16 +384,7 @@ export class CryptoDirectoryResearch {
             status: answer.fits ? "source-assessed" : "not-a-match",
             ...answer,
           };
-          const results = this.get("results") || [];
-          const key = mode + ":" + page.url;
-          this.save("result:" + key, result);
-          this.save(
-            "results",
-            [
-              result,
-              ...results.filter((x: any) => mode + ":" + x.url !== key),
-            ].slice(0, 100),
-          );
+          this.record(result);
           state.processed++;
         } catch (e) {
           if (signal.aborted) throw e;
@@ -388,6 +393,18 @@ export class CryptoDirectoryResearch {
             e instanceof Error
               ? e.message.slice(0, 180)
               : "Source check failed";
+          this.record({
+            mode,
+            url: candidate.url,
+            checkedAt: new Date().toISOString(),
+            existingId: candidate.existing?.id || null,
+            name: candidate.existing?.name || new URL(candidate.url).hostname,
+            status: "needs-research",
+            summary: "This check could not establish the project information.",
+            tags: [],
+            claims: [],
+            uncertainties: [state.message],
+          });
         }
         state.cursor =
           (offset + state.processed + state.failures) %
@@ -398,7 +415,11 @@ export class CryptoDirectoryResearch {
       state.state = "waiting";
       state.message = `Saved ${state.processed} assessments; ${state.failures} checks need retry. ${mode === "discovery" ? "Discovery currently covers the DeFiLlama project catalogue; other tags may have no candidates." : "Existing listing values were not overwritten."}`;
     } catch (e) {
-      state.state = signal.aborted ? "paused" : "failed";
+      state.state = signal.aborted
+        ? this.get("config")?.enabled
+          ? "waiting"
+          : "paused"
+        : "failed";
       state.message =
         e instanceof Error ? e.message.slice(0, 200) : "Research failed";
     }
