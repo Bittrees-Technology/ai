@@ -90,6 +90,7 @@ export interface LocalApiOptions {
   investorResearch?: InvestorResearch;
   qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
+  directoryResearch?: import("../../modules/research/crypto-directory.js").CryptoDirectoryResearch;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
   autonoteApproval?: AutoNoteApprovalConnector;
@@ -124,6 +125,7 @@ export function localApi({
   investorResearch,
   qualificationResearch,
   projectWork,
+  directoryResearch,
   roles,
   news,
   mail,
@@ -779,6 +781,23 @@ export function localApi({
       const a = z.strictObject({ id: z.uuid() }).parse(req.body);
       res.json(await projectWork.resume(a.id));
     });
+  }
+  app.get("/v1/research/directory", (_req, res) =>
+    res.json(
+      directoryResearch?.status() || {
+        configured: false,
+        workflows: [],
+        results: [],
+      },
+    ),
+  );
+  if (directoryResearch) {
+    app.post("/v1/research/directory/configure", async (req, res) =>
+      res.json(await directoryResearch.configure(req.body)),
+    );
+    app.post("/v1/research/directory/pause", async (_req, res) =>
+      res.json(await directoryResearch.pause()),
+    );
   }
   app.get("/v1/research/qualification", (_req, res) =>
     res.json({

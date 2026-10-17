@@ -32,6 +32,8 @@ export const localCatalogueSchema = z.strictObject({
           "investor-qualification",
           "crm-task-planning",
           "crm-task-work",
+          "cryptodirectory-discovery",
+          "cryptodirectory-validation",
         ]),
       }),
     )
