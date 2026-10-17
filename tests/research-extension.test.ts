@@ -54,6 +54,7 @@ async function setup() {
                   name: "Jane Smith",
                   title: "Managing Partner",
                   evidence: "Jane Smith Managing Partner",
+                  locationEvidence: "Jane Smith is based in New York.",
                   category: "Family office / allocator",
                   relevance: "Unverified.",
                 },
@@ -61,6 +62,7 @@ async function setup() {
                   name: "John Smith",
                   title: "Managing Partner",
                   evidence: "John Smith Managing Partner",
+                  locationEvidence: "John Smith is based in Boston.",
                   category: "Family office / allocator",
                   relevance: "Unverified.",
                 },
@@ -76,7 +78,7 @@ async function setup() {
       assert.ok(hosts.includes(new URL(u).hostname));
       return {
         url: u,
-        text: "Example Capital. New York, United States. Jane Smith Managing Partner. John Smith Managing Partner.",
+        text: "Example Capital. New York, United States. Jane Smith Managing Partner. John Smith Managing Partner. Jane Smith is based in New York. John Smith is based in Boston.",
         links: [],
       };
     },
