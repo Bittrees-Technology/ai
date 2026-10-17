@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "contracts": "tsx scripts/export-contracts.ts",
     "build": "tsc && vite build apps/dashboard --outDir ../../dist/dashboard --emptyOutDir && npm run build:remote && npm run build:site",
     "format": "prettier --write modules apps scripts tests",
