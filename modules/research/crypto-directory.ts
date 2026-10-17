@@ -10,7 +10,7 @@ import { publicPage } from "./public-pages.js";
 export const directoryAnswer = z.strictObject({
   fits: z.boolean(),
   tags: z.array(z.string().max(100)).max(8),
-  name: z.string().max(160),
+  name: z.string().min(1).max(160),
   summary: z.string().max(800),
   claims: z
     .array(
@@ -398,7 +398,11 @@ export class CryptoDirectoryResearch {
       state.state = "waiting";
       state.message = `Saved ${state.processed} assessments; ${state.failures} checks need retry. ${mode === "discovery" ? "Discovery currently covers the DeFiLlama project catalogue; other tags may have no candidates." : "Existing listing values were not overwritten."}`;
     } catch (e) {
-      state.state = signal.aborted ? "paused" : "failed";
+      state.state = signal.aborted
+        ? this.get("config")?.enabled
+          ? "waiting"
+          : "paused"
+        : "failed";
       state.message =
         e instanceof Error ? e.message.slice(0, 200) : "Research failed";
     }
