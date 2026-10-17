@@ -609,3 +609,24 @@ test("role retry source selection excludes other people, history, and navigation
     ),
   );
 });
+
+test("individual staff card location survives qualification revalidation", () => {
+  const q = output();
+  const evidence =
+    "Jeb Belford 11 Managing Director Chief Investment Officer New York, NY";
+  q.gates.individualUS = { status: "supported", evidence, url };
+  assert.equal(
+    validateQualification(q, [{ ...page, text: evidence }], "", "Jeb Belford")
+      .gates.individualUS.status,
+    "supported",
+  );
+  assert.equal(
+    validateQualification(
+      q,
+      [{ ...page, text: evidence + " Jeb Belford is based in London." }],
+      "",
+      "Jeb Belford",
+    ).gates.individualUS.status,
+    "unknown",
+  );
+});

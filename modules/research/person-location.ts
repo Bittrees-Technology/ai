@@ -41,11 +41,19 @@ export function personUSLocation(
     washington: "DC",
   };
   let card = false;
-  if (title) {
+  for (const cardTitle of title
+    ? [title]
+    : [
+        "Managing Director Chief Investment Officer",
+        "Managing Director Portfolio Manager",
+        "Chief Investment Officer",
+        "Portfolio Manager",
+        "Managing Partner",
+      ]) {
     // Entire quote must be one person/title/location card, never a paragraph with a firm address.
     const row = evidence.replace(/^\d+\s+/, "");
     const prefix = new RegExp(
-      `^${escape(normalize(name))}\\s+(?:\\d+\\s+)?${escape(normalize(title))}\\s+`,
+      `^${escape(normalize(name))}\\s+(?:\\d+\\s+)?${escape(normalize(cardTitle))}\\s+`,
       "i",
     );
     const match = row.match(prefix);
@@ -54,7 +62,7 @@ export function personUSLocation(
         .slice(match[0].length)
         .replace(/\.$/, "")
         .toLowerCase();
-      card = Object.entries(cityCards).some(
+      card ||= Object.entries(cityCards).some(
         ([city, state]) => location === `${city}, ${state.toLowerCase()}`,
       );
     }
