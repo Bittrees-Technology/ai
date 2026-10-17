@@ -42,7 +42,16 @@ export function personUSLocation(
   };
   let card = false;
   for (const cardTitle of title
-    ? [title]
+    ? [
+        title,
+        ...[
+          "Managing Director Chief Investment Officer",
+          "Managing Director Portfolio Manager",
+          "Chief Investment Officer",
+          "Portfolio Manager",
+          "Managing Partner",
+        ].filter((r) => r.toLowerCase().includes(title.toLowerCase())),
+      ]
     : [
         "Managing Director Chief Investment Officer",
         "Managing Director Portfolio Manager",
@@ -72,4 +81,44 @@ export function personUSLocation(
   for (const match of source.matchAll(subject))
     if (!usLocation.test(match[1]!.trim())) return false;
   return true;
+}
+
+/** Recover a complete literal card when the model supplied only its city/state cell. */
+export function recoverPersonLocation(
+  text: string,
+  name: string,
+  title: string,
+): string | undefined {
+  const source = normalize(text);
+  const roles = [
+    ...new Set([
+      title,
+      ...[
+        "Managing Director Chief Investment Officer",
+        "Managing Director Portfolio Manager",
+        "Chief Investment Officer",
+        "Portfolio Manager",
+        "Managing Partner",
+      ].filter((r) => r.toLowerCase().includes(title.toLowerCase())),
+    ]),
+  ];
+  const candidates = new Set<string>();
+  for (const role of roles) {
+    const pattern = new RegExp(
+      `\\b${escape(normalize(name))}\\s+(?:\\d+\\s+)?${escape(normalize(role))}\\s+[A-Za-z ]{2,30},\\s*[A-Z]{2}\\b`,
+      "gi",
+    );
+    for (const match of source.matchAll(pattern)) {
+      if (
+        /^\s+(?:headquarters|office|firm|company|corporate|address)\b/i.test(
+          source.slice(match.index! + match[0].length),
+        )
+      )
+        continue;
+      if (personUSLocation(source, name, match[0], role))
+        candidates.add(match[0]);
+      if (candidates.size > 1) return undefined;
+    }
+  }
+  return [...candidates][0];
 }

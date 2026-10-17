@@ -1,4 +1,4 @@
-import { personUSLocation } from "./person-location.js";
+import { personUSLocation, recoverPersonLocation } from "./person-location.js";
 import { immediateTurn, type ModelTurn } from "../models/local-turns.js";
 import { personMatches } from "./person-matches.js";
 import { crmProgress } from "./crm-progress.js";
@@ -62,7 +62,12 @@ type Job = {
   failures: { url: string; reason: string }[];
   pending?: any[];
   locationProofs?: Record<string, { version: number; quote: string }>;
-  locationReviews?: { name: string; url: string; reason: string }[];
+  locationReviews?: {
+    name: string;
+    url: string;
+    reason: string;
+    proposedQuote?: string;
+  }[];
   duplicateReviews?: {
     name: string;
     url: string;
@@ -678,12 +683,22 @@ export class InvestorResearch {
       });
       const rows: any[] = [];
       for (const p of parsed.people) {
+        p.title = p.title.replace(
+          /^\d+\s+(?=Managing|Chief|Portfolio|Partner|Director)/i,
+          "",
+        );
+        if (!personUSLocation(page.text, p.name, p.locationEvidence, p.title)) {
+          const recovered = recoverPersonLocation(page.text, p.name, p.title);
+          if (recovered) p.locationEvidence = recovered;
+        }
+
         if (!personUSLocation(page.text, p.name, p.locationEvidence, p.title)) {
           (j.locationReviews ||= []).push({
             name: p.name,
             url: page.url,
             reason:
               "Current person-specific US location is missing, unsupported or conflicting.",
+            proposedQuote: p.locationEvidence,
           });
           j.locationReviews = j.locationReviews.slice(-200);
           j.skipped++;

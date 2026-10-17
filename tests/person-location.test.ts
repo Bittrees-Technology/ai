@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { personUSLocation } from "../modules/research/person-location.js";
+import {
+  personUSLocation,
+  recoverPersonLocation,
+} from "../modules/research/person-location.js";
 test("personal current US evidence, not firm or career evidence", () => {
   const check = (q: string, n = "Paddy Dear", source = q) =>
     personUSLocation(source, n, q);
@@ -77,5 +80,46 @@ test("named individual directory cards qualify without borrowing company address
       "Managing Director Chief Investment Officer",
     ),
     false,
+  );
+});
+
+test("recover only a whole literal named card, never an office or another person", () => {
+  const card =
+    "Jeb Belford 11 Managing Director Chief Investment Officer New York, NY";
+  assert.equal(
+    recoverPersonLocation(card, "Jeb Belford", "Chief Investment Officer"),
+    card,
+  );
+  assert.equal(
+    personUSLocation(card, "Jeb Belford", card, "Chief Investment Officer"),
+    true,
+  );
+  assert.equal(
+    recoverPersonLocation(
+      "Jane Smith Chief Investment Officer. Boston, MA headquarters",
+      "Jane Smith",
+      "Chief Investment Officer",
+    ),
+    undefined,
+  );
+  assert.equal(
+    recoverPersonLocation(
+      "Jane Smith Chief Investment Officer Boston, MA headquarters",
+      "Jane Smith",
+      "Chief Investment Officer",
+    ),
+    undefined,
+  );
+  assert.equal(
+    recoverPersonLocation(card, "Jane Smith", "Chief Investment Officer"),
+    undefined,
+  );
+  assert.equal(
+    recoverPersonLocation(
+      card + " Jeb Belford is based in London.",
+      "Jeb Belford",
+      "Chief Investment Officer",
+    ),
+    undefined,
   );
 });
