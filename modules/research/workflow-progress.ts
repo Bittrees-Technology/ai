@@ -1,7 +1,7 @@
 import { z } from "zod";
 const count = z.number().int().min(0).max(10000);
 // Numeric, owner-only process telemetry. Never include identities or source content.
-export const workflowProgressSchema = z.strictObject({
+const researchProgressSchema = z.strictObject({
   fullyVerifiedPeople: count.optional(),
   verificationTarget: z.number().int().min(1).max(200).optional(),
   verificationCheckedAt: z.iso.datetime().optional(),
@@ -18,6 +18,26 @@ export const workflowProgressSchema = z.strictObject({
   measuredAt: z.iso.datetime(),
   crmCheckedAt: z.iso.datetime().optional(),
 });
+export const directoryProgressSchema = z.strictObject({
+  kind: z.literal("directory"),
+  recentReceipts: count,
+  modelRuns: count,
+  completed: count,
+  needsResearch: count,
+  queuedFollowups: count,
+  completedFollowups: count,
+  needsAttention: count,
+  measuredAt: z.iso.datetime(),
+  latestReceiptId: z.uuid().optional(),
+  evidenceHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+});
+export const workflowProgressSchema = z.union([
+  researchProgressSchema,
+  directoryProgressSchema,
+]);
 export type WorkflowProgress = z.infer<typeof workflowProgressSchema>;
 export function researchWorkflowProgress(job: any): WorkflowProgress {
   return workflowProgressSchema.parse({

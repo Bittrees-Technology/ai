@@ -120,6 +120,50 @@ export function DirectoryWorkflows({
           )}
         </div>
       ))}
+      <p>
+        Local execution: {data?.execution || "Checking"}. Discovery assessments
+        automatically enter validation.
+      </p>
+      <h4>Follow-up validation</h4>
+      <p>
+        {data?.followups?.filter((q: any) => q.state === "queued").length || 0}{" "}
+        queued ·{" "}
+        {data?.followups?.filter((q: any) => q.state === "completed").length ||
+          0}{" "}
+        completed ·{" "}
+        {data?.followups?.filter((q: any) => q.state === "needs-attention")
+          .length || 0}{" "}
+        need attention
+      </p>
+      <h4>Execution receipts</h4>
+      <p>
+        Completed means the assessment and its evidence were saved. It does not
+        mean a listing was published or every fact was verified.
+      </p>
+      {data?.receipts?.slice(0, 20).map((r: any) => (
+        <details key={r.id}>
+          <summary>
+            {r.url} — {r.mode} — {r.state}
+          </summary>
+          <p>
+            Stage: {r.stage}. Started: {r.startedAt}. Finished:{" "}
+            {r.finishedAt || "Pending"}.
+          </p>
+          <p>
+            Local model: {r.model || "Not reached"}. Model started:{" "}
+            {r.modelStartedAt || "Not yet"}. Model finished:{" "}
+            {r.modelFinishedAt || "Not yet"}.
+          </p>
+          {r.error && <p>Needs research: {r.error}</p>}
+          <p>
+            Receipt: {r.id}. Run: {r.runId}.
+          </p>
+          {r.parentId && <p>Triggered by discovery result: {r.parentId}</p>}
+          {r.evidenceHash && (
+            <p>Saved evidence fingerprint: {r.evidenceHash}</p>
+          )}
+        </details>
+      ))}
       <h4>Recent findings</h4>
       <p>
         Source-assessed means the model supplied matching quotations. It is not
