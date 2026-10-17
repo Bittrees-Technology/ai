@@ -47,3 +47,35 @@ test("personal current US evidence, not firm or career evidence", () => {
     false,
   );
 });
+
+test("named individual directory cards qualify without borrowing company addresses", () => {
+  const quote =
+    "3 Jeb Belford 11 Managing Director Chief Investment Officer New York, NY";
+  assert.equal(
+    personUSLocation(
+      quote,
+      "Jeb Belford",
+      quote,
+      "Managing Director Chief Investment Officer",
+    ),
+    true,
+  );
+  for (const q of [
+    "Jeb Belford Chief Investment Officer. Our headquarters is in New York, NY",
+    "Jeb Belford Chief Investment Officer Mary Jones New York, NY",
+    "Mary Jones Chief Investment Officer New York, NY",
+  ])
+    assert.equal(
+      personUSLocation(q, "Jeb Belford", q, "Chief Investment Officer"),
+      false,
+    );
+  assert.equal(
+    personUSLocation(
+      quote + " Jeb Belford is based in London.",
+      "Jeb Belford",
+      quote,
+      "Managing Director Chief Investment Officer",
+    ),
+    false,
+  );
+});

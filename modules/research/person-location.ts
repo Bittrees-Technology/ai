@@ -8,6 +8,7 @@ export function personUSLocation(
   text: string,
   name: string,
   quote: string,
+  title?: string,
 ): boolean {
   const source = normalize(text),
     evidence = normalize(quote);
@@ -23,8 +24,42 @@ export function personUSLocation(
     "gi",
   );
   const claims = [...evidence.matchAll(subject)];
-  if (!claims.length || !claims.some((m) => usLocation.test(m[1]!.trim())))
-    return false;
+  const cityCards: Record<string, string> = {
+    "new york": "NY",
+    "new york city": "NY",
+    "los angeles": "CA",
+    "san francisco": "CA",
+    boston: "MA",
+    chicago: "IL",
+    miami: "FL",
+    austin: "TX",
+    dallas: "TX",
+    denver: "CO",
+    seattle: "WA",
+    "palo alto": "CA",
+    "menlo park": "CA",
+    washington: "DC",
+  };
+  let card = false;
+  if (title) {
+    // Entire quote must be one person/title/location card, never a paragraph with a firm address.
+    const row = evidence.replace(/^\d+\s+/, "");
+    const prefix = new RegExp(
+      `^${escape(normalize(name))}\\s+(?:\\d+\\s+)?${escape(normalize(title))}\\s+`,
+      "i",
+    );
+    const match = row.match(prefix);
+    if (match) {
+      const location = row
+        .slice(match[0].length)
+        .replace(/\.$/, "")
+        .toLowerCase();
+      card = Object.entries(cityCards).some(
+        ([city, state]) => location === `${city}, ${state.toLowerCase()}`,
+      );
+    }
+  }
+  if (!card && !claims.some((m) => usLocation.test(m[1]!.trim()))) return false;
   // Any explicit conflicting current-base statement about the same named person blocks publication.
   for (const match of source.matchAll(subject))
     if (!usLocation.test(match[1]!.trim())) return false;
