@@ -1,3 +1,4 @@
+import { RecurringWork } from "./recurring.js";
 import React, { useState } from "react";
 import { Templates } from "./templates.js";
 import { WorkTools } from "./work-tools.js";
@@ -27,6 +28,7 @@ export function WorkflowWorkspace(props: {
           [
             ["sequences", "Task sequences"],
             ["instructions", "Saved instructions"],
+            ["recurring", "Recurring work"],
             ["permissions", "Permissions & sync"],
           ] as const
         ).map(([id, label]) => (
@@ -51,6 +53,7 @@ export function WorkflowWorkspace(props: {
         </>
       )}
       {view === "instructions" && <Templates {...props} />}
+      {view === "recurring" && <RecurringWork api={props.api} />}
       {view === "permissions" && <Workflows api={props.api} />}
     </section>
   );

@@ -1,3 +1,4 @@
+import { savedInvestorInput } from "../../modules/workflows/local-investor-review.js";
 import { checkForUpdates } from "./updates.js";
 import type { QualificationResearch } from "../../modules/research/qualification.js";
 import type { ProjectWork } from "../../modules/research/project-work.js";
@@ -91,6 +92,8 @@ export interface LocalApiOptions {
   investorResearch?: InvestorResearch;
   qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
+  localInvestorReview?: import("../../modules/workflows/local-investor-review.js").LocalInvestorReview;
+  recurring?: import("../../modules/workflows/recurring.js").RecurringWorkflows;
   taskSync?: import("../../modules/task-sync/runner.js").TaskSyncRunner;
   centralWorkflows?: import("../../modules/workflows/central-worker.js").CentralWorkflowWorker;
   directoryResearch?: import("../../modules/research/crypto-directory.js").CryptoDirectoryResearch;
@@ -131,6 +134,8 @@ export function localApi({
   directoryResearch,
   centralWorkflows,
   taskSync,
+  recurring,
+  localInvestorReview,
   roles,
   news,
   mail,
@@ -203,6 +208,16 @@ export function localApi({
   app.post(
     ["/v1/connections/dataset/save", "/v1/connections/dataset/patch"],
     express.json({ limit: 2_000_000, strict: true }),
+  );
+  // Reviewed task batches include full source evidence and destination mappings.
+  // Keep the larger bound confined to this authenticated, schema-validated route.
+  app.post(
+    "/v1/workflows/task-sync/review",
+    express.json({ limit: 2_000_000, strict: true }),
+  );
+  app.post(
+    "/v1/workflows/recurring/review",
+    express.json({ limit: 3_000_000, strict: true }),
   );
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/private-relay", (_req, res) =>
@@ -799,6 +814,85 @@ export function localApi({
       },
     ),
   );
+  if (localInvestorReview) {
+    app.get("/v1/research/local-investor-drafts", (_req, res) =>
+      res.json(localInvestorReview.outbox()),
+    );
+    app.post("/v1/research/local-investor-drafts", async (req, res) => {
+      const input = z
+        .strictObject({
+          evidence: savedInvestorInput,
+          modelProfileId: z.uuid(),
+        })
+        .parse(req.body);
+      const controller = new AbortController();
+      const cancel = () => {
+        if (!res.writableEnded) controller.abort(Error("Client disconnected"));
+      };
+      res.on("close", cancel);
+      try {
+        res.json(
+          await localInvestorReview.review(
+            input.evidence,
+            store.profile(owner, input.modelProfileId),
+            controller.signal,
+          ),
+        );
+      } finally {
+        res.off("close", cancel);
+      }
+    });
+    app.post("/v1/research/local-investor-drafts/cancel", (req, res) => {
+      const input = z
+        .strictObject({
+          operationId: z.string().regex(/^investor-draft:[a-f0-9]{64}$/),
+        })
+        .parse(req.body);
+      res.json(localInvestorReview.cancel(input.operationId));
+    });
+  }
+  if (recurring) {
+    app.get("/v1/workflows/recurring", (_req, res) =>
+      res.json(recurring.status()),
+    );
+    app.get("/v1/workflows/recurring/:id", (req, res) =>
+      res.json(recurring.detail(req.params.id)),
+    );
+    app.post("/v1/workflows/recurring/review", (req, res) =>
+      res.json(recurring.review(req.body)),
+    );
+    app.post("/v1/workflows/recurring/control", async (req, res) => {
+      const input = z
+        .discriminatedUnion("action", [
+          z.strictObject({
+            action: z.literal("approve"),
+            id: z.string(),
+            revision: z.string(),
+            confirmed: z.literal(true),
+          }),
+          z.strictObject({
+            action: z.literal("enable"),
+            id: z.string(),
+            revision: z.string(),
+          }),
+          z.strictObject({
+            action: z.enum(["verify", "pause", "revoke"]),
+            id: z.string(),
+          }),
+        ])
+        .parse(req.body);
+      if (input.action === "approve")
+        return res.json(
+          recurring.approve(input.id, input.revision, input.confirmed),
+        );
+      if (input.action === "enable")
+        return res.json(await recurring.enable(input.id, input.revision));
+      if (input.action === "verify")
+        return res.json(await recurring.verify(input.id));
+      if (input.action === "pause") return res.json(recurring.pause(input.id));
+      res.json(recurring.revoke(input.id));
+    });
+  }
   if (taskSync) {
     app.post("/v1/workflows/task-sync/retry-connection", (req, res) => {
       z.strictObject({}).parse(req.body);
