@@ -39,6 +39,12 @@ export type RecurringReceipt = {
   objectiveComplete?: boolean;
 };
 export type RecurringHost = {
+  /** Explicit typed native verification may exercise reviewed actions. UI must disclose this. */
+  verifyComplete?: (
+    definition: RecurringDefinition,
+    receipt: RecurringReceipt,
+    signal: AbortSignal,
+  ) => Promise<RecurringReceipt>;
   /** Recheck user approval, current source authorization AND zero additional cost. */
   authorize: (
     definition: RecurringDefinition,
@@ -135,6 +141,13 @@ export class RecurringWorkflows {
     )
       throw Error("Workflow approval changed");
   }
+  /** Internal operation fence; never a credential or grant. */
+  authorityVersion(id: string) {
+    const row = this.get(id);
+    return row.approved
+      ? digest({ revision: row.revision, epoch: row.epoch })
+      : undefined;
+  }
   review(raw: unknown) {
     const input = z.array(recurringDefinitionSchema).min(1).max(50).parse(raw);
     if (new Set(input.map((d) => d.id)).size !== input.length)
@@ -199,12 +212,26 @@ export class RecurringWorkflows {
       state.definition.collect,
       signal,
     );
-    const receipt = await this.host.execute(
+    let receipt = await this.host.execute(
       state.definition,
       state.definition.collect,
       "verify:" + randomUUID(),
       signal,
     );
+    const admitted = this.get(id);
+    if (
+      !admitted.approved ||
+      admitted.revision !== state.revision ||
+      admitted.epoch !== state.epoch
+    )
+      throw Error("Review changed");
+    signal.throwIfAborted();
+    if (this.host.verifyComplete && receipt.state === "confirmed")
+      receipt = await this.host.verifyComplete(
+        state.definition,
+        receipt,
+        signal,
+      );
     this.receipt(receipt);
     const current = this.get(id);
     if (

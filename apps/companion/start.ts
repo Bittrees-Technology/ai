@@ -8,6 +8,8 @@ import { AgentQueue } from "../../modules/agents/queue.js";
 import { AgentProfiles } from "../../modules/agents/profiles.js";
 import { AgentCoordinator } from "../../modules/agents/coordinator.js";
 import { MyCloudSource } from "../../modules/workflows/recurring-mycloud-source.js";
+import { StorageCleanupSource } from "../../modules/workflows/recurring-storage-source.js";
+import { StorageMaintenance } from "../../modules/workflows/recurring-storage-maintenance.js";
 import { LocalInvestorReview } from "../../modules/workflows/local-investor-review.js";
 import { localRecurringHost } from "../../modules/workflows/recurring-host.js";
 import {
@@ -84,10 +86,10 @@ import {
   crmKeychainEntry,
 } from "../../modules/connectors/crm.js";
 import { createServer } from "node:http";
-import { mkdir, stat, writeFile, rm } from "node:fs/promises";
+import { mkdir, stat, writeFile, rm, readFile, lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { Store } from "../../modules/storage/store.js";
 import { Vault } from "../../modules/storage/vault.js";
 import { MemoryStore } from "../../modules/memory/store.js";
@@ -260,14 +262,111 @@ const myCloudSource = new MyCloudSource(
         ),
   },
 );
+const storageScopePath = join(directory, "storage-cleanup-scope.json");
+const storageScopeFingerprint: string | undefined = await (async () => {
+  try {
+    const info = await lstat(storageScopePath);
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.size > 1024 ||
+      info.mode & 0o022
+    )
+      return undefined;
+    const value = JSON.parse(await readFile(storageScopePath, "utf8"));
+    if (
+      Object.keys(value).join() !== "sourceFingerprint" ||
+      !/^[a-f0-9]{64}$/.test(value.sourceFingerprint)
+    )
+      return undefined;
+    return value.sourceFingerprint;
+  } catch {
+    return undefined;
+  }
+})();
+const storageDefinition = (
+  d: import("../../modules/workflows/recurring.js").RecurringDefinition,
+) =>
+  d.id === "daily-safe-storage-cleanup" &&
+  !!storageScopeFingerprint &&
+  d.sourceFingerprint === storageScopeFingerprint &&
+  d.collect.id === "local.storage.plan" &&
+  d.collect.capability === "local.storage.inspect" &&
+  d.actions.length === 1 &&
+  d.actions[0]?.id === "local.storage.cleanup" &&
+  d.actions[0]?.capability === "local.cache.cleanup.reviewed";
+const storageAuthorized = () =>
+  executionControls.admission(0).reason === "ready" &&
+  recurring
+    .status()
+    .some(
+      (row) =>
+        row.id === "daily-safe-storage-cleanup" &&
+        row.approved &&
+        storageDefinition(recurring.detail(row.id).definition),
+    );
+const storageSource = new StorageCleanupSource(
+  join(directory, "storage-cleanup-operations.db"),
+  new Vault(key),
+  () => storageMaintenance.operationAuthorized(),
+);
+const storageMaintenance = new StorageMaintenance(
+  join(directory, "storage-maintenance.db"),
+  new Vault(key),
+  storageSource,
+  {
+    authorized: storageAuthorized,
+    authority: () =>
+      storageAuthorized()
+        ? recurring.authorityVersion("daily-safe-storage-cleanup")
+        : undefined,
+    reportsDirectory: join(
+      recurringHome(),
+      "Library",
+      "Logs",
+      "Storage Cleanup",
+    ),
+  },
+);
 const recurring = new RecurringWorkflows(
   join(directory, "recurring-workflows.db"),
   new Vault(key),
   localRecurringHost({
+    actions: new Map([
+      [
+        "local.storage.cleanup",
+        {
+          workflowId: "daily-safe-storage-cleanup",
+          capability: "local.cache.cleanup.reviewed",
+          read: (signal, id) => storageMaintenance.execute(signal, id),
+        },
+      ],
+    ]),
+    verifyComplete: async (d, receipt, signal) => {
+      if (
+        !storageDefinition(d) ||
+        storageMaintenance.decide(receipt).decision !== "act"
+      )
+        return receipt;
+      return storageMaintenance.execute(
+        signal,
+        createHash("sha256")
+          .update("manual-verification:" + receipt.fingerprint)
+          .digest("hex"),
+      );
+    },
     collectors: new Map<
       string,
       import("../../modules/workflows/recurring-host.js").LocalRecurringCollector
     >([
+      [
+        "local.storage.plan",
+        {
+          capability: "local.storage.inspect",
+          read: (signal, id) => storageMaintenance.collect(signal, id),
+          decide: (receipt) => storageMaintenance.decide(receipt),
+        },
+      ],
       [
         "local.mycloud.health",
         {
@@ -311,11 +410,14 @@ const recurring = new RecurringWorkflows(
     admission: () => executionControls.admission(0).reason === "ready",
     // Only this complete reviewed source is eligible; actual original PAUSED/fingerprint is still checked.
     cutoverReady: (d) =>
-      d.id === "mycloud-health-checks" &&
-      d.collect.id === "local.mycloud.health" &&
-      d.actions.length === 0 &&
-      d.sourceFingerprint ===
-        "e65e2bb43dc0176ec6f7aadf829cae15d92dcdea6558bc89ceea1943b1f1d3e4",
+      (storageDefinition(d) &&
+        storageMaintenance.status().report?.inventoryComplete === true &&
+        !storageMaintenance.status().pending) ||
+      (d.id === "mycloud-health-checks" &&
+        d.collect.id === "local.mycloud.health" &&
+        d.actions.length === 0 &&
+        d.sourceFingerprint ===
+          "e65e2bb43dc0176ec6f7aadf829cae15d92dcdea6558bc89ceea1943b1f1d3e4"),
     recordDecision: (id, evidence) => recurring.recordDecision(id, evidence),
   }),
 );
@@ -624,6 +726,7 @@ server.on(
     agents,
     localInvestorReview,
     myCloudSource,
+    storageMaintenance,
     myCloudHelperToken: process.env.BITTREES_MYCLOUD_HELPER_TOKEN,
     qualificationResearch,
     projectWork,
@@ -677,6 +780,8 @@ async function stop() {
   await localInvestorReview.shutdown();
   await recurring.close();
   myCloudSource.close();
+  storageMaintenance.close();
+  storageSource.close();
   await taskSync.close();
   await centralWorkflows.close();
   await directoryResearch.close();
