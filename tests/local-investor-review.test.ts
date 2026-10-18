@@ -174,7 +174,7 @@ test("cancellation persists and prevents duplicate execution", async () => {
       /cancelled/,
     );
     assert.equal(x.calls(), 1);
-    assert.equal(x.adapter.outbox()[0].state, "cancelled");
+    assert.equal(x.adapter.outbox()[0]?.state, "cancelled");
   } finally {
     x.adapter.close();
   }
