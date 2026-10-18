@@ -55,7 +55,9 @@ function accessDescription(capability: string) {
   if (capability === "local.mycloud.health")
     return "Read-only: pinned MyCloud health checker. Access is limited to the approved NAS on port 22; no repairs or file changes.";
   if (capability === "local.storage.inspect")
-    return "Available: read free disk space. Cleanup is not available.";
+    return "Read free disk space and inspect cache safety. Cleanup requires a separately reviewed cache action.";
+  if (capability === "local.cache.cleanup.reviewed")
+    return "May remove only verified unused download/compiler caches below the 20 GiB reserve. Verification runs can perform this cleanup. Projects, dependencies, backups and open/changing files are retained.";
   if (capability === "local.home-monitor.read")
     return "Available: read local Home Server Monitor status. SSH and repairs are not available.";
   return `Not connected yet: ${capability}. No source actions are enabled.`;
@@ -171,6 +173,9 @@ export function RecurringWork({ api }: { api: Api }) {
                 {details.definition.executionBrief}
               </p>
               <p>{accessDescription(details.definition.collect.capability)}</p>
+              {details.definition.actions.map((action: any) => (
+                <p key={action.id}>{accessDescription(action.capability)}</p>
+              ))}
               <p>
                 Schedule takeover requires a complete verified source adapter
                 and confirmation that the original schedule is paused.
@@ -201,7 +206,9 @@ export function RecurringWork({ api }: { api: Api }) {
           )}
           {row.approved && (
             <button onClick={() => void control(row, "verify")}>
-              Verify source access
+              {row.capabilities?.includes("local.cache.cleanup.reviewed")
+                ? "Run reviewed cache cleanup verification"
+                : "Verify source access"}
             </button>
           )}
           {row.verified && !row.enabled && (
@@ -218,6 +225,19 @@ export function RecurringWork({ api }: { api: Api }) {
             </button>
           )}
           {row.lastSummary && <p>{row.lastSummary}</p>}
+          {row.capabilities?.includes("local.cache.cleanup.reviewed") &&
+            row.lastReceipt?.evidence?.afterAvailableBytes !== undefined && (
+              <p>
+                Last check:{" "}
+                {(
+                  row.lastReceipt.evidence.afterAvailableBytes /
+                  1024 ** 3
+                ).toFixed(1)}{" "}
+                GiB free. {row.lastReceipt.evidence.removed?.length ?? 0} caches
+                cleaned; {row.lastReceipt.evidence.skipped?.length ?? 0}{" "}
+                skipped. {row.lastReceipt.evidence.review}
+              </p>
+            )}
           {row.exception && (
             <p role="status">Needs help: {row.exception.reason}</p>
           )}

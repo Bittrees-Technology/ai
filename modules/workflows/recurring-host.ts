@@ -13,7 +13,8 @@ import type { ModelTurn } from "../models/local-turns.js";
 export type LocalRecurringCollector = {
   capability: string;
   decide?: (receipt: RecurringReceipt) => {
-    decision: "wait" | "escalate";
+    decision: "wait" | "escalate" | "act";
+    actionId?: string;
     summary: string;
   };
   read: (signal: AbortSignal, operationId: string) => Promise<RecurringReceipt>;
@@ -21,6 +22,15 @@ export type LocalRecurringCollector = {
 /** Operator-installed read-only adapters. Definitions cannot supply URLs, commands or file paths. */
 export function localRecurringHost(options: {
   collectors: ReadonlyMap<string, LocalRecurringCollector>;
+  actions?: ReadonlyMap<
+    string,
+    LocalRecurringCollector & { workflowId: string }
+  >;
+  verifyComplete?: (
+    definition: RecurringDefinition,
+    receipt: RecurringReceipt,
+    signal: AbortSignal,
+  ) => Promise<RecurringReceipt>;
   automationRoot: string;
   runtime: Ollama;
   profile: (id: string) => unknown;
@@ -33,11 +43,22 @@ export function localRecurringHost(options: {
     definition: RecurringDefinition,
     operation: RecurringOperation,
   ) {
+    const action = definition.actions.find((a) => a.id === operation.id);
+    const actionAdapter = action && options.actions?.get(action.id);
     if (
-      operation.id !== definition.collect.id ||
-      definition.actions.some((a) => a.id === operation.id)
+      action &&
+      (!actionAdapter ||
+        actionAdapter.workflowId !== definition.id ||
+        canonical(action) !== canonical(operation))
     )
       throw Error("Source action adapter is not installed");
+    if (!action && operation.id !== definition.collect.id)
+      throw Error("Source action adapter is not installed");
+    if (
+      ["local.storage.plan", "local.storage.cleanup"].includes(operation.id) &&
+      definition.id !== "daily-safe-storage-cleanup"
+    )
+      throw Error("Storage source is restricted to its reviewed workflow");
     if (
       operation.id === "local.mycloud.health" &&
       definition.id !== "mycloud-health-checks"
@@ -46,7 +67,7 @@ export function localRecurringHost(options: {
     const args = z
       .strictObject({ sourceAutomationId: z.literal(definition.id) })
       .parse(operation.arguments);
-    const adapter = options.collectors.get(operation.id);
+    const adapter = actionAdapter ?? options.collectors.get(operation.id);
     if (!adapter || adapter.capability !== operation.capability)
       throw Error(`Adapter not installed: ${operation.id}`);
     if (definition.additionalSpendingUSD !== 0)
@@ -54,6 +75,7 @@ export function localRecurringHost(options: {
     return adapter;
   }
   return {
+    verifyComplete: options.verifyComplete,
     authorize: async (d, o, signal) => {
       signal.throwIfAborted();
       resolve(d, o);
