@@ -20,10 +20,14 @@ test("dataset save needs preview, keeps CRM separate and clears approval on edit
       connection: { datasetId: id, name: "Project inventory" },
     };
     if (path.endsWith("/read")) result = snapshot;
-    if (path.endsWith("/save")) {
+    if (path.endsWith("/patch")) {
       saves++;
       const body = route.request().postDataJSON();
-      snapshot.entries = body.entries;
+      expect(body.changes).toHaveLength(1);
+      expect(body.removeIds).toEqual([]);
+      snapshot.entries = snapshot.entries.map(
+        (e) => body.changes.find((c: any) => c.id === e.id) || e,
+      );
       snapshot.version++;
       result = { id, version: snapshot.version };
     }

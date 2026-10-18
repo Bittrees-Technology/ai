@@ -199,7 +199,7 @@ export function localApi({
   );
   // Match the bounded CRM dataset envelope without widening other local routes.
   app.post(
-    "/v1/connections/dataset/save",
+    ["/v1/connections/dataset/save", "/v1/connections/dataset/patch"],
     express.json({ limit: 2_000_000, strict: true }),
   );
   app.use(express.json({ limit: "64kb", strict: true }));
@@ -902,6 +902,9 @@ export function localApi({
     });
     app.post("/v1/connections/dataset/save", async (req, res) =>
       res.json(await dataset.save(req.body)),
+    );
+    app.post("/v1/connections/dataset/patch", async (req, res) =>
+      res.json(await dataset.patch(req.body)),
     );
     app.post("/v1/connections/dataset/forget", async (req, res) => {
       z.strictObject({ confirmed: z.literal(true) }).parse(req.body);
