@@ -819,6 +819,22 @@ export function localApi({
     ),
   );
   if (agents) {
+    app.post("/v1/agents/cloud/key", (req, res) => {
+      if (!agents.cloud) throw Error("Cloud unavailable");
+      res.json(agents.cloud.install(req.body));
+    });
+    app.post("/v1/agents/cloud/check", async (_req, res) => {
+      if (!agents.cloud) throw Error("Cloud unavailable");
+      res.json(await agents.cloud.check());
+    });
+    app.post("/v1/agents/cloud/enable", (req, res) => {
+      if (!agents.cloud) throw Error("Cloud unavailable");
+      res.json(agents.cloud.enable(req.body));
+    });
+    app.post("/v1/agents/cloud/disable", (_req, res) => {
+      if (!agents.cloud) throw Error("Cloud unavailable");
+      res.json(agents.cloud.disable());
+    });
     app.get("/v1/agents", (_req, res) => res.json(agents.status()));
     app.post("/v1/agents/profiles", (req, res) =>
       res.json(agents.profiles.save(req.body)),

@@ -1,3 +1,4 @@
+import { CloudConnection } from "./cloud-connection.js";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { Vault } from "../storage/vault.js";
@@ -17,6 +18,7 @@ export class AgentCoordinator {
     private runtime: Pick<Ollama, "pin" | "generate">,
     private model: (id: string) => unknown,
     private allowed: () => boolean,
+    readonly cloud?: CloudConnection,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -50,10 +52,9 @@ export class AgentCoordinator {
       profiles: this.profiles.list(),
       bindings: this.profiles.bindings(),
       drafts: this.drafts().slice(-100),
-      openRouter: {
+      openRouter: this.cloud?.status() ?? {
         enabled: false,
-        reason:
-          "Cloud execution requires separate network, data and account authorization. No paid usage approved.",
+        reason: "Cloud connection unavailable",
       },
       transport: {
         local: "Authenticated loopback REST",
@@ -78,6 +79,13 @@ export class AgentCoordinator {
     const snapshot = this.profiles.snapshot(
       this.profiles.resolve(input.workflow, input.agentProfileId),
     );
+    if (
+      snapshot.profile.provider === "openrouter" &&
+      (!input.cloudConsent || !this.cloud?.status().enabled)
+    )
+      throw Error(
+        "Cloud task needs an enabled connection and explicit export confirmation",
+      );
     const row: any = {
       id: input.operationId,
       inputHash,
@@ -98,25 +106,44 @@ export class AgentCoordinator {
               .revision !== snapshot.revision
           )
             throw Error("Profile changed; review queued task");
-          if (snapshot.profile.provider !== "local")
-            throw Error(
-              "OpenRouter is not activated; task held without network access",
-            );
           row.state = "running";
           this.save(row);
-          const model = await this.runtime.pin(
-            this.model(snapshot.profile.modelProfileId),
-            signal,
-          );
-          const output = await this.runtime.generate(
-            model,
-            profilePrompt(snapshot.profile, input.instruction),
-            signal,
-          );
+          const prompt = profilePrompt(snapshot.profile, input.instruction);
+          let model: { profile: { model: string }; digest: string };
+          let output: string;
+          let remoteReceipt: unknown;
+          if (snapshot.profile.provider === "openrouter") {
+            if (!input.cloudConsent || !this.cloud)
+              throw Error("Cloud export not approved");
+            const remote = await this.cloud.generate(
+              prompt,
+              snapshot.profile.modelProfileId,
+              signal,
+              input.operationId,
+            );
+            output = remote.output;
+            model = {
+              profile: { model: remote.model },
+              digest: "remote-provider-receipt",
+            };
+            remoteReceipt = remote;
+          } else {
+            model = await this.runtime.pin(
+              this.model(snapshot.profile.modelProfileId),
+              signal,
+            );
+            output = await this.runtime.generate(model as any, prompt, signal);
+          }
           signal.throwIfAborted();
           if (!this.allowed()) throw Error("Local authority changed");
+          if (
+            this.profiles.snapshot(this.profiles.get(snapshot.profile.id))
+              .revision !== snapshot.revision
+          )
+            throw Error("Profile changed during execution");
           row.state = "draft";
           row.receipt = {
+            remoteReceipt,
             model: model.profile.model,
             digest: model.digest,
             profileRevision: snapshot.revision,
@@ -142,5 +169,6 @@ export class AgentCoordinator {
     await Promise.all(this.pending.values());
     this.db.close();
     this.profiles.close();
+    this.cloud?.close();
   }
 }
