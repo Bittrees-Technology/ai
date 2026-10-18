@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import { personUSLocation, recoverPersonLocation } from "./person-location.js";
 import { immediateTurn, type ModelTurn } from "../models/local-turns.js";
 import { personMatches } from "./person-matches.js";
@@ -128,6 +129,7 @@ export function investmentRole(title: string): boolean {
 }
 
 export class InvestorResearch {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private active?: { abort: AbortController; done: Promise<void> };
   private verificationProgress = new Map<
@@ -650,6 +652,11 @@ export class InvestorResearch {
     this.save(j);
   }
   private async run(j: Job, signal: AbortSignal) {
+    return this.taskTurn("Investor research", signal, (queuedSignal) =>
+      this.runExclusive(j, queuedSignal),
+    );
+  }
+  private async runExclusive(j: Job, signal: AbortSignal) {
     this.activity(j, "Checking CRM connection");
     let s = await this.snapshot(j);
     this.activity(j, "Loading local model");

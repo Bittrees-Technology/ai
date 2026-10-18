@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import { RuntimeHandoff } from "./handoff.js";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import Database from "better-sqlite3";
@@ -57,6 +58,7 @@ type Approval = z.infer<typeof approvalSchema>;
 class Held extends Error {}
 /** One-shot deterministic source sync. Does not claim the local model authored or completed imported tasks. */
 export class TaskSyncRunner {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private running: Promise<void> | null = null;
   private controller: AbortController | null = null;
@@ -436,12 +438,7 @@ export class TaskSyncRunner {
     const a = this.get("approval") as Approval | null;
     if (!a || !this.get("enabled")) return Promise.resolve();
     this.controller = new AbortController();
-    const signal = AbortSignal.any([
-      this.controller.signal,
-      AbortSignal.timeout(
-        Math.max(1, Math.min(60000, a.identity.expiresAt - this.now())),
-      ),
-    ]);
+    const signal = this.controller.signal;
     this.running = this.work(a, signal)
       .catch((e) => {
         if (!this.get("enabled")) return;
@@ -518,6 +515,19 @@ export class TaskSyncRunner {
         throw new Held("Source task content changed");
   }
   private async work(a: Approval, signal: AbortSignal) {
+    return this.taskTurn("CRM task sync", signal, (queuedSignal) =>
+      this.workExclusive(
+        a,
+        AbortSignal.any([
+          queuedSignal,
+          AbortSignal.timeout(
+            Math.max(1, Math.min(60000, a.identity.expiresAt - this.now())),
+          ),
+        ]),
+      ),
+    );
+  }
+  private async workExclusive(a: Approval, signal: AbortSignal) {
     activeLease(a.identity, this.now());
     await this.source(a, signal);
     const receipts = this.get("receipts") || [],

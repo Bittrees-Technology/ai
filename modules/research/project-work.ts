@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import {
   SupplierReview,
   supplierAnswer,
@@ -39,6 +40,7 @@ const answer = z.strictObject({
   result: z.string().min(1).max(3500),
 });
 export class ProjectWork {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private configurationEpoch = 0;
   private projectChoices: any = { projects: [] };
@@ -439,6 +441,11 @@ export class ProjectWork {
     return text.slice(0, budget);
   }
   private async run(j: any, signal: AbortSignal) {
+    return this.taskTurn("CRM project work", signal, (queuedSignal) =>
+      this.runExclusive(j, queuedSignal),
+    );
+  }
+  private async runExclusive(j: any, signal: AbortSignal) {
     if (j.automatic && !j.pending?.length && !j.claim) {
       const tasks = await this.call(j, "tasks.list", {
         projectId: j.input.projectId,
