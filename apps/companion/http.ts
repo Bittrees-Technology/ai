@@ -91,6 +91,7 @@ export interface LocalApiOptions {
   investorResearch?: InvestorResearch;
   qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
+  taskSync?: import("../../modules/task-sync/runner.js").TaskSyncRunner;
   centralWorkflows?: import("../../modules/workflows/central-worker.js").CentralWorkflowWorker;
   directoryResearch?: import("../../modules/research/crypto-directory.js").CryptoDirectoryResearch;
   sources?: CrmTasks;
@@ -129,6 +130,7 @@ export function localApi({
   projectWork,
   directoryResearch,
   centralWorkflows,
+  taskSync,
   roles,
   news,
   mail,
@@ -797,6 +799,47 @@ export function localApi({
       },
     ),
   );
+  if (taskSync) {
+    app.post("/v1/workflows/task-sync/retry-connection", (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(taskSync.retryConnection());
+    });
+    app.post("/v1/workflows/task-sync/review", (req, res) =>
+      res.json(taskSync.configureReview(req.body)),
+    );
+    app.post("/v1/workflows/task-sync/enroll", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      const status = await workflows?.status(),
+        g = status?.grant;
+      if (!g?.signed_at || !g.wallet_address || g.paused_at || g.revoked_at)
+        throw Error("Connect and approve this Mac first");
+      res.json(
+        await taskSync.startEnrollment({
+          authorityId: g.id,
+          deviceId: g.device_id,
+          ownerWallet: g.wallet_address,
+        }),
+      );
+    });
+    app.post("/v1/workflows/task-sync/activation-review", (req, res) =>
+      res.json(taskSync.prepareActivation(req.body)),
+    );
+    app.post("/v1/workflows/task-sync/activate", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await taskSync.requestActivation());
+    });
+    app.get("/v1/workflows/task-sync", (_req, res) =>
+      res.json(taskSync.status()),
+    );
+    app.post("/v1/workflows/task-sync/pause", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await taskSync.pause());
+    });
+    app.post("/v1/workflows/task-sync/resume", (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(taskSync.resume());
+    });
+  }
   if (centralWorkflows) {
     app.get("/v1/workflows/central", (_req, res) =>
       res.json(centralWorkflows.status()),

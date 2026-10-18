@@ -1,3 +1,4 @@
+import { attestRuntime } from "../modules/coordinator/runtime-attestation.js";
 import { syncLocalCatalogue } from "../modules/coordinator/workflow-catalogue.js";
 import { suppressSso } from "../shared/sso/client.mjs";
 import { Pool } from "pg";
@@ -57,9 +58,21 @@ export default async function handler(req: any, res: any) {
         ).split(",")[0],
       100,
     );
-    if (body.action === "register-device" || body.action === "device") {
+    if (
+      body.action === "runtime-attestation" ||
+      body.action === "register-device" ||
+      body.action === "device"
+    ) {
       if (req.headers.origin || req.headers.cookie)
         throw Error("SERVICE_REQUIRED");
+      if (body.action === "runtime-attestation")
+        return res.json(
+          await attestRuntime(
+            pool,
+            String(req.headers.authorization || "").replace(/^Bearer /, ""),
+            body.input,
+          ),
+        );
       if (body.action === "register-device") {
         await rateLimit(
           pool,

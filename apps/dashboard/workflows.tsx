@@ -1,3 +1,4 @@
+import { TaskSyncStatus } from "./task-sync.js";
 import React, { useState, useEffect } from "react";
 export function Workflows({
   api,
@@ -54,6 +55,7 @@ export function Workflows({
             : "Operator configured — not wallet signed";
   return (
     <section>
+      <TaskSyncStatus api={api} />
       <p>
         Delegate work to this Mac with your wallet. Your app connections keep
         their own access rules.

@@ -1,3 +1,5 @@
+import { rolesDecisionPublicKey } from "../../modules/task-sync/roles-pin.js";
+import { TaskSyncRunner } from "../../modules/task-sync/runner.js";
 import { CentralWorkflowWorker } from "../../modules/workflows/central-worker.js";
 import { CryptoDirectoryResearch } from "../../modules/research/crypto-directory.js";
 import { researchWorkflowProgress } from "../../modules/research/workflow-progress.js";
@@ -397,6 +399,25 @@ const workflows = localWorkflows(
     })),
   ],
 );
+const taskSync = new TaskSyncRunner(
+  join(content.directory, "task-sync.db"),
+  new Vault(key),
+  undefined,
+  fetch,
+  Date.now,
+  async (request, signature, signal) => {
+    signal.throwIfAborted();
+    const result = await workflows.attestRuntime(
+      "decision",
+      request,
+      signature,
+    );
+    signal.throwIfAborted();
+    return result;
+  },
+  (purpose, request, signature) =>
+    workflows.attestRuntime(purpose, request, signature),
+);
 server.on(
   "request",
   dashboardServer({
@@ -421,6 +442,7 @@ server.on(
     investorResearch,
     directoryResearch,
     centralWorkflows,
+    taskSync,
     qualificationResearch,
     projectWork,
     sources,
@@ -466,6 +488,9 @@ async function stop() {
   clearInterval(workflowSync);
   clearInterval(directoryTimer);
   clearInterval(centralWorkflowTimer);
+  clearInterval(taskSyncTimer);
+  clearInterval(taskSyncReviewTimer);
+  await taskSync.close();
   await centralWorkflows.close();
   await directoryResearch.close();
   worker.stop();
@@ -540,6 +565,18 @@ const directoryTimer = setInterval(() => {
       .tick()
       .catch(() => console.error("Directory workflow check failed"));
 }, 30000);
+const taskSyncTimer = setInterval(() => {
+  if (started && !stopping) void taskSync.tick();
+}, 30000);
+const taskSyncReviewTimer = setInterval(() => {
+  if (started && !stopping)
+    void taskSync
+      .pollOwnerReview(
+        process.env.BITTREES_ROLES_DECISION_PUBLIC_KEY ||
+          rolesDecisionPublicKey,
+      )
+      .catch(() => {});
+}, 3000);
 const centralWorkflowTimer = setInterval(() => {
   if (started && !stopping) void centralWorkflows.tick();
 }, 30000);
