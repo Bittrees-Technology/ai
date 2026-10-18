@@ -1,3 +1,4 @@
+import { MyCloudSource } from "../../modules/workflows/recurring-mycloud-source.js";
 import { LocalInvestorReview } from "../../modules/workflows/local-investor-review.js";
 import { localRecurringHost } from "../../modules/workflows/recurring-host.js";
 import {
@@ -215,11 +216,47 @@ const localInvestorReview = new LocalInvestorReview(
       executionControls.admission(worker.activeTasks).reason === "ready",
   },
 );
+const myCloudSource = new MyCloudSource(
+  join(directory, "mycloud-health.db"),
+  new Vault(key),
+  {
+    // Human-approved pinned MyCloud source only; native definition approval remains revocable.
+    authorized: () =>
+      executionControls.admission(worker.activeTasks).reason === "ready" &&
+      recurring
+        .status()
+        .some(
+          (row) =>
+            row.id === "mycloud-health-checks" &&
+            row.approved &&
+            row.capabilities.includes("local.mycloud.health"),
+        ),
+  },
+);
 const recurring = new RecurringWorkflows(
   join(directory, "recurring-workflows.db"),
   new Vault(key),
   localRecurringHost({
-    collectors: new Map([
+    collectors: new Map<
+      string,
+      import("../../modules/workflows/recurring-host.js").LocalRecurringCollector
+    >([
+      [
+        "local.mycloud.health",
+        {
+          capability: "local.mycloud.health",
+          read: (signal) => myCloudSource.read(signal),
+          decide: (receipt) => {
+            const evidence = receipt.evidence as { notifications: string[] };
+            return {
+              decision: evidence.notifications.length ? "escalate" : "wait",
+              summary: evidence.notifications.length
+                ? evidence.notifications.join("; ")
+                : "No meaningful MyCloud health change.",
+            };
+          },
+        },
+      ],
       [
         "local.storage.inspect",
         { capability: "local.storage.inspect", read: inspectLocalStorage },
@@ -235,9 +272,13 @@ const recurring = new RecurringWorkflows(
     turn: modelTurns.run,
     admission: () =>
       executionControls.admission(worker.activeTasks).reason === "ready",
-    // Monitor collectors do not replace original cleanup or SSH-repair duties.
-    // No complete source adapter/cutover has been approved yet.
-    cutoverReady: () => false,
+    // Only this complete reviewed source is eligible; actual original PAUSED/fingerprint is still checked.
+    cutoverReady: (d) =>
+      d.id === "mycloud-health-checks" &&
+      d.collect.id === "local.mycloud.health" &&
+      d.actions.length === 0 &&
+      d.sourceFingerprint ===
+        "e65e2bb43dc0176ec6f7aadf829cae15d92dcdea6558bc89ceea1943b1f1d3e4",
     recordDecision: (id, evidence) => recurring.recordDecision(id, evidence),
   }),
 );
@@ -490,6 +531,7 @@ server.on(
     taskSync,
     recurring,
     localInvestorReview,
+    myCloudSource,
     qualificationResearch,
     projectWork,
     sources,
@@ -540,6 +582,7 @@ async function stop() {
   clearInterval(recurringTimer);
   await localInvestorReview.shutdown();
   await recurring.close();
+  myCloudSource.close();
   await taskSync.close();
   await centralWorkflows.close();
   await directoryResearch.close();

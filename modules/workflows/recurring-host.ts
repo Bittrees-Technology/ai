@@ -12,6 +12,10 @@ import type { Ollama } from "../models/ollama.js";
 import type { ModelTurn } from "../models/local-turns.js";
 export type LocalRecurringCollector = {
   capability: string;
+  decide?: (receipt: RecurringReceipt) => {
+    decision: "wait" | "escalate";
+    summary: string;
+  };
   read: (signal: AbortSignal) => Promise<RecurringReceipt>;
 };
 /** Operator-installed read-only adapters. Definitions cannot supply URLs, commands or file paths. */
@@ -34,6 +38,11 @@ export function localRecurringHost(options: {
       definition.actions.some((a) => a.id === operation.id)
     )
       throw Error("Source action adapter is not installed");
+    if (
+      operation.id === "local.mycloud.health" &&
+      definition.id !== "mycloud-health-checks"
+    )
+      throw Error("MyCloud source is restricted to its reviewed workflow");
     const args = z
       .strictObject({ sourceAutomationId: z.literal(definition.id) })
       .parse(operation.arguments);
@@ -58,6 +67,9 @@ export function localRecurringHost(options: {
       (await originalAutomationPaused(options.automationRoot, d)),
     admission: options.admission,
     decide: async (d, receipt, signal) => {
+      signal.throwIfAborted();
+      const deterministic = resolve(d, d.collect).decide;
+      if (deterministic) return deterministic(receipt);
       if (!options.admission()) throw Error("Local model is unavailable");
       const evidence = JSON.stringify(receipt);
       if (evidence.length > 7000)

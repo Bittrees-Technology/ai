@@ -1,24 +1,63 @@
 import React, { useEffect, useState } from "react";
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
 function readableSchedule(rule: string) {
-  const parts = Object.fromEntries(rule.replace(/^RRULE:/, "").split(";").map((part) => part.split("=")));
+  const parts = Object.fromEntries(
+    rule
+      .replace(/^RRULE:/, "")
+      .split(";")
+      .map((part) => part.split("=")),
+  );
   const interval = Number(parts.INTERVAL || 1);
-  if (Object.keys(parts).some((key) => !["FREQ", "INTERVAL", "BYHOUR", "BYMINUTE", "BYSECOND", "BYDAY"].includes(key))) return `Custom schedule: ${rule}`;
-  if (["MINUTELY", "HOURLY"].includes(parts.FREQ) && Object.keys(parts).every((key) => ["FREQ", "INTERVAL"].includes(key))) {
+  if (
+    Object.keys(parts).some(
+      (key) =>
+        ![
+          "FREQ",
+          "INTERVAL",
+          "BYHOUR",
+          "BYMINUTE",
+          "BYSECOND",
+          "BYDAY",
+        ].includes(key),
+    )
+  )
+    return `Custom schedule: ${rule}`;
+  if (
+    ["MINUTELY", "HOURLY"].includes(parts.FREQ) &&
+    Object.keys(parts).every((key) => ["FREQ", "INTERVAL"].includes(key))
+  ) {
     const unit = parts.FREQ === "MINUTELY" ? "minute" : "hour";
     return interval === 1 ? `Every ${unit}` : `Every ${interval} ${unit}s`;
   }
-  const days: Record<string, string> = { MO: "Monday", TU: "Tuesday", WE: "Wednesday", TH: "Thursday", FR: "Friday", SA: "Saturday", SU: "Sunday" };
-  if (interval === 1 && /^\d{1,2}$/.test(parts.BYHOUR || "") && /^\d{1,2}$/.test(parts.BYMINUTE || "") && (!parts.BYSECOND || parts.BYSECOND === "0")) {
+  const days: Record<string, string> = {
+    MO: "Monday",
+    TU: "Tuesday",
+    WE: "Wednesday",
+    TH: "Thursday",
+    FR: "Friday",
+    SA: "Saturday",
+    SU: "Sunday",
+  };
+  if (
+    interval === 1 &&
+    /^\d{1,2}$/.test(parts.BYHOUR || "") &&
+    /^\d{1,2}$/.test(parts.BYMINUTE || "") &&
+    (!parts.BYSECOND || parts.BYSECOND === "0")
+  ) {
     const time = `${parts.BYHOUR.padStart(2, "0")}:${parts.BYMINUTE.padStart(2, "0")}`;
     if (parts.FREQ === "DAILY" && !parts.BYDAY) return `Every day at ${time}`;
-    if (parts.FREQ === "WEEKLY" && days[parts.BYDAY]) return `Every ${days[parts.BYDAY]} at ${time}`;
+    if (parts.FREQ === "WEEKLY" && days[parts.BYDAY])
+      return `Every ${days[parts.BYDAY]} at ${time}`;
   }
   return `Custom schedule: ${rule}`;
 }
 function accessDescription(capability: string) {
-  if (capability === "local.storage.inspect") return "Available: read free disk space. Cleanup is not available.";
-  if (capability === "local.home-monitor.read") return "Available: read local Home Server Monitor status. SSH and repairs are not available.";
+  if (capability === "local.mycloud.health")
+    return "Read-only: pinned MyCloud health checker. Access is limited to the approved NAS on port 22; no repairs or file changes.";
+  if (capability === "local.storage.inspect")
+    return "Available: read free disk space. Cleanup is not available.";
+  if (capability === "local.home-monitor.read")
+    return "Available: read local Home Server Monitor status. SSH and repairs are not available.";
   return `Not connected yet: ${capability}. No source actions are enabled.`;
 }
 export function RecurringWork({ api }: { api: Api }) {
@@ -95,7 +134,11 @@ export function RecurringWork({ api }: { api: Api }) {
           <p>
             {row.status} · Original: {row.originalState} · {row.timezone}
           </p>
-          <p>{row.enabled ? "Local workflow enabled" : "Local workflow inactive; original schedule remains responsible."}</p>
+          <p>
+            {row.enabled
+              ? "Local workflow enabled"
+              : "Local workflow inactive; original schedule remains responsible."}
+          </p>
           <button
             onClick={async () => {
               try {
@@ -113,13 +156,35 @@ export function RecurringWork({ api }: { api: Api }) {
           </button>
           {details?.definition.id === row.id && (
             <div>
-              <p><strong>Schedule:</strong> {readableSchedule(details.definition.rrule)} ({details.definition.timezone})</p>
-              <p><strong>Original schedule:</strong> {details.definition.originalState === "paused" ? "Paused — will not restart through import" : "Active"}</p>
-              <p style={{ whiteSpace: "pre-wrap" }}>{details.definition.executionBrief}</p>
+              <p>
+                <strong>Schedule:</strong>{" "}
+                {readableSchedule(details.definition.rrule)} (
+                {details.definition.timezone})
+              </p>
+              <p>
+                <strong>Original schedule:</strong>{" "}
+                {details.definition.originalState === "paused"
+                  ? "Paused — will not restart through import"
+                  : "Active"}
+              </p>
+              <p style={{ whiteSpace: "pre-wrap" }}>
+                {details.definition.executionBrief}
+              </p>
               <p>{accessDescription(details.definition.collect.capability)}</p>
-              <p>Schedule takeover remains unavailable until the complete task can be performed and verified.</p>
-              <details><summary>Full original instructions</summary><p style={{ whiteSpace: "pre-wrap" }}>{details.definition.instructions}</p></details>
-              <details><summary>Technical definition</summary><pre>{JSON.stringify(details.definition, null, 2)}</pre></details>
+              <p>
+                Schedule takeover requires a complete verified source adapter
+                and confirmation that the original schedule is paused.
+              </p>
+              <details>
+                <summary>Full original instructions</summary>
+                <p style={{ whiteSpace: "pre-wrap" }}>
+                  {details.definition.instructions}
+                </p>
+              </details>
+              <details>
+                <summary>Technical definition</summary>
+                <pre>{JSON.stringify(details.definition, null, 2)}</pre>
+              </details>
               {!row.approved && (
                 <button
                   onClick={() =>
