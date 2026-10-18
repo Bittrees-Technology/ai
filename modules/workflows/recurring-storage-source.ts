@@ -13,7 +13,7 @@ import {
   type StorageCleanupResult,
 } from "./recurring-storage-cleanup.js";
 
-const pin = "640f645cacb2e828b60c6b5dbdf71d867f9e9919296554a8727eab12a4e4d5de";
+const pin = "5be39a0e84b198710f7ee40e45e4a062d7775795bf8b8e6137a3a630fba2fd85";
 const script = fileURLToPath(
   new URL("./storage_cleanup_source.py", import.meta.url),
 );
@@ -85,7 +85,7 @@ async function sourceRead(
           process.kill(-child.pid, "SIGKILL");
         } catch {}
     };
-    const timer = setTimeout(stop, 25000);
+    const timer = setTimeout(stop, 60000);
     signal.addEventListener("abort", stop, { once: true });
     if (signal.aborted) stop();
     child.on("error", () => {

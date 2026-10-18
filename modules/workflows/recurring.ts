@@ -219,7 +219,7 @@ export class RecurringWorkflows {
     if (this.running) throw Error("Wait for current work");
     const state = this.get(id);
     if (!state.approved) throw Error("Approval required");
-    const signal = AbortSignal.any([parent, AbortSignal.timeout(30000)]);
+    const signal = AbortSignal.any([parent, AbortSignal.timeout(120000)]);
     await this.host.authorize(
       state.definition,
       state.definition.collect,

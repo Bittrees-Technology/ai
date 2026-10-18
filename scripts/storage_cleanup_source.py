@@ -238,7 +238,7 @@ def remove(proof):
 def inventory():
     """Bounded discovery; never follows symlinks or scans installed dependency trees."""
     candidates = [(p, None) for p in sorted(DOWNLOADS) if p.exists()]
-    scanned, deadline, complete = 0, time.monotonic() + 10, True
+    scanned, deadline, complete = 0, time.monotonic() + 45, True
     roots = [HOME / '.codex/.chatgpt-projects', HOME / '.codex/worktrees']
     for base in roots:
         if not base.exists():
