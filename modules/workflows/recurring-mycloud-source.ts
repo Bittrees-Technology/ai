@@ -1,9 +1,10 @@
 import Database from "better-sqlite3";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 import { Vault } from "../storage/vault.js";
+import { myCloudOperationIdSchema } from "./mycloud-operation-journal.js";
 import {
   myCloudHealthReceipt,
   type MyCloudObservation,
@@ -134,7 +135,7 @@ export class MyCloudSource {
     private vault: Vault,
     private options: {
       authorized: () => boolean;
-      check?: typeof pinnedMyCloudCheck;
+      check?: (signal: AbortSignal, operationId: string) => Promise<string>;
     },
   ) {
     this.db = new Database(path);
@@ -145,7 +146,8 @@ export class MyCloudSource {
   authorized() {
     return this.options.authorized();
   }
-  async read(signal: AbortSignal) {
+  async read(signal: AbortSignal, operationId = "verify:" + randomUUID()) {
+    myCloudOperationIdSchema.parse(operationId);
     signal.throwIfAborted();
     if (!this.options.authorized())
       throw Error(
@@ -154,7 +156,10 @@ export class MyCloudSource {
     if (this.busy) throw Error("MyCloud check already running");
     this.busy = true;
     try {
-      const raw = await (this.options.check || pinnedMyCloudCheck)(signal);
+      const raw = await (this.options.check || pinnedMyCloudCheck)(
+        signal,
+        operationId,
+      );
       signal.throwIfAborted();
       if (!this.options.authorized())
         throw Error("MyCloud source approval changed");
@@ -165,6 +170,10 @@ export class MyCloudSource {
         ? this.vault.open<State>(row.value, "mycloud-baseline")
         : { sequence: 0 };
       const result = myCloudHealthReceipt(raw, prior.observation);
+      result.receipt.evidence = {
+        ...(result.receipt.evidence as Record<string, unknown>),
+        operationId,
+      };
       const sequence = prior.sequence + (result.notifications.length ? 1 : 0);
       this.db.transaction(() => {
         const capacity = this.db

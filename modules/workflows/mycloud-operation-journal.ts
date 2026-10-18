@@ -42,6 +42,7 @@ export class MyCloudOperationJournal {
     this.db = new Database(path);
     if (path !== ":memory:") chmodSync(path, 0o600);
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = FULL");
     this.db.pragma("busy_timeout = 1000");
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,revision TEXT NOT NULL,state TEXT NOT NULL,startedAt INTEGER NOT NULL,responseSha256 TEXT)",

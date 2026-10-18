@@ -1,20 +1,24 @@
 import { createServer, type Server } from "node:http";
-import { timingSafeEqual, randomUUID } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import {
+  MyCloudOperationJournal,
+  myCloudOperationIdSchema,
+} from "./mycloud-operation-journal.js";
 /** A single typed operation, never a network proxy or command runner. */
 export function myCloudHelper(options: {
   token: string;
-  authorize: () => Promise<boolean>;
+  journalPath: string;
+  authorize: () => Promise<string | null>;
   check: (signal: AbortSignal) => Promise<string>;
   now?: () => number;
 }) {
   if (!/^[a-f0-9]{64}$/.test(options.token))
     throw Error("Invalid helper credential");
   const now = options.now ?? Date.now;
-  let active = false,
-    last = -Infinity;
+  const journal = new MyCloudOperationJournal(options.journalPath);
+  let active = false;
   const receipts = new Map<string, string>();
-  const seen = new Set<string>();
   const controllers = new Set<AbortController>();
   const server = createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -46,7 +50,7 @@ export function myCloudHelper(options: {
         if (body.length > 256) throw Error();
       }
       operationId = z
-        .strictObject({ operationId: z.uuid() })
+        .strictObject({ operationId: myCloudOperationIdSchema })
         .parse(JSON.parse(body)).operationId;
     } catch {
       deny(400);
@@ -58,42 +62,54 @@ export function myCloudHelper(options: {
     };
     res.on("close", cancel);
     try {
-      if (!(await options.authorize())) {
+      const revision = await options.authorize();
+      if (!revision || !/^[a-f0-9]{64}$/.test(revision)) {
         deny(403);
         return;
       }
-      const prior = receipts.get(operationId);
+      const prior = journal.get(operationId),
+        cached = receipts.get(operationId);
       if (prior) {
-        res.end(JSON.stringify({ operationId, raw: prior }));
+        if (cached && journal.matchesCached(operationId, revision, cached))
+          res.end(JSON.stringify({ operationId, raw: cached }));
+        else deny(409);
         return;
       }
-      if (active || now() - last < 60000 || seen.size >= 10000) {
+      if (active) {
         deny(429);
         return;
       }
-      // Failed/uncertain operation IDs cannot be blindly retried.
-      if (seen.has(operationId)) {
-        deny(409);
+      try {
+        journal.reserve(operationId, revision, now());
+      } catch {
+        deny(429);
         return;
       }
       active = true;
-      last = now();
-      seen.add(operationId);
-      receipts.set(operationId, "");
       controllers.add(controller);
       try {
-        const raw = await options.check(
-          AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
-        );
+        const sourceSignal = AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(20000),
+        ]);
+        const raw = await options.check(sourceSignal);
         if (Buffer.byteLength(raw) > 32768)
           throw Error("Oversized health response");
-        controller.signal.throwIfAborted();
-        if (!(await options.authorize())) throw Error("Source revoked");
+        sourceSignal.throwIfAborted();
+        if ((await options.authorize()) !== revision)
+          throw Error("Source approval revision changed");
+        sourceSignal.throwIfAborted();
+        journal.confirm(operationId, revision, raw);
         receipts.set(operationId, raw);
         // Response cache only; authoritative accepted evidence remains in the encrypted source store.
         while (receipts.size > 48)
           receipts.delete(receipts.keys().next().value!);
         res.end(JSON.stringify({ operationId, raw }));
+      } catch (error) {
+        try {
+          journal.uncertain(operationId, revision);
+        } catch {}
+        throw error;
       } finally {
         active = false;
         controllers.delete(controller);
@@ -112,6 +128,7 @@ export function myCloudHelper(options: {
     close: async () => {
       for (const c of controllers) c.abort();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      journal.close();
     },
   };
 }
@@ -119,6 +136,7 @@ export async function helperMyCloudCheck(
   endpoint: string,
   token: string,
   signal: AbortSignal,
+  operationId: string,
 ) {
   const u = new URL(endpoint);
   if (
@@ -133,7 +151,7 @@ export async function helperMyCloudCheck(
     !/^[a-f0-9]{64}$/.test(token)
   )
     throw Error("Invalid fixed helper endpoint");
-  const operationId = randomUUID();
+  myCloudOperationIdSchema.parse(operationId);
   const response = await fetch(new URL("/health", u), {
     method: "POST",
     redirect: "error",
