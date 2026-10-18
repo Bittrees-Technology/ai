@@ -227,6 +227,7 @@ test("invalid evidence gets one correction; ordinary failures enter a durable bo
   );
   let calls = 0,
     broken = true;
+  const pageUrls: string[] = [];
   const prompts: string[] = [];
   const invalid = {
     ...answer,
@@ -258,7 +259,12 @@ test("invalid evidence gets one correction; ordinary failures enter a durable bo
       () => ({}),
       () => ({ reason: "ready", seconds: 60 }),
       async (_s, work) => work(),
-      { page: async (url) => ({ url, text, links: [] }) },
+      {
+        page: async (url) => {
+          pageUrls.push(url);
+          return { url, text, links: [] };
+        },
+      },
     );
   let worker = make();
   try {
@@ -278,10 +284,15 @@ test("invalid evidence gets one correction; ordinary failures enter a durable bo
     worker.retryLatestValidation();
     assert.equal(worker.status().followups.length, 1);
     await worker.close();
+    await writeFile(
+      join(root, "content/projects/example.md"),
+      "---\nname: Example\nprimary_url: https://example.org\nresearch_url: https://docs.example.org\ntags: [DeFi]\n---\n",
+    );
     worker = make();
     broken = false;
     await worker.tick();
     assert.equal(calls, 4);
+    assert.equal(pageUrls.at(-1), "https://docs.example.org/");
     assert.equal(worker.status().followups[0].state, "completed");
     assert.equal(worker.status().results[0].existingId, "example.md");
     assert.equal(worker.status().receipts[0].modelAttempts, 2);

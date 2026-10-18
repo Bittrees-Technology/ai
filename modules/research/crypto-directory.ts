@@ -435,12 +435,15 @@ export class CryptoDirectoryResearch {
                 (e) => e.id === q.existingId || e.primary_url === q.url,
               );
               return {
-                url: existing?.primary_url || q.url,
+                url: existing?.research_url || existing?.primary_url || q.url,
                 followup: q,
                 existing,
               };
             })
-          : entries.map((e) => ({ url: e.primary_url!, existing: e }));
+          : entries.map((e) => ({
+              url: e.research_url || e.primary_url!,
+              existing: e,
+            }));
       else {
         // Curated upstream discovery feed is only a lead; official project pages supply evidence.
         const readFeed = async () => {
