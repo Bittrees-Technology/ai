@@ -1,0 +1,33 @@
+{
+  "now": 1000,
+  "request": {
+    "contractVersion": "mail-draft-generation-v1",
+    "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "policy": {
+      "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "revision": 1
+    },
+    "sourceVersion": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "deadline": 121000,
+    "mode": "draft",
+    "input": {
+      "instructions": "Answer hours only",
+      "facts": "Open Monday Closed Sunday",
+      "excluded": "No changes",
+      "subject": "Hours café 🌳",
+      "text": "When are you open?"
+    }
+  },
+  "result": {
+    "contractVersion": "mail-draft-generation-v1",
+    "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requestDigest": "a00fa3bce16c737ca9cb9f75d90ba204cd7ba8824cbeaf829649185a11ad3064",
+    "status": "draft",
+    "text": "Open Monday",
+    "factIds": [1],
+    "evidence": {
+      "model": "synthetic-local",
+      "outputDigest": "7d48caf724fb683531f04da2092596cc75429bac6a409c70c62d911240c70418"
+    }
+  }
+}
