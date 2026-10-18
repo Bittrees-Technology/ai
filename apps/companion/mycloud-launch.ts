@@ -74,7 +74,10 @@ async function main() {
     {
       stdio: "inherit",
       env: {
-        ...process.env,
+        HOME: "/Users/jhineline",
+        TMPDIR: process.env.TMPDIR ?? "/tmp",
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        LANG: "en_US.UTF-8",
         BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
         BITTREES_MYCLOUD_HELPER_TOKEN: token,
       },
