@@ -19,6 +19,9 @@ SUFFIXES = {'.next/cache/webpack', '.next/cache/turbopack', '.next/cache/swc',
 MAX_ENTRIES = 20000
 RESERVE = 20 * 1024 ** 3
 
+class SafeCandidateSkip(ValueError):
+    """A candidate was positively inspected and must be preserved."""
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -56,6 +59,8 @@ def run(args, limit=4 * 1024 * 1024):
 
 def scope(path, checkout):
     path = Path(path)
+    if any(ord(c) < 32 or ord(c) > 126 or c == chr(92) for value in (str(path), str(checkout or '')) for c in value):
+        raise ValueError('Cache path cannot be matched losslessly for open-file safety')
     if not path.is_absolute() or str(path) != os.path.normpath(str(path)):
         raise ValueError('Noncanonical cache path')
     if path in DOWNLOADS:
@@ -107,7 +112,7 @@ def snapshot(path, now=None):
         youngest = min(youngest, now - max(info.st_mtime, info.st_ctime))
         for name in sorted(os.listdir(fd)):
             if len(entries) >= MAX_ENTRIES or time.monotonic() > deadline:
-                raise ValueError('Inventory bound exceeded; candidate held')
+                raise SafeCandidateSkip('Inventory bound exceeded; candidate held')
             rel = relative + '/' + name if relative else name
             s = os.stat(name, dir_fd=fd, follow_symlinks=False)
             youngest = min(youngest, now - max(s.st_mtime, s.st_ctime))
@@ -115,45 +120,59 @@ def snapshot(path, now=None):
                 child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                 try:
                     if identity(os.fstat(child)) != identity(s):
-                        raise ValueError('Directory changed during inventory')
+                        raise SafeCandidateSkip('Directory changed during inventory')
                     walk(child, rel)
                 finally:
                     os.close(child)
             elif stat.S_ISREG(s.st_mode) and s.st_nlink == 1:
                 entries[rel] = identity(s)
             else:
-                raise ValueError('Symlink, hard link or special file; candidate held')
+                raise SafeCandidateSkip('Symlink, hard link or special file; candidate held')
     fd = open_directory(path)
     try:
         walk(fd, '')
     finally:
         os.close(fd)
     if youngest < 3600:
-        raise ValueError('Recently changing cache')
+        raise SafeCandidateSkip('Recently changing cache')
     return entries, int(youngest * 1000)
 
 def activity(path, checkout):
-    import re
-    processes = run(['/bin/ps', '-axo', 'comm=,args='])
-    if re.search(r'(^|[/\s])(npm|npx|yarn|pnpm|webpack|turbo|rustc|cargo|tsc)(\s|$)', processes, re.M) or re.search(
-            r'(^|\s)(next|vite)\s+(dev|build)(\s|$)', processes, re.M):
-        raise ValueError('Build or package manager active')
-    opened = run(['/usr/sbin/lsof', '-nP', '-Fn'], 16 * 1024 * 1024)
-    prefix = str(checkout or path)
-    if any(line[1:] == prefix or line[1:].startswith(prefix + '/')
-           for line in opened.splitlines() if line.startswith('n/')):
-        raise ValueError('Candidate or checkout has open files')
+    # Fixed authenticated native-parent read operation; no privileged binary in model sandbox.
+    import http.client
+    import urllib.parse
+    endpoint = urllib.parse.urlsplit(os.environ.get('BITTREES_STORAGE_ACTIVITY_URL', ''))
+    token = os.environ.get('BITTREES_STORAGE_ACTIVITY_TOKEN', '')
+    operation = os.environ.get('BITTREES_STORAGE_OPERATION_ID', '')
+    if endpoint.scheme != 'http' or endpoint.hostname != '127.0.0.1' or not endpoint.port or endpoint.path != '/activity' or endpoint.query or endpoint.fragment or endpoint.username or len(token) != 64 or not operation:
+        raise RuntimeError('Safety inspection unavailable')
+    conn = http.client.HTTPConnection('127.0.0.1', endpoint.port, timeout=20)
+    try:
+        conn.request('POST', '/activity', json.dumps(dict(operationId=operation, path=str(path), checkout=str(checkout) if checkout else None)), {'Authorization': 'Bearer '+token, 'Content-Type': 'application/json'})
+        response = conn.getresponse()
+        raw = response.read(4097)
+        if response.status != 200 or len(raw) > 4096:
+            raise RuntimeError('Safety inspection unavailable')
+        result = json.loads(raw)
+        if result.get('operationId') != operation or abs(time.time()*1000-result.get('observedAt', 0)) > 5000 or result.get('available') is not True:
+            raise RuntimeError('Safety inspection unavailable')
+        if type(result.get('busy')) is not bool or type(result.get('openFiles')) is not bool:
+            raise RuntimeError('Safety inspection unavailable')
+        if result['busy'] or result['openFiles']:
+            raise SafeCandidateSkip('Build or open files active; candidate held')
+    finally:
+        conn.close()
 
 def repository(path, checkout):
     if not checkout:
         return None
     root = run(['/usr/bin/git', '-C', str(checkout), 'rev-parse', '--show-toplevel']).strip()
     if root != str(checkout):
-        raise ValueError('Checkout is not its repository root')
+        raise SafeCandidateSkip('Checkout is not its repository root')
     rel = Path(path).relative_to(checkout).as_posix()
     run(['/usr/bin/git', '-C', str(checkout), 'check-ignore', '-q', '--', rel])
     if run(['/usr/bin/git', '-C', str(checkout), 'ls-files', '--', rel]).strip():
-        raise ValueError('Tracked cache content')
+        raise SafeCandidateSkip('Tracked cache content')
     return hashlib.sha256(run(['/usr/bin/git', '-C', str(checkout), 'status', '--porcelain=v1', '-uall']).encode()).hexdigest()
 
 def free_bytes():
@@ -167,7 +186,7 @@ def inspect(path, checkout=None):
     first, age = snapshot(path)
     second, _ = snapshot(path)
     if first != second:
-        raise ValueError('Cache changed during inspection')
+        raise SafeCandidateSkip('Cache changed during inspection')
     proof = dict(path=str(path), measuredAt=int(time.time() * 1000), availableBytes=free_bytes(),
                  snapshotHash=digest(second), oldestChangeAgeMs=age, noSymlinksOrSpecialFiles=True,
                  noOpenFiles=True, noBuildOrPackageProcesses=True, stableSnapshot=True,

@@ -70,6 +70,8 @@ import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   myCloudHelperToken?: string;
+  storageActivityToken?: string;
+  storageActivityApproval?: (id: string) => unknown;
   agents?: import("../../modules/agents/coordinator.js").AgentCoordinator;
   privateRelay?: CompanionPrivateRelay;
   privateKeys?: CompanionPrivateKeys;
@@ -144,6 +146,8 @@ export function localApi({
   myCloudSource,
   storageMaintenance,
   myCloudHelperToken,
+  storageActivityToken,
+  storageActivityApproval,
   roles,
   news,
   mail,
@@ -195,6 +199,28 @@ export function localApi({
       (req.headers.origin && !origins.has(req.headers.origin))
     )
       return reject(403, "FORBIDDEN");
+    if (req.path === "/internal/storage-activity-approval") {
+      const actual = Buffer.from(req.headers.authorization ?? ""),
+        expected = Buffer.from("Bearer " + (storageActivityToken ?? ""));
+      if (
+        req.method !== "GET" ||
+        req.headers.origin ||
+        !storageActivityToken ||
+        !/^[a-f0-9]{64}$/.test(storageActivityToken) ||
+        actual.length !== expected.length ||
+        !timingSafeEqual(actual, expected)
+      )
+        return reject(403, "FORBIDDEN");
+      const query = z
+        .strictObject({ operationId: z.string().uuid() })
+        .safeParse(req.query);
+      const approval = query.success
+        ? storageActivityApproval?.(query.data.operationId)
+        : null;
+      if (!approval) return reject(403, "FORBIDDEN");
+      res.json(approval);
+      return;
+    }
     // Dedicated revision callback for the launch-owned helper, never general API access.
     if (req.path === "/internal/mycloud-approval") {
       const actual = Buffer.from(req.headers.authorization ?? ""),

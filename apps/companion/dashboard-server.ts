@@ -115,6 +115,7 @@ export function dashboardServer(
   // Only this fixed helper callback is exposed outside /v1. It authenticates its
   // launch-owned credential independently and cannot grant general API access.
   app.get("/internal/mycloud-approval", api);
+  app.get("/internal/storage-activity-approval", api);
   app.use("/v1", (req, res, next) => {
     req.url = "/v1" + req.url;
     api(req, res, next);

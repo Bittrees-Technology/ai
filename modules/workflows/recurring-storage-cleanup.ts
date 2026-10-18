@@ -55,6 +55,12 @@ type RecordValue = {
  */
 export function assertCleanupScope(proof: StorageCleanupProof) {
   const path = proof.path;
+  // lsof text paths are escaped; accept only the lossless printable ASCII subset.
+  if (
+    /[^\x20-\x7e]|\\/.test(path) ||
+    (proof.checkout !== undefined && /[^\x20-\x7e]|\\/.test(proof.checkout))
+  )
+    throw Error("Cache path cannot be matched losslessly for open-file safety");
   if (!path.startsWith("/") || posix.normalize(path) !== path)
     throw Error("Cache path is not canonical");
   if (downloads.has(path)) {

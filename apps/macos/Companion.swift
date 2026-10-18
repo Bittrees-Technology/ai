@@ -122,6 +122,16 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             process.environment?["BITTREES_CLOUD_HELPER_URL"] = endpoint
             process.environment?["BITTREES_CLOUD_HELPER_TOKEN"] = token
         }
+        // Fixed read-only local storage activity helper; no command/path capability supplied here.
+        if let endpoint = inherited["BITTREES_STORAGE_ACTIVITY_URL"],
+           let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
+           url.port != nil, url.path == "/activity", url.user == nil, url.password == nil,
+           url.query == nil, url.fragment == nil,
+           let token = inherited["BITTREES_STORAGE_ACTIVITY_TOKEN"],
+           token.count == 64, token.allSatisfy({ "0123456789abcdef".contains($0) }) {
+            process.environment?["BITTREES_STORAGE_ACTIVITY_URL"] = endpoint
+            process.environment?["BITTREES_STORAGE_ACTIVITY_TOKEN"] = token
+        }
         lifetime = Pipe()
         process.standardInput = lifetime
         let pipe = Pipe()
