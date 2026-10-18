@@ -156,10 +156,33 @@ export function Workflows({
             <>
               <h3>Pair with your wallet</h3>
               <p>
-                Enter this code on the website, review this device and sign the
-                approval.
+                Open the approval page below. It carries this code for you;
+                review this device and its permissions before signing.
               </p>
-              <pre>{data.pairCode}</pre>
+              <a
+                className="primary"
+                href={
+                  "https://ai.bittrees.org/workflows#pair=" +
+                  encodeURIComponent(data.pairCode)
+                }
+                target="_blank"
+                rel="noreferrer"
+              >
+                Continue on ai.bittrees.org
+              </a>
+              <details>
+                <summary>Use a code instead</summary>
+                <pre>{data.pairCode}</pre>
+                <button
+                  onClick={() =>
+                    void act(() =>
+                      navigator.clipboard.writeText(data.pairCode!),
+                    )
+                  }
+                >
+                  Copy website pairing code
+                </button>
+              </details>
               <p>Expires {new Date(data.pairExpiresAt).toLocaleString()}.</p>
               <button
                 disabled={busy}

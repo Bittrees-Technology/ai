@@ -91,6 +91,7 @@ export interface LocalApiOptions {
   investorResearch?: InvestorResearch;
   qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
+  centralWorkflows?: import("../../modules/workflows/central-worker.js").CentralWorkflowWorker;
   directoryResearch?: import("../../modules/research/crypto-directory.js").CryptoDirectoryResearch;
   sources?: CrmTasks;
   autonote?: AutoNoteConnector;
@@ -127,6 +128,7 @@ export function localApi({
   qualificationResearch,
   projectWork,
   directoryResearch,
+  centralWorkflows,
   roles,
   news,
   mail,
@@ -795,6 +797,27 @@ export function localApi({
       },
     ),
   );
+  if (centralWorkflows) {
+    app.get("/v1/workflows/central", (_req, res) =>
+      res.json(centralWorkflows.status()),
+    );
+    app.post("/v1/workflows/central/enrollment", (req, res) =>
+      res.json(
+        centralWorkflows.enrollment(
+          z.strictObject({ profileId: z.uuid() }).parse(req.body).profileId,
+        ),
+      ),
+    );
+    app.post("/v1/workflows/central/configure", (req, res) =>
+      res.json(centralWorkflows.configure(req.body)),
+    );
+    app.post("/v1/workflows/central/resume", (_req, res) =>
+      res.json(centralWorkflows.resume()),
+    );
+    app.post("/v1/workflows/central/pause", async (_req, res) =>
+      res.json(await centralWorkflows.pause()),
+    );
+  }
   if (directoryResearch) {
     app.post("/v1/research/directory/retry", (req, res) => {
       const input = z
