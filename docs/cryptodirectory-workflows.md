@@ -16,3 +16,28 @@ Authenticated local API (same pairing/token rules as the other companion APIs):
 - `POST /v1/research/directory/pause`: cancel the active directory pass and disable future passes.
 
 The paired workflow catalogue sends only fixed workflow identifiers, kind, revision, and state; no source text, local paths, model output, or configuration is sent. Deploy the server's catalogue-kind update before enabling the new companion entries.
+
+
+## Execution evidence and follow-up validation
+
+Each attempted page assessment now has a durable receipt: run ID, source URL,
+model identity and digest, model start/end times, source text fingerprint, and
+saved-result fingerprint. A task is completed only in the same transaction
+that saves its grounded assessment. Source/model failures and interrupted work
+are separate states; they are never counted as completed assessments. The app
+shows the latest 100 receipts; historical receipts remain encrypted locally.
+
+A fitting discovery result automatically queues validation, including existing
+discoveries saved before this update. The queue survives app restarts, links each
+validation result to its discovery parent, and prevents duplicate handoffs for
+the same parent. Follow-ups run before the next scheduled catalogue pass. Failed
+follow-ups retry after one and two hours; three unsuccessful attempts leave an
+explicit needs-attention item. Pausing does not consume a retry attempt.
+
+The owner-only workflow catalogue receives bounded receipt counts, follow-up
+counts, and the latest receipt ID/evidence fingerprint. Quotes and project URLs
+remain local. Counts describe the recent receipt window, not lifetime totals.
+Old results are not given fabricated model-execution receipts. Validation remains
+an automated source assessment: it neither publishes listings nor certifies
+security or unsupported facts. Local execution requires the Mac/app/model to be
+available and execution permissions to remain enabled.

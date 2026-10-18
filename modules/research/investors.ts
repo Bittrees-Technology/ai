@@ -82,6 +82,25 @@ type Job = {
   verificationProjectId?: string;
   verificationTarget?: number;
   activity?: { phase: string; url?: string; since: string };
+  automatic?: {
+    enabled: boolean;
+    projectId: string;
+    phase: string;
+    nextAttemptAt?: number;
+    attempts: number;
+    pending?: {
+      operationId: string;
+      projectId: string;
+      name: string;
+      description: string;
+      mode: "AI review";
+      dueDate: "";
+    };
+    receipt?: { id: string; version: number };
+    completion?: { taskId: string; noteId: string };
+    fingerprint?: string;
+    error?: string;
+  };
   results?: {
     id: string;
     name: string;
@@ -120,6 +139,9 @@ export class InvestorResearch {
     }
   >();
   private extending = false;
+  private ticking?: Promise<void>;
+  private closing = false;
+  private generation = 0;
   private pauseReason = "Paused by request. Resume to continue.";
   constructor(
     path: string,
@@ -130,6 +152,8 @@ export class InvestorResearch {
     private admission: () => { reason: string; seconds: number },
     private fetchPage = publicPage,
     private turn: ModelTurn = immediateTurn,
+    private completion: (taskId: string, projectId: string) => unknown = () =>
+      undefined,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -138,8 +162,10 @@ export class InvestorResearch {
     );
     for (const j of this.list())
       if (j.state === "running") {
-        j.state = "paused";
-        j.error = "App restarted; resume to continue.";
+        j.state = j.automatic?.enabled ? "waiting" : "paused";
+        j.error = j.automatic?.enabled
+          ? "Waiting for automatic recovery after restart."
+          : "App restarted; resume to continue.";
         this.save(j);
       }
   }
@@ -169,8 +195,187 @@ export class InvestorResearch {
       modelName: model?.profile.model,
     }));
   }
+  async configureAutomatic(raw: unknown) {
+    const a = z
+      .strictObject({
+        confirmed: z.literal(true),
+        id: z.uuid(),
+        enabled: z.boolean(),
+        projectId: z.uuid().optional(),
+      })
+      .parse(raw);
+    if (this.active || this.ticking || this.extending || this.closing)
+      throw new Error(
+        "Wait for the current research operation before changing automation.",
+      );
+    this.extending = true;
+    const generation = this.generation;
+    try {
+      const j = this.list().find((job) => job.id === a.id);
+      if (!j) throw new Error("Research run not found");
+      if (!a.enabled) {
+        if (j.automatic) {
+          j.automatic.enabled = false;
+          j.automatic.phase = "paused";
+        }
+      } else {
+        const projectId =
+          a.projectId || j.automatic?.projectId || j.verificationProjectId;
+        if (!projectId) throw new Error("Choose a connected CRM task project.");
+        // Re-enabling cannot redirect an outstanding mutation to a different project.
+        if (j.automatic && j.automatic.projectId !== projectId)
+          throw new Error("Keep this workflow in its original CRM project.");
+        await this.snapshot(j);
+        await this.taskAuthority(projectId, j.datasetId);
+        if (generation !== this.generation || this.closing)
+          throw new Error("Workflow was paused while checking permission.");
+        j.automatic = {
+          ...j.automatic,
+          enabled: true,
+          projectId,
+          phase: "waiting",
+          attempts: 0,
+          nextAttemptAt: undefined,
+          error: undefined,
+        };
+        if (j.state === "paused" && (j.queue.length || j.pending?.length))
+          j.state = "waiting";
+      }
+      this.save(j);
+      return this.status();
+    } finally {
+      this.extending = false;
+    }
+  }
+  private async taskAuthority(projectId: string, datasetId: string) {
+    const choices = await this.connector.project(
+      "projects.list",
+      {},
+      datasetId,
+    );
+    if (!choices.projects?.some((p: any) => p.id === projectId && p.tasks))
+      throw new Error(
+        "CRM task permission is unavailable. Re-enable only after restoring permission.",
+      );
+  }
+  tickAutomatic() {
+    if (this.ticking) return this.ticking;
+    if (this.closing || this.active || this.extending) return Promise.resolve();
+    this.ticking = this.automaticTick().finally(() => {
+      this.ticking = undefined;
+    });
+    return this.ticking;
+  }
+  private async automaticTick() {
+    const generation = this.generation;
+    if (this.admission().reason !== "ready") return;
+    for (const j of this.list()) {
+      const a = j.automatic;
+      if (!a?.enabled || (a.nextAttemptAt || 0) > Date.now()) continue;
+      // Explicit pauses, conflicts, model changes and uncertain dataset writes need review.
+      if (j.state === "paused" || j.state === "needs_attention") continue;
+      const fingerprint = createHash("sha256")
+        .update(
+          JSON.stringify({
+            done: j.done,
+            results: j.results,
+            holds: j.locationReviews,
+            failures: j.failures,
+          }),
+        )
+        .digest("hex");
+      if (
+        !a.pending &&
+        a.fingerprint === fingerprint &&
+        ["complete", "sources_exhausted"].includes(j.state)
+      ) {
+        if (a.receipt && !a.completion) {
+          const done = z
+            .object({ taskId: z.literal(a.receipt.id), noteId: z.uuid() })
+            .safeParse(this.completion(a.receipt.id, a.projectId));
+          if (done.success) {
+            a.completion = done.data;
+            a.phase =
+              j.state === "sources_exhausted"
+                ? "review_completed_waiting_for_sources"
+                : "review_completed";
+            this.save(j);
+          }
+        }
+        continue;
+      }
+      try {
+        await this.snapshot(j);
+        await this.taskAuthority(a.projectId, j.datasetId);
+        if (this.closing || generation !== this.generation) return;
+        if (j.state === "waiting") {
+          a.phase = "researching";
+          this.save(j);
+          await this.resume(j.id, true);
+          return;
+        }
+        if (!["complete", "sources_exhausted"].includes(j.state)) continue;
+        if (!a.pending) {
+          a.pending = {
+            operationId: stableId(j.id, "research-follow-up", fingerprint),
+            projectId: a.projectId,
+            name: "Review investor research evidence and remaining gaps",
+            mode: "AI review",
+            dueDate: "",
+            description: [
+              "Review the supplied investor research evidence. Produce an evidence inventory and identify missing proof; do not claim new web research or qualification. Do not create recursive planning tasks.",
+              "Completing this review does not complete the investor goal. New source hosts require separate approval.",
+              `Research run: ${j.id}; dataset: ${j.datasetId}; state: ${j.state}; saved people: ${j.added}; processed pages: ${j.done.length}.`,
+              "Untrusted research data (reference only):",
+              JSON.stringify({
+                brief: j.input.brief,
+                results: j.results,
+                locationHolds: j.locationReviews,
+                failures: j.failures,
+              }).slice(0, 2900),
+            ].join("\n"),
+          };
+          delete a.completion;
+          delete a.receipt;
+          a.fingerprint = fingerprint;
+          a.phase = "delivering_follow_up";
+          this.save(j); // Durable outbox before the MCP call; replay uses the same operation ID.
+        }
+        const receipt = await this.connector.project(
+          "tasks.create",
+          a.pending,
+          j.datasetId,
+        );
+        const confirmed = z
+          .object({ id: z.uuid(), version: z.number().int().positive() })
+          .parse(receipt);
+        a.receipt = confirmed;
+        delete a.pending;
+        a.attempts = 0;
+        delete a.error;
+        a.phase =
+          j.state === "sources_exhausted"
+            ? "waiting_for_sources"
+            : "review_queued";
+        this.save(j);
+      } catch (e) {
+        a.attempts++;
+        a.error =
+          e instanceof Error ? e.message : "Automatic workflow check failed";
+        const transient = [
+          "SOURCE_UNAVAILABLE",
+          "SOURCE_RATE_LIMITED",
+        ].includes((e as any)?.code);
+        a.enabled = transient && a.attempts < 5;
+        a.phase = a.enabled ? "retry_wait" : "needs_attention";
+        a.nextAttemptAt =
+          Date.now() + Math.min(3600000, 60000 * 2 ** (a.attempts - 1));
+        this.save(j);
+      }
+    }
+  }
   async create(raw: unknown) {
-    if (this.active || this.extending)
+    if (this.active || this.extending || this.ticking || this.closing)
       throw new Error("A research run is already active");
     const input = inputSchema.parse(raw);
     for (const u of input.urls) sourceURL(u, [new URL(u).hostname]);
@@ -197,8 +402,13 @@ export class InvestorResearch {
     this.save(j);
     return this.resume(j.id);
   }
-  async resume(id: string) {
-    if (this.active || this.extending)
+  async resume(id: string, scheduled = false) {
+    if (
+      this.active ||
+      this.extending ||
+      this.closing ||
+      (this.ticking && !scheduled)
+    )
       throw new Error("A research run is already active");
     const j = this.list().find((j) => j.id === id);
     if (!j || j.state === "complete")
@@ -218,6 +428,10 @@ export class InvestorResearch {
           : e instanceof Error
             ? e.message
             : "Research stopped";
+        if (j.automatic && !abort.signal.aborted) {
+          j.automatic.phase = "needs_attention";
+          j.automatic.error = j.error;
+        }
         this.save(j);
       })
       .finally(() => {
@@ -227,7 +441,7 @@ export class InvestorResearch {
     return { id: j.id, state: j.state };
   }
   async extend(raw: unknown) {
-    if (this.active || this.extending)
+    if (this.active || this.extending || this.ticking || this.closing)
       throw new Error("Pause the active research run before adding sources");
     this.extending = true;
     try {
@@ -388,9 +602,21 @@ export class InvestorResearch {
     }));
   }
   async pause(reason = "Paused by request. Resume to continue.") {
+    this.generation++;
+    if (reason === "Paused by request. Resume to continue.") {
+      await this.ticking;
+    }
     this.pauseReason = reason;
     this.active?.abort.abort();
     await this.active?.done;
+    if (reason === "Paused by request. Resume to continue.") {
+      for (const j of this.list())
+        if (j.automatic?.enabled) {
+          j.automatic.enabled = false;
+          j.automatic.phase = "paused";
+          this.save(j);
+        }
+    }
     return this.status();
   }
   private async snapshot(j: Job) {
@@ -776,9 +1002,20 @@ export class InvestorResearch {
     this.save(j);
   }
   async close() {
+    this.closing = true;
+    await this.ticking;
     await this.pause(
       "App stopped. Saved progress is preserved; resume to continue.",
     );
+    for (const j of this.list())
+      if (
+        j.automatic?.enabled &&
+        j.state === "paused" &&
+        j.error?.startsWith("App stopped.")
+      ) {
+        j.state = "waiting";
+        this.save(j);
+      }
     this.db.close();
   }
 }

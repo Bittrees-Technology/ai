@@ -121,3 +121,42 @@ test("research progress is bounded numeric metadata and rejects content or autho
       }),
     );
 });
+
+test("directory receipts sync bounded progress without source content", () => {
+  const progress = {
+    kind: "directory",
+    recentReceipts: 10,
+    modelRuns: 9,
+    completed: 4,
+    needsResearch: 6,
+    queuedFollowups: 2,
+    completedFollowups: 1,
+    needsAttention: 0,
+    measuredAt: new Date().toISOString(),
+    latestReceiptId: randomUUID(),
+    evidenceHash: "a".repeat(64),
+  };
+  const entry = {
+    id: randomUUID(),
+    revision: 1,
+    kind: "cryptodirectory-validation",
+    progress,
+  };
+  assert.deepEqual(
+    localCatalogueSchema.parse({ ...input, entries: [entry] }).entries[0]!
+      .progress,
+    progress,
+  );
+  for (const patch of [
+    { source: "private text" },
+    { url: "https://example.org" },
+    { modelRuns: 10001 },
+    { evidenceHash: "not-a-digest" },
+  ])
+    assert.throws(() =>
+      localCatalogueSchema.parse({
+        ...input,
+        entries: [{ ...entry, progress: { ...progress, ...patch } }],
+      }),
+    );
+});

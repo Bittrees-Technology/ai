@@ -209,6 +209,15 @@ const investorResearch = new InvestorResearch(
   },
   undefined,
   modelTurns.run,
+  (taskId, projectId) =>
+    projectWork
+      .status()
+      .filter((job) => job.input.projectId === projectId)
+      .flatMap((job) => job.receipts)
+      .find(
+        (receipt) =>
+          receipt.tool === "tasks.finish" && receipt.taskId === taskId,
+      ),
 );
 const projectWork = new ProjectWork(
   join(content.directory, "project-work.db"),
@@ -435,6 +444,7 @@ async function stop() {
   process.stdin.pause();
   clearInterval(timer);
   clearInterval(automaticProjectWork);
+  clearInterval(automaticInvestorWork);
   clearInterval(importMaintenance);
   clearInterval(workflowSync);
   clearInterval(directoryTimer);
@@ -490,6 +500,12 @@ const automaticProjectWork = setInterval(() => {
           console.error("Automatic CRM task check could not start.");
         automaticErrorReported = true;
       });
+}, 10000);
+const automaticInvestorWork = setInterval(() => {
+  if (started && !stopping && !qualificationResearch.isRunning)
+    void investorResearch
+      .tickAutomatic()
+      .catch(() => console.error("Automatic investor workflow check failed."));
 }, 10000);
 const importMaintenance = setInterval(() => {
   if (started && !stopping)

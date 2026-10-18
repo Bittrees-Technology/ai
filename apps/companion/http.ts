@@ -832,6 +832,9 @@ export function localApi({
     }),
   );
   if (investorResearch) {
+    app.post("/v1/research/investors/automatic", async (req, res) =>
+      res.json(await investorResearch.configureAutomatic(req.body)),
+    );
     app.post("/v1/research/investors/extend", async (req, res) =>
       res.json(await investorResearch.extend(req.body)),
     );
