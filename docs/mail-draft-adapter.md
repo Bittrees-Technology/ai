@@ -1,0 +1,15 @@
+# Inactive Mail draft adapter
+
+This ports PR253's pure generator into the existing `AgentQueue` and local agent-profile model selection. There is no standalone runtime, listener, HTTP registration, tunnel, mailbox read, send tool or cloud-model fallback. No dependency or lockfile change is needed. The existing Mail worker is unchanged.
+
+`MailDraftQueue` requires an explicitly enabled caller and a current source-authorization epoch for the exact request. Future integration must derive this epoch from reviewed Mail policy/account/grant/MFA/source checks, never model output or payload hashes. The caller must authenticate operation-specific cancellation/status access. Draft persistence/sending permissions remain owned by Mail; this adapter can do neither.
+
+The `mail-draft-generation-v1` envelope binds operation, policy/revision, source digest, deadline (at most 120 seconds), draft-only mode and bounded input. Responses bind the full canonical UTF-8 request and output hashes. Python codepoint lengths and splitlines semantics are preserved; malformed surrogate strings are rejected. Model-selected fact references and a second pass by the same model are advisory, not independent verification or permission to send.
+
+Every complete task holds the shared queue until the model settles, including cancellation. Deadlines include queue time. Authority epoch/profile changes or late results discard draft output. Operation IDs are encrypted and durable; conflicting reuse is rejected, completed replay does not regenerate, and interrupted queued/running work is held for reconciliation. No automatic retry. The local profile selects a pinned model; supporting profile knowledge does not add approved Mail facts.
+
+Connection preparation remains disabled. The proposed Mac-to-Pi-to-Acer restricted reverse forwarding, broker endpoint, ports, identities and private-body transfer need separate exact review and user network approval. The NAS-only exception does not cover Mail. Never expose the general companion or model API. No installed-app change or live mailbox test is part of this PR.
+
+The legacy `/reply` caller expects nonempty reply text even when review is needed, and is incompatible with this contract. A `needs-review`, `cancelled` or `failed` response here has empty text and fact IDs; Mail must not save placeholder content or treat it as a draft. Only the separately reviewed v1 caller adapter can be considered for later wiring. PR253's standalone runtime, dashboard controls and package script are intentionally not ported; retain that unmerged prototype as historical evidence.
+
+Returned and persisted evidence includes the pinned model digest (null before pinning) and exact agent-profile revision. Model tags alone are not provenance. A final authority/profile/deadline/cancellation fence runs after queue completion and before persistence or release.
