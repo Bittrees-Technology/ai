@@ -55,6 +55,7 @@ async function fixture(
     concurrentName?: string;
     repeat?: boolean;
     location?: string;
+    target?: number;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "investor-research-"));
@@ -129,7 +130,7 @@ async function fixture(
       confirmed: true,
       profileId: "p",
       brief: "Research US investors with owner publication approval.",
-      target: options.repeat ? 2 : 1,
+      target: options.target ?? (options.repeat ? 2 : 1),
       urls: ["https://example.org/team"],
     });
     for (let i = 0; i < 100 && run.status()[0]!.state === "running"; i++)
@@ -250,4 +251,12 @@ test("firm address or another person's base cannot automatically publish a candi
     assert.equal(job.state, "sources_exhausted");
     assert.equal(job.locationReviews?.length, 1);
   }
+});
+
+test("a 2,000-person research target is accepted without claiming unsupported completion", async () => {
+  const { job, rows } = await fixture("success", { target: 2000 });
+  assert.equal(job.input.target, 2000);
+  assert.equal(job.added, 1);
+  assert.equal(job.state, "sources_exhausted");
+  assert.equal(rows.length, 2);
 });

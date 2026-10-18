@@ -2,7 +2,7 @@
 
 In CRM, open Lead research, create a private list, and open Dataset, agent connection & sharing. Create a dataset connection and copy its MCP configuration. In the Mac app, open Connections → CRM dataset and paste that configuration. The Mac stores the credential in Keychain, bound to its local owner and one dataset. The source URL is fixed to CRM; arbitrary MCP servers are not accepted.
 
-Read dataset and linked CRM records loads saved research plus current, explicitly linked CRM source records. Source snapshots remain separate from research. Edit the research JSON, preview the complete replacement, then save it through MCP. Preserve entry IDs and the loaded version. At most 600 entries fit in a private dataset; publication reviews remain limited to 20 entries. Changed research must have training eligibility pending.
+Read dataset and linked CRM records loads saved research plus current, explicitly linked CRM source records. Source snapshots remain separate from research. Edit the research JSON, preview the complete replacement, then save it through MCP. Preserve entry IDs and the loaded version. There is no fixed count cap on private lists, entries, or owner-reviewed publication selections. The connector loads revision-checked pages and saves reviewed changes atomically with `dataset.patch`, preserving unchanged entries and the reviewed order. Request-size and request-rate protections still apply; grow large portfolios through request-sized append batches. Changed research must have training eligibility pending.
 
 For projects, use `kind: "projects"`, a stable UUID `id`, `name`, `category`, `source`, and `description`. In CRM, select an owned destination workspace and project entries, preview the import, then approve it. New projects start restricted to workspace owners and are linked back to the dataset. Existing names, including archived projects, are blocked rather than silently merged. Import an existing CRM record into the dataset to propose an update instead.
 
@@ -14,7 +14,7 @@ Validation includes authenticated local HTTP boundaries, fixed-origin MCP transp
 
 ## Local investor research
 
-Connections → Investor research runs the selected installed Ollama model on approved public HTTPS sources. Enter the research brief, target (1–200 additional people), and up to 100 starting URLs. The worker follows related team/about/contact links on those exact hosts, up to 8 pages per host / 300 pages total. No paid search provider or cloud inference is used. This is bounded site research, not an unrestricted search engine.
+Connections → Investor research runs the selected installed Ollama model on approved public HTTPS sources. Enter the research brief, a positive target of additional people, and approved starting URLs. The worker follows related team/about/contact links on those exact hosts, up to 8 pages per host / 300 pages total. No paid search provider or cloud inference is used. This is bounded site research, not an unrestricted search engine.
 
 The source reader pins public IPv4 DNS results, denies private addresses and off-list redirects, limits responses to 1 MB, and does not bypass authentication, CAPTCHA or access blocks. The model receives only public excerpts and the brief, never CRM credentials or existing private entries. Names and current titles must occur in an exact contiguous evidence quote; a source quote must also establish a US office/location. This does not prove individual residence, accreditation, interest or investment fit. Candidates remain unverified and training-pending.
 
