@@ -37,8 +37,9 @@ export function RecurringWork({ api }: { api: Api }) {
         Approval here does not grant access to another app.
       </p>
       <p>
-        Source adapters are not yet installed in this local release. Imported
-        workflows cannot execute or take over their original schedules.
+        Storage and Home Server Monitor inspection are available locally. Source
+        changes and schedule takeover remain held until complete adapters are
+        verified.
       </p>
       {error && <p role="alert">{error}</p>}
       <details>

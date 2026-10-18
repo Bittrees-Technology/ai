@@ -16,6 +16,7 @@ export const recurringDefinitionSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/),
   name: z.string().min(1).max(160),
   instructions: z.string().min(1).max(48000),
+  executionBrief: z.string().min(1).max(4000),
   rrule: z.string().max(200),
   timezone: z.string().max(100),
   anchor: z.number().int().safe().positive(),
@@ -75,6 +76,7 @@ type State = {
   status?: string;
   lastReceipt?: RecurringReceipt;
   lastSummary?: string;
+  modelEvidence?: unknown;
   exception?: {
     id: string;
     fingerprint: string;
@@ -259,6 +261,17 @@ export class RecurringWorkflows {
     this.put(state);
     this.controller?.abort();
     return this.status();
+  }
+  recordDecision(id: string, evidence: any) {
+    const state = this.get(id);
+    if (
+      !state.approved ||
+      state.revision !== evidence.definitionHash ||
+      JSON.stringify(evidence).length > 16000
+    )
+      return;
+    state.modelEvidence = evidence;
+    this.put(state);
   }
   detail(id: string) {
     const state = this.get(id);

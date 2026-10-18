@@ -23,6 +23,7 @@ const definition = (
   id: "test-workflow",
   name: "Recurring local monitor",
   instructions: "PRIVATE OWNER INSTRUCTIONS",
+  executionBrief: "Check the approved source and wait when unchanged.",
   rrule: "FREQ=MINUTELY;INTERVAL=5",
   timezone: "Europe/Lisbon",
   anchor: start,

@@ -1,3 +1,9 @@
+import { localRecurringHost } from "../../modules/workflows/recurring-host.js";
+import {
+  inspectLocalStorage,
+  readLocalHomeMonitor,
+} from "../../modules/workflows/recurring-local-collectors.js";
+import { homedir as recurringHome } from "node:os";
 import { RecurringWorkflows } from "../../modules/workflows/recurring.js";
 import { rolesDecisionPublicKey } from "../../modules/task-sync/roles-pin.js";
 import { TaskSyncRunner } from "../../modules/task-sync/runner.js";
@@ -122,25 +128,6 @@ const key = await loadStorageKey(
 );
 const store = new Store(join(content.directory, "tasks.db"), new Vault(key)),
   owner = { userId: "local-owner", tenantId: "personal" };
-const recurring = new RecurringWorkflows(
-  join(directory, "recurring-workflows.db"),
-  new Vault(key),
-  {
-    authorize: async (_definition, operation) => {
-      throw Error(
-        `Adapter not installed: ${operation.id}. Original schedule remains responsible.`,
-      );
-    },
-    execute: async () => {
-      throw Error("No authorized recurring adapter installed");
-    },
-    decide: async () => {
-      throw Error("No recurring model adapter installed");
-    },
-    sourcePaused: async () => false,
-    admission: () => false,
-  },
-);
 const executionControls = new ExecutionControls(
   join(directory, "execution-limits.json"),
 );
@@ -217,6 +204,33 @@ const crm = new CrmConnector(
     },
   );
 const modelTurns = new LocalModelTurns();
+const recurring = new RecurringWorkflows(
+  join(directory, "recurring-workflows.db"),
+  new Vault(key),
+  localRecurringHost({
+    collectors: new Map([
+      [
+        "local.storage.inspect",
+        { capability: "local.storage.inspect", read: inspectLocalStorage },
+      ],
+      [
+        "local.home-monitor.read",
+        { capability: "local.home-monitor.read", read: readLocalHomeMonitor },
+      ],
+    ]),
+    automationRoot: join(recurringHome(), ".codex", "automations"),
+    runtime,
+    profile: (id) => store.profile(owner, id),
+    turn: modelTurns.run,
+    admission: () =>
+      executionControls.admission(worker.activeTasks).reason === "ready",
+    // Monitor collectors do not replace original cleanup or SSH-repair duties.
+    // No complete source adapter/cutover has been approved yet.
+    cutoverReady: () => false,
+    recordDecision: (id, evidence) => recurring.recordDecision(id, evidence),
+  }),
+);
+
 const investorResearch = new InvestorResearch(
   join(content.directory, "investor-research.db"),
   new Vault(key),
@@ -511,6 +525,7 @@ async function stop() {
   clearInterval(centralWorkflowTimer);
   clearInterval(taskSyncTimer);
   clearInterval(taskSyncReviewTimer);
+  clearInterval(recurringTimer);
   await recurring.close();
   await taskSync.close();
   await centralWorkflows.close();
@@ -599,6 +614,9 @@ const taskSyncReviewTimer = setInterval(() => {
       )
       .catch(() => {});
 }, 3000);
+const recurringTimer = setInterval(() => {
+  if (started && !stopping) void recurring.tick();
+}, 30000);
 const centralWorkflowTimer = setInterval(() => {
   if (started && !stopping) void centralWorkflows.tick();
 }, 30000);
