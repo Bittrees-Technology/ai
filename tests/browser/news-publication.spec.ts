@@ -216,6 +216,10 @@ async function fixture(
   });
   await page.goto("/?workspace");
   await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^News$/ })
+    .click();
   const panel = page.getByRole("region", {
     name: "News publication",
     exact: true,

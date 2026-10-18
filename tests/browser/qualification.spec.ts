@@ -78,6 +78,17 @@ test("qualification previews labels, scopes source research and preserves profil
   await page
     .getByLabel("Local model", { exact: true })
     .selectOption("local-model");
+  await expect(page.getByLabel("Investment requirements")).toHaveValue("");
+  await expect(
+    page.getByRole("button", {
+      name: "Research 1 selected people and sync labels",
+    }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("Investment requirements")
+    .fill(
+      "Require current investment responsibility and explicitly evidenced individual location.",
+    );
   await page
     .getByRole("button", { name: "Research 1 selected people and sync labels" })
     .click();

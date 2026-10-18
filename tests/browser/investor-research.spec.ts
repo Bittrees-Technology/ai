@@ -28,6 +28,15 @@ test("local research requires explicit source and model choices; confirmation do
   await page
     .getByLabel("Approved public source URLs")
     .fill("https://example.org/team");
+  await expect(page.getByLabel("Research brief")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Start private investor research" }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("Research brief")
+    .fill(
+      "Find current investment decision makers using the approved public sources.",
+    );
   page.once("dialog", (d) => d.dismiss());
   await page
     .getByRole("button", { name: "Start private investor research" })

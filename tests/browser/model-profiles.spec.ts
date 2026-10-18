@@ -193,12 +193,30 @@ test("profile settings and saved configurations remain usable at desktop and nar
     viewport: innerWidth,
     width: document.documentElement.scrollWidth,
     elements: [...document.querySelectorAll<HTMLElement>("body *")]
-      .filter((e) => e.getBoundingClientRect().right > innerWidth + 1 || e.scrollWidth > e.clientWidth + 1)
-      .map((e) => ({ tag: e.tagName, class: e.className, id: e.id, right: e.getBoundingClientRect().right, width: e.clientWidth, scroll: e.scrollWidth })),
+      .filter(
+        (e) =>
+          e.getBoundingClientRect().right > innerWidth + 1 ||
+          e.scrollWidth > e.clientWidth + 1,
+      )
+      .map((e) => ({
+        tag: e.tagName,
+        class: e.className,
+        id: e.id,
+        right: e.getBoundingClientRect().right,
+        width: e.clientWidth,
+        scroll: e.scrollWidth,
+      })),
   }));
-  expect(overflow.width, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.viewport + 1);
-  await page.getByRole("button", { name: "Templates", exact: true }).click();
-  await page.getByRole("button", { name: "New template", exact: true }).click();
+  expect(overflow.width, JSON.stringify(overflow)).toBeLessThanOrEqual(
+    overflow.viewport + 1,
+  );
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Saved instructions", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "New instructions", exact: true })
+    .click();
   await expect(
     page
       .getByRole("combobox", { name: "Model", exact: true })

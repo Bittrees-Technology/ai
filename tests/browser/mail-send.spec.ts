@@ -195,7 +195,8 @@ async function fixture(
     await route.fulfill({ json });
   });
   await page.goto("/?workspace");
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.getByLabel("Workflow", { exact: true }).selectOption("mail");
   const panel = page.getByRole("article", {
     name: "Reviewed Mail sending",
     exact: true,
