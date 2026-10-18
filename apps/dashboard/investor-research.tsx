@@ -96,7 +96,6 @@ export function InvestorResearchPanel({
           <input
             type="number"
             min={1}
-            max={200}
             value={target}
             onChange={(e) => setTarget(Number(e.target.value))}
           />
@@ -290,7 +289,6 @@ export function InvestorResearchPanel({
                   <input
                     type="number"
                     min={1}
-                    max={200}
                     value={batchTargets[j.id] ?? 20}
                     onChange={(e) =>
                       setBatchTargets({
@@ -330,7 +328,6 @@ export function InvestorResearchPanel({
                   <input
                     type="number"
                     min={1}
-                    max={200}
                     disabled={
                       !(verificationProjects[j.id] ?? j.verificationProjectId)
                     }

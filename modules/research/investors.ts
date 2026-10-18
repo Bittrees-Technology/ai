@@ -13,8 +13,8 @@ const inputSchema = z.strictObject({
   confirmed: z.literal(true),
   profileId: z.string().min(1),
   brief: z.string().min(20).max(1500),
-  target: z.number().int().min(1).max(200),
-  urls: z.array(z.url()).min(1).max(100),
+  target: z.number().int().positive(),
+  urls: z.array(z.url()).min(1),
 });
 const extraction = z.strictObject({
   organization: z.string().max(150),
@@ -379,12 +379,8 @@ export class InvestorResearch {
       throw new Error("A research run is already active");
     const input = inputSchema.parse(raw);
     for (const u of input.urls) sourceURL(u, [new URL(u).hostname]);
-    if (this.list().length >= 20)
-      throw new Error("Research history limit reached");
     const s = await this.connector.read();
     if (!("entries" in s)) throw new Error("Full dataset required");
-    if (s.entries.length + input.target * 2 > 600)
-      throw new Error("Not enough space in this dataset");
     this.profile(input.profileId);
     const j: Job = {
       id: randomUUID(),
@@ -449,11 +445,11 @@ export class InvestorResearch {
         .strictObject({
           confirmed: z.literal(true),
           id: z.uuid(),
-          urls: z.array(z.url()).min(1).max(100),
-          totalPeopleTarget: z.number().int().min(1).max(200).optional(),
-          additionalPeople: z.number().int().min(1).max(200).optional(),
+          urls: z.array(z.url()).min(1),
+          totalPeopleTarget: z.number().int().positive().optional(),
+          additionalPeople: z.number().int().positive().optional(),
           verificationProjectId: z.uuid().optional(),
-          verificationTarget: z.number().int().min(1).max(200).optional(),
+          verificationTarget: z.number().int().positive().optional(),
         })
         .refine(
           (a) =>
@@ -507,8 +503,6 @@ export class InvestorResearch {
           s.entries.filter((e) => e.kind === "people").length;
       if (remaining <= 0)
         throw new Error("The dataset has already reached this target");
-      if (j.added + remaining > 200 || s.entries.length + remaining * 2 > 600)
-        throw new Error("Not enough space for this target");
       j.input.urls = approved;
       j.input.target = j.added + remaining;
       j.totalPeopleTarget = input.totalPeopleTarget;
@@ -940,7 +934,7 @@ export class InvestorResearch {
                   j.totalPeopleTarget -
                     s.entries.filter((e) => e.kind === "people").length,
                 )
-              : 200,
+              : j.input.target - j.added,
           )
         )
           break;
