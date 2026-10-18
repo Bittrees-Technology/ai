@@ -107,3 +107,33 @@ test("ambiguous start is not replayed; polls bind request and enforce spacing", 
   f.advance(3000);
   f.plan.prepare(poll);
 });
+
+test("non-finite review deadlines fail closed", () => {
+  const f = fixture();
+  for (const expiresAt of [NaN, Infinity, -Infinity, 100000.5])
+    assert.throws(() => new EnrollmentTransportPlan(() => ({ ...f.review, expiresAt }), () => 100000));
+});
+test("response-release guard detects revocation after request planning", () => {
+  const f = fixture();
+  f.plan.prepare({ operation: "heartbeat" });
+  f.set(null);
+  assert.throws(() => f.plan.assertCurrent());
+});
+test("review binding includes all identity fields and prevents extending session", () => {
+  for (const field of ["authorityId", "sourceWorkspace", "principal", "publicKey", "ownerWallet", "expiresAt"] as const) {
+    const f = fixture();
+    f.set({ ...f.review, [field]: field === "expiresAt" ? 400001 : "changed" });
+    assert.throws(() => f.plan.assertCurrent());
+  }
+});
+test("stale signed requests and oversized envelopes fail before planning", () => {
+  const f = fixture();
+  assert.throws(() => f.plan.prepare({ operation: "start", request: { ...f.request(), issuedAt: 1 }, signature: "fixture" }));
+  assert.throws(() => f.plan.prepare({ operation: "heartbeat", padding: "x".repeat(16001) }));
+  assert.equal(f.plan.prepare({ operation: "heartbeat" }).maximumResponseBytes, 64000);
+});
+test("total calls are bounded independently from owner review freshness", () => {
+  const f = fixture();
+  for (let i = 0; i < 108; i++) f.plan.prepare({ operation: "heartbeat" });
+  assert.throws(() => f.plan.prepare({ operation: "heartbeat" }));
+});

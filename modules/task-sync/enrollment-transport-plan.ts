@@ -71,6 +71,9 @@ export class EnrollmentTransportPlan {
     const review = current();
     if (
       !review ||
+      !Number.isSafeInteger(review.expiresAt) ||
+      !Number.isSafeInteger(now()) ||
+      !review.epoch ||
       review.expiresAt <= now() ||
       review.expiresAt > now() + 300000
     )
@@ -89,17 +92,23 @@ export class EnrollmentTransportPlan {
       ownerWallet: r.ownerWallet,
     });
   }
-  prepare(raw: unknown) {
+  /** Recheck immediately before dispatch and before releasing a response. Not signature verification. */
+  assertCurrent() {
     const review = this.current();
     if (
       !review ||
+      !Number.isSafeInteger(this.now()) ||
       review.epoch !== this.epoch ||
       review.expiresAt !== this.deadline ||
       this.scope(review) !== this.binding ||
-      this.calls >= 108 ||
       this.now() >= this.deadline
     )
       throw Error("Enrollment review expired or revoked");
+    return review;
+  }
+  prepare(raw: unknown) {
+    const review = this.assertCurrent();
+    if (this.calls >= 108) throw Error("Enrollment call limit reached");
     if (Buffer.byteLength(JSON.stringify(raw)) > 16000)
       throw Error("Enrollment request too large");
     const value = enrollmentOperation.parse(raw);
