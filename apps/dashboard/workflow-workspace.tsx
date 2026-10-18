@@ -1,3 +1,4 @@
+import { Agents } from "./agents.js";
 import { RecurringWork } from "./recurring.js";
 import React, { useState } from "react";
 import { Templates } from "./templates.js";
@@ -27,6 +28,7 @@ export function WorkflowWorkspace(props: {
         {(
           [
             ["sequences", "Task sequences"],
+            ["agents", "Task queue & agents"],
             ["instructions", "Saved instructions"],
             ["recurring", "Recurring work"],
             ["permissions", "Permissions & sync"],
@@ -52,6 +54,7 @@ export function WorkflowWorkspace(props: {
           <WorkTools {...props} onCreated={props.onTask} />
         </>
       )}
+      {view === "agents" && <Agents api={props.api} models={props.profiles} />}
       {view === "instructions" && <Templates {...props} />}
       {view === "recurring" && <RecurringWork api={props.api} />}
       {view === "permissions" && <Workflows api={props.api} />}

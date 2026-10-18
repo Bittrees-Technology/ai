@@ -102,7 +102,7 @@ async function fixture(page: Page) {
       state = {
         ...state,
         revision: state.revision + 1,
-        limits: { ...state.limits, parallelTasks: 3 },
+        limits: { ...state.limits, maxTaskSeconds: 300 },
       };
     },
   };
@@ -113,7 +113,8 @@ test("Mac limits require confirmation, keep running work explicit and fit deskto
   const f = await fixture(page),
     save = f.panel.getByRole("button", { name: "Save limits" });
   await expect(save).toBeDisabled();
-  await f.panel.getByLabel("Tasks at once").fill("2");
+  await expect(f.panel.getByLabel("Tasks at once")).toBeDisabled();
+  await f.panel.getByLabel("Time limit per task (seconds)").fill("240");
   await f.panel.getByLabel("Time limit per task (seconds)").fill("240");
   await f.panel.getByLabel("Minimum free memory (GiB)").fill("3");
   await f.panel.getByLabel("Pause new tasks", { exact: true }).check();
@@ -128,7 +129,7 @@ test("Mac limits require confirmation, keep running work explicit and fit deskto
       expectedRevision: 0,
       confirmed: true,
       limits: {
-        parallelTasks: 2,
+        parallelTasks: 1,
         maxTaskSeconds: 240,
         minFreeMemoryGiB: 3,
         pauseNewTasks: true,
@@ -155,19 +156,24 @@ test("lost settings acknowledgement requires reconciliation and never automatica
 }) => {
   const f = await fixture(page),
     save = f.panel.getByRole("button", { name: "Save limits" });
-  await f.panel.getByLabel("Tasks at once").fill("2");
+  await expect(f.panel.getByLabel("Tasks at once")).toBeDisabled();
+  await f.panel.getByLabel("Time limit per task (seconds)").fill("240");
   await f.panel
     .getByLabel("Apply these limits to new tasks on this Mac.")
     .check();
   f.lose();
   await save.click();
   await expect(f.panel.getByText(/save could not be confirmed/)).toBeVisible();
-  await expect(f.panel.getByLabel("Tasks at once")).toHaveValue("2");
+  await expect(f.panel.getByLabel("Time limit per task (seconds)")).toHaveValue(
+    "240",
+  );
   await expect(save).toBeDisabled();
   expect(f.writes).toHaveLength(1);
   await f.panel.getByRole("button", { name: "Load current limits" }).click();
   await expect(f.panel.getByText("Current limits loaded.")).toBeVisible();
-  await expect(f.panel.getByLabel("Tasks at once")).toHaveValue("2");
+  await expect(f.panel.getByLabel("Time limit per task (seconds)")).toHaveValue(
+    "240",
+  );
   await expect(save).toBeDisabled();
   expect(f.writes).toHaveLength(1);
 });
@@ -175,7 +181,8 @@ test("stale settings cannot replace a newer revision and a departed view ignores
   page,
 }) => {
   const f = await fixture(page);
-  await f.panel.getByLabel("Tasks at once").fill("2");
+  await expect(f.panel.getByLabel("Tasks at once")).toBeDisabled();
+  await f.panel.getByLabel("Time limit per task (seconds)").fill("240");
   await f.panel
     .getByLabel("Apply these limits to new tasks on this Mac.")
     .check();
@@ -189,5 +196,7 @@ test("stale settings cannot replace a newer revision and a departed view ignores
   await f.held()!.fulfill({ json: f.state() });
   await expect(page.getByText("Current limits loaded.")).toHaveCount(0);
   await page.getByRole("button", { name: "Device", exact: true }).click();
-  await expect(f.panel.getByLabel("Tasks at once")).toHaveValue("3");
+  await expect(f.panel.getByLabel("Time limit per task (seconds)")).toHaveValue(
+    "300",
+  );
 });

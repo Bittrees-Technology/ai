@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../../modules/agents/queue.js";
 import {
   crmDecisionPlan,
   crmDecisionPrompt,
@@ -48,6 +49,8 @@ export type ResumeExecutionBoundary = <T>(
   action: (privateAuthority: (permissionId: string) => void) => T,
 ) => Promise<T>;
 export class LocalWorker {
+  taskTurn: TaskTurn = immediateTask;
+  private queuedRun: Promise<boolean> | null = null;
   private active = new Map<string, AbortController>();
   private stopped = false;
   get activeTasks() {
@@ -85,7 +88,20 @@ export class LocalWorker {
   cancel(id: string) {
     this.active.get(id)?.abort();
   }
-  async runOnce(): Promise<boolean> {
+  runOnce(): Promise<boolean> {
+    if (this.taskTurn === immediateTask)
+      return this.runExclusive(new AbortController().signal);
+    if (this.queuedRun) return Promise.resolve(false);
+    this.queuedRun = this.taskTurn(
+      "Local task",
+      new AbortController().signal,
+      (signal) => this.runExclusive(signal),
+    ).finally(() => {
+      this.queuedRun = null;
+    });
+    return this.queuedRun;
+  }
+  private async runExclusive(queueSignal: AbortSignal): Promise<boolean> {
     if (this.stopped) return false;
     const state = this.controls?.admission(this.active.size);
     const limits = state?.limits ?? defaultExecutionLimits;
@@ -96,6 +112,9 @@ export class LocalWorker {
     ]);
     if (!claim) return false;
     const abort = new AbortController();
+    const queueAbort = () => abort.abort(queueSignal.reason);
+    queueSignal.addEventListener("abort", queueAbort, { once: true });
+    if (queueSignal.aborted) queueAbort();
     this.active.set(claim.task.id, abort);
     let timedOut = false;
     const expiresAt = Date.now() + limits.maxTaskSeconds * 1000;
@@ -476,6 +495,7 @@ export class LocalWorker {
       clearInterval(heartbeat);
       clearTimeout(deadline);
       this.active.delete(claim.task.id);
+      queueSignal.removeEventListener("abort", queueAbort);
     }
     return true;
   }
