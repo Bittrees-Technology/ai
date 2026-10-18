@@ -16,7 +16,7 @@ export type LocalRecurringCollector = {
     decision: "wait" | "escalate";
     summary: string;
   };
-  read: (signal: AbortSignal) => Promise<RecurringReceipt>;
+  read: (signal: AbortSignal, operationId: string) => Promise<RecurringReceipt>;
 };
 /** Operator-installed read-only adapters. Definitions cannot supply URLs, commands or file paths. */
 export function localRecurringHost(options: {
@@ -58,9 +58,9 @@ export function localRecurringHost(options: {
       signal.throwIfAborted();
       resolve(d, o);
     },
-    execute: async (d, o, _id, signal) => {
+    execute: async (d, o, operationId, signal) => {
       signal.throwIfAborted();
-      return resolve(d, o).read(signal);
+      return resolve(d, o).read(signal, operationId);
     },
     sourcePaused: async (d) =>
       options.cutoverReady(d) &&

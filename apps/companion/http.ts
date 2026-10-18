@@ -69,6 +69,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  myCloudHelperToken?: string;
   agents?: import("../../modules/agents/coordinator.js").AgentCoordinator;
   privateRelay?: CompanionPrivateRelay;
   privateKeys?: CompanionPrivateKeys;
@@ -140,6 +141,7 @@ export function localApi({
   agents,
   localInvestorReview,
   myCloudSource,
+  myCloudHelperToken,
   roles,
   news,
   mail,
@@ -191,6 +193,31 @@ export function localApi({
       (req.headers.origin && !origins.has(req.headers.origin))
     )
       return reject(403, "FORBIDDEN");
+    // Dedicated revision callback for the launch-owned helper, never general API access.
+    if (req.path === "/internal/mycloud-approval") {
+      const actual = Buffer.from(req.headers.authorization ?? ""),
+        expected = Buffer.from("Bearer " + (myCloudHelperToken ?? ""));
+      if (
+        req.method !== "GET" ||
+        req.headers.origin ||
+        !myCloudHelperToken ||
+        !/^[a-f0-9]{64}$/.test(myCloudHelperToken) ||
+        actual.length !== expected.length ||
+        !timingSafeEqual(actual, expected)
+      )
+        return reject(403, "FORBIDDEN");
+      const row = recurring
+        ?.status()
+        .find((item) => item.id === "mycloud-health-checks");
+      if (
+        !myCloudSource?.authorized() ||
+        !row?.approved ||
+        !/^[a-f0-9]{64}$/.test(row.revision)
+      )
+        return reject(403, "FORBIDDEN");
+      res.json({ revision: row.revision });
+      return;
+    }
     const actual = Buffer.from(req.headers.authorization ?? ""),
       expected = Buffer.from("Bearer " + token);
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected))

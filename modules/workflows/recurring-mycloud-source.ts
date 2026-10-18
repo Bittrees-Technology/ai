@@ -1,9 +1,10 @@
 import Database from "better-sqlite3";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 import { Vault } from "../storage/vault.js";
+import { myCloudOperationIdSchema } from "./mycloud-operation-journal.js";
 import {
   myCloudHealthReceipt,
   type MyCloudObservation,
@@ -47,7 +48,34 @@ export async function pinnedMyCloudCheck(signal: AbortSignal) {
   await verifyMyCloudPins();
   signal.throwIfAborted();
   const result = await new Promise<string>((resolve, reject) => {
-    const child = spawn("/usr/bin/python3", [directory + "/health-check.py"], {
+    const bootstrap =
+      "import sys,runpy;sys.path.insert(0," +
+      JSON.stringify(directory) +
+      ");import remote;remote.SSH=" +
+      JSON.stringify([
+        "/usr/bin/ssh",
+        "-F",
+        "/dev/null",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "UserKnownHostsFile=/Users/jhineline/.ssh/known_hosts",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-i",
+        "/Users/jhineline/.ssh/mycloud_admin",
+        "root@192.168.1.164",
+      ]) +
+      ";runpy.run_path(" +
+      JSON.stringify(directory + "/health-check.py") +
+      ",run_name='__main__')";
+    const child = spawn("/usr/bin/python3", ["-I", "-c", bootstrap], {
       cwd: directory,
       detached: true,
       stdio: ["ignore", "pipe", "ignore"],
@@ -107,7 +135,7 @@ export class MyCloudSource {
     private vault: Vault,
     private options: {
       authorized: () => boolean;
-      check?: typeof pinnedMyCloudCheck;
+      check?: (signal: AbortSignal, operationId: string) => Promise<string>;
     },
   ) {
     this.db = new Database(path);
@@ -115,7 +143,11 @@ export class MyCloudSource {
       "CREATE TABLE IF NOT EXISTS health_state(id TEXT PRIMARY KEY,value BLOB NOT NULL); CREATE TABLE IF NOT EXISTS health_outbox(id INTEGER PRIMARY KEY,value BLOB NOT NULL)",
     );
   }
-  async read(signal: AbortSignal) {
+  authorized() {
+    return this.options.authorized();
+  }
+  async read(signal: AbortSignal, operationId = "verify:" + randomUUID()) {
+    myCloudOperationIdSchema.parse(operationId);
     signal.throwIfAborted();
     if (!this.options.authorized())
       throw Error(
@@ -124,7 +156,10 @@ export class MyCloudSource {
     if (this.busy) throw Error("MyCloud check already running");
     this.busy = true;
     try {
-      const raw = await (this.options.check || pinnedMyCloudCheck)(signal);
+      const raw = await (this.options.check || pinnedMyCloudCheck)(
+        signal,
+        operationId,
+      );
       signal.throwIfAborted();
       if (!this.options.authorized())
         throw Error("MyCloud source approval changed");
@@ -135,6 +170,10 @@ export class MyCloudSource {
         ? this.vault.open<State>(row.value, "mycloud-baseline")
         : { sequence: 0 };
       const result = myCloudHealthReceipt(raw, prior.observation);
+      result.receipt.evidence = {
+        ...(result.receipt.evidence as Record<string, unknown>),
+        operationId,
+      };
       const sequence = prior.sequence + (result.notifications.length ? 1 : 0);
       this.db.transaction(() => {
         const capacity = this.db

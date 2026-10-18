@@ -101,6 +101,17 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         // Do not inherit NODE_OPTIONS, injected module paths, or shell credentials.
         desktopBootstrap = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
         process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "BITTREES_DESKTOP": "1", "BITTREES_DESKTOP_BOOTSTRAP": desktopBootstrap]
+        // Forward only the fixed local MyCloud helper capability, never general shell environment.
+        let inherited = ProcessInfo.processInfo.environment
+        if let endpoint = inherited["BITTREES_MYCLOUD_HELPER_URL"], let url = URL(string: endpoint),
+           url.scheme == "http", url.host == "127.0.0.1", url.port != nil,
+           url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+           (url.path.isEmpty || url.path == "/"),
+           let secret = inherited["BITTREES_MYCLOUD_HELPER_TOKEN"],
+           secret.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_MYCLOUD_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_MYCLOUD_HELPER_TOKEN"] = secret
+        }
         // Only the fixed cloud broker connection crosses the native boundary.
         if let endpoint = ProcessInfo.processInfo.environment["BITTREES_CLOUD_HELPER_URL"],
            let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
