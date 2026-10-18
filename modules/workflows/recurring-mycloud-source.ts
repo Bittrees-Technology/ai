@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 import { Vault } from "../storage/vault.js";
 import {
   myCloudHealthReceipt,
@@ -14,9 +15,18 @@ const pins = {
   "remote.py":
     "4c1c0eb7fb12dd2460c12114d03536526f2e8919f8df90378babda9a7ecbe738",
 };
-export async function pinnedMyCloudCheck(signal: AbortSignal) {
-  for (const [name, expected] of Object.entries(pins)) {
-    const path = directory + "/" + name,
+export async function verifyMyCloudPins(
+  root = directory,
+  expectedPins: Record<string, string> = pins,
+) {
+  for (let parent = root; ; parent = dirname(parent)) {
+    const info = await lstat(parent);
+    if (!info.isDirectory() || info.isSymbolicLink())
+      throw Error("MyCloud source directory identity unavailable");
+    if (parent === dirname(parent)) break;
+  }
+  for (const [name, expected] of Object.entries(expectedPins)) {
+    const path = root + "/" + name,
       stat = await lstat(path);
     if (
       !stat.isFile() ||
@@ -32,30 +42,56 @@ export async function pinnedMyCloudCheck(signal: AbortSignal) {
     )
       throw Error("MyCloud checker changed; review required");
   }
+}
+export async function pinnedMyCloudCheck(signal: AbortSignal) {
+  await verifyMyCloudPins();
   signal.throwIfAborted();
-  return new Promise<string>((resolve, reject) => {
-    execFile(
-      "/usr/bin/python3",
-      [directory + "/health-check.py"],
-      {
-        cwd: directory,
-        env: {
-          PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-          HOME: "/Users/jhineline",
-          PYTHONNOUSERSITE: "1",
-          PYTHONDONTWRITEBYTECODE: "1",
-        },
-        timeout: 45000,
-        maxBuffer: 32768,
-        signal,
+  const result = await new Promise<string>((resolve, reject) => {
+    const child = spawn("/usr/bin/python3", [directory + "/health-check.py"], {
+      cwd: directory,
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: {
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        HOME: "/Users/jhineline",
+        PYTHONNOUSERSITE: "1",
+        PYTHONDONTWRITEBYTECODE: "1",
       },
-      (error, stdout) => {
-        // Never propagate SSH stderr or credentials into workflow receipts.
-        if (error) reject(Error("MyCloud checker failed or timed out"));
-        else resolve(stdout);
-      },
-    );
+    });
+    let failed = false,
+      bytes = 0;
+    const chunks: Buffer[] = [];
+    // Own process group includes the checker's SSH child; never leave an orphan retry.
+    const stop = () => {
+      failed = true;
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {}
+      }
+    };
+    const timer = setTimeout(stop, 20000); // less than recurring verification's 30-second budget
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) stop();
+    child.stdout.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > 32768) stop();
+      else chunks.push(chunk);
+    });
+    child.on("error", () => {
+      failed = true;
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", stop);
+      if (failed || code !== 0 || signal.aborted)
+        reject(Error("MyCloud checker failed or timed out"));
+      else resolve(Buffer.concat(chunks).toString("utf8"));
+    });
   });
+  await verifyMyCloudPins();
+  signal.throwIfAborted();
+  return result;
 }
 type State = { observation?: MyCloudObservation; sequence: number };
 /** Fixed original checker only. Network admission must be separately approved; never bypass sandbox. */
@@ -97,6 +133,13 @@ export class MyCloudSource {
       const result = myCloudHealthReceipt(raw, prior.observation);
       const sequence = prior.sequence + (result.notifications.length ? 1 : 0);
       this.db.transaction(() => {
+        const capacity = this.db
+          .prepare("SELECT COUNT(*) AS count FROM health_outbox")
+          .get() as { count: number };
+        if (result.notifications.length && capacity.count >= 1000)
+          throw Error(
+            "MyCloud notification outbox full; explicit retention review required",
+          );
         this.db
           .prepare("INSERT OR REPLACE INTO health_state VALUES('baseline',?)")
           .run(
@@ -106,19 +149,17 @@ export class MyCloudSource {
             ),
           );
         if (result.notifications.length)
-          this.db
-            .prepare("INSERT INTO health_outbox VALUES(?,?)")
-            .run(
-              sequence,
-              this.vault.seal(
-                {
-                  id: sequence,
-                  notifications: result.notifications,
-                  receipt: result.receipt,
-                },
-                "mycloud-event:" + sequence,
-              ),
-            );
+          this.db.prepare("INSERT INTO health_outbox VALUES(?,?)").run(
+            sequence,
+            this.vault.seal(
+              {
+                id: sequence,
+                notifications: result.notifications,
+                receipt: result.receipt,
+              },
+              "mycloud-event:" + sequence,
+            ),
+          );
       })();
       return result.receipt;
     } finally {

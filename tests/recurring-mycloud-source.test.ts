@@ -80,3 +80,50 @@ test("revocation during collection retains no baseline or event", async () => {
     s.close();
   }
 });
+test("outbox capacity fails closed without silently deleting unique events", async () => {
+  let temp = 64;
+  const s = new MyCloudSource(":memory:", new Vault(randomBytes(32)), {
+    authorized: () => true,
+    check: async () => reading(temp),
+  });
+  try {
+    await s.read(new AbortController().signal);
+    for (let i = 0; i < 1000; i++) {
+      temp = temp === 64 ? 65 : 64;
+      await s.read(new AbortController().signal);
+    }
+    temp = 65;
+    await assert.rejects(s.read(new AbortController().signal), /outbox full/);
+    assert.equal(s.outbox().length, 100);
+  } finally {
+    s.close();
+  }
+});
+test("pin validation rejects changed files and symlinked source ancestors", async () => {
+  const { mkdtemp, mkdir, writeFile, symlink, rm, realpath } =
+    await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createHash } = await import("node:crypto");
+  const { verifyMyCloudPins } =
+    await import("../modules/workflows/recurring-mycloud-source.js");
+  const base = await realpath(await mkdtemp(join(tmpdir(), "mycloud-pins-")));
+  try {
+    const source = join(base, "real");
+    await mkdir(source);
+    await writeFile(join(source, "check.py"), "safe", { mode: 0o600 });
+    const pins = {
+      "check.py": createHash("sha256").update("safe").digest("hex"),
+    };
+    await verifyMyCloudPins(source, pins);
+    await symlink(source, join(base, "alias"));
+    await assert.rejects(
+      verifyMyCloudPins(join(base, "alias"), pins),
+      /directory identity/,
+    );
+    await writeFile(join(source, "check.py"), "changed");
+    await assert.rejects(verifyMyCloudPins(source, pins), /changed/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
