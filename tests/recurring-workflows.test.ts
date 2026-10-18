@@ -376,3 +376,33 @@ test("duplicate imports fail atomically and active definitions cannot be overwri
     s.engine.review([{ ...d, instructions: "Changed scope" }]),
   );
 });
+
+test("revocation aborts manual action verification and reapproval cannot revive it", async (t) => {
+  let entered!: () => void,
+    mutations = 0;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const s = setup(t, {
+    verifyComplete: async (_d, receipt, signal) => {
+      entered();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      signal.throwIfAborted();
+      mutations++;
+      return receipt;
+    },
+  });
+  const d = definition(),
+    row = s.engine.review([d])[0]!;
+  s.engine.approve(d.id, row.revision, true);
+  const before = s.engine.authorityVersion(d.id);
+  const run = s.engine.verify(d.id);
+  await started;
+  s.engine.revoke(d.id);
+  s.engine.approve(d.id, row.revision, true);
+  await assert.rejects(run);
+  assert.notEqual(s.engine.authorityVersion(d.id), before);
+  assert.equal(mutations, 0);
+});

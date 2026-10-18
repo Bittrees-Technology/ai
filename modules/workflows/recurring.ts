@@ -98,6 +98,8 @@ export class RecurringWorkflows {
   private db: Database.Database;
   private running: Promise<void> | null = null;
   private controller: AbortController | null = null;
+  private verificationController: AbortController | null = null;
+  private verifying: Promise<unknown> | null = null;
   constructor(
     path: string,
     private vault: Vault,
@@ -172,6 +174,7 @@ export class RecurringWorkflows {
             (row) => row.definition.id === definition.id,
           );
         if (prior?.revision === revision) continue;
+        this.verificationController?.abort();
         this.put({
           definition,
           revision,
@@ -189,6 +192,7 @@ export class RecurringWorkflows {
     const state = this.get(id);
     if (confirmed !== true || state.revision !== revision)
       throw Error("Review changed");
+    this.verificationController?.abort();
     state.approved = true;
     state.epoch = randomUUID();
     state.status = "approved-not-running";
@@ -196,11 +200,20 @@ export class RecurringWorkflows {
     return this.status();
   }
   async verify(id: string) {
-    return this.taskTurn(
+    if (this.verifying) throw Error("Wait for current verification");
+    this.verificationController = new AbortController();
+    const run = this.taskTurn(
       "Verify recurring source",
-      new AbortController().signal,
+      this.verificationController.signal,
       (signal) => this.verifyExclusive(id, signal),
     );
+    this.verifying = run;
+    try {
+      return await run;
+    } finally {
+      this.verifying = null;
+      this.verificationController = null;
+    }
   }
   private async verifyExclusive(id: string, parent: AbortSignal) {
     if (this.running) throw Error("Wait for current work");
@@ -285,6 +298,7 @@ export class RecurringWorkflows {
     state.status = "paused";
     this.put(state);
     this.controller?.abort();
+    this.verificationController?.abort();
     return this.status();
   }
   revoke(id: string) {
@@ -296,6 +310,7 @@ export class RecurringWorkflows {
     state.status = "revoked";
     this.put(state);
     this.controller?.abort();
+    this.verificationController?.abort();
     return this.status();
   }
   recordDecision(id: string, evidence: any) {
@@ -549,7 +564,9 @@ export class RecurringWorkflows {
   }
   async close() {
     this.controller?.abort();
+    this.verificationController?.abort();
     await this.running;
+    await this.verifying?.catch(() => {});
     this.db.close();
   }
 }
