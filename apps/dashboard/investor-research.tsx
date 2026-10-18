@@ -34,10 +34,19 @@ export function InvestorResearchPanel({
     void refresh().catch(onError);
   }, []);
   useEffect(() => {
-    if (!status?.jobs?.some((j: any) => j.state === "running")) return;
+    if (
+      !status?.jobs?.some(
+        (j: any) => j.state === "running" || j.automatic?.enabled,
+      )
+    )
+      return;
     const id = setInterval(() => void refresh().catch(onError), 10000);
     return () => clearInterval(id);
-  }, [status?.jobs?.some((j: any) => j.state === "running")]);
+  }, [
+    status?.jobs?.some(
+      (j: any) => j.state === "running" || j.automatic?.enabled,
+    ),
+  ]);
   async function act(action: () => Promise<any>) {
     setBusy(true);
     try {
@@ -156,6 +165,78 @@ export function InvestorResearchPanel({
               {j.totalPeopleTarget} people. This includes other runs and manual
               additions; CRM imports are counted separately.
             </p>
+          )}
+          {j.automatic && (
+            <p role="status">
+              Automatic workflow: {j.automatic.phase.replaceAll("_", " ")}.
+              {j.automatic.receipt &&
+                ` CRM follow-up confirmed: ${j.automatic.receipt.id}.`}
+              {j.automatic.completion &&
+                ` Completion evidence saved in CRM note: ${j.automatic.completion.noteId}.`}
+              {j.automatic.error && ` ${j.automatic.error}`}
+            </p>
+          )}
+          {j.state !== "running" && (
+            <details>
+              <summary>Automatic research and CRM follow-up</summary>
+              <p>
+                Resume interrupted research on the same approved sources when
+                this Mac is running. After each batch, create one
+                evidence-review task for the existing CRM worker. Missing
+                sources remain a blocker; a completed review does not mean
+                investors are verified.
+              </p>
+              <label>
+                CRM follow-up project
+                <select
+                  value={
+                    verificationProjects[j.id] ??
+                    j.automatic?.projectId ??
+                    j.verificationProjectId ??
+                    ""
+                  }
+                  onChange={(e) =>
+                    setVerificationProjects({
+                      ...verificationProjects,
+                      [j.id]: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Choose a connected task project</option>
+                  {projectChoices
+                    .filter((p) => p.tasks)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button
+                disabled={
+                  busy ||
+                  status.jobs.some((job: any) => job.state === "running")
+                }
+                onClick={() =>
+                  void act(() =>
+                    api("/v1/research/investors/automatic", "POST", {
+                      confirmed: true,
+                      id: j.id,
+                      enabled: !j.automatic?.enabled,
+                      projectId:
+                        verificationProjects[j.id] ||
+                        j.automatic?.projectId ||
+                        j.verificationProjectId ||
+                        undefined,
+                    }),
+                  )
+                }
+              >
+                {j.automatic?.enabled
+                  ? "Pause automatic workflow"
+                  : "Enable automatic workflow"}
+              </button>
+            </details>
           )}
           {j.error && (
             <p role="status">

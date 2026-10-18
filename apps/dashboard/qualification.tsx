@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useId } from "react";
 export function QualificationPanel({
   api,
   onError,
@@ -8,6 +8,7 @@ export function QualificationPanel({
   onError: (e: unknown) => void;
   profiles: { id: string; model: string }[];
 }) {
+  const modelId = useId();
   const [status, setStatus] = useState<any>(null),
     [projects, setProjects] = useState<any[]>([]),
     [project, setProject] = useState(""),
@@ -208,20 +209,19 @@ export function QualificationPanel({
             >
               Sync previewed labels only
             </button>
-            <label>
-              Local model
-              <select
-                value={profile}
-                onChange={(e) => setProfile(e.target.value)}
-              >
-                <option value="">Choose model</option>
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.model}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <label htmlFor={modelId}>Local model</label>
+            <select
+              id={modelId}
+              value={profile}
+              onChange={(e) => setProfile(e.target.value)}
+            >
+              <option value="">Choose model</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.model}
+                </option>
+              ))}
+            </select>
             <label>
               Investment requirements
               <textarea

@@ -68,3 +68,13 @@ CRM prepares separate supplier research tasks from reviewed confirmation tasks a
 Prepared supplier reviews read their approved public pages and save exact model-selected quotations with URLs and retrieval times. Public pages may be reused for up to one hour within the same connection, project and supplier, retaining their original dates. Unavailable pages remain unresolved; no stale fallback is used after expiry. If all pages fail or quotations cannot be validated, the research task remains open with a visible evidence issue. Automatic work continues with other tasks; the source claim lease prevents immediate repeated attempts, and unresolved tasks are retried after it expires.
 
 Completing the research child does not complete the original supplier confirmation tasks. Public listings do not establish negotiated dealer prices, reserved stock, export commitments or image permissions. No outreach, purchases or publication is performed by this worker. CRM's supplier preparation and approval interface must be deployed before this capability can be activated.
+
+## Automatic investor handoffs
+
+For a saved investor run, open **Automatic research and CRM follow-up**, choose a task-enabled CRM project, and select **Enable automatic workflow**. Existing runs remain manual until enabled. Keep that project's automatic CRM task worker enabled to execute generated reviews.
+
+While the companion is running, its ten-second scheduler resumes an enabled run interrupted by an app restart. It uses the original model and approved sources. User pauses, model changes, dataset conflicts and missing permissions still stop execution. Closing the app preserves the enabled workflow for its next launch; this does not keep a sleeping or powered-off Mac running.
+
+After a research batch completes or exhausts its sources, the companion creates one **AI review** task through the existing CRM dataset MCP. The encrypted outbox is saved before delivery, and retries reuse the same operation ID. Temporary source outages use delayed, bounded retries. Permission failures stop the handoff until explicitly re-enabled; they never grant access.
+
+The local panel shows the workflow phase, confirmed task ID, and the CRM evidence-note ID once the local task worker has a confirmed `tasks.finish` receipt. Review completion means an evidence inventory was saved. It does not count as a fully verified investor, source discovery, outreach, or goal completion. Exhausted approved sources remain visibly blocked. Adding new source hosts and automatically chaining qualification research are separate capabilities, not enabled by this handoff.
