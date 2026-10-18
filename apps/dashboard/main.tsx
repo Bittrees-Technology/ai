@@ -24,6 +24,7 @@ import { Templates } from "./templates.js";
 import { ModelImportControls } from "./imports.js";
 import { DeviceResources } from "./device.js";
 import { SourceDraftDetail } from "./crm-drafts.js";
+import { WorkTools } from "./work-tools.js";
 import { Connections } from "./connections.js";
 import { Inbox } from "./inbox.js";
 import React, { useState, useEffect, useRef } from "react";
@@ -405,7 +406,24 @@ function App() {
           </section>
         ) : (
           <React.Fragment key={epoch.current}>
-            {page === "Work activity" && <ResearchActivity api={api} onConnections={() => setPage("Connections")} />}
+            {page === "Work activity" && (
+              <>
+                <WorkTools
+                  api={api}
+                  onError={fail}
+                  profiles={profiles}
+                  onCreated={(id) => {
+                    setSelected(id);
+                    setPage("Tasks");
+                    void refresh().catch(fail);
+                  }}
+                />
+                <ResearchActivity
+                  api={api}
+                  onConnections={() => setPage("Connections")}
+                />
+              </>
+            )}
             {page === "Tasks" && (
               <div className="workspace">
                 <section className="queue">

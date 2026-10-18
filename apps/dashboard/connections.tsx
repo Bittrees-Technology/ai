@@ -1,10 +1,5 @@
-import { QualificationPanel } from "./qualification.js";
-import { ProjectWorkPanel } from "./project-work.js";
-import { InvestorResearchPanel } from "./investor-research.js";
 import { CrmDatasetPanel } from "./crm-dataset.js";
-import { AutoNoteApprovalPanel } from "./autonote-approval.js";
 import { PrivateRelayPanel } from "./private-relay.js";
-import { MailSendPanel } from "./mail-send.js";
 import { NewsConnectionPanel } from "./news-connection.js";
 import { PrivateCheckPanel } from "./private-checks.js";
 import { PrivatePermissionPanel } from "./private-permissions.js";
@@ -13,8 +8,6 @@ import { PrivateKeyPanel } from "./private-keys.js";
 import { RemoteConnectionPanel } from "./remote-connection.js";
 import { MailConnection } from "./mail-connection.js";
 import { RolesConnection } from "./roles-connection.js";
-import { AutoNoteDrafts } from "./autonote-drafts.js";
-import { CrmDrafts } from "./crm-drafts.js";
 import React, { useEffect, useState } from "react";
 type Api = (
   path: string,
@@ -106,22 +99,6 @@ function ConnectionCard({
                 : "Credential saved on this Mac"}
             . Current access is checked with {label} on every read.
           </p>
-          {current.connection.state === "stored" &&
-            (app === "crm" ? (
-              <CrmDrafts
-                api={api}
-                onError={onError}
-                profiles={profiles}
-                onCreated={onCreated}
-              />
-            ) : (
-              <AutoNoteDrafts
-                api={api}
-                onError={onError}
-                profiles={profiles}
-                onCreated={onCreated}
-              />
-            ))}
           <dl>
             <dt>Source user</dt>
             <dd>{current.connection.subjectId}</dd>
@@ -269,12 +246,6 @@ function ConnectionCard({
           )}
         </>
       )}
-      <p>
-        {app === "crm"
-          ? "Drafts stay local until you explicitly send a proposal for CRM review."
-          : "Drafts stay local until you explicitly send them for review in AutoNote."}{" "}
-        Cross-app memory is not enabled.
-      </p>
     </article>
   );
 }
@@ -287,40 +258,53 @@ export function Connections(props: {
 }) {
   return (
     <section className="content">
-      <h2>Connect only what you choose</h2>
+      <h2>Connections</h2>
       <p>
-        Each app controls its own permissions. Pairing this browser does not
-        grant app access.
+        Manage connected services and their access. Research and task controls
+        are in Work activity.
       </p>
-      <RemoteConnectionPanel api={props.api} />
-      <PrivateRelayPanel api={props.api} />
-      <PrivateKeyPanel api={props.api} />
-      <PrivatePeerPanel api={props.api} />
-      <PrivateCheckPanel api={props.api} />
-      <PrivatePermissionPanel api={props.api} />
-      <CrmDatasetPanel api={props.api} onError={props.onError} />
-      <ProjectWorkPanel
-        api={props.api}
-        onError={props.onError}
-        profiles={props.profiles}
-      />
-      <QualificationPanel
-        api={props.api}
-        onError={props.onError}
-        profiles={props.profiles}
-      />
-      <InvestorResearchPanel
-        api={props.api}
-        onError={props.onError}
-        profiles={props.profiles}
-      />
-      <ConnectionCard app="crm" {...props} />
-      <ConnectionCard app="autonote" {...props} />
-      <AutoNoteApprovalPanel api={props.api} />
-      <RolesConnection api={props.api} onError={props.onError} />
-      <MailConnection {...props} />
-      <MailSendPanel api={props.api} />
-      <NewsConnectionPanel api={props.api} />
+      <ConnectionSection title="CRM">
+        <CrmDatasetPanel api={props.api} onError={props.onError} />
+        <ConnectionCard app="crm" {...props} />
+      </ConnectionSection>
+      <ConnectionSection title="AutoNote">
+        <ConnectionCard app="autonote" {...props} />
+      </ConnectionSection>
+      <ConnectionSection title="Roles">
+        <RolesConnection api={props.api} onError={props.onError} />
+      </ConnectionSection>
+      <ConnectionSection title="Mail">
+        <MailConnection {...props} />
+      </ConnectionSection>
+      <ConnectionSection title="News">
+        <NewsConnectionPanel api={props.api} />
+      </ConnectionSection>
+      <ConnectionSection title="Remote access">
+        <RemoteConnectionPanel api={props.api} />
+        <PrivateRelayPanel api={props.api} />
+      </ConnectionSection>
+      <ConnectionSection title="Advanced access settings">
+        <PrivateKeyPanel api={props.api} />
+        <PrivatePeerPanel api={props.api} />
+        <PrivateCheckPanel api={props.api} />
+        <PrivatePermissionPanel api={props.api} />
+      </ConnectionSection>
     </section>
+  );
+}
+
+function ConnectionSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="card" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{title}</summary>
+      {open && children}
+    </details>
   );
 }

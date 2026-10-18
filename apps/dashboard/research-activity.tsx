@@ -42,9 +42,7 @@ export function ResearchActivity({
         additions to People and Organizations. Supplier automation runs
         separately using rules.
       </p>
-      <button onClick={onConnections}>
-        Manage research and CRM connection
-      </button>
+      <button onClick={onConnections}>Manage connections</button>
       {error && <p role="alert">{error}</p>}
       <p>Last checked: {checked || "Checking…"}</p>
       {!jobs.length && <p>No research runs recorded.</p>}
