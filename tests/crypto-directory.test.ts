@@ -41,6 +41,21 @@ const answer = {
 };
 test("source assessment rejects invented quotes, tags, and missing project evidence", () => {
   assert.equal(groundedDirectoryAnswer(answer, text, ["DeFi"]).fits, true);
+  assert.throws(
+    () =>
+      groundedDirectoryAnswer(
+        {
+          ...answer,
+          claims: [
+            ...answer.claims,
+            { field: "founded", value: "2014", quote: text },
+          ],
+        },
+        text,
+        ["DeFi"],
+      ),
+    /Claim value/,
+  );
   assert.throws(() =>
     groundedDirectoryAnswer({ ...answer, tags: ["Invented"] }, text, ["DeFi"]),
   );
