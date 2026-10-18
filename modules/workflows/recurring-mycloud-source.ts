@@ -47,7 +47,34 @@ export async function pinnedMyCloudCheck(signal: AbortSignal) {
   await verifyMyCloudPins();
   signal.throwIfAborted();
   const result = await new Promise<string>((resolve, reject) => {
-    const child = spawn("/usr/bin/python3", [directory + "/health-check.py"], {
+    const bootstrap =
+      "import sys,runpy;sys.path.insert(0," +
+      JSON.stringify(directory) +
+      ");import remote;remote.SSH=" +
+      JSON.stringify([
+        "/usr/bin/ssh",
+        "-F",
+        "/dev/null",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "UserKnownHostsFile=/Users/jhineline/.ssh/known_hosts",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-i",
+        "/Users/jhineline/.ssh/mycloud_admin",
+        "root@192.168.1.164",
+      ]) +
+      ";runpy.run_path(" +
+      JSON.stringify(directory + "/health-check.py") +
+      ",run_name='__main__')";
+    const child = spawn("/usr/bin/python3", ["-I", "-c", bootstrap], {
       cwd: directory,
       detached: true,
       stdio: ["ignore", "pipe", "ignore"],
@@ -114,6 +141,9 @@ export class MyCloudSource {
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS health_state(id TEXT PRIMARY KEY,value BLOB NOT NULL); CREATE TABLE IF NOT EXISTS health_outbox(id INTEGER PRIMARY KEY,value BLOB NOT NULL)",
     );
+  }
+  authorized() {
+    return this.options.authorized();
   }
   async read(signal: AbortSignal) {
     signal.throwIfAborted();

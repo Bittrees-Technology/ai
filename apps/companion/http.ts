@@ -69,6 +69,7 @@ import type { CrmTasks } from "../../modules/connectors/crm-tasks.js";
 import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
+  myCloudHelperToken?: string;
   privateRelay?: CompanionPrivateRelay;
   privateKeys?: CompanionPrivateKeys;
   privateKeyCleanup?: () => Promise<void>;
@@ -138,6 +139,7 @@ export function localApi({
   recurring,
   localInvestorReview,
   myCloudSource,
+  myCloudHelperToken,
   roles,
   news,
   mail,
@@ -189,6 +191,25 @@ export function localApi({
       (req.headers.origin && !origins.has(req.headers.origin))
     )
       return reject(403, "FORBIDDEN");
+    // Dedicated one-bit callback for the launch-owned helper, never general API access.
+    if (req.path === "/internal/mycloud-approval") {
+      const actual = Buffer.from(req.headers.authorization ?? ""),
+        expected = Buffer.from("Bearer " + (myCloudHelperToken ?? ""));
+      if (
+        req.method !== "GET" ||
+        req.headers.origin ||
+        !myCloudHelperToken ||
+        !/^[a-f0-9]{64}$/.test(myCloudHelperToken) ||
+        actual.length !== expected.length ||
+        !timingSafeEqual(actual, expected)
+      )
+        return reject(403, "FORBIDDEN");
+      res
+        .type("text/plain")
+        .status(myCloudSource?.authorized() ? 200 : 403)
+        .send(myCloudSource?.authorized() ? "approved" : "denied");
+      return;
+    }
     const actual = Buffer.from(req.headers.authorization ?? ""),
       expected = Buffer.from("Bearer " + token);
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected))

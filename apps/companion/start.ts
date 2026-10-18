@@ -1,3 +1,4 @@
+import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
 import { MyCloudSource } from "../../modules/workflows/recurring-mycloud-source.js";
 import { LocalInvestorReview } from "../../modules/workflows/local-investor-review.js";
 import { localRecurringHost } from "../../modules/workflows/recurring-host.js";
@@ -220,6 +221,15 @@ const myCloudSource = new MyCloudSource(
   join(directory, "mycloud-health.db"),
   new Vault(key),
   {
+    check: (signal) => {
+      const endpoint = process.env.BITTREES_MYCLOUD_HELPER_URL,
+        token = process.env.BITTREES_MYCLOUD_HELPER_TOKEN;
+      if (!endpoint || !token)
+        throw Error(
+          "Scoped MyCloud helper is unavailable; offline policy retained",
+        );
+      return helperMyCloudCheck(endpoint, token, signal);
+    },
     // Human-approved pinned MyCloud source only; native definition approval remains revocable.
     authorized: () =>
       executionControls.admission(worker.activeTasks).reason === "ready" &&
@@ -229,7 +239,9 @@ const myCloudSource = new MyCloudSource(
           (row) =>
             row.id === "mycloud-health-checks" &&
             row.approved &&
-            row.capabilities.includes("local.mycloud.health"),
+            row.capabilities.includes("local.mycloud.health") &&
+            recurring.detail(row.id).definition.sourceFingerprint ===
+              "e65e2bb43dc0176ec6f7aadf829cae15d92dcdea6558bc89ceea1943b1f1d3e4",
         ),
   },
 );
@@ -532,6 +544,7 @@ server.on(
     recurring,
     localInvestorReview,
     myCloudSource,
+    myCloudHelperToken: process.env.BITTREES_MYCLOUD_HELPER_TOKEN,
     qualificationResearch,
     projectWork,
     sources,
