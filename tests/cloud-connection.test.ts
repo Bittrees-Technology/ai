@@ -186,3 +186,78 @@ test("generation pins Phala and forbids paid fallback, training and retention", 
     request: 0,
   });
 });
+
+test("cloud consent binds exact profile and task disclosure before dispatch", async () => {
+  const { AgentCoordinator } = await import("../modules/agents/coordinator.js");
+  const { AgentProfiles } = await import("../modules/agents/profiles.js");
+  const { AgentQueue } = await import("../modules/agents/queue.js");
+  const { cloudExportText } = await import("../modules/agents/cloud-scope.js");
+  const { createHash } = await import("node:crypto");
+  const vault = new Vault(randomBytes(32));
+  const profiles = new AgentProfiles(":memory:", vault);
+  const queue = new AgentQueue(":memory:", vault);
+  let calls = 0;
+  const cloud = new CloudConnection(":memory:", vault, async (body: any) => {
+    if (body.action === "check") return { ready: true };
+    calls++;
+    return {
+      model: cloudModel,
+      output: "draft",
+      requestId: "test",
+      provider: "openrouter",
+      upstreamProvider: "Phala",
+    };
+  });
+  cloud.install({ apiKey: key });
+  await cloud.check();
+  cloud.enable({ confirmed: true });
+  const coordinator = new AgentCoordinator(
+    ":memory:",
+    vault,
+    queue,
+    profiles,
+    {} as any,
+    () => undefined,
+    () => true,
+    cloud,
+  );
+  const profile = profiles.save({
+    id: randomUUID(),
+    name: "Reviewer",
+    role: "Review evidence",
+    methodology: "Use supplied facts",
+    knowledge: [],
+    provider: "openrouter",
+    modelProfileId: cloudModel,
+  });
+  const instruction = "Synthetic public evidence";
+  const request = {
+    operationId: randomUUID(),
+    workflow: "draft",
+    agentProfileId: profile.id,
+    instruction,
+    cloudConsent: true as const,
+    cloudContextHash: createHash("sha256")
+      .update(cloudExportText(profile, instruction))
+      .digest("hex"),
+  };
+  try {
+    assert.throws(() =>
+      coordinator.submit({ ...request, cloudContextHash: undefined }),
+    );
+    profiles.save({
+      ...profile,
+      knowledge: [{ name: "changed", text: "new unreviewed context" }],
+    });
+    assert.throws(() => coordinator.submit(request));
+    assert.equal(calls, 0);
+    profiles.save(profile);
+    coordinator.submit(request);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(calls, 1);
+    assert.equal(coordinator.drafts()[0].state, "draft");
+  } finally {
+    await queue.close();
+    await coordinator.close();
+  }
+});

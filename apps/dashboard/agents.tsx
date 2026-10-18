@@ -1,3 +1,4 @@
+import { cloudExportText } from "../../modules/agents/cloud-scope.js";
 import React, { useEffect, useState } from "react";
 export function Agents({
   api,
@@ -53,17 +54,29 @@ export function Agents({
   );
   const cloudPreview =
     chosenProfile?.provider === "openrouter"
-      ? JSON.stringify(
-          {
-            role: chosenProfile.role,
-            methodology: chosenProfile.methodology,
-            knowledge: chosenProfile.knowledge,
-            task: instruction,
-          },
-          null,
-          2,
-        )
+      ? cloudExportText(chosenProfile, instruction)
       : "";
+  async function queueDraft() {
+    const cloudContextHash = cloudPreview
+      ? Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest(
+              "SHA-256",
+              new TextEncoder().encode(cloudPreview),
+            ),
+          ),
+        )
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")
+      : undefined;
+    await action("/v1/agents/tasks", {
+      operationId: crypto.randomUUID(),
+      workflow,
+      instruction,
+      ...(cloudConsent ? { cloudConsent: true, cloudContextHash } : {}),
+      ...(selected ? { agentProfileId: selected } : {}),
+    });
+  }
   useEffect(() => setCloudConsent(false), [cloudPreview]);
   const field = (key: string, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -177,7 +190,7 @@ export function Agents({
           onChange={(e) => field("provider", e.target.value)}
         >
           <option value="local">Local Mac model</option>
-          <option value="openrouter">OpenRouter (not activated)</option>
+          <option value="openrouter">OpenRouter (free-only)</option>
         </select>
       </label>
       {form.provider === "local" ? (
@@ -255,15 +268,7 @@ export function Agents({
           !instruction ||
           (!!cloudPreview && (!cloudConsent || !data?.openRouter.enabled))
         }
-        onClick={() =>
-          void action("/v1/agents/tasks", {
-            operationId: crypto.randomUUID(),
-            workflow,
-            instruction,
-            ...(cloudConsent ? { cloudConsent: true } : {}),
-            ...(selected ? { agentProfileId: selected } : {}),
-          })
-        }
+        onClick={() => void queueDraft()}
       >
         Add to queue
       </button>

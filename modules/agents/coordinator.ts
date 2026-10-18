@@ -1,3 +1,4 @@
+import { cloudExportText } from "./cloud-scope.js";
 import { CloudConnection } from "./cloud-connection.js";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
@@ -85,6 +86,16 @@ export class AgentCoordinator {
     )
       throw Error(
         "Cloud task needs an enabled connection and explicit export confirmation",
+      );
+    if (
+      snapshot.profile.provider === "openrouter" &&
+      input.cloudContextHash !==
+        createHash("sha256")
+          .update(cloudExportText(snapshot.profile, input.instruction))
+          .digest("hex")
+    )
+      throw Error(
+        "Cloud context changed; review the current disclosure before submitting",
       );
     const row: any = {
       id: input.operationId,
