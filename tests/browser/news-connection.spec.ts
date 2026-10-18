@@ -91,6 +91,10 @@ async function fixture(page: Page) {
   });
   await page.goto("/?workspace");
   await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^News$/ })
+    .click();
   const card = page.getByRole("article", { name: "News connection" });
   await expect(card.getByLabel("Existing News connection key")).toBeVisible();
   return {
@@ -213,11 +217,9 @@ test("focus loss clears News secrets and discards a late private article respons
   await card.getByRole("button", { name: "Load my News articles" }).click();
   await expect.poll(() => !!f.pending()).toBe(true);
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await f
-    .pending()!
-    .fulfill({
-      json: { items: [article], checkedAt: new Date().toISOString() },
-    });
+  await f.pending()!.fulfill({
+    json: { items: [article], checkedAt: new Date().toISOString() },
+  });
   await expect(
     card.getByRole("button", { name: "Load my News articles" }),
   ).toBeEnabled();

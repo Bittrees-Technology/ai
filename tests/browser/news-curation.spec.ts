@@ -113,6 +113,10 @@ async function fixture(page: Page, curate = true) {
   });
   await page.goto("/?workspace");
   await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^News$/ })
+    .click();
   const panel = page.getByRole("region", { name: "Private News preview" });
   await panel
     .getByRole("button", { name: "Load private preview", exact: true })

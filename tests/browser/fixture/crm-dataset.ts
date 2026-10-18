@@ -7,6 +7,7 @@ root.style.cssText = "max-width:1000px;margin:auto;padding:20px";
 document.body.replaceChildren(root);
 createRoot(root).render(
   React.createElement(CrmDatasetPanel, {
+    manageData: true,
     api: async (path: string, method = "GET", body?: unknown) => {
       const r = await fetch(path, {
         method,
