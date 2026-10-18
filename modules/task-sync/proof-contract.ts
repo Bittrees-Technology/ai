@@ -27,6 +27,7 @@ export type SyncIdentity = {
   credentialId: string;
   tenant: string;
   workspace: string;
+  sourceWorkspace: string;
   subject: string;
   leaseId: string;
   runtimeBindingDigest: string;
@@ -146,7 +147,7 @@ export function validateChallenge(
     throw Error("Stale or mismatched challenge");
   if (
     digest(task.content) !== task.fingerprint ||
-    task.destination.workspaceId !== identity.workspace
+    task.destination.workspaceId !== identity.sourceWorkspace
   )
     throw Error("Reviewed content or workspace changed");
   const project = task.destination.projectId;
