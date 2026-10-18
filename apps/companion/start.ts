@@ -1,3 +1,4 @@
+import { CentralWorkflowWorker } from "../../modules/workflows/central-worker.js";
 import { CryptoDirectoryResearch } from "../../modules/research/crypto-directory.js";
 import { researchWorkflowProgress } from "../../modules/research/workflow-progress.js";
 import { QualificationResearch } from "../../modules/research/qualification.js";
@@ -258,6 +259,17 @@ const directoryResearch = new CryptoDirectoryResearch(
   },
   modelTurns.run,
 );
+const centralWorkflows = new CentralWorkflowWorker(
+  join(content.directory, "central-workflows.db"),
+  new Vault(key),
+  new Ollama("http://127.0.0.1:11434", 1800_000),
+  (id) => store.profile(owner, id),
+  () => {
+    const a = executionControls.admission(worker.activeTasks);
+    return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
+  },
+  modelTurns.run,
+);
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
     ? new RemoteClient(
@@ -408,6 +420,7 @@ server.on(
     dataset,
     investorResearch,
     directoryResearch,
+    centralWorkflows,
     qualificationResearch,
     projectWork,
     sources,
@@ -448,6 +461,8 @@ async function stop() {
   clearInterval(importMaintenance);
   clearInterval(workflowSync);
   clearInterval(directoryTimer);
+  clearInterval(centralWorkflowTimer);
+  await centralWorkflows.close();
   await directoryResearch.close();
   worker.stop();
   await investorResearch.close();
@@ -520,6 +535,9 @@ const directoryTimer = setInterval(() => {
     void directoryResearch
       .tick()
       .catch(() => console.error("Directory workflow check failed"));
+}, 30000);
+const centralWorkflowTimer = setInterval(() => {
+  if (started && !stopping) void centralWorkflows.tick();
 }, 30000);
 const workflowSync = setInterval(() => {
   if (started && !stopping) void workflows.sync().catch(() => {});
