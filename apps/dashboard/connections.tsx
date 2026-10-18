@@ -261,7 +261,7 @@ export function Connections(props: {
       <h2>Connections</h2>
       <p>
         Manage connected services and their access. Research and task controls
-        are in Work activity.
+        are in Workflows.
       </p>
       <ConnectionSection title="CRM">
         <CrmDatasetPanel api={props.api} onError={props.onError} />
