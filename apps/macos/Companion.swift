@@ -112,6 +112,16 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             process.environment?["BITTREES_MYCLOUD_HELPER_URL"] = endpoint
             process.environment?["BITTREES_MYCLOUD_HELPER_TOKEN"] = secret
         }
+        // Only the fixed cloud broker connection crosses the native boundary.
+        if let endpoint = ProcessInfo.processInfo.environment["BITTREES_CLOUD_HELPER_URL"],
+           let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
+           url.port != nil, url.path == "/cloud", url.user == nil, url.password == nil,
+           url.query == nil, url.fragment == nil,
+           let token = ProcessInfo.processInfo.environment["BITTREES_CLOUD_HELPER_TOKEN"],
+           token.count == 64, token.allSatisfy({ "0123456789abcdef".contains($0) }) {
+            process.environment?["BITTREES_CLOUD_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_CLOUD_HELPER_TOKEN"] = token
+        }
         lifetime = Pipe()
         process.standardInput = lifetime
         let pipe = Pipe()

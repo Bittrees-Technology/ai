@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cloudHelper } from "../../modules/agents/cloud-helper.js";
 import { randomBytes, createHash } from "node:crypto";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -75,6 +76,29 @@ async function main() {
   await new Promise<void>((r) => helper.server.listen(0, "127.0.0.1", r));
   const address = helper.server.address();
   if (!address || typeof address === "string") throw Error("No helper address");
+  // Preserve the separately authorized free-only broker. No model calls on startup.
+  const cloudToken = randomBytes(32).toString("hex");
+  const cloud = cloudHelper(cloudToken);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      cloud.once("error", reject);
+      cloud.listen(0, "127.0.0.1", resolve);
+    });
+  } catch (error) {
+    await helper.close();
+    throw error;
+  }
+  const cloudAddress = cloud.address();
+  if (!cloudAddress || typeof cloudAddress === "string") {
+    await helper.close();
+    cloud.close();
+    throw Error("Cloud helper unavailable");
+  }
+  const closeHelpers = async () => {
+    cloud.closeAllConnections();
+    cloud.close();
+    await helper.close();
+  };
   const child = spawn(
     "/usr/bin/sandbox-exec",
     [
@@ -91,6 +115,8 @@ async function main() {
         LANG: "en_US.UTF-8",
         BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
         BITTREES_MYCLOUD_HELPER_TOKEN: token,
+        BITTREES_CLOUD_HELPER_URL: `http://127.0.0.1:${cloudAddress.port}/cloud`,
+        BITTREES_CLOUD_HELPER_TOKEN: cloudToken,
       },
     },
   );
@@ -98,10 +124,10 @@ async function main() {
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
   child.once("error", () => {
-    void helper.close().finally(() => process.exit(1));
+    void closeHelpers().finally(() => process.exit(1));
   });
   child.once("exit", (code) => {
-    void helper.close().finally(() => process.exit(code ?? 1));
+    void closeHelpers().finally(() => process.exit(code ?? 1));
   });
 }
 if (
