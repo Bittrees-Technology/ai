@@ -1,10 +1,11 @@
 import importlib.util
 import os
+import json
 from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 spec = importlib.util.spec_from_file_location('source', Path(__file__).resolve().parents[1] / 'scripts/storage_cleanup_source.py')
 source = importlib.util.module_from_spec(spec)
@@ -51,10 +52,16 @@ class CacheSourceTests(unittest.TestCase):
         self.assertFalse((self.cache / 'one').exists())
         self.assertTrue(self.cache.is_dir())
     def test_open_files_and_package_process_hold(self):
-        for processes, opened in [('node /usr/bin/npm install', ''), ('idle', 'n' + str(self.cache / 'one'))]:
-            with patch.object(source, 'run', side_effect=[processes, opened]):
-                with self.assertRaises(ValueError):
+        env = dict(BITTREES_STORAGE_ACTIVITY_URL='http://127.0.0.1:12345/activity', BITTREES_STORAGE_ACTIVITY_TOKEN='a'*64, BITTREES_STORAGE_OPERATION_ID='operation')
+        for busy, opened, available in [(True, False, True), (False, True, True), (False, False, False)]:
+            connection = MagicMock()
+            response = connection.getresponse.return_value
+            response.status = 200
+            response.read.return_value = json.dumps(dict(operationId='operation', observedAt=time.time()*1000, available=available, busy=busy, openFiles=opened)).encode()
+            with patch.dict(os.environ, env), patch('http.client.HTTPConnection', return_value=connection):
+                with self.assertRaises(source.SafeCandidateSkip if available else RuntimeError):
                     source.activity(self.cache, None)
+            connection.close.assert_called_once()
     def test_compiler_requires_ignored_untracked_exact_root(self):
         root = Path.home() / 'project'
         cache = root / '.next/cache/webpack'
@@ -66,6 +73,15 @@ class CacheSourceTests(unittest.TestCase):
                 source.repository(cache, root)
         with self.assertRaises(ValueError):
             source.scope(root / 'node_modules', root)
+    def test_escaped_and_unicode_paths_held(self):
+        for character in [chr(9), chr(10), chr(92), 'é', '树']:
+            checkout = self.root / ('project' + character)
+            cache = checkout / '.next/cache/webpack'
+            cache.mkdir(parents=True)
+            with (cache / 'open-fixture').open('w+'):
+                with self.assertRaisesRegex(ValueError, 'losslessly'):
+                    source.scope(cache, checkout)
+
     def test_command_output_bounded(self):
         with self.assertRaisesRegex(ValueError, 'bound'):
             source.run(['/bin/echo', 'too much'], limit=2)

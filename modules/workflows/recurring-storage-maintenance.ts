@@ -13,7 +13,10 @@ import { dirname, join } from "node:path";
 import { Vault } from "../storage/vault.js";
 import { canonical } from "../contracts/canonical-json.js";
 import type { RecurringReceipt } from "./recurring.js";
-import type { StorageCleanupSource } from "./recurring-storage-source.js";
+import {
+  StorageCandidateSkip,
+  type StorageCleanupSource,
+} from "./recurring-storage-source.js";
 import type { StorageCleanupProof } from "./recurring-storage-cleanup.js";
 
 const reserve = 20 * 1024 ** 3;
@@ -27,6 +30,8 @@ type Plan = {
   complete: boolean;
   proofs: StorageCleanupProof[];
   skipped: string[];
+  safetyUnavailable: string[];
+  safetyChecks: number;
 };
 type Report = {
   producer: "bittrees-ai-storage-cleanup";
@@ -39,7 +44,9 @@ type Report = {
   growthSincePriorCheck: number | null;
   removed: string[];
   skipped: string[];
+  safetyUnavailable: string[];
   inventoryComplete: boolean;
+  safetyAvailable: boolean;
   needsReview: boolean;
   notify: boolean;
   receipt: RecurringReceipt;
@@ -53,7 +60,7 @@ export class StorageMaintenance {
     private vault: Vault,
     private source: Pick<
       StorageCleanupSource,
-      "inventory" | "inspect" | "execute"
+      "inventory" | "inspect" | "execute" | "probe"
     >,
     private options: {
       authorized: () => boolean;
@@ -122,6 +129,8 @@ export class StorageMaintenance {
         complete: inventory.complete,
         proofs: [],
         skipped: [],
+        safetyUnavailable: [],
+        safetyChecks: 0,
       };
       if (plan.before < reserve && inventory.complete) {
         for (const candidate of inventory.candidates) {
@@ -132,16 +141,36 @@ export class StorageMaintenance {
               candidate.checkout ?? undefined,
               signal,
             );
+            plan.safetyChecks++;
             if (proof.fileCount !== 0) plan.proofs.push(proof);
-          } catch {
+          } catch (error) {
             this.check(signal);
-            plan.skipped.push(candidate.path);
+            if (error instanceof StorageCandidateSkip) {
+              plan.safetyChecks++;
+              plan.skipped.push(candidate.path);
+              continue;
+            }
+            // Unknown OS/source errors are not evidence that a cache is safely busy.
+            plan.safetyUnavailable.push(candidate.path);
           }
+        }
+      }
+      if (plan.safetyChecks === 0 && plan.safetyUnavailable.length === 0) {
+        try {
+          await this.source.probe(signal);
+          plan.safetyChecks++;
+        } catch {
+          this.check(signal);
+          plan.safetyUnavailable.push("activity-capability");
         }
       }
       this.check(signal);
       this.put("plan", plan);
-      if (!plan.complete || !plan.proofs.length)
+      if (
+        !plan.complete ||
+        plan.safetyUnavailable.length ||
+        !plan.proofs.length
+      )
         return (await this.report(plan, id, plan.before, [])).receipt;
       return {
         state: "confirmed",
@@ -151,6 +180,7 @@ export class StorageMaintenance {
           planId: id,
           eligibleCaches: plan.proofs.length,
           skipped: plan.skipped,
+          safetyUnavailable: plan.safetyUnavailable,
           availableBytes: plan.before,
         },
       };
@@ -195,6 +225,9 @@ export class StorageMaintenance {
       !plan ||
       plan.authority !== this.options.authority() ||
       !plan.complete ||
+      !plan.safetyChecks ||
+      !Array.isArray(plan.safetyUnavailable) ||
+      plan.safetyUnavailable.length > 0 ||
       now - plan.at < 0 ||
       now - plan.at > 120000
     )
@@ -254,28 +287,35 @@ export class StorageMaintenance {
     }).format(at);
     const previous = this.get<Report>("report");
     const legacy = previous ? undefined : await this.legacyPrior(day);
-    const needsReview = !plan.complete || after < reserve;
+    const safetyAvailable =
+      plan.safetyChecks > 0 &&
+      Array.isArray(plan.safetyUnavailable) &&
+      plan.safetyUnavailable.length === 0;
+    const needsReview = !plan.complete || !safetyAvailable || after < reserve;
     const key = {
       needsReview,
       complete: plan.complete,
       bucket: Math.floor(after / 1024 ** 3),
       skipped: plan.skipped,
+      safetyUnavailable: plan.safetyUnavailable,
     };
     const notify =
       removed.length > 0 ||
       (this.get<string>("notification") !== hash(key) && needsReview);
     const receipt: RecurringReceipt = {
-      state: plan.complete ? "confirmed" : "held",
+      state: plan.complete && safetyAvailable ? "confirmed" : "held",
       observedAt: at,
       fingerprint: hash(key),
       evidence: {
         operationId: id,
         inventoryComplete: plan.complete,
+        safetyAvailable,
         beforeAvailableBytes: plan.before,
         afterAvailableBytes: after,
         actualFreeBytesChange: after - plan.before,
         removed,
         skipped: plan.skipped,
+        safetyUnavailable: plan.safetyUnavailable,
         needsReview,
         notify,
         review: needsReview
@@ -298,7 +338,9 @@ export class StorageMaintenance {
           : null,
       removed,
       skipped: plan.skipped,
+      safetyUnavailable: plan.safetyUnavailable,
       inventoryComplete: plan.complete,
+      safetyAvailable,
       needsReview,
       notify,
       receipt,

@@ -309,6 +309,14 @@ const storageSource = new StorageCleanupSource(
   join(directory, "storage-cleanup-operations.db"),
   new Vault(key),
   () => storageMaintenance.operationAuthorized(),
+  () => {
+    const url = process.env.BITTREES_STORAGE_ACTIVITY_URL,
+      token = process.env.BITTREES_STORAGE_ACTIVITY_TOKEN;
+    const revision = storageAuthorized()
+      ? recurring.authorityVersion("daily-safe-storage-cleanup")
+      : undefined;
+    return url && token && revision ? { url, token, revision } : undefined;
+  },
 );
 const storageMaintenance = new StorageMaintenance(
   join(directory, "storage-maintenance.db"),
@@ -412,6 +420,7 @@ const recurring = new RecurringWorkflows(
     cutoverReady: (d) =>
       (storageDefinition(d) &&
         storageMaintenance.status().report?.inventoryComplete === true &&
+        storageMaintenance.status().report?.safetyAvailable === true &&
         !storageMaintenance.status().pending) ||
       (d.id === "mycloud-health-checks" &&
         d.collect.id === "local.mycloud.health" &&
@@ -728,6 +737,8 @@ server.on(
     myCloudSource,
     storageMaintenance,
     myCloudHelperToken: process.env.BITTREES_MYCLOUD_HELPER_TOKEN,
+    storageActivityToken: process.env.BITTREES_STORAGE_ACTIVITY_TOKEN,
+    storageActivityApproval: (id) => storageSource.activityApproval(id),
     qualificationResearch,
     projectWork,
     sources,

@@ -1,3 +1,4 @@
+import { StorageCandidateSkip } from "../modules/workflows/recurring-storage-source.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -325,3 +326,144 @@ test("revoke/reapprove during filesystem revalidation fences the in-flight mutat
     await rm(dir, { recursive: true });
   }
 });
+
+test("unavailable OS safety inspection holds completed inventory and prevents cleanup", async () => {
+  const dir = await realpath(await mkdtemp(tmpdir() + "/storage-os-held-"));
+  let mutations = 0;
+  const source = {
+    inventory: async () => ({
+      complete: true,
+      candidates: [{ path: "/fixture", checkout: null }],
+      availableBytes: 10e9,
+      measuredAt: Date.now(),
+      scannedDirectories: 1,
+    }),
+    inspect: async () => {
+      throw Object.assign(Error("OS inspection unavailable"), {
+        code: "EPERM",
+      });
+    },
+    execute: async () => {
+      mutations++;
+      throw Error("must not execute");
+    },
+  } as unknown as StorageCleanupSource;
+  const task = new StorageMaintenance(
+    dir + "/state.db",
+    new Vault(randomBytes(32)),
+    source,
+    {
+      authorized: () => true,
+      authority: () => "reviewed",
+      reportsDirectory: dir + "/reports",
+    },
+  );
+  try {
+    const result = await task.collect(signal(), "native-inspect");
+    assert.equal(result.state, "held");
+    assert.equal(task.status().report?.inventoryComplete, true);
+    assert.equal(task.status().report?.safetyAvailable, false);
+    assert.deepEqual(task.status().report?.safetyUnavailable, ["/fixture"]);
+    assert.deepEqual(task.status().report?.skipped, []);
+    assert.equal(task.decide(result).decision, "escalate");
+    await assert.rejects(task.execute(signal(), "cleanup"));
+    assert.equal(mutations, 0);
+  } finally {
+    task.close();
+    await rm(dir, { recursive: true });
+  }
+});
+
+for (const mode of ["empty", "healthy", "busy"] as const)
+  test(`safety availability requires actual inspection: ${mode}`, async () => {
+    const dir = await realpath(await mkdtemp(tmpdir() + "/storage-safety-"));
+    const source = {
+      inventory: async () => ({
+        complete: true,
+        candidates:
+          mode === "empty" ? [] : [{ path: "/fixture", checkout: null }],
+        availableBytes: mode === "healthy" ? 30e9 : 10e9,
+        measuredAt: Date.now(),
+        scannedDirectories: 1,
+      }),
+      inspect: async () => {
+        throw new StorageCandidateSkip("Active build");
+      },
+      execute: async () => {
+        throw Error("must not execute");
+      },
+    } as unknown as StorageCleanupSource;
+    const task = new StorageMaintenance(
+      ":memory:",
+      new Vault(randomBytes(32)),
+      source,
+      {
+        authorized: () => true,
+        authority: () => "reviewed",
+        reportsDirectory: dir + "/reports",
+      },
+    );
+    try {
+      const receipt = await task.collect(signal(), "inspection");
+      assert.equal(task.status().report?.safetyAvailable, mode === "busy");
+      assert.equal(receipt.state, mode === "busy" ? "confirmed" : "held");
+      assert.deepEqual(
+        task.status().report?.skipped,
+        mode === "busy" ? ["/fixture"] : [],
+      );
+      if (mode === "busy") await task.execute(signal(), "mutation");
+      else await assert.rejects(task.execute(signal(), "mutation"));
+    } finally {
+      task.close();
+      await rm(dir, { recursive: true });
+    }
+  });
+
+for (const healthy of [true, false])
+  for (const available of [true, false])
+    test(`empty inventory capability probe healthy=${healthy} available=${available}`, async () => {
+      const dir = await realpath(
+        await mkdtemp(tmpdir() + "/storage-capability-"),
+      );
+      let probes = 0;
+      const source = {
+        inventory: async () => ({
+          complete: true,
+          candidates: [],
+          availableBytes: healthy ? 30e9 : 10e9,
+          measuredAt: Date.now(),
+          scannedDirectories: 1,
+        }),
+        probe: async () => {
+          probes++;
+          if (!available) throw Error("EPERM");
+        },
+        inspect: async () => {
+          throw Error("unexpected inspection");
+        },
+        execute: async () => {
+          throw Error("unexpected mutation");
+        },
+      } as unknown as StorageCleanupSource;
+      const task = new StorageMaintenance(
+        ":memory:",
+        new Vault(randomBytes(32)),
+        source,
+        {
+          authorized: () => true,
+          authority: () => "reviewed",
+          reportsDirectory: dir + "/reports",
+        },
+      );
+      try {
+        const receipt = await task.collect(signal(), "capability");
+        assert.equal(probes, 1);
+        assert.equal(receipt.state, available ? "confirmed" : "held");
+        assert.equal(task.status().report?.safetyAvailable, available);
+        if (healthy && available)
+          assert.equal(task.decide(receipt).decision, "wait");
+      } finally {
+        task.close();
+        await rm(dir, { recursive: true });
+      }
+    });

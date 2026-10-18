@@ -1,3 +1,4 @@
+import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
 import { z } from "zod";
 import { cloudHelper } from "../../modules/agents/cloud-helper.js";
 import { randomBytes, createHash } from "node:crypto";
@@ -94,7 +95,57 @@ async function main() {
     cloud.close();
     throw Error("Cloud helper unavailable");
   }
+  const activityToken = randomBytes(32).toString("hex");
+  const activity = storageActivityHelper({
+    token: activityToken,
+    authorize: async (request) => {
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:43127/internal/storage-activity-approval?operationId=" +
+            request.operationId,
+          {
+            headers: { authorization: "Bearer " + activityToken },
+            redirect: "error",
+            signal: AbortSignal.timeout(2000),
+          },
+        );
+        const text = await response.text();
+        if (!response.ok || text.length > 10000) return null;
+        const value = z
+          .strictObject({
+            operationId: z.string().uuid(),
+            path: z.string(),
+            checkout: z.string().nullable(),
+            revision: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .parse(JSON.parse(text));
+        return value.operationId === request.operationId &&
+          value.path === request.path &&
+          value.checkout === request.checkout
+          ? value.revision
+          : null;
+      } catch {
+        return null;
+      }
+    },
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      activity.once("error", reject);
+      activity.listen(0, "127.0.0.1", resolve);
+    });
+  } catch (error) {
+    cloud.closeAllConnections();
+    cloud.close();
+    await helper.close();
+    throw error;
+  }
+  const activityAddress = activity.address();
+  if (!activityAddress || typeof activityAddress === "string")
+    throw Error("Storage activity helper unavailable");
   const closeHelpers = async () => {
+    activity.closeAllConnections();
+    activity.close();
     cloud.closeAllConnections();
     cloud.close();
     await helper.close();
@@ -113,6 +164,8 @@ async function main() {
         TMPDIR: process.env.TMPDIR ?? "/tmp",
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         LANG: "en_US.UTF-8",
+        BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
+        BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
         BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
         BITTREES_MYCLOUD_HELPER_TOKEN: token,
         BITTREES_CLOUD_HELPER_URL: `http://127.0.0.1:${cloudAddress.port}/cloud`,

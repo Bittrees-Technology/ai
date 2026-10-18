@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, lstat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -13,7 +13,9 @@ import {
   type StorageCleanupResult,
 } from "./recurring-storage-cleanup.js";
 
-const pin = "5be39a0e84b198710f7ee40e45e4a062d7775795bf8b8e6137a3a630fba2fd85";
+export class StorageCandidateSkip extends Error {}
+
+const pin = "1f822446f357a0b499f2b318438e7262377259365ef1ef54d398b86322498b85";
 const script = fileURLToPath(
   new URL("./storage_cleanup_source.py", import.meta.url),
 );
@@ -38,6 +40,7 @@ const inventorySchema = z.strictObject({
 async function sourceRead(
   input: unknown,
   signal: AbortSignal,
+  activity?: { url: string; token: string; operationId: string },
 ): Promise<unknown> {
   signal.throwIfAborted();
   for (let parent = dirname(script); ; parent = dirname(parent)) {
@@ -67,13 +70,24 @@ async function sourceRead(
     JSON.stringify(serialized) +
     ")\n" +
     "mode=request['mode']\n" +
-    "result=inventory() if mode=='inventory' else inspect(request['path'],request.get('checkout')) if mode=='inspect' else remove(request['proof']) if mode=='remove' else None\n" +
+    "try:\n result=inventory() if mode=='inventory' else inspect(request['path'],request.get('checkout')) if mode=='inspect' else remove(request['proof']) if mode=='remove' else activity(request['path'],None) if mode=='activity' else None\n" +
+    "except SafeCandidateSkip:\n result={'safeCandidateSkip':True}\n" +
     "print(json.dumps(result))\n";
   return new Promise((resolve, reject) => {
     const child = spawn("/usr/bin/python3", ["-I", "-"], {
       detached: true,
       stdio: ["pipe", "pipe", "ignore"],
-      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: homedir() },
+      env: {
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        HOME: homedir(),
+        ...(activity
+          ? {
+              BITTREES_STORAGE_ACTIVITY_URL: activity.url,
+              BITTREES_STORAGE_ACTIVITY_TOKEN: activity.token,
+              BITTREES_STORAGE_OPERATION_ID: activity.operationId,
+            }
+          : {}),
+      },
     });
     const chunks: Buffer[] = [];
     let size = 0,
@@ -109,7 +123,10 @@ async function sourceRead(
           ),
         );
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (result?.safeCandidateSkip === true)
+          return reject(new StorageCandidateSkip("Candidate safely held"));
+        resolve(result);
       } catch {
         reject(Error("Storage source returned invalid evidence"));
       }
@@ -123,29 +140,88 @@ async function sourceRead(
  */
 export class StorageCleanupSource {
   private journal: StorageCleanupJournal;
+  private activity?: {
+    operationId: string;
+    path: string;
+    checkout: string | null;
+    revision: string;
+  };
+  activityApproval(id: string) {
+    return this.authorized() &&
+      this.activity?.operationId === id &&
+      this.activityConfig?.()?.revision === this.activity.revision
+      ? this.activity
+      : null;
+  }
+  private async read(input: any, signal: AbortSignal) {
+    if (input.mode === "inventory") return sourceRead(input, signal);
+    const config = this.activityConfig?.();
+    if (!config || this.activity)
+      throw Error("Storage safety helper unavailable");
+    const url = new URL(config.url);
+    if (
+      url.protocol !== "http:" ||
+      url.hostname !== "127.0.0.1" ||
+      !url.port ||
+      url.pathname !== "/activity" ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password ||
+      !/^[a-f0-9]{64}$/.test(config.token)
+    )
+      throw Error("Invalid activity helper");
+    const target = input.proof ?? input;
+    const operationId = randomUUID();
+    this.activity = {
+      operationId,
+      path: target.path,
+      checkout: target.checkout ?? null,
+      revision: config.revision,
+    };
+    try {
+      return await sourceRead(input, signal, { ...config, operationId });
+    } finally {
+      this.activity = undefined;
+    }
+  }
   constructor(
     path: string,
     vault: Vault,
     private authorized: () => boolean,
+    private activityConfig?: () =>
+      { url: string; token: string; revision: string } | undefined,
   ) {
     this.journal = new StorageCleanupJournal(path, vault, {
       authorized,
       revalidate: async (proof, signal) =>
-        (await sourceRead(
+        (await this.read(
           { mode: "inspect", path: proof.path, checkout: proof.checkout },
           signal,
         )) as StorageCleanupProof,
       removeVerifiedCache: async (proof, signal) =>
-        (await sourceRead(
+        (await this.read(
           { mode: "remove", proof },
           signal,
         )) as StorageCleanupResult,
     });
   }
+  async probe(signal: AbortSignal): Promise<void> {
+    if (!this.authorized()) throw Error("Storage source approval required");
+    try {
+      await this.read(
+        { mode: "activity", path: homedir() + "/.npm/_cacache" },
+        signal,
+      );
+    } catch (error) {
+      if (!(error instanceof StorageCandidateSkip)) throw error;
+    }
+    if (!this.authorized()) throw Error("Storage source approval changed");
+  }
   async inventory(signal: AbortSignal) {
     if (!this.authorized()) throw Error("Storage source approval required");
     const value = inventorySchema.parse(
-      await sourceRead({ mode: "inventory" }, signal),
+      await this.read({ mode: "inventory" }, signal),
     );
     if (!this.authorized()) throw Error("Storage source approval changed");
     return value;
@@ -163,7 +239,7 @@ export class StorageCleanupSource {
       ignoredAndUntracked: true,
       repositoryStatusHash: "0".repeat(64),
     } as StorageCleanupProof);
-    const value = (await sourceRead(
+    const value = (await this.read(
       { mode: "inspect", path, checkout },
       signal,
     )) as StorageCleanupProof;
