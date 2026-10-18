@@ -280,7 +280,7 @@ test("invalid evidence gets one correction; ordinary failures enter a durable bo
     assert.equal(worker.status().receipts[0].state, "needs-research");
     assert.equal(worker.status().followups.length, 1);
     assert.equal(worker.status().followups[0].existingId, "example.md");
-    worker.retryLatestValidation();
+    worker.retryLatestValidation(worker.status().receipts[0].runId);
     worker.retryLatestValidation();
     assert.equal(worker.status().followups.length, 1);
     await worker.close();

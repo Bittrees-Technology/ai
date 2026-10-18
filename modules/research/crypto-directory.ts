@@ -177,12 +177,24 @@ export class CryptoDirectoryResearch {
     });
     this.save("followups", queue);
   }
-  retryLatestValidation() {
+  retryLatestValidation(selectedRunId?: string) {
     if (!this.get("config")?.enabled)
       throw Error("Directory workflows are paused");
-    const runId = this.get("validation")?.runId;
+    const runId = selectedRunId
+      ? z.uuid().parse(selectedRunId)
+      : this.get("validation")?.runId;
+    const receipts = selectedRunId
+      ? this.db
+          .prepare(
+            "SELECT id,payload FROM directory_state WHERE id LIKE 'receipt:%'",
+          )
+          .all()
+          .map((row: any) =>
+            this.vault.open<any>(row.payload, "directory:" + row.id),
+          )
+      : this.get("receipts") || [];
     this.db.transaction(() => {
-      for (const r of this.get("receipts") || []) {
+      for (const r of receipts) {
         if (
           r.runId === runId &&
           r.mode === "validation" &&
