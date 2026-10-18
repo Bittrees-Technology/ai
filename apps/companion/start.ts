@@ -1,4 +1,8 @@
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
+import { ProfiledOllama } from "../../modules/agents/profiled-runtime.js";
+import { AgentQueue } from "../../modules/agents/queue.js";
+import { AgentProfiles } from "../../modules/agents/profiles.js";
+import { AgentCoordinator } from "../../modules/agents/coordinator.js";
 import { MyCloudSource } from "../../modules/workflows/recurring-mycloud-source.js";
 import { LocalInvestorReview } from "../../modules/workflows/local-investor-review.js";
 import { localRecurringHost } from "../../modules/workflows/recurring-host.js";
@@ -191,7 +195,11 @@ const crm = new CrmConnector(
   worker = new LocalWorker(
     store,
     owner,
-    new Ollama("http://127.0.0.1:11434", 1800_000),
+    new ProfiledOllama(
+      "local-tasks",
+      () => agentProfiles,
+      (id) => store.profile(owner, id),
+    ),
     (id) => store.profile(owner, id),
     "personal",
     memory,
@@ -211,10 +219,13 @@ const localInvestorReview = new LocalInvestorReview(
   join(directory, "local-investor-drafts.db"),
   new Vault(key),
   {
-    runtime,
+    runtime: new ProfiledOllama(
+      "saved-investor-evidence",
+      () => agentProfiles,
+      (id) => store.profile(owner, id),
+    ),
     turn: modelTurns.run,
-    authorize: () =>
-      executionControls.admission(worker.activeTasks).reason === "ready",
+    authorize: () => executionControls.admission(0).reason === "ready",
   },
 );
 const myCloudSource = new MyCloudSource(
@@ -232,7 +243,7 @@ const myCloudSource = new MyCloudSource(
     },
     // Human-approved pinned MyCloud source only; native definition approval remains revocable.
     authorized: () =>
-      executionControls.admission(worker.activeTasks).reason === "ready" &&
+      executionControls.admission(0).reason === "ready" &&
       recurring
         .status()
         .some(
@@ -286,11 +297,14 @@ const recurring = new RecurringWorkflows(
       ],
     ]),
     automationRoot: join(recurringHome(), ".codex", "automations"),
-    runtime,
+    runtime: new ProfiledOllama(
+      "recurring-work",
+      () => agentProfiles,
+      (id) => store.profile(owner, id),
+    ),
     profile: (id) => store.profile(owner, id),
     turn: modelTurns.run,
-    admission: () =>
-      executionControls.admission(worker.activeTasks).reason === "ready",
+    admission: () => executionControls.admission(0).reason === "ready",
     // Only this complete reviewed source is eligible; actual original PAUSED/fingerprint is still checked.
     cutoverReady: (d) =>
       d.id === "mycloud-health-checks" &&
@@ -306,10 +320,14 @@ const investorResearch = new InvestorResearch(
   join(content.directory, "investor-research.db"),
   new Vault(key),
   dataset,
-  new Ollama("http://127.0.0.1:11434", 1800_000),
+  new ProfiledOllama(
+    "investor-research",
+    () => agentProfiles,
+    (id) => store.profile(owner, id),
+  ),
   (id) => store.profile(owner, id),
   () => {
-    const a = executionControls.admission(worker.activeTasks);
+    const a = executionControls.admission(0);
     return {
       reason: a.reason,
       seconds: a.limits.maxTaskSeconds,
@@ -331,10 +349,14 @@ const projectWork = new ProjectWork(
   join(content.directory, "project-work.db"),
   new Vault(key),
   dataset,
-  new Ollama("http://127.0.0.1:11434", 1800_000),
+  new ProfiledOllama(
+    "crm-project-work",
+    () => agentProfiles,
+    (id) => store.profile(owner, id),
+  ),
   (id) => store.profile(owner, id),
   () => {
-    const a = executionControls.admission(worker.activeTasks);
+    const a = executionControls.admission(0);
     return {
       reason: a.reason,
       seconds: a.limits.maxTaskSeconds,
@@ -346,10 +368,14 @@ const qualificationResearch = new QualificationResearch(
   join(content.directory, "qualification-research.db"),
   new Vault(key),
   dataset,
-  new Ollama("http://127.0.0.1:11434", 1800_000),
+  new ProfiledOllama(
+    "qualification-research",
+    () => agentProfiles,
+    (id) => store.profile(owner, id),
+  ),
   (id) => store.profile(owner, id),
   () => {
-    const a = executionControls.admission(worker.activeTasks);
+    const a = executionControls.admission(0);
     return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
   },
   undefined,
@@ -358,10 +384,14 @@ const qualificationResearch = new QualificationResearch(
 const directoryResearch = new CryptoDirectoryResearch(
   join(content.directory, "crypto-directory.db"),
   new Vault(key),
-  new Ollama("http://127.0.0.1:11434", 1800_000),
+  new ProfiledOllama(
+    "directory-evidence",
+    () => agentProfiles,
+    (id) => store.profile(owner, id),
+  ),
   (id) => store.profile(owner, id),
   () => {
-    const a = executionControls.admission(worker.activeTasks);
+    const a = executionControls.admission(0);
     return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
   },
   modelTurns.run,
@@ -369,14 +399,46 @@ const directoryResearch = new CryptoDirectoryResearch(
 const centralWorkflows = new CentralWorkflowWorker(
   join(content.directory, "central-workflows.db"),
   new Vault(key),
-  new Ollama("http://127.0.0.1:11434", 1800_000),
+  new ProfiledOllama(
+    "central-workflows",
+    () => agentProfiles,
+    (id) => store.profile(owner, id),
+  ),
   (id) => store.profile(owner, id),
   () => {
-    const a = executionControls.admission(worker.activeTasks);
+    const a = executionControls.admission(0);
     return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
   },
   modelTurns.run,
 );
+const agentQueue = new AgentQueue(
+  join(directory, "agent-queue.db"),
+  new Vault(key),
+);
+const agentProfiles = new AgentProfiles(
+  join(directory, "agent-profiles.db"),
+  new Vault(key),
+);
+const agents = new AgentCoordinator(
+  join(directory, "agent-drafts.db"),
+  new Vault(key),
+  agentQueue,
+  agentProfiles,
+  runtime,
+  (id) => store.profile(owner, id),
+  () => executionControls.admission(0).reason === "ready",
+);
+for (const runner of [
+  worker,
+  localInvestorReview,
+  recurring,
+  investorResearch,
+  projectWork,
+  qualificationResearch,
+  directoryResearch,
+  centralWorkflows,
+])
+  runner.taskTurn = agentQueue.run;
 const remote =
   process.env.BITTREES_REMOTE_STATUS === "1"
     ? new RemoteClient(
@@ -523,6 +585,7 @@ const taskSync = new TaskSyncRunner(
   (purpose, request, signature) =>
     workflows.attestRuntime(purpose, request, signature),
 );
+taskSync.taskTurn = agentQueue.run;
 server.on(
   "request",
   dashboardServer({
@@ -549,6 +612,7 @@ server.on(
     centralWorkflows,
     taskSync,
     recurring,
+    agents,
     localInvestorReview,
     myCloudSource,
     myCloudHelperToken: process.env.BITTREES_MYCLOUD_HELPER_TOKEN,
@@ -600,6 +664,7 @@ async function stop() {
   clearInterval(taskSyncTimer);
   clearInterval(taskSyncReviewTimer);
   clearInterval(recurringTimer);
+  const queueClosing = agentQueue.close();
   await localInvestorReview.shutdown();
   await recurring.close();
   myCloudSource.close();
@@ -616,6 +681,8 @@ async function stop() {
   await imports.shutdown();
   await Promise.all([...runs]);
   await closed;
+  await queueClosing;
+  await agents.close();
   imports.close();
   memory.close();
   store.close();

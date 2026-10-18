@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import Database from "better-sqlite3";
 import { z } from "zod";
@@ -33,6 +34,7 @@ const jobSchema = z.strictObject({
   inputHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
 export class CentralWorkflowWorker {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private running: Promise<void> | null = null;
   private controller: AbortController | null = null;
@@ -217,12 +219,7 @@ export class CentralWorkflowWorker {
     if (!c?.enabled || this.admission().reason !== "ready")
       return Promise.resolve();
     this.controller = new AbortController();
-    const signal = AbortSignal.any([
-      this.controller.signal,
-      AbortSignal.timeout(
-        Math.max(1000, Math.min(720, this.admission().seconds) * 1000),
-      ),
-    ]);
+    const signal = this.controller.signal;
     this.running = this.work(c, signal)
       .catch(() => {
         this.set("progress", {
@@ -239,6 +236,19 @@ export class CentralWorkflowWorker {
     return this.running;
   }
   private async work(c: any, signal: AbortSignal) {
+    return this.taskTurn("Central workflow", signal, (queuedSignal) =>
+      this.workExclusive(
+        c,
+        AbortSignal.any([
+          queuedSignal,
+          AbortSignal.timeout(
+            Math.max(1000, Math.min(720, this.admission().seconds) * 1000),
+          ),
+        ]),
+      ),
+    );
+  }
+  private async workExclusive(c: any, signal: AbortSignal) {
     const base = { connectionId: c.connectionId, workflowId: c.workflowId };
     let pending = this.get("pending");
     if (!pending) {

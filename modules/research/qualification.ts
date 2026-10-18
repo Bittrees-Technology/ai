@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import { personUSLocation } from "./person-location.js";
 import Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
@@ -350,6 +351,7 @@ type Job = {
 };
 type Turn = <T>(signal: AbortSignal, work: () => Promise<T>) => Promise<T>;
 export class QualificationResearch {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private active?: { abort: AbortController; done: Promise<void> };
   constructor(
@@ -526,6 +528,11 @@ export class QualificationResearch {
     return c;
   }
   private async run(j: Job, signal: AbortSignal) {
+    return this.taskTurn("Qualification research", signal, (queuedSignal) =>
+      this.runExclusive(j, queuedSignal),
+    );
+  }
+  private async runExclusive(j: Job, signal: AbortSignal) {
     const hosts = [...new Set(j.input.urls.map((u) => new URL(u).hostname))];
     const cache = new Map<string, Page>();
     const model = await this.runtime.pin(

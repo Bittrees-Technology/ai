@@ -70,6 +70,7 @@ import type { Task } from "../../modules/storage/store.js";
 import { CrmConnector, ConnectorError } from "../../modules/connectors/crm.js";
 export interface LocalApiOptions {
   myCloudHelperToken?: string;
+  agents?: import("../../modules/agents/coordinator.js").AgentCoordinator;
   privateRelay?: CompanionPrivateRelay;
   privateKeys?: CompanionPrivateKeys;
   privateKeyCleanup?: () => Promise<void>;
@@ -137,6 +138,7 @@ export function localApi({
   centralWorkflows,
   taskSync,
   recurring,
+  agents,
   localInvestorReview,
   myCloudSource,
   myCloudHelperToken,
@@ -843,6 +845,35 @@ export function localApi({
       },
     ),
   );
+  if (agents) {
+    app.get("/v1/agents", (_req, res) => res.json(agents.status()));
+    app.post("/v1/agents/profiles", (req, res) =>
+      res.json(agents.profiles.save(req.body)),
+    );
+    app.post("/v1/agents/bindings", (req, res) =>
+      res.json(agents.profiles.bind(req.body)),
+    );
+    app.post("/v1/agents/tasks", (req, res) =>
+      res.status(202).json(agents.submit(req.body)),
+    );
+    app.post("/v1/agents/queue", (req, res) => {
+      const input = z
+        .strictObject({
+          action: z.enum(["pause", "resume", "cancel"]),
+          id: z.uuid().optional(),
+        })
+        .parse(req.body);
+      if (input.action === "cancel" && !input.id)
+        throw Error("Task ID required");
+      res.json(
+        input.action === "pause"
+          ? agents.queue.pause()
+          : input.action === "resume"
+            ? agents.queue.resume()
+            : agents.queue.cancel(input.id!),
+      );
+    });
+  }
   if (myCloudSource)
     app.get("/v1/workflows/mycloud-health", (_req, res) =>
       res.json(myCloudSource.status()),

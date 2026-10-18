@@ -101,13 +101,18 @@ export function ExecutionSettings({
             <input
               type="number"
               min="1"
-              max="4"
+              max="1"
               step="1"
               required
-              value={draft.parallelTasks}
+              value={1}
+              disabled
               onChange={(e) => change("parallelTasks", Number(e.target.value))}
             />
           </label>
+          <p>
+            The task coordinator runs one task at a time across all workflows.
+            Existing saved limits are retained.
+          </p>
           <label>
             Time limit per task (seconds)
             <input

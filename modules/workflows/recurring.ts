@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -87,6 +88,7 @@ type State = {
 
 /** Single owner, encrypted local state. Model output can select only reviewed operations. */
 export class RecurringWorkflows {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private running: Promise<void> | null = null;
   private controller: AbortController | null = null;
@@ -181,10 +183,17 @@ export class RecurringWorkflows {
     return this.status();
   }
   async verify(id: string) {
+    return this.taskTurn(
+      "Verify recurring source",
+      new AbortController().signal,
+      (signal) => this.verifyExclusive(id, signal),
+    );
+  }
+  private async verifyExclusive(id: string, parent: AbortSignal) {
     if (this.running) throw Error("Wait for current work");
     const state = this.get(id);
     if (!state.approved) throw Error("Approval required");
-    const signal = AbortSignal.timeout(30000);
+    const signal = AbortSignal.any([parent, AbortSignal.timeout(30000)]);
     await this.host.authorize(
       state.definition,
       state.definition.collect,
@@ -378,10 +387,7 @@ export class RecurringWorkflows {
     state.lastSlot = slot;
     this.put(state);
     this.controller = new AbortController();
-    const signal = AbortSignal.any([
-      this.controller.signal,
-      AbortSignal.timeout(120000),
-    ]);
+    const signal = this.controller.signal;
     this.running = this.run(state, slot, signal)
       .catch(() => {
         this.hold(
@@ -397,6 +403,15 @@ export class RecurringWorkflows {
     return this.running;
   }
   private async run(state: State, slot: string, signal: AbortSignal) {
+    return this.taskTurn("Recurring workflow", signal, (queuedSignal) =>
+      this.runExclusive(
+        state,
+        slot,
+        AbortSignal.any([queuedSignal, AbortSignal.timeout(120000)]),
+      ),
+    );
+  }
+  private async runExclusive(state: State, slot: string, signal: AbortSignal) {
     if (state.pending) {
       this.hold(
         state,

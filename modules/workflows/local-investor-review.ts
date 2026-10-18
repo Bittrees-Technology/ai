@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -85,6 +86,7 @@ type Entry = {
 };
 /** Draft-only adapter. No URL fetching, source writes, commands, grants or qualification promotion. */
 export class LocalInvestorReview {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private busy = false;
   private active?: {
@@ -147,6 +149,15 @@ export class LocalInvestorReview {
     this.close();
   }
   async review(raw: unknown, profile: unknown, parent: AbortSignal) {
+    return this.taskTurn("Saved investor evidence", parent, (signal) =>
+      this.reviewExclusive(raw, profile, signal),
+    );
+  }
+  private async reviewExclusive(
+    raw: unknown,
+    profile: unknown,
+    parent: AbortSignal,
+  ) {
     parent.throwIfAborted();
     if (!this.options.authorize())
       throw Error("Local saved-evidence scope unavailable");

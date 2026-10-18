@@ -1,3 +1,4 @@
+import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import { createHash, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { readFile, readdir, realpath, lstat } from "node:fs/promises";
@@ -107,6 +108,7 @@ const ids = {
 type Mode = keyof typeof ids;
 /** Public-source research only. No signing, publishing, private CRM access or repository writes. */
 export class CryptoDirectoryResearch {
+  taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
   private active?: { abort: AbortController; done: Promise<void> };
   constructor(
@@ -392,13 +394,7 @@ export class CryptoDirectoryResearch {
         );
     if (!mode) return;
     const abort = new AbortController();
-    const done = this.run(
-      mode,
-      AbortSignal.any([
-        abort.signal,
-        AbortSignal.timeout(Math.min(1800, admission.seconds) * 1000),
-      ]),
-    );
+    const done = this.run(mode, abort.signal);
     this.active = { abort, done };
     try {
       await done;
@@ -407,6 +403,17 @@ export class CryptoDirectoryResearch {
     }
   }
   private async run(mode: Mode, signal: AbortSignal) {
+    return this.taskTurn("Directory evidence", signal, (queuedSignal) =>
+      this.runExclusive(
+        mode,
+        AbortSignal.any([
+          queuedSignal,
+          AbortSignal.timeout(Math.min(1800, this.admission().seconds) * 1000),
+        ]),
+      ),
+    );
+  }
+  private async runExclusive(mode: Mode, signal: AbortSignal) {
     const c = this.get("config"),
       previous = this.get(mode) || {},
       started = Date.now();
