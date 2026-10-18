@@ -38,6 +38,11 @@ export function localRecurringHost(options: {
       definition.actions.some((a) => a.id === operation.id)
     )
       throw Error("Source action adapter is not installed");
+    if (
+      operation.id === "local.mycloud.health" &&
+      definition.id !== "mycloud-health-checks"
+    )
+      throw Error("MyCloud source is restricted to its reviewed workflow");
     const args = z
       .strictObject({ sourceAutomationId: z.literal(definition.id) })
       .parse(operation.arguments);

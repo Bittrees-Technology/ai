@@ -93,7 +93,11 @@ export async function pinnedMyCloudCheck(signal: AbortSignal) {
   signal.throwIfAborted();
   return result;
 }
-type State = { observation?: MyCloudObservation; sequence: number };
+type State = {
+  observation?: MyCloudObservation;
+  sequence: number;
+  receipt?: unknown;
+};
 /** Fixed original checker only. Network admission must be separately approved; never bypass sandbox. */
 export class MyCloudSource {
   private db: Database.Database;
@@ -144,7 +148,11 @@ export class MyCloudSource {
           .prepare("INSERT OR REPLACE INTO health_state VALUES('baseline',?)")
           .run(
             this.vault.seal(
-              { observation: result.observation, sequence },
+              {
+                observation: result.observation,
+                sequence,
+                receipt: result.receipt,
+              },
               "mycloud-baseline",
             ),
           );
@@ -165,6 +173,17 @@ export class MyCloudSource {
     } finally {
       this.busy = false;
     }
+  }
+  status() {
+    const row = this.db
+      .prepare("SELECT value FROM health_state WHERE id='baseline'")
+      .get() as { value: Buffer } | undefined;
+    return {
+      lastAccepted: row
+        ? this.vault.open<State>(row.value, "mycloud-baseline")
+        : null,
+      notifications: this.outbox(),
+    };
   }
   outbox() {
     return (

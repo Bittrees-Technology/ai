@@ -220,8 +220,17 @@ const myCloudSource = new MyCloudSource(
   join(directory, "mycloud-health.db"),
   new Vault(key),
   {
-    // Explicit offline policy remains binding. Enable only after exact NAS source/network review.
-    authorized: () => false,
+    // Human-approved pinned MyCloud source only; native definition approval remains revocable.
+    authorized: () =>
+      executionControls.admission(worker.activeTasks).reason === "ready" &&
+      recurring
+        .status()
+        .some(
+          (row) =>
+            row.id === "mycloud-health-checks" &&
+            row.approved &&
+            row.capabilities.includes("local.mycloud.health"),
+        ),
   },
 );
 const recurring = new RecurringWorkflows(
@@ -263,9 +272,13 @@ const recurring = new RecurringWorkflows(
     turn: modelTurns.run,
     admission: () =>
       executionControls.admission(worker.activeTasks).reason === "ready",
-    // Monitor collectors do not replace original cleanup or SSH-repair duties.
-    // No complete source adapter/cutover has been approved yet.
-    cutoverReady: () => false,
+    // Only this complete reviewed source is eligible; actual original PAUSED/fingerprint is still checked.
+    cutoverReady: (d) =>
+      d.id === "mycloud-health-checks" &&
+      d.collect.id === "local.mycloud.health" &&
+      d.actions.length === 0 &&
+      d.sourceFingerprint ===
+        "e65e2bb43dc0176ec6f7aadf829cae15d92dcdea6558bc89ceea1943b1f1d3e4",
     recordDecision: (id, evidence) => recurring.recordDecision(id, evidence),
   }),
 );
@@ -518,6 +531,7 @@ server.on(
     taskSync,
     recurring,
     localInvestorReview,
+    myCloudSource,
     qualificationResearch,
     projectWork,
     sources,

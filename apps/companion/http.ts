@@ -92,6 +92,7 @@ export interface LocalApiOptions {
   investorResearch?: InvestorResearch;
   qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
+  myCloudSource?: import("../../modules/workflows/recurring-mycloud-source.js").MyCloudSource;
   localInvestorReview?: import("../../modules/workflows/local-investor-review.js").LocalInvestorReview;
   recurring?: import("../../modules/workflows/recurring.js").RecurringWorkflows;
   taskSync?: import("../../modules/task-sync/runner.js").TaskSyncRunner;
@@ -136,6 +137,7 @@ export function localApi({
   taskSync,
   recurring,
   localInvestorReview,
+  myCloudSource,
   roles,
   news,
   mail,
@@ -814,6 +816,10 @@ export function localApi({
       },
     ),
   );
+  if (myCloudSource)
+    app.get("/v1/workflows/mycloud-health", (_req, res) =>
+      res.json(myCloudSource.status()),
+    );
   if (localInvestorReview) {
     app.get("/v1/research/local-investor-drafts", (_req, res) =>
       res.json(localInvestorReview.outbox()),
