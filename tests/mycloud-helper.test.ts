@@ -132,7 +132,7 @@ test("browser-origin and arbitrary paths cannot invoke helper", async () => {
   }
 });
 test("helper callback returns only the exact revision, current-authority checked and cannot authenticate general APIs", async () => {
-  const { localApi } = await import("../apps/companion/http.js");
+  const { dashboardServer } = await import("../apps/companion/dashboard-server.js");
   const { Store } = await import("../modules/storage/store.js");
   const { Vault } = await import("../modules/storage/vault.js");
   const { MyCloudSource } =
@@ -152,7 +152,9 @@ test("helper callback returns only the exact revision, current-authority checked
   const port = (server.address() as { port: number }).port;
   server.on(
     "request",
-    localApi({
+    dashboardServer({
+      assets: "/nonexistent-test-assets",
+      pairCode: "test-pair-code",
       store,
       owner: { userId: "local", tenantId: "local" },
       port,
