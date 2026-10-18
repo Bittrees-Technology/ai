@@ -18,9 +18,7 @@ export function QualificationPanel({
     [urls, setUrls] = useState(""),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
-  const [brief, setBrief] = useState(
-    "BBRF-PT: current investment decision-makers personally based in the US, with evidence of a mandate accepting Bitcoin reserves and leverage, Portuguese real estate and Luxembourg holding structures, external preferred shares or early investment vehicles, and a plausible €50,000 minimum ticket (€1–5M family allocation). Do not infer interest, accreditation or US offering eligibility.",
-  );
+  const [brief, setBrief] = useState("");
   const refresh = async () =>
     setStatus(await api("/v1/research/qualification"));
   useEffect(() => {
@@ -225,6 +223,7 @@ export function QualificationPanel({
             <label>
               Investment requirements
               <textarea
+                placeholder="Describe the evidence required for this project (at least 30 characters)."
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
                 maxLength={2000}
@@ -242,7 +241,12 @@ export function QualificationPanel({
               content cannot grant new permissions.
             </p>
             <button
-              disabled={!profile || !selected.length || !urls.trim()}
+              disabled={
+                !profile ||
+                !selected.length ||
+                !urls.trim() ||
+                brief.trim().length < 30
+              }
               onClick={() =>
                 void act(async () => {
                   await api("/v1/research/qualification/start", "POST", {

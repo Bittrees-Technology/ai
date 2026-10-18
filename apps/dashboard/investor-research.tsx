@@ -12,10 +12,8 @@ export function InvestorResearchPanel({
     [busy, setBusy] = useState(false),
     [profile, setProfile] = useState(""),
     [urls, setUrls] = useState(""),
-    [target, setTarget] = useState(200),
-    [brief, setBrief] = useState(
-      "Find US investment decision-makers for BBRF-PT, a proposed Bitcoin-reserve and Portuguese real-estate vehicle. Prioritize Bitcoin investors, family-office allocators and alternative real-estate investors. Distinguish direct capital allocators from adjacent prospects; do not infer interest or accredited status.",
-    );
+    [target, setTarget] = useState(20),
+    [brief, setBrief] = useState("");
   const [extensions, setExtensions] = useState<Record<string, string>>({});
   const [totalTargets, setTotalTargets] = useState<Record<string, number>>({});
   const [batchTargets, setBatchTargets] = useState<Record<string, number>>({});
@@ -87,6 +85,7 @@ export function InvestorResearchPanel({
         <label>
           Research brief
           <textarea
+            placeholder="Describe who to research and why (at least 20 characters)."
             value={brief}
             onChange={(e) => setBrief(e.target.value)}
             maxLength={1500}
@@ -118,7 +117,7 @@ export function InvestorResearchPanel({
           preserved; conflicts pause the run.
         </p>
         <button
-          disabled={!profile || !urls.trim()}
+          disabled={!profile || !urls.trim() || brief.trim().length < 20}
           onClick={() =>
             void act(async () => {
               if (

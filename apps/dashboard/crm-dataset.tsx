@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 type Props = {
+  manageData?: boolean;
   api: (path: string, method?: string, body?: unknown) => Promise<any>;
   onError: (e: unknown) => void;
 };
 const base = "/v1/connections/dataset";
-export function CrmDatasetPanel({ api, onError }: Props) {
+export function CrmDatasetPanel({ api, onError, manageData = false }: Props) {
   const [connection, setConnection] = useState<any>(null),
     [available, setAvailable] = useState(false),
     [key, setKey] = useState("");
@@ -125,25 +126,27 @@ export function CrmDatasetPanel({ api, onError }: Props) {
               <p>
                 Connected: {connection.name} · {connection.datasetId}
               </p>
-              <button
-                onClick={() =>
-                  void act(async () => {
-                    if (
-                      text &&
-                      !confirm(
-                        "Reload the saved dataset? Unsaved edits in this panel will be discarded.",
+              {manageData && (
+                <button
+                  onClick={() =>
+                    void act(async () => {
+                      if (
+                        text &&
+                        !confirm(
+                          "Reload the saved dataset? Unsaved edits in this panel will be discarded.",
+                        )
                       )
-                    )
-                      return;
-                    await read();
-                    setMessage(
-                      "Loaded saved research and current linked CRM records.",
-                    );
-                  })
-                }
-              >
-                Read dataset and linked CRM records
-              </button>
+                        return;
+                      await read();
+                      setMessage(
+                        "Loaded saved research and current linked CRM records.",
+                      );
+                    })
+                  }
+                >
+                  Read dataset and linked CRM records
+                </button>
+              )}
               <button
                 onClick={() =>
                   void act(async () => {
