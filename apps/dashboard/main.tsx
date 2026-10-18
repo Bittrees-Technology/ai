@@ -1,5 +1,5 @@
 import { ResearchActivity } from "./research-activity.js";
-import { Workflows } from "./workflows.js";
+import { WorkflowWorkspace } from "./workflow-workspace.js";
 import { MemoryAppScope } from "./app-memory.js";
 import { SourceMemoryCapture } from "./source-memory-capture.js";
 import { ResumePermissions } from "./resume-permissions.js";
@@ -20,11 +20,9 @@ import { requestBackup } from "./backup-download.js";
 import { createLocalApi } from "./local-api.js";
 import { MemorySuggestions } from "./memory-suggestions.js";
 import { MemorySearch } from "./memory-search.js";
-import { Templates } from "./templates.js";
 import { ModelImportControls } from "./imports.js";
 import { DeviceResources } from "./device.js";
 import { SourceDraftDetail } from "./crm-drafts.js";
-import { WorkTools } from "./work-tools.js";
 import { Connections } from "./connections.js";
 import { Inbox } from "./inbox.js";
 import React, { useState, useEffect, useRef } from "react";
@@ -307,13 +305,12 @@ function App() {
           {[
             "Tasks",
             "Work activity",
-            "Templates",
+            "Workflows",
             "Inbox",
             "Memory",
             "Models",
             "Device",
             "Connections",
-            "Workflows & permissions",
           ].map((name) => (
             <button
               key={name}
@@ -408,16 +405,9 @@ function App() {
           <React.Fragment key={epoch.current}>
             {page === "Work activity" && (
               <>
-                <WorkTools
-                  api={api}
-                  onError={fail}
-                  profiles={profiles}
-                  onCreated={(id) => {
-                    setSelected(id);
-                    setPage("Tasks");
-                    void refresh().catch(fail);
-                  }}
-                />
+                <button onClick={() => setPage("Workflows")}>
+                  Manage workflows
+                </button>
                 <ResearchActivity
                   api={api}
                   onConnections={() => setPage("Connections")}
@@ -786,18 +776,6 @@ function App() {
                 </section>
               </div>
             )}
-            {page === "Templates" && (
-              <Templates
-                api={api}
-                profiles={profiles}
-                onError={fail}
-                onTask={(id) => {
-                  setSelected(id);
-                  setPage("Tasks");
-                  void refresh().catch(fail);
-                }}
-              />
-            )}
             {page === "Models" && (
               <section className="content">
                 <h2>Choose your local model</h2>
@@ -1027,8 +1005,18 @@ function App() {
             <div hidden={page !== "Inbox"}>
               <Inbox key={epoch.current} api={api} onError={fail} />
             </div>
-            {page === "Workflows & permissions" && (
-              <Workflows api={createLocalApi(fetch, 30000)} />
+            {page === "Workflows" && (
+              <WorkflowWorkspace
+                api={api}
+                profiles={profiles}
+                onError={fail}
+                onActivity={() => setPage("Work activity")}
+                onTask={(id) => {
+                  setSelected(id);
+                  setPage("Tasks");
+                  void refresh().catch(fail);
+                }}
+              />
             )}
             {page === "Connections" && (
               <Connections

@@ -42,21 +42,21 @@ export function Templates({
     );
   return (
     <section className="panel">
-      <h2>Local templates</h2>
+      <h3>Saved instructions</h3>
       <p>
-        Keep a reusable prompt and model choice on this Mac. Each run starts a
-        new task using exactly the saved text. Templates do not include app
-        access or saved memories. Remote runs require a separate reviewed
-        permission below.
+        Save a single-step workflow with exact instructions and a model choice.
+        Each run creates a task from the saved version. These instructions do
+        not change existing research sequences or grant tool access. Remote
+        triggers require the separate permission below.
       </p>
       <button
         disabled={controller.busy}
         onClick={() => act(() => controller.load())}
       >
-        Show saved templates
+        Show saved instructions
       </button>{" "}
       <button disabled={controller.busy} onClick={() => controller.select()}>
-        New template
+        New instructions
       </button>
       <ul>
         {controller.items.map((item) => (
@@ -76,7 +76,7 @@ export function Templates({
           <legend>
             {draft.revision
               ? `Review version ${draft.revision}`
-              : "New template"}
+              : "New instructions"}
           </legend>
           <label>
             Name
@@ -123,7 +123,7 @@ export function Templates({
             </select>
           </label>
           <label>
-            Exact prompt
+            Instructions for the local model
             <textarea
               rows={8}
               maxLength={32000}
