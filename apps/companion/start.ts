@@ -1,3 +1,4 @@
+import { LocalInvestorReview } from "../../modules/workflows/local-investor-review.js";
 import { localRecurringHost } from "../../modules/workflows/recurring-host.js";
 import {
   inspectLocalStorage,
@@ -204,6 +205,16 @@ const crm = new CrmConnector(
     },
   );
 const modelTurns = new LocalModelTurns();
+const localInvestorReview = new LocalInvestorReview(
+  join(directory, "local-investor-drafts.db"),
+  new Vault(key),
+  {
+    runtime,
+    turn: modelTurns.run,
+    authorize: () =>
+      executionControls.admission(worker.activeTasks).reason === "ready",
+  },
+);
 const recurring = new RecurringWorkflows(
   join(directory, "recurring-workflows.db"),
   new Vault(key),
@@ -478,6 +489,7 @@ server.on(
     centralWorkflows,
     taskSync,
     recurring,
+    localInvestorReview,
     qualificationResearch,
     projectWork,
     sources,
@@ -526,6 +538,7 @@ async function stop() {
   clearInterval(taskSyncTimer);
   clearInterval(taskSyncReviewTimer);
   clearInterval(recurringTimer);
+  await localInvestorReview.shutdown();
   await recurring.close();
   await taskSync.close();
   await centralWorkflows.close();

@@ -160,3 +160,22 @@ test("rejects duplicate gates and forged completion fields", async () => {
     }
   }
 });
+test("cancellation persists and prevents duplicate execution", async () => {
+  const x = setup();
+  try {
+    const draft: any = await x.adapter.review(
+      input,
+      {},
+      new AbortController().signal,
+    );
+    x.adapter.cancel(draft.operationId);
+    await assert.rejects(
+      x.adapter.review(input, {}, new AbortController().signal),
+      /cancelled/,
+    );
+    assert.equal(x.calls(), 1);
+    assert.equal(x.adapter.outbox()[0].state, "cancelled");
+  } finally {
+    x.adapter.close();
+  }
+});

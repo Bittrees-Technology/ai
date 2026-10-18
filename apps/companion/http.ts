@@ -1,3 +1,4 @@
+import { savedInvestorInput } from "../../modules/workflows/local-investor-review.js";
 import { checkForUpdates } from "./updates.js";
 import type { QualificationResearch } from "../../modules/research/qualification.js";
 import type { ProjectWork } from "../../modules/research/project-work.js";
@@ -91,6 +92,7 @@ export interface LocalApiOptions {
   investorResearch?: InvestorResearch;
   qualificationResearch?: QualificationResearch;
   projectWork?: ProjectWork;
+  localInvestorReview?: import("../../modules/workflows/local-investor-review.js").LocalInvestorReview;
   recurring?: import("../../modules/workflows/recurring.js").RecurringWorkflows;
   taskSync?: import("../../modules/task-sync/runner.js").TaskSyncRunner;
   centralWorkflows?: import("../../modules/workflows/central-worker.js").CentralWorkflowWorker;
@@ -133,6 +135,7 @@ export function localApi({
   centralWorkflows,
   taskSync,
   recurring,
+  localInvestorReview,
   roles,
   news,
   mail,
@@ -811,6 +814,43 @@ export function localApi({
       },
     ),
   );
+  if (localInvestorReview) {
+    app.get("/v1/research/local-investor-drafts", (_req, res) =>
+      res.json(localInvestorReview.outbox()),
+    );
+    app.post("/v1/research/local-investor-drafts", async (req, res) => {
+      const input = z
+        .strictObject({
+          evidence: savedInvestorInput,
+          modelProfileId: z.uuid(),
+        })
+        .parse(req.body);
+      const controller = new AbortController();
+      const cancel = () => {
+        if (!res.writableEnded) controller.abort(Error("Client disconnected"));
+      };
+      res.on("close", cancel);
+      try {
+        res.json(
+          await localInvestorReview.review(
+            input.evidence,
+            store.profile(owner, input.modelProfileId),
+            controller.signal,
+          ),
+        );
+      } finally {
+        res.off("close", cancel);
+      }
+    });
+    app.post("/v1/research/local-investor-drafts/cancel", (req, res) => {
+      const input = z
+        .strictObject({
+          operationId: z.string().regex(/^investor-draft:[a-f0-9]{64}$/),
+        })
+        .parse(req.body);
+      res.json(localInvestorReview.cancel(input.operationId));
+    });
+  }
   if (recurring) {
     app.get("/v1/workflows/recurring", (_req, res) =>
       res.json(recurring.status()),
