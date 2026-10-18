@@ -7,10 +7,15 @@ import {
 } from "../modules/workflows/mycloud-helper.js";
 async function fixture(
   check: (s: AbortSignal) => Promise<string>,
-  authorize = async () => true,
+  authorize: () => Promise<string | null> = async () => "d".repeat(64),
 ) {
   const token = "a".repeat(64);
-  const helper = myCloudHelper({ token, check, authorize });
+  const helper = myCloudHelper({
+    token,
+    check,
+    authorize,
+    journalPath: ":memory:",
+  });
   await new Promise<void>((r) => helper.server.listen(0, "127.0.0.1", r));
   const a = helper.server.address() as { port: number };
   return {
@@ -68,7 +73,7 @@ test("source revocation denies new and completed receipt delivery", async () => 
       authorized = false;
       return "{}";
     },
-    async () => authorized,
+    async () => (authorized ? "d".repeat(64) : null),
   );
   try {
     assert.equal((await f.post({ operationId: randomUUID() })).status, 403);
@@ -85,12 +90,18 @@ test("helper client rejects remote endpoints before any request; local exact rec
       "http://example.com:80",
       "a".repeat(64),
       new AbortController().signal,
+      randomUUID(),
     ),
   );
   const f = await fixture(async () => "{}");
   try {
     assert.equal(
-      await helperMyCloudCheck(f.url, f.token, new AbortController().signal),
+      await helperMyCloudCheck(
+        f.url,
+        f.token,
+        new AbortController().signal,
+        randomUUID(),
+      ),
       "{}",
     );
   } finally {
@@ -120,7 +131,7 @@ test("browser-origin and arbitrary paths cannot invoke helper", async () => {
     await f.close();
   }
 });
-test("helper callback is one-bit, current-authority checked and cannot authenticate general APIs", async () => {
+test("helper callback returns only the exact revision, current-authority checked and cannot authenticate general APIs", async () => {
   const { localApi } = await import("../apps/companion/http.js");
   const { Store } = await import("../modules/storage/store.js");
   const { Vault } = await import("../modules/storage/vault.js");
@@ -148,6 +159,15 @@ test("helper callback is one-bit, current-authority checked and cannot authentic
       token,
       myCloudSource: source,
       myCloudHelperToken: helperToken,
+      recurring: {
+        status: () => [
+          {
+            id: "mycloud-health-checks",
+            approved: allowed,
+            revision: "d".repeat(64),
+          },
+        ],
+      } as unknown as import("../modules/workflows/recurring.js").RecurringWorkflows,
     }),
   );
   const url = `http://127.0.0.1:${port}`;
@@ -162,7 +182,7 @@ test("helper callback is one-bit, current-authority checked and cannot authentic
       await (
         await fetch(url + "/internal/mycloud-approval", { headers })
       ).text(),
-      "approved",
+      JSON.stringify({ revision: "d".repeat(64) }),
     );
     assert.equal(
       (await fetch(url + "/v1/workflows/mycloud-health", { headers })).status,

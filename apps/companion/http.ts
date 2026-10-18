@@ -191,7 +191,7 @@ export function localApi({
       (req.headers.origin && !origins.has(req.headers.origin))
     )
       return reject(403, "FORBIDDEN");
-    // Dedicated one-bit callback for the launch-owned helper, never general API access.
+    // Dedicated revision callback for the launch-owned helper, never general API access.
     if (req.path === "/internal/mycloud-approval") {
       const actual = Buffer.from(req.headers.authorization ?? ""),
         expected = Buffer.from("Bearer " + (myCloudHelperToken ?? ""));
@@ -204,10 +204,16 @@ export function localApi({
         !timingSafeEqual(actual, expected)
       )
         return reject(403, "FORBIDDEN");
-      res
-        .type("text/plain")
-        .status(myCloudSource?.authorized() ? 200 : 403)
-        .send(myCloudSource?.authorized() ? "approved" : "denied");
+      const row = recurring
+        ?.status()
+        .find((item) => item.id === "mycloud-health-checks");
+      if (
+        !myCloudSource?.authorized() ||
+        !row?.approved ||
+        !/^[a-f0-9]{64}$/.test(row.revision)
+      )
+        return reject(403, "FORBIDDEN");
+      res.json({ revision: row.revision });
       return;
     }
     const actual = Buffer.from(req.headers.authorization ?? ""),

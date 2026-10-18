@@ -221,14 +221,14 @@ const myCloudSource = new MyCloudSource(
   join(directory, "mycloud-health.db"),
   new Vault(key),
   {
-    check: (signal) => {
+    check: (signal, operationId) => {
       const endpoint = process.env.BITTREES_MYCLOUD_HELPER_URL,
         token = process.env.BITTREES_MYCLOUD_HELPER_TOKEN;
       if (!endpoint || !token)
         throw Error(
           "Scoped MyCloud helper is unavailable; offline policy retained",
         );
-      return helperMyCloudCheck(endpoint, token, signal);
+      return helperMyCloudCheck(endpoint, token, signal, operationId);
     },
     // Human-approved pinned MyCloud source only; native definition approval remains revocable.
     authorized: () =>
@@ -257,7 +257,8 @@ const recurring = new RecurringWorkflows(
         "local.mycloud.health",
         {
           capability: "local.mycloud.health",
-          read: (signal) => myCloudSource.read(signal),
+          read: (signal, operationId) =>
+            myCloudSource.read(signal, operationId),
           decide: (receipt) => {
             const evidence = receipt.evidence as { notifications: string[] };
             return {
@@ -271,11 +272,17 @@ const recurring = new RecurringWorkflows(
       ],
       [
         "local.storage.inspect",
-        { capability: "local.storage.inspect", read: inspectLocalStorage },
+        {
+          capability: "local.storage.inspect",
+          read: (signal) => inspectLocalStorage(signal),
+        },
       ],
       [
         "local.home-monitor.read",
-        { capability: "local.home-monitor.read", read: readLocalHomeMonitor },
+        {
+          capability: "local.home-monitor.read",
+          read: (signal) => readLocalHomeMonitor(signal),
+        },
       ],
     ]),
     automationRoot: join(recurringHome(), ".codex", "automations"),

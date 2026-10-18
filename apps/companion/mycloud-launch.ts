@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { randomBytes, createHash } from "node:crypto";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -39,6 +40,8 @@ async function main() {
   const token = randomBytes(32).toString("hex");
   const helper = myCloudHelper({
     token,
+    journalPath:
+      "/Users/jhineline/Library/Application Support/Bittrees AI/mycloud-helper-operations.db",
     authorize: async () => {
       try {
         const r = await fetch(
@@ -49,9 +52,17 @@ async function main() {
             signal: AbortSignal.timeout(2000),
           },
         );
-        return r.ok && (await r.text()) === "approved";
+        if (!r.ok) {
+          await r.body?.cancel();
+          return null;
+        }
+        const text = await r.text();
+        if (text.length > 256) return null;
+        return z
+          .strictObject({ revision: z.string().regex(/^[a-f0-9]{64}$/) })
+          .parse(JSON.parse(text)).revision;
       } catch {
-        return false;
+        return null;
       }
     },
     check: async (signal) => {
