@@ -204,6 +204,12 @@ export function localApi({
     ["/v1/connections/dataset/save", "/v1/connections/dataset/patch"],
     express.json({ limit: 2_000_000, strict: true }),
   );
+  // Reviewed task batches include full source evidence and destination mappings.
+  // Keep the larger bound confined to this authenticated, schema-validated route.
+  app.post(
+    "/v1/workflows/task-sync/review",
+    express.json({ limit: 2_000_000, strict: true }),
+  );
   app.use(express.json({ limit: "64kb", strict: true }));
   app.get("/v1/private-relay", (_req, res) =>
     res.json(
