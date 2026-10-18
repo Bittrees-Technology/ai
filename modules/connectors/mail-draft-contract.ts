@@ -23,7 +23,7 @@ export type MailDraftResult = {
   status: "draft" | "needs-review" | "cancelled" | "failed";
   text: string;
   factIds: number[];
-  evidence: { model: string; outputDigest: string };
+  evidence: { model: string; modelDigest: string | null; profileRevision: string; outputDigest: string };
 };
 export const mailDigest = (value: unknown) =>
   createHash("sha256").update(canonical(value), "utf8").digest("hex");

@@ -24,10 +24,14 @@
     "requestDigest": "a00fa3bce16c737ca9cb9f75d90ba204cd7ba8824cbeaf829649185a11ad3064",
     "status": "draft",
     "text": "Open Monday",
-    "factIds": [1],
+    "factIds": [
+      1
+    ],
     "evidence": {
       "model": "synthetic-local",
-      "outputDigest": "7d48caf724fb683531f04da2092596cc75429bac6a409c70c62d911240c70418"
+      "outputDigest": "7d48caf724fb683531f04da2092596cc75429bac6a409c70c62d911240c70418",
+      "modelDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "profileRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     }
   }
 }

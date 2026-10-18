@@ -110,6 +110,8 @@ test("shared queue creates bound encrypted durable draft, replay never regenerat
     const r = request();
     const a = await f.adapter.generate(r);
     assert.equal(a.status, "draft");
+    assert.equal(a.evidence.modelDigest, "d".repeat(64));
+    assert.equal(a.evidence.profileRevision, f.profiles.snapshot(f.profiles.resolve("mail-draft")).revision);
     assert.equal(a.requestDigest, mailDigest(r));
     assert.equal(f.calls(), 2);
     assert.deepEqual(await f.adapter.generate(r), a);
@@ -321,4 +323,21 @@ test("unpaired surrogate and out-of-contract Unicode lengths are rejected", asyn
   } finally {
     await f.cleanup();
   }
+});
+
+ test("revocation after queue callback before persistence discards draft", async () => {
+  const f = await setup();
+  const original = f.queue.run.bind(f.queue);
+  f.queue.run = ((label: any, signal: any, callback: any) =>
+    original(label, signal, async (innerSignal) => {
+      const value = await callback(innerSignal);
+      f.setAllowed(false);
+      return value;
+    })) as typeof f.queue.run;
+  try {
+    const result = await f.adapter.generate(request());
+    assert.equal(result.status, "failed");
+    assert.equal(result.text, "");
+    assert.deepEqual(result.factIds, []);
+  } finally { await f.cleanup(); }
 });

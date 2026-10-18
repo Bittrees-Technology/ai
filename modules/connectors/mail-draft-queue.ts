@@ -136,7 +136,7 @@ export class MailDraftQueue {
       status,
       text,
       factIds,
-      evidence: { model: modelName, outputDigest: outputDigest(text) },
+      evidence: { model: modelName, modelDigest: row.modelDigest ?? null, profileRevision: snapshot.revision, outputDigest: outputDigest(text) },
     });
     const fence = (signal: AbortSignal) => {
       signal.throwIfAborted();
@@ -183,6 +183,10 @@ export class MailDraftQueue {
       })
       .catch(() => result(controller.signal.aborted ? "cancelled" : "failed"))
       .then((value) => {
+        if (value.status === "draft" || value.status === "needs-review") {
+          try { fence(controller.signal); }
+          catch { value = result(controller.signal.aborted ? "cancelled" : "failed"); }
+        }
         row.state = "done";
         row.result = value;
         this.save(row);
