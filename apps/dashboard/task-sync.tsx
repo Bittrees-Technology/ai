@@ -41,7 +41,7 @@ export function TaskSyncStatus({
       setBusy(false);
     }
   }
-  async function review(action: "enroll" | "activate") {
+  async function review(action: "enroll" | "activate" | "retry-connection") {
     setBusy(true);
     try {
       await api("/v1/workflows/task-sync/" + action, "POST", {});
@@ -86,6 +86,17 @@ export function TaskSyncStatus({
           >
             Review one-hour permission
           </button>
+        )}
+        {state.connectionError && (
+          <>
+            <p role="alert">{state.connectionError}</p>
+            <button
+              disabled={busy}
+              onClick={() => void review("retry-connection")}
+            >
+              Retry connection
+            </button>
+          </>
         )}
         {state.ownerReview && (
           <>

@@ -800,6 +800,10 @@ export function localApi({
     ),
   );
   if (taskSync) {
+    app.post("/v1/workflows/task-sync/retry-connection", (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(taskSync.retryConnection());
+    });
     app.post("/v1/workflows/task-sync/review", (req, res) =>
       res.json(taskSync.configureReview(req.body)),
     );

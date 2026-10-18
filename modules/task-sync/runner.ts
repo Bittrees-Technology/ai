@@ -257,32 +257,52 @@ export class TaskSyncRunner {
       candidate = this.get("handoff").candidate;
     if (!e || !review) throw new Held("Missing saved enrollment or review");
     const b = e.binding;
-    await this.activateReceipt(
-      { receipt: result.receipt, signature: result.signature },
-      {
-        principal: b.principal,
-        credentialId: b.credentialId,
-        tenant: b.tenant,
-        workspace: b.workspace,
-        sourceWorkspace: b.sourceWorkspace,
-        subject: b.principal,
-        leaseId: candidate.leaseId,
-        policyDigest: candidate.policyDigest,
-        runtimeBindingDigest: e.runtimeBindingDigest,
-        projectIds: [
-          ...new Set([
-            "crm",
-            ...review.mappings.map((m: any) => m.sourceProjectId),
-          ]),
-        ],
-      },
-      rolesPublicKey,
-      {
-        revision: review.revision,
-        tasks: review.tasks,
-        mappings: review.mappings,
-      },
-    );
+    const attempts = this.get("connectionAttempts") || 0;
+    if (attempts >= 3 || (this.get("connectionRetryAt") || 0) > this.now())
+      return;
+    this.put("connectionAttempts", attempts + 1);
+    this.put("connectionRetryAt", this.now() + 30000);
+    try {
+      await this.activateReceipt(
+        { receipt: result.receipt, signature: result.signature },
+        {
+          principal: b.principal,
+          credentialId: b.credentialId,
+          tenant: b.tenant,
+          workspace: b.workspace,
+          sourceWorkspace: b.sourceWorkspace,
+          subject: b.principal,
+          leaseId: candidate.leaseId,
+          policyDigest: candidate.policyDigest,
+          runtimeBindingDigest: e.runtimeBindingDigest,
+          projectIds: [
+            ...new Set([
+              "crm",
+              ...review.mappings.map((m: any) => m.sourceProjectId),
+            ]),
+          ],
+        },
+        rolesPublicKey,
+        {
+          revision: review.revision,
+          tasks: review.tasks,
+          mappings: review.mappings,
+        },
+      );
+      this.put("connectionError", null);
+    } catch {
+      this.put(
+        "connectionError",
+        "Synchronization has not started because the approved connection could not be verified. Check the connection before retrying.",
+      );
+    }
+  }
+  retryConnection() {
+    if (this.get("approval")) throw new Held("Already connected");
+    this.put("connectionAttempts", 0);
+    this.put("connectionRetryAt", 0);
+    this.put("connectionError", null);
+    return this.status();
   }
   status() {
     const a = this.get("approval"),
@@ -293,6 +313,7 @@ export class TaskSyncRunner {
       enrolled: !!this.get("enrollment"),
       enrollment: this.get("enrollment"),
       activationReady: !!this.get("activationReview"),
+      connectionError: this.get("connectionError"),
       ownerReview: this.handoff.status(),
       enabled: this.get("enabled") === true,
       running: !!this.running,

@@ -1,3 +1,4 @@
+import { rolesDecisionPublicKey } from "../../modules/task-sync/roles-pin.js";
 import { TaskSyncRunner } from "../../modules/task-sync/runner.js";
 import { CentralWorkflowWorker } from "../../modules/workflows/central-worker.js";
 import { CryptoDirectoryResearch } from "../../modules/research/crypto-directory.js";
@@ -570,7 +571,10 @@ const taskSyncTimer = setInterval(() => {
 const taskSyncReviewTimer = setInterval(() => {
   if (started && !stopping)
     void taskSync
-      .pollOwnerReview(process.env.BITTREES_ROLES_DECISION_PUBLIC_KEY)
+      .pollOwnerReview(
+        process.env.BITTREES_ROLES_DECISION_PUBLIC_KEY ||
+          rolesDecisionPublicKey,
+      )
       .catch(() => {});
 }, 3000);
 const centralWorkflowTimer = setInterval(() => {
