@@ -1,3 +1,4 @@
+import { UpdateNotice } from "./update-notice.js";
 import { ResearchActivity } from "./research-activity.js";
 import { WorkflowWorkspace } from "./workflow-workspace.js";
 import { MemoryAppScope } from "./app-memory.js";
@@ -349,6 +350,7 @@ function App() {
             </button>
           )}
         </header>
+        {paired && <UpdateNotice api={api} />}
         {error && (
           <div className="error" role="alert">
             {error}
