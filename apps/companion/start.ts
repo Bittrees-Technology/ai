@@ -1,3 +1,4 @@
+import { RecurringWorkflows } from "../../modules/workflows/recurring.js";
 import { rolesDecisionPublicKey } from "../../modules/task-sync/roles-pin.js";
 import { TaskSyncRunner } from "../../modules/task-sync/runner.js";
 import { CentralWorkflowWorker } from "../../modules/workflows/central-worker.js";
@@ -121,6 +122,25 @@ const key = await loadStorageKey(
 );
 const store = new Store(join(content.directory, "tasks.db"), new Vault(key)),
   owner = { userId: "local-owner", tenantId: "personal" };
+const recurring = new RecurringWorkflows(
+  join(directory, "recurring-workflows.db"),
+  new Vault(key),
+  {
+    authorize: async (_definition, operation) => {
+      throw Error(
+        `Adapter not installed: ${operation.id}. Original schedule remains responsible.`,
+      );
+    },
+    execute: async () => {
+      throw Error("No authorized recurring adapter installed");
+    },
+    decide: async () => {
+      throw Error("No recurring model adapter installed");
+    },
+    sourcePaused: async () => false,
+    admission: () => false,
+  },
+);
 const executionControls = new ExecutionControls(
   join(directory, "execution-limits.json"),
 );
@@ -443,6 +463,7 @@ server.on(
     directoryResearch,
     centralWorkflows,
     taskSync,
+    recurring,
     qualificationResearch,
     projectWork,
     sources,
@@ -490,6 +511,7 @@ async function stop() {
   clearInterval(centralWorkflowTimer);
   clearInterval(taskSyncTimer);
   clearInterval(taskSyncReviewTimer);
+  await recurring.close();
   await taskSync.close();
   await centralWorkflows.close();
   await directoryResearch.close();
