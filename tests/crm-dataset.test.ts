@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { CrmDatasetConnector } from "../modules/connectors/crm-dataset.js";
-function fixture() {
+function fixture(initialCount = 1, paged = false) {
   let bytes: Uint8Array | undefined,
     revoked = false,
     wrongId = false;
@@ -18,6 +18,13 @@ function fixture() {
         description: "Original",
       },
     ];
+  if (initialCount > 1)
+    entries = Array.from({ length: initialCount }, (_, i) => ({
+      id: randomUUID(),
+      kind: "people",
+      name: `Synthetic ${i}`,
+      ...(paged ? { description: "Grounded source text ".repeat(150) } : {}),
+    }));
   const secret = {
     getSecret: async () => bytes,
     setSecret: async (v: Uint8Array) => {
@@ -33,16 +40,62 @@ function fixture() {
     const rpc = JSON.parse(String(init?.body));
     if (revoked) return Response.json({ error: token }, { status: 401 });
     let result: any;
-    if (rpc.params.name === "dataset.read")
+    if (rpc.params.name === "dataset.read") {
+      const a = rpc.params.arguments,
+        offset = a.offset || 0;
+      if (
+        a.pageRevision &&
+        a.pageRevision !== version.toString(16).padStart(64, "0")
+      )
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { isError: true, content: [] },
+        });
       result = {
         id: wrongId ? randomUUID() : id,
         name: "Synthetic",
         version,
-        revision: "b".repeat(64),
-        entries,
+        revision: paged
+          ? version.toString(16).padStart(64, "0")
+          : "b".repeat(64),
+        entries: paged ? entries.slice(offset, offset + a.pageSize) : entries,
+        ...(paged
+          ? {
+              pagination: {
+                offset,
+                totalEntries: entries.length,
+                nextOffset:
+                  offset + a.pageSize < entries.length
+                    ? offset + a.pageSize
+                    : null,
+              },
+            }
+          : {}),
         crm: [],
         links: [],
       };
+    }
+    if (rpc.params.name === "dataset.patch") {
+      const a = rpc.params.arguments;
+      if (a.version !== version)
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { isError: true, content: [] },
+        });
+      const changed = new Map(a.changes.map((e: any) => [e.id, e]));
+      const ids = new Set(entries.map((e) => e.id));
+      entries = entries
+        .filter((e) => !a.removeIds.includes(e.id))
+        .map((e) => changed.get(e.id) || e);
+      entries.push(...a.changes.filter((e: any) => !ids.has(e.id)));
+      if (a.entryOrder) {
+        const byId = new Map(entries.map((e) => [e.id, e]));
+        entries = a.entryOrder.map((id: string) => byId.get(id));
+      }
+      result = { id, version: ++version };
+    }
     if (rpc.params.name === "dataset.save") {
       if (rpc.params.arguments.version !== version)
         return Response.json({
@@ -333,4 +386,88 @@ test("source throttling stops repeated reads without starving task writes", asyn
   assert.equal(requests, before);
   await connector.project("tasks.create", {}, f.id);
   assert.equal(requests, before + 1);
+});
+
+test("large private datasets can be read and saved without a 600-entry ceiling", async () => {
+  const f = fixture(2000);
+  await f.connector.connect({ token: f.token });
+  const data: any = await f.connector.read();
+  assert.equal(data.entries.length, 2000);
+  await f.connector.save({
+    version: data.version,
+    name: data.name,
+    entries: data.entries,
+  });
+  assert.equal(((await f.connector.read()) as any).entries.length, 2000);
+});
+
+test("large revision-paged snapshots save small edits atomically and preserve ordering", async () => {
+  const f = fixture(2000, true);
+  await f.connector.connect({ token: f.token });
+  const snapshot: any = await f.connector.read();
+  assert.equal(snapshot.entries.length, 2000);
+  assert(Buffer.byteLength(JSON.stringify(snapshot)) > 4_000_000);
+  assert.equal(
+    f.calls.filter(
+      (c) => JSON.parse(c.init.body).params.name === "dataset.read",
+    ).length,
+    40,
+  );
+  snapshot.entries.reverse();
+  snapshot.entries[0].description = "Corrected public business profile";
+  await f.connector.save({
+    version: snapshot.version,
+    name: snapshot.name,
+    entries: snapshot.entries,
+  });
+  const writes = f.calls
+    .map((c) => JSON.parse(c.init.body))
+    .filter((c) => c.params.name !== "dataset.read");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].params.name, "dataset.patch");
+  assert.equal(writes[0].params.arguments.changes.length, 1);
+  assert(Buffer.byteLength(JSON.stringify(writes[0])) < 100_000);
+  assert.deepEqual(
+    ((await f.connector.read()) as any).entries,
+    snapshot.entries,
+  );
+  await assert.rejects(
+    () =>
+      f.connector.patch({
+        version: 1,
+        name: snapshot.name,
+        changes: [],
+        removeIds: [],
+      }),
+    /SOURCE_CONFLICT/,
+  );
+});
+
+test("paged reads reject a changed source before returning a partial portfolio", async () => {
+  const f = fixture(200, true);
+  let conflict = false;
+  const connector = new CrmDatasetConnector(
+    "owner",
+    f.secret,
+    async (url, init) => {
+      const response = await f.request(url, init),
+        rpc = JSON.parse(String(init?.body));
+      if (conflict && rpc.params.arguments.offset) {
+        const body = await response.json();
+        const page = JSON.parse(body.result.content[0].text);
+        page.revision = "e".repeat(64);
+        body.result.content[0].text = JSON.stringify(page);
+        return Response.json(body);
+      }
+      return response;
+    },
+  );
+  await connector.connect({ token: f.token });
+  conflict = true;
+  await assert.rejects(() => connector.read(), /SOURCE_CONFLICT/);
+  assert(
+    !f.calls.some(
+      (c) => JSON.parse(c.init.body).params.name !== "dataset.read",
+    ),
+  );
 });

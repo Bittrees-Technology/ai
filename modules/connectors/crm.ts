@@ -100,6 +100,7 @@ export class ConnectorError extends Error {
       | "CONNECTION_BUSY"
       | "INVALID_CONNECTION"
       | "SOURCE_UNAVAILABLE"
+      | "SOURCE_TOO_LARGE"
       | "SOURCE_RATE_LIMITED"
       | "SOURCE_DENIED"
       | "SOURCE_CONFLICT"

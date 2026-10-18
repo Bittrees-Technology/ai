@@ -1,3 +1,4 @@
+import { CentralWorkflows } from "./central-workflows.js";
 import React, { useState, useId } from "react";
 import { DirectoryWorkflows } from "./directory-workflows.js";
 import { QualificationPanel } from "./qualification.js";
@@ -30,6 +31,7 @@ export function WorkTools(props: {
         onChange={(e) => setTool(e.target.value)}
       >
         <option value="">Choose a workflow</option>
+        <option value="central">Central workflows</option>
         <option value="directory">Directory discovery and validation</option>
         <option value="tasks">CRM task worker</option>
         <option value="discovery">Investor discovery</option>
@@ -43,6 +45,7 @@ export function WorkTools(props: {
         These controls manage existing workflows. Switching views does not stop
         background work.
       </p>
+      {tool === "central" && <CentralWorkflows api={props.api} />}
       {tool === "directory" && <DirectoryWorkflows api={props.api} />}
       {tool === "tasks" && <ProjectWorkPanel {...props} />}
       {tool === "discovery" && <InvestorResearchPanel {...props} />}

@@ -1,18 +1,42 @@
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { LoginPanel, EthereumSignIn } from "../shared/login/LoginPanel.jsx";
-import {SharedProfileCard} from '../../../shared/sso/SharedProfileCard.jsx';
+import { SharedProfileCard } from "../../../shared/sso/SharedProfileCard.jsx";
 let profileRoot: Root | undefined;
 let loginRoot: Root | undefined;
 let chooseWallet = false;
-let sharedCheck:AbortController|undefined;
-let sharedRevision:string|undefined;
+let sharedCheck: AbortController | undefined;
+let sharedRevision: string | undefined;
 async function sharedSignIn() {
-  if(sharedRevision===wallet)return;
-  sharedRevision=wallet;sharedCheck?.abort();const check=new AbortController();sharedCheck=check;
-  try{const r=await fetch("/api/sso/status",{credentials:"same-origin",cache:"no-store",signal:check.signal});const v=await r.json();if(check.signal.aborted||!r.ok||!v.configured||!["publish","resume"].includes(v.action))return;
-    location.replace("/api/sso/start?"+new URLSearchParams({mode:v.action,return_to:location.pathname+location.search+location.hash}));
-  }catch{/* The local wallet sign-in remains available. */}
+  if (sharedRevision === wallet) return;
+  sharedRevision = wallet;
+  sharedCheck?.abort();
+  const check = new AbortController();
+  sharedCheck = check;
+  try {
+    const r = await fetch("/api/sso/status", {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: check.signal,
+    });
+    const v = await r.json();
+    if (
+      check.signal.aborted ||
+      !r.ok ||
+      !v.configured ||
+      !["publish", "resume"].includes(v.action)
+    )
+      return;
+    location.replace(
+      "/api/sso/start?" +
+        new URLSearchParams({
+          mode: v.action,
+          return_to: location.pathname + location.search + location.hash,
+        }),
+    );
+  } catch {
+    /* The local wallet sign-in remains available. */
+  }
 }
 type Provider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<any>;
@@ -31,6 +55,27 @@ let wallets: Wallet[] = [],
   pairCode = "",
   duration = "until-revoked",
   pairGrant: any = null;
+// Carry only a short-lived public pairing reference across shared sign-in. Never auto-approve.
+try {
+  const incoming = new URLSearchParams(location.hash.slice(1)).get("pair");
+  if (incoming && /^[a-f0-9]{32}$/.test(incoming)) {
+    pairCode = incoming;
+    sessionStorage.setItem(
+      "bittrees-pending-device-pair",
+      JSON.stringify({ code: incoming, until: Date.now() + 300000 }),
+    );
+    history.replaceState(null, "", location.pathname + location.search);
+  } else {
+    const saved = JSON.parse(
+      sessionStorage.getItem("bittrees-pending-device-pair") || "null",
+    );
+    if (saved?.until > Date.now() && /^[a-f0-9]{32}$/.test(saved.code))
+      pairCode = saved.code;
+    else sessionStorage.removeItem("bittrees-pending-device-pair");
+  }
+} catch {
+  /* Manual code entry remains available. */
+}
 const el = (tag: string, text = "", className = "") => {
   const e = document.createElement(tag);
   e.textContent = text;
@@ -47,7 +92,10 @@ async function api(action: string, input?: unknown) {
     signal: AbortSignal.timeout(20000),
   });
   const data = await r.json();
-  if (!r.ok) throw Object.assign(Error(data.error || "REQUEST_REJECTED"), { status: r.status });
+  if (!r.ok)
+    throw Object.assign(Error(data.error || "REQUEST_REJECTED"), {
+      status: r.status,
+    });
   return data;
 }
 const messages: Record<string, string> = {
@@ -68,7 +116,13 @@ async function act(fn: () => Promise<void>) {
   try {
     await fn();
   } catch (e) {
-    if ((e as Error & {status?:number}).status === 401) { wallet="";grants=[];pending=null;sharedRevision=undefined;void sharedSignIn(); }
+    if ((e as Error & { status?: number }).status === 401) {
+      wallet = "";
+      grants = [];
+      pending = null;
+      sharedRevision = undefined;
+      void sharedSignIn();
+    }
     error =
       messages[(e as Error).message] ||
       "The request did not finish. Refresh to check its status before trying again.";
@@ -302,11 +356,13 @@ function grantView(g: any, code?: string) {
   return panel;
 }
 function render() {
-  profileRoot?.unmount(); profileRoot = undefined;
+  profileRoot?.unmount();
+  profileRoot = undefined;
   loginRoot?.unmount();
   loginRoot = undefined;
   root.replaceChildren();
-  if (error && wallet) root.append(el("p", error, "workflow-notice workflow-error"));
+  if (error && wallet)
+    root.append(el("p", error, "workflow-notice workflow-error"));
   if (notice) root.append(el("p", notice, "workflow-notice"));
   if (!wallet) {
     const mount = el("div", "", "workflow-login");
@@ -314,18 +370,39 @@ function render() {
     loginRoot = createRoot(mount);
     const start = () => {
       if (wallets.length === 1) void act(() => login(wallets[0]!.provider));
-      else { chooseWallet = true; render(); }
+      else {
+        chooseWallet = true;
+        render();
+      }
     };
-    loginRoot.render(React.createElement(LoginPanel, {
-      product: "AI", icon: "/favicon-32x32.png", description: "Use your Ethereum wallet.",
-      wallet: React.createElement(EthereumSignIn, { onClick: start, busy }),
-      notice: error ? React.createElement("p", { role: "alert" }, error) : undefined,
-      footer: React.createElement("p", null, "A separate wallet approval is required to delegate workflow permissions.")
-    }));
+    loginRoot.render(
+      React.createElement(LoginPanel, {
+        product: "AI",
+        icon: "/favicon-32x32.png",
+        description: "Use your Ethereum wallet.",
+        wallet: React.createElement(EthereumSignIn, { onClick: start, busy }),
+        notice: error
+          ? React.createElement("p", { role: "alert" }, error)
+          : undefined,
+        footer: React.createElement(
+          "p",
+          null,
+          "A separate wallet approval is required to delegate workflow permissions.",
+        ),
+      }),
+    );
     if (chooseWallet) {
       const picker = el("div", "", "workflow-wallet-picker");
-      picker.append(el("p", wallets.length ? "Choose your Ethereum wallet." : "Open this page in your wallet’s browser or enable an Ethereum wallet extension."));
-      for (const w of wallets) picker.append(button(w.name, () => login(w.provider)));
+      picker.append(
+        el(
+          "p",
+          wallets.length
+            ? "Choose your Ethereum wallet."
+            : "Open this page in your wallet’s browser or enable an Ethereum wallet extension.",
+        ),
+      );
+      for (const w of wallets)
+        picker.append(button(w.name, () => login(w.provider)));
       root.append(picker);
     }
     return;
@@ -335,7 +412,8 @@ function render() {
     el("span", wallet, "wallet-line"),
     button("Refresh", refresh),
     button("Sign out", async () => {
-      sharedCheck?.abort();sharedRevision=undefined;
+      sharedCheck?.abort();
+      sharedRevision = undefined;
       await api("logout");
       wallet = "";
       grants = [];
@@ -344,9 +422,12 @@ function render() {
     }),
   );
   root.append(account);
-  const profileMount = el("div"); root.append(profileMount);
+  const profileMount = el("div");
+  root.append(profileMount);
   profileRoot = createRoot(profileMount);
-  profileRoot.render(React.createElement(SharedProfileCard, {sessionRevision:wallet}));
+  profileRoot.render(
+    React.createElement(SharedProfileCard, { sessionRevision: wallet }),
+  );
   if (!selected) {
     root.append(
       el(
@@ -391,18 +472,21 @@ function render() {
     root.append(
       el(
         "p",
-        "No devices connected yet. Open Workflows & permissions in your Mac app and create a pairing code.",
+        "No devices connected yet. In Bittrees AI on your Mac, choose Workflows → Permissions & sync → Create pairing code, then Continue on ai.bittrees.org.",
       ),
     );
   const pair = el("section", "", "workflow-panel");
   pair.append(
-    el("h2", "Connect another Mac"),
+    el("h2", grants.length ? "Connect another Mac" : "Connect your Mac"),
     el(
       "p",
-      "Each person pairs their own device and approves its permissions with their own wallet. Source apps must separately authorize access.",
+      "1. Open Bittrees AI on your Mac. 2. Choose Workflows → Permissions & sync and create a pairing code. 3. Select Continue on ai.bittrees.org to bring the code here. Sign in and review the exact permissions before approving. The local workspace code from the Mac menu is a different code.",
     ),
   );
-  const label = el("label", "Pairing code from your Mac");
+  const label = el(
+    "label",
+    "Website pairing code (from Workflows → Permissions & sync)",
+  );
   const input = el("input") as HTMLInputElement;
   input.value = pairCode;
   input.autocomplete = "off";
@@ -415,6 +499,7 @@ function render() {
     button("Review this Mac", async () => {
       const v = await api("pair", { pairCode });
       pending = null;
+      sessionStorage.removeItem("bittrees-pending-device-pair");
       pairGrant = v.grant;
     }),
   );
@@ -439,7 +524,11 @@ void api("list")
   .then((v) => {
     wallet = v.wallet;
     grants = v.grants;
-    render();void sharedSignIn();
+    render();
+    void sharedSignIn();
   })
-  .catch((e) => {render();if(e.message==="SIGN_IN_REQUIRED")void sharedSignIn();});
+  .catch((e) => {
+    render();
+    if (e.message === "SIGN_IN_REQUIRED") void sharedSignIn();
+  });
 render();

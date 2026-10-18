@@ -191,11 +191,10 @@ export function CrmDatasetPanel({ api, onError, manageData = false }: Props) {
                     const p = JSON.parse(text);
                     if (
                       !Array.isArray(p.entries) ||
-                      p.entries.length > 600 ||
                       p.version !== snapshot.version
                     )
                       throw new Error(
-                        "Keep the loaded version and use at most 600 entries.",
+                        "Keep the loaded dataset ID, version and entry IDs.",
                       );
                     setPreview(p);
                   })
@@ -216,7 +215,23 @@ export function CrmDatasetPanel({ api, onError, manageData = false }: Props) {
                   <button
                     onClick={() =>
                       void act(async () => {
-                        await api(base + "/save", "POST", preview);
+                        const baseline = new Map(
+                            snapshot.entries.map((e: any) => [e.id, e]),
+                          ),
+                          ids = new Set(preview.entries.map((e: any) => e.id));
+                        await api(base + "/patch", "POST", {
+                          version: preview.version,
+                          name: preview.name,
+                          changes: preview.entries.filter(
+                            (e: any) =>
+                              JSON.stringify(e) !==
+                              JSON.stringify(baseline.get(e.id)),
+                          ),
+                          entryOrder: preview.entries.map((e: any) => e.id),
+                          removeIds: snapshot.entries
+                            .filter((e: any) => !ids.has(e.id))
+                            .map((e: any) => e.id),
+                        });
                         await read();
                         setMessage(
                           "Private dataset saved through MCP. Review linked updates or project imports in CRM before publishing.",

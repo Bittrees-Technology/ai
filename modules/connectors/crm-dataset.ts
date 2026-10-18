@@ -16,25 +16,30 @@ const snapshotSchema = z
     name: z.string().max(200),
     version: z.number().int().positive(),
     revision: z.string().regex(/^[a-f0-9]{64}$/),
-    entries: z
-      .array(
-        z
-          .object({
-            id: z.uuid(),
-            kind: z.enum(["people", "organizations", "projects"]),
-            name: z.string(),
-          })
-          .passthrough(),
-      )
-      .max(600),
-    crm: z.array(z.unknown()).max(600),
-    links: z.array(z.unknown()).max(600),
+    entries: z.array(
+      z
+        .object({
+          id: z.uuid(),
+          kind: z.enum(["people", "organizations", "projects"]),
+          name: z.string(),
+        })
+        .passthrough(),
+    ),
+    crm: z.array(z.unknown()),
+    links: z.array(z.unknown()),
   })
   .passthrough();
 export const datasetSaveSchema = z.strictObject({
   version: z.number().int().positive(),
   name: z.string().trim().min(1).max(200),
-  entries: z.array(z.record(z.string(), z.unknown())).max(600),
+  entries: z.array(z.record(z.string(), z.unknown())),
+});
+export const datasetPatchSchema = z.strictObject({
+  version: z.number().int().positive(),
+  name: z.string().trim().min(1).max(200),
+  changes: z.array(z.record(z.string(), z.unknown())),
+  removeIds: z.array(z.uuid()).default([]),
+  entryOrder: z.array(z.uuid()).optional(),
 });
 export function datasetKeychainEntry(profile: string): ConnectorSecret {
   if (process.platform !== "darwin" || !/^[A-Za-z0-9_-]{1,80}$/.test(profile))
@@ -205,14 +210,105 @@ export class CrmDatasetConnector {
       throw e;
     }
   }
+  private async loadSnapshot(
+    token: string,
+    args: { revision?: string } = {},
+    expectedId?: string,
+  ): Promise<any> {
+    let result: any;
+    try {
+      result = await this.call(token, "dataset.read", {
+        ...args,
+        pageSize: 100,
+      });
+    } catch (e) {
+      // Older CRM servers reject the new read arguments. Read-only fallback;
+      // never fall back or retry a mutation.
+      if (!(e instanceof ConnectorError) || e.code !== "SOURCE_CONFLICT")
+        throw e;
+      result = await this.call(token, "dataset.read", args);
+    }
+    if (result.unchanged === true)
+      return z
+        .strictObject({
+          unchanged: z.literal(true),
+          revision: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .parse(result);
+    const first = snapshotSchema.parse(result);
+    if (expectedId && first.id !== expectedId)
+      throw new ConnectorError("INVALID_SOURCE");
+    if (!first.pagination) return first;
+    const pageInfo = z.strictObject({
+      offset: z.number().int().nonnegative(),
+      totalEntries: z.number().int().nonnegative(),
+      nextOffset: z.number().int().nonnegative().nullable(),
+    });
+    let info = pageInfo.parse(first.pagination);
+    if (info.offset !== 0) throw new ConnectorError("INVALID_SOURCE");
+    const total = info.totalEntries,
+      entries = [...first.entries],
+      crm = new Map((first.crm as any[]).map((r) => [r.id, r])),
+      links = new Map((first.links as any[]).map((r) => [r.entryId, r]));
+    const submissions = new Map<string, any>(
+      ((first.submissions as any[]) || []).map((r) => [
+        r.operationId,
+        { ...r, mappings: [...r.mappings] },
+      ]),
+    );
+    while (info.nextOffset !== null) {
+      if (info.nextOffset !== entries.length)
+        throw new ConnectorError("INVALID_SOURCE");
+      const page = snapshotSchema.parse(
+        await this.call(token, "dataset.read", {
+          pageSize: 100,
+          offset: info.nextOffset,
+          pageRevision: first.revision,
+        }),
+      );
+      const next = pageInfo.parse(page.pagination);
+      if (
+        page.id !== first.id ||
+        page.version !== first.version ||
+        page.revision !== first.revision ||
+        next.offset !== info.nextOffset ||
+        next.totalEntries !== total ||
+        !page.entries.length
+      )
+        throw new ConnectorError("SOURCE_CONFLICT");
+      entries.push(...page.entries);
+      for (const r of page.crm as any[]) crm.set(r.id, r);
+      for (const r of page.links as any[]) links.set(r.entryId, r);
+      for (const r of (page.submissions as any[]) || []) {
+        const prior = submissions.get(r.operationId);
+        submissions.set(r.operationId, {
+          ...r,
+          mappings: [...(prior?.mappings || []), ...r.mappings],
+        });
+      }
+      info = next;
+    }
+    if (
+      entries.length !== total ||
+      new Set(entries.map((e) => e.id)).size !== entries.length
+    )
+      throw new ConnectorError("INVALID_SOURCE");
+    const merged: any = {
+      ...first,
+      entries,
+      crm: [...crm.values()],
+      links: [...links.values()],
+      submissions: [...submissions.values()],
+    };
+    delete merged.pagination;
+    return merged;
+  }
   async connect(raw: unknown) {
     return this.exclusive(async () => {
       const { token } = z
         .strictObject({ token: z.string().regex(/^[a-f0-9]{64}$/) })
         .parse(raw);
-      const snapshot = snapshotSchema.parse(
-        await this.call(token, "dataset.read", {}),
-      );
+      const snapshot = snapshotSchema.parse(await this.loadSnapshot(token));
       // Invalidate queued operations before changing the credential, even if
       // the credential store reports an uncertain failure.
       this.generation++;
@@ -246,7 +342,7 @@ export class CrmDatasetConnector {
         })
         .parse(raw);
       const s = await this.saved(),
-        result = await this.call(s.token, "dataset.read", args);
+        result = await this.loadSnapshot(s.token, args, s.datasetId);
       if (result.unchanged === true)
         return z
           .strictObject({
@@ -265,9 +361,49 @@ export class CrmDatasetConnector {
       const args = datasetSaveSchema.parse(raw),
         s = await this.saved();
       // Never retry automatically: the caller retains the exact payload on uncertainty.
+      let name = "dataset.save",
+        payload: unknown = args;
+      if (Buffer.byteLength(JSON.stringify(args)) > 1_800_000) {
+        const current = await this.loadSnapshot(s.token, {}, s.datasetId);
+        if (
+          current.version === args.version + 1 &&
+          current.name === args.name &&
+          JSON.stringify(current.entries) === JSON.stringify(args.entries)
+        )
+          return { id: s.datasetId, version: current.version };
+        if (current.version !== args.version)
+          throw new ConnectorError("SOURCE_CONFLICT");
+        const baseline = new Map(current.entries.map((e: any) => [e.id, e])),
+          nextIds = new Set(args.entries.map((e) => e.id));
+        payload = {
+          version: args.version,
+          name: args.name,
+          entryOrder: args.entries.map((e) => e.id),
+          changes: args.entries.filter(
+            (e) => JSON.stringify(e) !== JSON.stringify(baseline.get(e.id)),
+          ),
+          removeIds: current.entries
+            .filter((e: any) => !nextIds.has(e.id))
+            .map((e: any) => e.id),
+        };
+        if (Buffer.byteLength(JSON.stringify(payload)) > 1_800_000)
+          throw new ConnectorError("SOURCE_TOO_LARGE");
+        name = "dataset.patch";
+      }
       const result = z
         .object({ id: z.uuid(), version: z.number().int().positive() })
-        .parse(await this.call(s.token, "dataset.save", args));
+        .parse(await this.call(s.token, name, payload));
+      if (result.id !== s.datasetId) throw new ConnectorError("INVALID_SOURCE");
+      return result;
+    });
+  }
+  async patch(raw: unknown) {
+    return this.exclusive(async () => {
+      const args = datasetPatchSchema.parse(raw),
+        s = await this.saved();
+      const result = z
+        .object({ id: z.uuid(), version: z.number().int().positive() })
+        .parse(await this.call(s.token, "dataset.patch", args));
       if (result.id !== s.datasetId) throw new ConnectorError("INVALID_SOURCE");
       return result;
     });
@@ -277,7 +413,7 @@ export class CrmDatasetConnector {
       const args = z
         .strictObject({
           version: z.number().int().positive(),
-          entries: z.array(z.record(z.string(), z.unknown())).min(1).max(20),
+          entries: z.array(z.record(z.string(), z.unknown())).min(1),
         })
         .parse(raw);
       const s = await this.saved();
