@@ -102,6 +102,24 @@ export function DirectoryWorkflows({
           ? "Pause directory workflows"
           : "Enable directory workflows"}
       </button>
+      {data?.enabled && (
+        <button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              setData(await api("/v1/research/directory/retry", "POST", {}));
+            } catch {
+              setError("Could not queue the latest unsuccessful checks.");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Retry latest unsuccessful checks
+        </button>
+      )}
       <p>
         Discovery starts with the DeFiLlama catalogue. Coverage outside its
         projects is limited; a missing result does not mean a tag has no

@@ -15,6 +15,7 @@ import {
   CryptoDirectoryResearch,
   groundedDirectoryAnswer,
   directoryURL,
+  directoryEvidenceQuotes,
 } from "../modules/research/crypto-directory.js";
 import { Vault } from "../modules/storage/vault.js";
 const text =
@@ -213,4 +214,96 @@ test("discovery hands off durably, validation receipts prove model execution, fa
     await worker.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("invalid evidence gets one correction; ordinary failures enter a durable bounded retry queue", async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "directory-retry-")),
+  );
+  await mkdir(join(root, "content/projects"), { recursive: true });
+  await writeFile(
+    join(root, "content/projects/example.md"),
+    "---\nname: Example\nprimary_url: https://example.org\ntags: [DeFi]\n---\n",
+  );
+  let calls = 0,
+    broken = true;
+  const prompts: string[] = [];
+  const invalid = {
+    ...answer,
+    claims: answer.claims.map((c) => ({
+      ...c,
+      quote: "Fabricated source quotation",
+    })),
+  };
+  const vault = new Vault(randomBytes(32));
+  const make = () =>
+    new CryptoDirectoryResearch(
+      join(root, "state.db"),
+      vault,
+      {
+        pin: async () => ({
+          profile: {
+            model: "local",
+            contextTokens: 32000,
+            maxOutputTokens: 2000,
+          },
+          digest: "d",
+        }),
+        generate: async (_m: unknown, prompt: string) => {
+          calls++;
+          prompts.push(prompt);
+          return JSON.stringify(broken || calls === 3 ? invalid : answer);
+        },
+      } as any,
+      () => ({}),
+      () => ({ reason: "ready", seconds: 60 }),
+      async (_s, work) => work(),
+      { page: async (url) => ({ url, text, links: [] }) },
+    );
+  let worker = make();
+  try {
+    await worker.configure({
+      confirmed: true,
+      enabled: true,
+      repository: root,
+      profileId: "test",
+    });
+    await worker.tick();
+    assert.equal(calls, 2);
+    assert.match(prompts[1]!, /CORRECTION/);
+    assert.equal(worker.status().receipts[0].state, "needs-research");
+    assert.equal(worker.status().followups.length, 1);
+    assert.equal(worker.status().followups[0].existingId, "example.md");
+    worker.retryLatestValidation();
+    worker.retryLatestValidation();
+    assert.equal(worker.status().followups.length, 1);
+    await worker.close();
+    worker = make();
+    broken = false;
+    await worker.tick();
+    assert.equal(calls, 4);
+    assert.equal(worker.status().followups[0].state, "completed");
+    assert.equal(worker.status().results[0].existingId, "example.md");
+    assert.equal(worker.status().receipts[0].modelAttempts, 2);
+    worker.retryLatestValidation();
+    assert.equal(worker.status().followups.length, 1);
+    await worker.pause();
+    assert.throws(() => worker.retryLatestValidation(), /paused/);
+  } finally {
+    await worker.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("quote grammar only offers bounded literal source excerpts", () => {
+  const source =
+    '  A quoted company: "Example". ' +
+    "Long source sentence with details. ".repeat(50);
+  const quotes = directoryEvidenceQuotes(source);
+  assert.ok(quotes.length > 1);
+  for (const quote of quotes) {
+    assert.ok(source.includes(quote));
+    assert.ok(quote.length >= 8 && quote.length <= 400);
+  }
+  assert.deepEqual(directoryEvidenceQuotes("short"), []);
 });
