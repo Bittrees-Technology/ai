@@ -796,6 +796,12 @@ export function localApi({
     ),
   );
   if (directoryResearch) {
+    app.post("/v1/research/directory/retry", (req, res) => {
+      const input = z
+        .strictObject({ runId: z.uuid().optional() })
+        .parse(req.body);
+      res.json(directoryResearch.retryLatestValidation(input.runId));
+    });
     app.post("/v1/research/directory/configure", async (req, res) =>
       res.json(await directoryResearch.configure(req.body)),
     );
