@@ -1,6 +1,8 @@
+import { RuntimeHandoff } from "./handoff.js";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import Database from "better-sqlite3";
 import { z } from "zod";
+import { exchangeActivation, type ActivationScope } from "./activation.js";
 import {
   runtimeEnrollmentSchema,
   runtimeEnrollmentMessage,
@@ -58,13 +60,17 @@ export class TaskSyncRunner {
   private db: Database.Database;
   private running: Promise<void> | null = null;
   private controller: AbortController | null = null;
+  private handoff: RuntimeHandoff;
+  private reviewing: Promise<void> | null = null;
   constructor(
     path: string,
     private vault: Vault,
     private verifyActivation: (
       input: unknown,
       device: ReturnType<TaskSyncRunner["device"]>,
-    ) => Promise<unknown>,
+    ) => Promise<unknown> = async () => {
+      throw new Held("Verified Roles activation is required");
+    },
     private request: typeof fetch = fetch,
     private now = () => Date.now(),
     private attestProof: (
@@ -74,11 +80,34 @@ export class TaskSyncRunner {
     ) => Promise<unknown> = async () => {
       throw new Held("Runtime attestation is not configured");
     },
+    attestRuntime: (
+      purpose: "enroll" | "activate",
+      request: unknown,
+      signature: string,
+    ) => Promise<unknown> = async () => {
+      throw new Held("Device attestation unavailable");
+    },
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value BLOB NOT NULL)",
+    );
+    this.handoff = new RuntimeHandoff(
+      () => this.get("handoff"),
+      (s) => {
+        this.put("handoff", s);
+        if (s.status === "complete" && s.candidate.kind === "enroll")
+          this.put("enrollment", s.result);
+      },
+      () => this.device(),
+      (message) =>
+        sign(null, Buffer.from(message), this.key().privateKey).toString(
+          "base64",
+        ),
+      attestRuntime,
+      this.request,
+      this.now,
     );
   }
   private get(key: string): any {
@@ -137,11 +166,134 @@ export class TaskSyncRunner {
       ).toString("base64"),
     };
   }
+  configureReview(input: unknown) {
+    if (
+      this.get("approval") ||
+      this.get("enrollment") ||
+      ["pending", "approved"].includes(this.handoff.status()?.status || "")
+    )
+      throw new Held("A pending or enrolled review cannot be replaced");
+    const review = approvalSchema
+      .omit({ identity: true, token: true })
+      .extend({ sourceWorkspace: z.uuid() })
+      .parse(input);
+    if (
+      review.tasks.some(
+        (t) =>
+          t.destination.workspaceId !== review.sourceWorkspace ||
+          digest(t.content) !== t.fingerprint,
+      )
+    )
+      throw new Held("Invalid source review");
+    this.put("review", review);
+    return this.status();
+  }
+  async startEnrollment(device: {
+    authorityId: string;
+    deviceId: string;
+    ownerWallet: string;
+  }) {
+    const review = this.get("review");
+    if (!review)
+      throw new Held("Select a reviewed synchronization workflow first");
+    return this.handoff.start({
+      kind: "enroll",
+      ...device,
+      sourceWorkspace: review.sourceWorkspace,
+    });
+  }
+  async startActivation(input: { leaseId: string; policyDigest: string }) {
+    const e = this.get("enrollment");
+    if (!e) throw new Held("Enroll this Mac first");
+    const b = e.binding;
+    return this.handoff.start({
+      kind: "activate",
+      authorityId: b.authorityId,
+      deviceId: b.deviceId,
+      ownerWallet: b.ownerWallet,
+      sourceWorkspace: b.sourceWorkspace,
+      runtimeBindingDigest: e.runtimeBindingDigest,
+      ...input,
+    });
+  }
+  prepareActivation(input: unknown) {
+    if (this.get("approval")) throw new Held("Already activated");
+    this.put(
+      "activationReview",
+      z
+        .strictObject({
+          leaseId: z.uuid(),
+          policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .parse(input),
+    );
+    return this.status();
+  }
+  async requestActivation() {
+    const input = this.get("activationReview");
+    if (!input) throw new Held("A finalized permission review is required");
+    return this.startActivation(input);
+  }
+  pollOwnerReview(rolesPublicKey?: string) {
+    if (this.reviewing) return this.reviewing;
+    this.reviewing = this.ownerReview(rolesPublicKey).finally(() => {
+      this.reviewing = null;
+    });
+    return this.reviewing;
+  }
+  private async ownerReview(rolesPublicKey?: string) {
+    await this.handoff.tick();
+    const h = this.handoff.status(),
+      result = this.handoff.result();
+    if (
+      h?.kind !== "activate" ||
+      h.status !== "complete" ||
+      this.get("approval") ||
+      !rolesPublicKey
+    )
+      return;
+    const e = this.get("enrollment"),
+      review = this.get("review"),
+      candidate = this.get("handoff").candidate;
+    if (!e || !review) throw new Held("Missing saved enrollment or review");
+    const b = e.binding;
+    await this.activateReceipt(
+      { receipt: result.receipt, signature: result.signature },
+      {
+        principal: b.principal,
+        credentialId: b.credentialId,
+        tenant: b.tenant,
+        workspace: b.workspace,
+        sourceWorkspace: b.sourceWorkspace,
+        subject: b.principal,
+        leaseId: candidate.leaseId,
+        policyDigest: candidate.policyDigest,
+        runtimeBindingDigest: e.runtimeBindingDigest,
+        projectIds: [
+          ...new Set([
+            "crm",
+            ...review.mappings.map((m: any) => m.sourceProjectId),
+          ]),
+        ],
+      },
+      rolesPublicKey,
+      {
+        revision: review.revision,
+        tasks: review.tasks,
+        mappings: review.mappings,
+      },
+    );
+  }
   status() {
     const a = this.get("approval"),
       receipts = this.get("receipts") || [];
     return {
       configured: !!a,
+      reviewReady: !!this.get("review"),
+      enrolled: !!this.get("enrollment"),
+      enrollment: this.get("enrollment"),
+      activationReady: !!this.get("activationReview"),
+      ownerReview: this.handoff.status(),
       enabled: this.get("enabled") === true,
       running: !!this.running,
       progress: this.get("progress"),
@@ -153,13 +305,62 @@ export class TaskSyncRunner {
     };
   }
   async activate(input: unknown) {
+    return this.saveActivation(
+      await this.verifyActivation(input, this.device()),
+    );
+  }
+  async activateReceipt(
+    receipt: unknown,
+    scope: ActivationScope,
+    rolesPublicKey: string,
+    review: Pick<Approval, "revision" | "tasks" | "mappings">,
+  ) {
+    const d = this.device();
+    if (
+      scope.principal !== d.principal ||
+      scope.credentialId !== d.credentialId ||
+      scope.subject !== d.principal
+    )
+      throw new Held("Activation is for a different device");
+    if (this.running || this.get("approval"))
+      throw new Held("This runner already has an activation");
+    const task = review.tasks[0];
+    if (!task) throw new Held("Review the source tasks first");
+    const connection = await exchangeActivation(
+      receipt,
+      scope,
+      rolesPublicKey,
+      task,
+      async (challenge, identity, signal) => {
+        const proof = JSON.parse(
+          Buffer.from(
+            signChallenges(
+              [challenge],
+              this.key().privateKey,
+              identity,
+              this.now(),
+            ),
+            "base64url",
+          ).toString(),
+        ).proofs[0];
+        proof.attestation = await this.attestProof(
+          proof.request,
+          proof.signature,
+          signal,
+        );
+        return proof;
+      },
+      this.request,
+      this.now,
+    );
+    return this.saveActivation({ ...review, ...connection });
+  }
+  private saveActivation(input: unknown) {
     if (this.running || this.get("approval"))
       throw new Held(
         "This runner already has an activation; do not renew or replace it",
       );
-    const a = approvalSchema.parse(
-      await this.verifyActivation(input, this.device()),
-    );
+    const a = approvalSchema.parse(input);
     activeLease(a.identity, this.now());
     const device = this.device();
     if (
@@ -441,6 +642,8 @@ export class TaskSyncRunner {
   async close() {
     this.controller?.abort();
     await this.running;
+    await this.reviewing;
+    await this.handoff.close();
     this.db.close();
   }
 }
