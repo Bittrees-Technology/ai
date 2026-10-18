@@ -1,5 +1,5 @@
 import { CentralWorkflows } from "./central-workflows.js";
-import React, { useState } from "react";
+import React, { useState, useId } from "react";
 import { DirectoryWorkflows } from "./directory-workflows.js";
 import { QualificationPanel } from "./qualification.js";
 import { ProjectWorkPanel } from "./project-work.js";
@@ -20,24 +20,27 @@ export function WorkTools(props: {
   profiles: { id: string; model: string }[];
   onCreated: (id: string) => void;
 }) {
+  const workflowId = useId();
   const [tool, setTool] = useState("");
   return (
     <section aria-label="Work controls">
-      <label>
-        Workflow
-        <select value={tool} onChange={(e) => setTool(e.target.value)}>
-          <option value="">Choose a workflow</option>
-          <option value="central">Central workflows</option>
-          <option value="directory">Directory discovery and validation</option>
-          <option value="tasks">CRM task worker</option>
-          <option value="discovery">Investor discovery</option>
-          <option value="evidence">Investor evidence review</option>
-          <option value="dataset">Research dataset editor</option>
-          <option value="crm">CRM drafts</option>
-          <option value="autonote">AutoNote drafts and approvals</option>
-          <option value="mail">Mail delivery</option>
-        </select>
-      </label>
+      <label htmlFor={workflowId}>Workflow</label>
+      <select
+        id={workflowId}
+        value={tool}
+        onChange={(e) => setTool(e.target.value)}
+      >
+        <option value="">Choose a workflow</option>
+        <option value="central">Central workflows</option>
+        <option value="directory">Directory discovery and validation</option>
+        <option value="tasks">CRM task worker</option>
+        <option value="discovery">Investor discovery</option>
+        <option value="evidence">Investor evidence review</option>
+        <option value="dataset">Research dataset editor</option>
+        <option value="crm">CRM drafts</option>
+        <option value="autonote">AutoNote drafts and approvals</option>
+        <option value="mail">Mail delivery</option>
+      </select>
       <p>
         These controls manage existing workflows. Switching views does not stop
         background work.
