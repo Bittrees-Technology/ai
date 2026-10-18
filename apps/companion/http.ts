@@ -1,3 +1,4 @@
+import { checkForUpdates } from "./updates.js";
 import type { QualificationResearch } from "../../modules/research/qualification.js";
 import type { ProjectWork } from "../../modules/research/project-work.js";
 import type { InvestorResearch } from "../../modules/research/investors.js";
@@ -738,6 +739,9 @@ export function localApi({
       res.status(204).end();
     });
   }
+  app.get("/v1/updates", async (_req, res) =>
+    res.json(await checkForUpdates()),
+  );
   app.get("/v1/health", (_req, res) =>
     res.json({
       status: "ok",
