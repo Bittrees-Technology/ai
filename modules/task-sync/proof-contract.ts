@@ -1,6 +1,6 @@
 import { createHash, randomUUID, sign } from "node:crypto";
 import { z } from "zod";
-import { canonical } from "../workflows/central-worker.js";
+import { canonical } from "../contracts/canonical-json.js";
 export const digest = (value: unknown) =>
   createHash("sha256").update(canonical(value)).digest("hex");
 const hex = z.string().regex(/^[a-f0-9]{64}$/),
@@ -34,7 +34,7 @@ export type SyncIdentity = {
   activatedAt: number;
   expiresAt: number;
 };
-const requestSchema = z.strictObject({
+export const requestSchema = z.strictObject({
   version: z.literal(1),
   source: z.literal("mcp.bittrees.org"),
   audience: z.literal("https://roles.bittrees.org/api/authority/mcp-decision"),

@@ -4,26 +4,9 @@ import { z } from "zod";
 import { Vault } from "../storage/vault.js";
 import { Ollama } from "../models/ollama.js";
 import type { ModelTurn } from "../models/local-turns.js";
-export function canonical(v: any): string {
-  if (
-    v === null ||
-    typeof v === "string" ||
-    typeof v === "boolean" ||
-    (typeof v === "number" && Number.isFinite(v))
-  )
-    return JSON.stringify(v);
-  if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
-  if (v && typeof v === "object")
-    return (
-      "{" +
-      Object.keys(v)
-        .sort()
-        .map((k) => JSON.stringify(k) + ":" + canonical(v[k]))
-        .join(",") +
-      "}"
-    );
-  throw Error("Invalid signed value");
-}
+import { canonical } from "../contracts/canonical-json.js";
+export { canonical } from "../contracts/canonical-json.js";
+
 const hash = (v: any) =>
   createHash("sha256").update(canonical(v)).digest("hex");
 const configSchema = z.strictObject({

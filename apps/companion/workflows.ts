@@ -127,6 +127,19 @@ export function localWorkflows(
   }
   return {
     sync,
+    async attestRuntime(
+      purpose: "enroll" | "activate" | "decision",
+      request: unknown,
+      signature: string,
+    ) {
+      const s = await settings();
+      if (!s) throw Error("Connect this Mac first");
+      return call(
+        "runtime-attestation",
+        { purpose, request, signature },
+        s.controlToken,
+      );
+    },
     async status() {
       const s = await settings();
       if (!s)
