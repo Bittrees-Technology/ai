@@ -1,3 +1,4 @@
+import { cloudExportText } from "../../modules/agents/cloud-scope.js";
 import React, { useEffect, useState } from "react";
 export function Agents({
   api,
@@ -8,6 +9,8 @@ export function Agents({
 }) {
   const [data, setData] = useState<any>();
   const [error, setError] = useState("");
+  const [cloudKey, setCloudKey] = useState("");
+  const [cloudConsent, setCloudConsent] = useState(false);
   const [selected, setSelected] = useState("");
   const empty = () => ({
     id: crypto.randomUUID(),
@@ -43,6 +46,38 @@ export function Agents({
       setError(e instanceof Error ? e.message : "Action failed");
     }
   }
+  const chosenProfile = data?.profiles.find(
+    (p: any) =>
+      p.id ===
+      (selected ||
+        data?.bindings.find((b: any) => b.workflow === workflow)?.profile),
+  );
+  const cloudPreview =
+    chosenProfile?.provider === "openrouter"
+      ? cloudExportText(chosenProfile, instruction)
+      : "";
+  async function queueDraft() {
+    const cloudContextHash = cloudPreview
+      ? Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest(
+              "SHA-256",
+              new TextEncoder().encode(cloudPreview),
+            ),
+          ),
+        )
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")
+      : undefined;
+    await action("/v1/agents/tasks", {
+      operationId: crypto.randomUUID(),
+      workflow,
+      instruction,
+      ...(cloudConsent ? { cloudConsent: true, cloudContextHash } : {}),
+      ...(selected ? { agentProfileId: selected } : {}),
+    });
+  }
+  useEffect(() => setCloudConsent(false), [cloudPreview]);
   const field = (key: string, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
   return (
@@ -155,7 +190,7 @@ export function Agents({
           onChange={(e) => field("provider", e.target.value)}
         >
           <option value="local">Local Mac model</option>
-          <option value="openrouter">OpenRouter (not activated)</option>
+          <option value="openrouter">OpenRouter (free-only)</option>
         </select>
       </label>
       {form.provider === "local" ? (
@@ -228,15 +263,12 @@ export function Agents({
         />
       </label>
       <button
-        disabled={!workflow || !instruction}
-        onClick={() =>
-          void action("/v1/agents/tasks", {
-            operationId: crypto.randomUUID(),
-            workflow,
-            instruction,
-            ...(selected ? { agentProfileId: selected } : {}),
-          })
+        disabled={
+          !workflow ||
+          !instruction ||
+          (!!cloudPreview && (!cloudConsent || !data?.openRouter.enabled))
         }
+        onClick={() => void queueDraft()}
       >
         Add to queue
       </button>
@@ -250,7 +282,76 @@ export function Agents({
           {d.receipt && <p>Model: {d.receipt.model}. Source writes: none.</p>}
         </details>
       ))}
+      {cloudPreview && (
+        <details>
+          <summary>Information proposed for cloud review</summary>
+          <pre style={{ whiteSpace: "pre-wrap" }}>{cloudPreview}</pre>
+        </details>
+      )}
+      {cloudPreview && (
+        <label>
+          <input
+            type="checkbox"
+            checked={cloudConsent}
+            onChange={(e) => setCloudConsent(e.target.checked)}
+          />
+          For this cloud draft, I approve sending the task instructions and
+          selected agent's role, methodology and reference knowledge to
+          OpenRouter and Phala. No source data is attached automatically.
+        </label>
+      )}
       <h3>Remote models & agents</h3>
+      <p>
+        Free-only model: Xing4.0 29B A4B via Phala. Zero-retention routing, no
+        paid fallback. Existing source workflows remain local.
+      </p>
+      <label>
+        OpenRouter API key
+        <input
+          type="password"
+          autoComplete="off"
+          value={cloudKey}
+          onChange={(e) => setCloudKey(e.target.value)}
+        />
+      </label>
+      <button
+        disabled={!cloudKey}
+        onClick={() => {
+          const apiKey = cloudKey;
+          setCloudKey("");
+          void action("/v1/agents/cloud/key", { apiKey });
+        }}
+      >
+        Save key securely
+      </button>
+      <p>
+        {data?.openRouter.hasKey
+          ? "Key saved in the encrypted local vault."
+          : "No key saved."}
+      </p>
+      <button
+        disabled={!data?.openRouter.hasKey}
+        onClick={() => void action("/v1/agents/cloud/check", {})}
+      >
+        Check free access
+      </button>
+      <p>{data?.openRouter.lastCheck?.reason}</p>
+      <button
+        disabled={
+          !data?.openRouter.lastCheck?.ready || data?.openRouter.enabled
+        }
+        onClick={() =>
+          void action("/v1/agents/cloud/enable", { confirmed: true })
+        }
+      >
+        Enable free specialist drafts
+      </button>
+      <button
+        disabled={!data?.openRouter.enabled}
+        onClick={() => void action("/v1/agents/cloud/disable", {})}
+      >
+        Disable cloud access
+      </button>
       <p>{data?.openRouter.reason}</p>
       <p>
         Remote agent messages use an authenticated HTTPS REST transport. No

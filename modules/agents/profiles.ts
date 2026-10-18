@@ -98,6 +98,11 @@ export class AgentProfiles {
 }
 export const draftRequest = z.strictObject({
   operationId: z.uuid(),
+  cloudConsent: z.literal(true).optional(),
+  cloudContextHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   workflow: z.string().min(1).max(128),
   agentProfileId: z.uuid().optional(),
   instruction: z.string().min(1).max(6000),

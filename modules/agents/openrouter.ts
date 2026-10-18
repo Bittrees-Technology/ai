@@ -7,6 +7,7 @@ export class OpenRouter {
       model: string;
       prompt: string;
       apiKey: string;
+      provider?: "phala";
       authorization: {
         networkAllowed: boolean;
         dataExportAllowed: boolean;
@@ -49,6 +50,7 @@ export class OpenRouter {
           stream: false,
           provider: {
             allow_fallbacks: false,
+            ...(input.provider ? { only: [input.provider] } : {}),
             require_parameters: true,
             data_collection: "deny",
             zdr: true,
@@ -81,6 +83,7 @@ export class OpenRouter {
     const receipt = z
       .object({
         id: z.string().min(1),
+        provider: z.string().optional(),
         model: z.string().min(1),
         choices: z
           .array(
@@ -94,7 +97,10 @@ export class OpenRouter {
       .parse(JSON.parse(Buffer.concat(chunks).toString()));
     if (receipt.model !== input.model)
       throw Error("Unexpected remote model; reconcile provider receipt");
+    if (input.provider && receipt.provider?.toLowerCase() !== input.provider)
+      throw Error("Unexpected upstream provider; reconcile receipt");
     return {
+      upstreamProvider: receipt.provider,
       provider: "openrouter",
       requestId: receipt.id,
       model: receipt.model,

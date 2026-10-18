@@ -1,3 +1,7 @@
+import {
+  CloudConnection,
+  cloudBridge,
+} from "../../modules/agents/cloud-connection.js";
 import { ProfiledOllama } from "../../modules/agents/profiled-runtime.js";
 import { AgentQueue } from "../../modules/agents/queue.js";
 import { AgentProfiles } from "../../modules/agents/profiles.js";
@@ -408,6 +412,11 @@ const agents = new AgentCoordinator(
   runtime,
   (id) => store.profile(owner, id),
   () => executionControls.admission(0).reason === "ready",
+  new CloudConnection(
+    join(directory, "cloud-connection.db"),
+    new Vault(key),
+    cloudBridge,
+  ),
 );
 for (const runner of [
   worker,
