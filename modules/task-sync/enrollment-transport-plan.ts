@@ -50,6 +50,8 @@ export type EnrollmentReview = Readonly<{
   ownerWallet: string;
   requestId?: string;
   pollSecretHash?: string;
+  /** Digest of the independently validated owner enrollment challenge. */
+  enrollmentRequestDigest?: string;
 }>;
 /** Offline-only planner. No fetch, sockets, credentials, runtime registration or authority grants.
  * A future native transport must independently enforce pinned TLS/DNS and response bounds.
@@ -142,6 +144,8 @@ export class EnrollmentTransportPlan {
       body = { request: value.request, signature: value.signature };
     } else if (value.operation === "attest") {
       bind(value.request);
+      if (!review.enrollmentRequestDigest || hash(value.request) !== review.enrollmentRequestDigest)
+        throw Error("Owner challenge binding mismatch");
       body = {
         action: "runtime-attestation",
         input: {
@@ -164,6 +168,8 @@ export class EnrollmentTransportPlan {
         body = { id: value.id, pollSecret: value.pollSecret };
       } else {
         bind(value.proof.request);
+        if (!review.enrollmentRequestDigest || hash(value.proof.request) !== review.enrollmentRequestDigest)
+          throw Error("Owner challenge binding mismatch");
         const attestation = value.proof.attestation.request;
         if (
           attestation.purpose !== "enroll" ||
@@ -173,6 +179,9 @@ export class EnrollmentTransportPlan {
           attestation.sourceWorkspace !== review.sourceWorkspace ||
           attestation.ownerWallet !== review.ownerWallet ||
           attestation.requestDigest !== hash(value.proof.request) ||
+          attestation.issuedAt > this.now() ||
+          attestation.issuedAt < value.proof.request.issuedAt ||
+          attestation.expiresAt <= attestation.issuedAt ||
           attestation.expiresAt <= this.now()
         )
           throw Error("Attestation scope mismatch");

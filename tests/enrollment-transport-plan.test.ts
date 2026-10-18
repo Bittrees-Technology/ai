@@ -1,4 +1,5 @@
 import test from "node:test";
+import { canonical } from "../modules/contracts/canonical-json.js";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import {
@@ -136,4 +137,49 @@ test("total calls are bounded independently from owner review freshness", () => 
   const f = fixture();
   for (let i = 0; i < 108; i++) f.plan.prepare({ operation: "heartbeat" });
   assert.throws(() => f.plan.prepare({ operation: "heartbeat" }));
+});
+
+function completionFixture() {
+  const f = fixture();
+  const { kind, ownerWallet, ...identity } = f.request();
+  const request = { ...identity, profileId: randomUUID() };
+  const digest = createHash("sha256").update(canonical(request)).digest("hex");
+  f.set({ ...f.review, enrollmentRequestDigest: digest });
+  const complete = {
+    operation: "complete", id: f.review.requestId, pollSecret: "b".repeat(64),
+    proof: { request, signature: "synthetic",
+      attestation: { signature: "synthetic", request: {
+        version: 1, issuer: "https://ai.bittrees.org", audience: "https://roles.bittrees.org",
+        purpose: "enroll", requestDigest: digest, authorityId: request.authorityId,
+        deviceId: request.deviceId, ownerWallet, principal: request.principal,
+        credentialId: "c".repeat(64), sourceWorkspace: request.sourceWorkspace,
+        issuedAt: request.issuedAt, expiresAt: request.issuedAt + 60000, nonce: randomUUID(),
+      } },
+    },
+  };
+  return { f, complete };
+}
+test("completion permits only two identical plans and never another proof", () => {
+  const { f, complete } = completionFixture();
+  f.plan.prepare(complete);
+  assert.throws(() => f.plan.prepare({ ...complete, proof: { ...complete.proof, signature: "changed" } }));
+  f.plan.prepare(complete);
+  assert.throws(() => f.plan.prepare(complete));
+});
+test("attestation and completion require the reviewed owner challenge", () => {
+  for (const operation of ["attest", "complete"]) {
+    const { f, complete } = completionFixture();
+    f.set({ ...f.review, enrollmentRequestDigest: "f".repeat(64) });
+    const raw = operation === "complete" ? complete : { operation, request: complete.proof.request, signature: "synthetic" };
+    assert.throws(() => f.plan.prepare(raw), /challenge binding/);
+  }
+});
+test("completion rejects substituted scope, expired and future attestations", () => {
+  for (const field of ["purpose", "deviceId", "requestDigest", "issuedAt", "expiresAt"]) {
+    const { f, complete } = completionFixture();
+    const changes: Record<string, unknown> = { purpose: "activate", deviceId: randomUUID(), requestDigest: "f".repeat(64), issuedAt: 100001, expiresAt: 99999 };
+    const raw = structuredClone(complete);
+    Object.assign(raw.proof.attestation.request, { [field]: changes[field] });
+    assert.throws(() => f.plan.prepare(raw));
+  }
 });
