@@ -11,6 +11,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var ready = false
     var quitting = false
     var buffer = ""
+    var desktopBootstrap = ""
     var recovery = RecoveryLifecycle()
     var recoveryProcess: Process?
     var recoveryMessage: String?
@@ -98,7 +99,8 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         process.currentDirectoryURL = resources.appendingPathComponent("engine")
         process.arguments = ["dist/apps/companion/start.js"]
         // Do not inherit NODE_OPTIONS, injected module paths, or shell credentials.
-        process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "BITTREES_DESKTOP": "1"]
+        desktopBootstrap = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
+        process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "BITTREES_DESKTOP": "1", "BITTREES_DESKTOP_BOOTSTRAP": desktopBootstrap]
         lifetime = Pipe()
         process.standardInput = lifetime
         let pipe = Pipe()
@@ -115,12 +117,18 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                 if !self.ready && self.buffer.contains("Bittrees AI: http://127.0.0.1:43127") {
                     self.ready = true
                     self.window.title = "Bittrees AI — Local companion"
-                    self.web.load(URLRequest(url: self.home))
+                    var request = URLRequest(url: self.home.appendingPathComponent("desktop-pair"))
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("http://127.0.0.1:43127", forHTTPHeaderField: "Origin")
+                    request.httpBody = try? JSONSerialization.data(withJSONObject: ["code": self.desktopBootstrap])
+                    self.desktopBootstrap = ""
+                    self.web.load(request)
                     if let message = self.recoveryMessage {
                         self.recoveryMessage = nil
                         let alert = NSAlert()
                         alert.messageText = "Recovery finished"
-                        alert.informativeText = message + "\n\nPair this window again using Copy pairing code in the app menu."
+                        alert.informativeText = message + "\n\nThe local workspace reconnects automatically."
                         alert.addButton(withTitle: "OK")
                         alert.beginSheetModal(for: self.window)
                     }
@@ -199,6 +207,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         process.executableURL = resources.appendingPathComponent("node")
         process.currentDirectoryURL = resources.appendingPathComponent("engine")
         process.arguments = ["dist/apps/companion/activate-cli.js"] + recovery.arguments
+        desktopBootstrap = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
         process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice

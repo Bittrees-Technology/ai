@@ -134,3 +134,58 @@ for (const mode of ["expiry", "attempts"] as const)
       }
     },
   );
+
+test("native bootstrap is one-use and independent of browser pairing, with lock and origin protection", async () => {
+  const store = new Store(":memory:", new Vault(randomBytes(32))),
+    server = createServer();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port,
+    origin = "http://127.0.0.1:" + port;
+  server.on(
+    "request",
+    dashboardServer({
+      store,
+      owner: { userId: "a", tenantId: "t" },
+      token: "a".repeat(64),
+      port,
+      pairCode: "b".repeat(24),
+      desktopBootstrap: "c".repeat(64),
+      assets: "apps/dashboard",
+    }),
+  );
+  const post = (path: string, code: string, Cookie = "", Origin = origin) =>
+    fetch(origin + path, {
+      method: "POST",
+      redirect: "manual",
+      headers: { Origin, Cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+  const health = (Cookie: string) =>
+    fetch(origin + "/v1/health", { headers: { Cookie } });
+  try {
+    assert.equal(
+      (await post("/desktop-pair", "c".repeat(64), "", "https://evil.test"))
+        .status,
+      403,
+    );
+    assert.equal((await post("/desktop-pair", "wrong")).status, 403);
+    const native = await post("/desktop-pair", "c".repeat(64));
+    assert.equal(native.status, 303);
+    assert.equal(native.headers.get("location"), "/");
+    const nativeCookie = native.headers.get("set-cookie")!.split(";")[0]!;
+    assert.equal((await post("/desktop-pair", "c".repeat(64))).status, 403);
+    const browser = await post("/pair", "b".repeat(24));
+    assert.equal(browser.status, 204);
+    const browserCookie = browser.headers.get("set-cookie")!.split(";")[0]!;
+    assert.notEqual(browserCookie, nativeCookie);
+    assert.equal((await health(nativeCookie)).status, 200);
+    assert.equal((await health(browserCookie)).status, 200);
+    assert.equal((await post("/logout", "", nativeCookie)).status, 204);
+    assert.equal((await health(nativeCookie)).status, 401);
+    assert.equal((await health(browserCookie)).status, 200);
+    assert.equal((await post("/desktop-pair", "c".repeat(64))).status, 403);
+  } finally {
+    await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())));
+    store.close();
+  }
+});

@@ -361,7 +361,8 @@ function App() {
           <section className="pair">
             <h2>Connect to this Mac</h2>
             <p>
-              In the macOS menu bar at the top of your screen, choose{" "}
+              The installed Mac app connects automatically when opened. For a
+              separate browser window, use the macOS menu bar: choose{" "}
               <strong>Bittrees AI → Copy pairing code</strong>. Paste the code
               below, then select <strong>Open workspace</strong>. The menu
               copies the code without displaying it; the field hides it as dots.

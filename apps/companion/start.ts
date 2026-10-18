@@ -436,6 +436,10 @@ server.on(
     port,
     token,
     pairCode,
+    desktopBootstrap:
+      process.env.BITTREES_DESKTOP === "1"
+        ? process.env.BITTREES_DESKTOP_BOOTSTRAP
+        : undefined,
     assets: resolve("dist/dashboard"),
     cancelRun: (id) => worker.cancel(id),
     cancelSourceRun: (app) => worker.cancelSource(app),

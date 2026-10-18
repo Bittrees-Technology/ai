@@ -8,6 +8,7 @@ export function dashboardServer(
   options: LocalApiOptions & {
     assets: string;
     pairCode: string;
+    desktopBootstrap?: string;
     now?: () => number;
   },
 ) {
@@ -16,7 +17,9 @@ export function dashboardServer(
     expiry = now() + 10 * 60_000;
   let attempts = 0,
     paired = false,
-    session = "";
+    session = "",
+    desktopSession = "",
+    desktopPaired = false;
   const origin = `http://127.0.0.1:${options.port}`,
     cookieName = `bittrees_ai_${options.port}`;
   app.disable("x-powered-by");
@@ -55,6 +58,25 @@ export function dashboardServer(
     );
     res.status(204).end();
   });
+  app.post("/desktop-pair", express.json({ limit: "1kb" }), (req, res) => {
+    const key = options.desktopBootstrap;
+    if (
+      desktopPaired ||
+      now() >= expiry ||
+      !key ||
+      !/^[a-f0-9]{64}$/.test(key) ||
+      typeof req.body?.code !== "string" ||
+      !equal(req.body.code, key)
+    )
+      return res.status(403).json({ error: "PAIRING_DENIED" });
+    desktopPaired = true;
+    desktopSession = randomBytes(32).toString("hex");
+    res.set(
+      "Set-Cookie",
+      `${cookieName}=${desktopSession}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`,
+    );
+    res.redirect(303, "/");
+  });
   const sessionExpiry = now() + 8 * 60 * 60_000;
   app.use((req, res, next) => {
     const cookie =
@@ -63,7 +85,13 @@ export function dashboardServer(
         .map((s) => s.trim())
         .find((s) => s.startsWith(cookieName + "="))
         ?.slice(cookieName.length + 1) ?? "";
-    if (session && now() < sessionExpiry && equal(cookie, session))
+    const desktopAuthenticated = Boolean(
+      desktopSession && equal(cookie, desktopSession),
+    );
+    if (
+      now() < sessionExpiry &&
+      (desktopAuthenticated || (session && equal(cookie, session)))
+    )
       req.headers.authorization = "Bearer " + options.token;
     if (req.path === "/logout") {
       if (
@@ -71,7 +99,8 @@ export function dashboardServer(
         req.headers.authorization !== "Bearer " + options.token
       )
         return res.status(401).json({ error: "UNAUTHORIZED" });
-      session = "";
+      if (desktopAuthenticated) desktopSession = "";
+      else session = "";
       options.privateKeys?.invalidate();
       options.privateRelay?.invalidate();
       res.set(
