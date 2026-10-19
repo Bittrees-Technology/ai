@@ -208,3 +208,125 @@ test("central worker holds revoked, malformed, expired and unbounded renewals be
     }
   }
 });
+
+test("central restart recovery binds actual instructions, run and step before any model turn", async () => {
+  for (const change of [
+    "stale-hash",
+    "run",
+    "step",
+    "new-input",
+    "unchanged",
+  ]) {
+    const dir = await mkdtemp(join(tmpdir(), "central-recovery-"));
+    const key = randomBytes(32);
+    const input = {
+      title: "Original task",
+      instruction: "Return original result",
+    };
+    const job = {
+      id: randomUUID(),
+      runId: randomUUID(),
+      stepIndex: 0,
+      leaseId: randomUUID(),
+      leaseUntil: new Date(Date.now() - 1000).toISOString(),
+      input,
+      inputHash: createHash("sha256").update(canonical(input)).digest("hex"),
+    };
+    let restarted = false,
+      generations = 0,
+      completions = 0,
+      renewals = 0;
+    const request: typeof fetch = async (_url, options: any) => {
+      const body = JSON.parse(options.body);
+      let result: unknown;
+      if (body.params.name === "workflow_claim") {
+        const recovered = { ...job, input: { ...job.input } };
+        if (restarted) {
+          recovered.leaseId = randomUUID();
+          recovered.leaseUntil = new Date(Date.now() + 900000).toISOString();
+          if (change === "run") recovered.runId = randomUUID();
+          if (change === "step") recovered.stepIndex = 1;
+          if (change === "stale-hash" || change === "new-input")
+            recovered.input.instruction = "Changed instructions";
+          if (change === "new-input")
+            recovered.inputHash = createHash("sha256")
+              .update(canonical(recovered.input))
+              .digest("hex");
+        }
+        result = { job: recovered };
+      } else if (body.params.name === "workflow_renew") {
+        renewals++;
+        if (!restarted) throw Error("Renewal reply unavailable before restart");
+        result = { leaseUntil: new Date(Date.now() + 900000).toISOString() };
+      } else {
+        completions++;
+        result = { completed: true, runId: job.runId, followUpQueued: false };
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { structuredContent: result },
+        }),
+      );
+    };
+    const runtime = {
+      pin: async () => ({
+        profile: { model: "fixture" },
+        digest: "fixture-digest",
+      }),
+      generate: async () => {
+        generations++;
+        return "Original result";
+      },
+    } as unknown as Ollama;
+    const make = () =>
+      new CentralWorkflowWorker(
+        join(dir, "state.db"),
+        new Vault(key),
+        runtime,
+        () => ({}),
+        () => ({ reason: "ready", seconds: 60 }),
+        async (_signal, fn) => fn(),
+        request,
+      );
+    let worker = make();
+    try {
+      worker.configure({
+        confirmed: true,
+        enabled: true,
+        tenant: "fixture",
+        workspace: "fixture",
+        connectionId: randomUUID(),
+        workflowId: "recovery",
+        delegationId: randomUUID(),
+        profileId: randomUUID(),
+        mcpToken: "fixture-token-123456",
+      });
+      await worker.tick();
+      assert.equal(worker.status().pending, true);
+      assert.equal(worker.status().progress.state, "held");
+      assert.equal(generations, 0);
+      assert.equal(renewals, 1);
+      await worker.close();
+      restarted = true;
+      worker = make();
+      await worker.tick();
+      if (change === "unchanged") {
+        assert.equal(generations, 1);
+        assert.equal(completions, 1);
+        assert.equal(worker.status().lastReceipt.runId, job.runId);
+        assert.equal(worker.status().pending, false);
+      } else {
+        assert.equal(generations, 0, change);
+        assert.equal(completions, 0, change);
+        assert.equal(renewals, 1, change);
+        assert.equal(worker.status().pending, true, change);
+        assert.equal(worker.status().progress.state, "held", change);
+      }
+    } finally {
+      await worker.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+});

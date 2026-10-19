@@ -22,18 +22,23 @@ const configSchema = z.strictObject({
   profileId: z.uuid(),
   mcpToken: z.string().min(16).max(4096).regex(/^\S+$/),
 });
-const jobSchema = z.strictObject({
-  id: z.uuid(),
-  runId: z.uuid(),
-  stepIndex: z.int().min(0).max(29),
-  leaseId: z.uuid(),
-  leaseUntil: z.iso.datetime({ offset: true }),
-  input: z.strictObject({
-    title: z.string().max(120),
-    instruction: z.string().max(600),
-  }),
-  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
-});
+const jobSchema = z
+  .strictObject({
+    id: z.uuid(),
+    runId: z.uuid(),
+    stepIndex: z.int().min(0).max(29),
+    leaseId: z.uuid(),
+    leaseUntil: z.iso.datetime({ offset: true }),
+    input: z.strictObject({
+      title: z.string().max(120),
+      instruction: z.string().max(600),
+    }),
+    inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .refine(
+    (job) => hash(job.input) === job.inputHash,
+    "Workflow input hash mismatch",
+  );
 export class CentralWorkflowWorker {
   taskTurn: TaskTurn = immediateTask;
   private db: Database.Database;
@@ -50,6 +55,7 @@ export class CentralWorkflowWorker {
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = FULL");
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value BLOB NOT NULL)",
     );
@@ -271,8 +277,6 @@ export class CentralWorkflowWorker {
         return;
       }
       pending.job = jobSchema.parse(r.job);
-      if (hash(pending.job.input) !== pending.job.inputHash)
-        throw Error("Workflow input hash mismatch");
       this.set("pending", pending);
     }
     let j = pending.job;
@@ -290,7 +294,13 @@ export class CentralWorkflowWorker {
       if (!recovered?.job || recovered.job.id !== j.id)
         throw Error("The previous lease cannot be resumed automatically.");
       const fresh = jobSchema.parse(recovered.job);
-      if (fresh.inputHash !== j.inputHash) throw Error("Instruction changed");
+      if (
+        fresh.inputHash !== j.inputHash ||
+        fresh.runId !== j.runId ||
+        fresh.stepIndex !== j.stepIndex ||
+        canonical(fresh.input) !== canonical(j.input)
+      )
+        throw Error("The saved workflow step changed during lease recovery");
       pending.job = fresh;
       j = fresh;
       this.set("pending", pending);
