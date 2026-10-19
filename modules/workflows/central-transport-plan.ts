@@ -52,7 +52,7 @@ const proofRequest = z.strictObject({
   action: z.enum(["workflow:claim", "workflow:renew", "workflow:complete"]),
   stage: z.literal("execute"),
 });
-const inputSchema = z.strictObject({
+export const centralNativeInputSchema = z.strictObject({
   rpc: z.strictObject({
     jsonrpc: z.literal("2.0"),
     id: z.uuid(),
@@ -118,7 +118,7 @@ export class CentralTransportPlan {
   }
   prepare(raw: unknown) {
     this.assertCurrent();
-    const input = inputSchema.parse(raw),
+    const input = centralNativeInputSchema.parse(raw),
       p = input.proof.request,
       a = input.rpc.params.arguments;
     const tool = input.rpc.params.name,
