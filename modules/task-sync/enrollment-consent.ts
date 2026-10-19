@@ -48,6 +48,7 @@ export class EnrollmentConsent {
     private readonly costAllowed: () => boolean,
     private readonly onRevoke: () => void,
     private readonly now = Date.now,
+    private readonly onApprove: (review: EnrollmentReview) => void = () => {},
   ) {}
   private scope() {
     const scope = scopeSchema.parse(this.trustedScope());
@@ -103,6 +104,12 @@ export class EnrollmentConsent {
     if (!this.valid() || digest !== this.pending?.digest)
       throw Error("Exact current native review required");
     this.approved = true;
+    try {
+      this.onApprove(this.pending!.review);
+    } catch (error) {
+      this.revoke();
+      throw error;
+    }
     return this.pending!.review;
   }
   current(): EnrollmentReview | null {
