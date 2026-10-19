@@ -77,7 +77,11 @@ test("central worker preserves signed identity and completed model evidence acro
       result = { completed: true, runId: job.runId, followUpQueued: true };
     }
     return new Response(
-      JSON.stringify({ id: b.id, result: { structuredContent: result } }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: b.id,
+        result: { structuredContent: result },
+      }),
     );
   };
   const make = () =>
@@ -127,5 +131,80 @@ test("central worker preserves signed identity and completed model evidence acro
   } finally {
     await worker.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("central worker holds revoked, malformed, expired and unbounded renewals before model execution", async () => {
+  for (const renewal of [
+    null,
+    {},
+    { leaseUntil: "not-a-date" },
+    { leaseUntil: new Date(Date.now() - 1000).toISOString() },
+    { leaseUntil: new Date(Date.now() + 3600000).toISOString() },
+  ]) {
+    const dir = await mkdtemp(join(tmpdir(), "central-renew-"));
+    let generations = 0,
+      completions = 0;
+    const input = { title: "Task", instruction: "Return result" };
+    const job = {
+      id: randomUUID(),
+      runId: randomUUID(),
+      stepIndex: 0,
+      leaseId: randomUUID(),
+      leaseUntil: new Date(Date.now() + 900000).toISOString(),
+      input,
+      inputHash: createHash("sha256").update(canonical(input)).digest("hex"),
+    };
+    const request: typeof fetch = async (_url, options: any) => {
+      const body = JSON.parse(options.body);
+      if (body.params.name === "workflow_complete") completions++;
+      if (body.params.name === "workflow_renew" && renewal === null)
+        return new Response("revoked", { status: 403 });
+      const result = body.params.name === "workflow_claim" ? { job } : renewal;
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { structuredContent: result },
+        }),
+      );
+    };
+    const runtime = {
+      pin: async () => ({}),
+      generate: async () => {
+        generations++;
+        return "output";
+      },
+    } as unknown as Ollama;
+    const worker = new CentralWorkflowWorker(
+      join(dir, "state.db"),
+      new Vault(randomBytes(32)),
+      runtime,
+      () => ({}),
+      () => ({ reason: "ready", seconds: 60 }),
+      async (_s, fn) => fn(),
+      request,
+    );
+    try {
+      worker.configure({
+        confirmed: true,
+        enabled: true,
+        tenant: "t",
+        workspace: "w",
+        connectionId: randomUUID(),
+        workflowId: "test",
+        delegationId: randomUUID(),
+        profileId: randomUUID(),
+        mcpToken: "fixture-token-123456",
+      });
+      await worker.tick();
+      assert.equal(worker.status().progress.state, "held");
+      assert.equal(worker.status().pending, true);
+      assert.equal(generations, 0);
+      assert.equal(completions, 0);
+    } finally {
+      await worker.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   }
 });
