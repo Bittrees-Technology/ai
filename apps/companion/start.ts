@@ -21,6 +21,7 @@ import { homedir as recurringHome } from "node:os";
 import { RecurringWorkflows } from "../../modules/workflows/recurring.js";
 import { rolesDecisionPublicKey } from "../../modules/task-sync/roles-pin.js";
 import { TaskSyncRunner } from "../../modules/task-sync/runner.js";
+import { nativeCentralClient } from "../../modules/workflows/central-native-client.js";
 import { CentralWorkflowWorker } from "../../modules/workflows/central-worker.js";
 import { CryptoDirectoryResearch } from "../../modules/research/crypto-directory.js";
 import { researchWorkflowProgress } from "../../modules/research/workflow-progress.js";
@@ -526,6 +527,7 @@ const centralWorkflows = new CentralWorkflowWorker(
     return { reason: a.reason, seconds: a.limits.maxTaskSeconds };
   },
   modelTurns.run,
+  nativeCentralClient()?.request ?? fetch,
 );
 const agentQueue = new AgentQueue(
   join(directory, "agent-queue.db"),

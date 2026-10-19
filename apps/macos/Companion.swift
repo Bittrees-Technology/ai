@@ -8,6 +8,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var engine: Process?
     var output: Pipe?
     var lifetime: Pipe?
+    var centralReviewBusy = false
     var enrollmentReviewBusy = false
     var ready = false
     var quitting = false
@@ -34,6 +35,10 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(NSMenuItem.separator())
         if enrollmentControl() != nil {
             appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")
+        }
+        if centralControl() != nil {
+            appMenu.addItem(withTitle: "Review task execution…", action: #selector(reviewCentralWorkflow), keyEquivalent: "")
+            appMenu.addItem(withTitle: "Stop task verification", action: #selector(stopCentralWorkflow), keyEquivalent: "")
         }
         appMenu.addItem(withTitle: "Copy pairing code", action: #selector(copyPairingCode), keyEquivalent: "p")
         appMenu.addItem(NSMenuItem.separator())
@@ -125,6 +130,17 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
            token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
             process.environment?["BITTREES_ENROLLMENT_HELPER_URL"] = endpoint
             process.environment?["BITTREES_ENROLLMENT_HELPER_TOKEN"] = token
+        }
+        // Only the execution capability crosses into the core; native approval stays here.
+        if let endpoint = inherited["BITTREES_CENTRAL_HELPER_URL"],
+           let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
+           let port = url.port, port > 0, port <= 65535, url.path == "/central-workflow",
+           url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+           url.absoluteString == endpoint,
+           let token = inherited["BITTREES_CENTRAL_HELPER_TOKEN"],
+           token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_CENTRAL_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_CENTRAL_HELPER_TOKEN"] = token
         }
         // Only the fixed cloud broker connection crosses the native boundary.
         if let endpoint = ProcessInfo.processInfo.environment["BITTREES_CLOUD_HELPER_URL"],
