@@ -21,6 +21,10 @@ export class EnrollmentOwner {
   private readonly timer: ReturnType<typeof setTimeout>;
   private pending = new Set<Promise<unknown>>();
   private stopped = false;
+  private executeRequest: (
+    raw: unknown,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
   private closing?: Promise<void>;
   constructor(
     review: EnrollmentReview,
@@ -82,6 +86,7 @@ export class EnrollmentOwner {
         return work;
       },
     };
+    this.executeRequest = endpointSession.execute;
     try {
       this.broker = new EnrollmentBroker(token, () =>
         current() ? endpointSession : null,
@@ -95,6 +100,9 @@ export class EnrollmentOwner {
       Math.max(0, this.review.expiresAt - now()),
     );
     this.timer.unref();
+  }
+  execute(raw: unknown, signal: AbortSignal) {
+    return this.executeRequest(raw, signal);
   }
   async listen() {
     if (this.stopped) throw Error("Enrollment owner closed");
