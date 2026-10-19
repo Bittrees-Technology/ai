@@ -1,3 +1,4 @@
+import { launchEnrollment } from "./enrollment-launch.js";
 import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
 import { z } from "zod";
 import { cloudHelper } from "../../modules/agents/cloud-helper.js";
@@ -143,12 +144,27 @@ async function main() {
   const activityAddress = activity.address();
   if (!activityAddress || typeof activityAddress === "string")
     throw Error("Storage activity helper unavailable");
+  // Missing or held enrollment setup must not interrupt existing local workflows.
+  let enrollment: Awaited<ReturnType<typeof launchEnrollment>> = null;
+  try {
+    enrollment = await launchEnrollment(
+      "/Users/jhineline/Library/Application Support/Bittrees AI",
+    );
+  } catch {
+    console.error(
+      "Workflow connection held: native enrollment configuration or credential unavailable",
+    );
+  }
   const closeHelpers = async () => {
-    activity.closeAllConnections();
-    activity.close();
-    cloud.closeAllConnections();
-    cloud.close();
-    await helper.close();
+    try {
+      await enrollment?.service.close();
+    } finally {
+      activity.closeAllConnections();
+      activity.close();
+      cloud.closeAllConnections();
+      cloud.close();
+      await helper.close();
+    }
   };
   const child = spawn(
     "/usr/bin/sandbox-exec",
@@ -164,6 +180,7 @@ async function main() {
         TMPDIR: process.env.TMPDIR ?? "/tmp",
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         LANG: "en_US.UTF-8",
+        ...enrollment?.environment,
         BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
         BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
         BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
