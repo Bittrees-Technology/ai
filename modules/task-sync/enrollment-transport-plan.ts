@@ -144,7 +144,10 @@ export class EnrollmentTransportPlan {
       body = { request: value.request, signature: value.signature };
     } else if (value.operation === "attest") {
       bind(value.request);
-      if (!review.enrollmentRequestDigest || hash(value.request) !== review.enrollmentRequestDigest)
+      if (
+        !review.enrollmentRequestDigest ||
+        hash(value.request) !== review.enrollmentRequestDigest
+      )
         throw Error("Owner challenge binding mismatch");
       body = {
         action: "runtime-attestation",
@@ -168,7 +171,10 @@ export class EnrollmentTransportPlan {
         body = { id: value.id, pollSecret: value.pollSecret };
       } else {
         bind(value.proof.request);
-        if (!review.enrollmentRequestDigest || hash(value.proof.request) !== review.enrollmentRequestDigest)
+        if (
+          !review.enrollmentRequestDigest ||
+          hash(value.proof.request) !== review.enrollmentRequestDigest
+        )
           throw Error("Owner challenge binding mismatch");
         const attestation = value.proof.attestation.request;
         if (
