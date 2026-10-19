@@ -83,3 +83,23 @@ A crash between a source mutation and local receipt persistence leaves a held
 operation. No automatic stale-lock removal or unknown-mutation retry is provided.
 Source reconciliation must precede any operator recovery. Preserve saved journal
 and session data when diagnosing these holds.
+
+## Trusted native storage assembly
+
+`nativeEnrollmentSessionFactory` connects the fixed HTTPS adapter to encrypted
+session storage. It requires a canonical independently pinned Ed25519 public key,
+an absolute storage path, an existing vault and credential provider, and current
+source/cost admission. Construction sends no requests. Admission and the exact
+approved scope are rechecked before dispatch.
+
+`savedEnrollmentIdentity` reads existing encrypted task identity and workspace
+metadata in one read-only transaction. It does not create keys or reviews and
+returns no private key. Saved workspace metadata is not source authorization.
+`existingEnrollmentCredential` reads the existing encrypted connection with the
+same coordinator-first precedence as the app. An unavailable or invalid preferred
+credential never falls back to another identity. Supplied vaults must already be
+unlocked; these readers do not invoke Keychain or change credential access.
+
+These components remain unregistered in the production launcher. They do not
+establish current server configuration, cost approval, owner approval, installation
+or live workflow execution. Tests use temporary synthetic encrypted state.
