@@ -76,7 +76,7 @@ export class EnrollmentConsent {
       expiresAt: now + 300000,
     });
     const digest = hash({ review, disclosure });
-    this.pending = { review, digest, scopeDigest: hash(scope) };
+    this.pending = { review, digest, scopeDigest: hash(scope), issuedAt: now };
     return Object.freeze({ review, disclosure, digest });
   }
   private valid() {
