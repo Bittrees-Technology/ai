@@ -1,3 +1,4 @@
+import type { EnrollmentClient } from "./enrollment-client.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { canonical } from "../contracts/canonical-json.js";
@@ -40,6 +41,7 @@ export class RuntimeHandoff {
     ) => Promise<unknown>,
     private request: typeof fetch = fetch,
     private now = () => Date.now(),
+    private enrollmentTransport?: Pick<EnrollmentClient, "execute">,
   ) {}
   status() {
     const s = this.read();
@@ -58,6 +60,17 @@ export class RuntimeHandoff {
     return s?.status === "complete" ? s.result : null;
   }
   private async call(action: string, input: unknown) {
+    if (this.enrollmentTransport) {
+      if (!["start", "poll", "complete"].includes(action))
+        throw Error("Unsupported enrollment operation");
+      return this.enrollmentTransport.execute(
+        {
+          ...z.record(z.string(), z.unknown()).parse(input),
+          operation: action,
+        },
+        AbortSignal.timeout(15000),
+      ) as Promise<any>;
+    }
     const r = await this.request(
       "https://roles.bittrees.org/api/mcp/runtime/" + action,
       {
@@ -108,6 +121,8 @@ export class RuntimeHandoff {
       issuedAt: this.now(),
       nonce: randomUUID(),
     });
+    if (this.enrollmentTransport && candidate.kind !== "enroll")
+      throw Error("Native enrollment transport cannot activate workflows");
     const result = z
       .strictObject({
         id: z.uuid(),
@@ -154,6 +169,8 @@ export class RuntimeHandoff {
     return this.running;
   }
   private async poll(s: State) {
+    if (this.enrollmentTransport && s.candidate.kind !== "enroll")
+      throw Error("Native enrollment transport cannot activate workflows");
     const auth = { id: s.id, pollSecret: s.pollSecret };
     let r = await this.call("poll", auth);
     if (r.status === "pending") return;
@@ -188,7 +205,12 @@ export class RuntimeHandoff {
             ? runtimeEnrollmentMessage(request)
             : leaseActivationMessage(request),
         signature = this.sign(message);
-      const attestation = await this.attest(c.kind, request, signature);
+      const attestation = this.enrollmentTransport
+        ? await this.enrollmentTransport.execute(
+            { operation: "attest", request, signature },
+            AbortSignal.timeout(15000),
+          )
+        : await this.attest(c.kind, request, signature);
       r = await this.call("complete", {
         ...auth,
         proof: { request, signature, attestation },
