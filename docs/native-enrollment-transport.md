@@ -1,8 +1,9 @@
 # Native enrollment transport preparation
 
-This implementation is inactive. Nothing imports it from the companion startup,
-Swift launcher, or public API. It does not change the running app's offline policy,
-create a grant, or enroll a device. Enrollment alone grants no workflow permissions.
+The production helper is not configured or launched. Companion startup accepts an
+optional execution capability and Swift includes a conditional native consent
+dialog, but existing launchers supply neither capability. No offline policy change,
+grant or enrollment occurs by default. Enrollment grants no workflow permissions.
 
 ## Prepared components
 
@@ -35,9 +36,24 @@ remain held rather than releasing the exclusive owner while work is still runnin
 
 The task-sync runner and existing Roles handoff accept an optional typed enrollment
 client. When supplied, start/poll/attest/complete use only that client, failed IPC
-never falls back to remote fetch, and activation is rejected before signing. No
-startup caller supplies this option yet. Existing deployments retain their prior
-transport until the reviewed native consent and lifecycle wiring is installed.
+never falls back to remote fetch, and activation is rejected before signing. Core
+startup supplies this option only when the native execution capability is present.
+The native consent capability is excluded from the child engine environment.
+Existing launchers do not provide these capabilities.
+
+## Native consent preparation
+
+The separate control port accepts only propose, exact-digest approval and revoke
+with a different capability from execution. Its trusted identity and cost callbacks
+are supplied by native code, never request data. The five-minute review cannot be
+extended. The service creates a session only after approval and drains it on revoke;
+an uncertain storage close holds future sessions for reconciliation.
+
+The Swift dialog validates the helper proposal digest, identity, destinations,
+limits and expiry before showing the owner details. Cancel is the default. The
+Foundation parser is tested against an actual Node-generated proposal. This does
+not prove interactive UI acceptance or production authority. Both native and core
+capabilities must stay private; the native capability must never reach model/core.
 
 ## Required native integration
 
@@ -47,7 +63,7 @@ Neither model output nor a broker request may create a review, choose a signer,
 change identity, extend a deadline, or supply credentials. Keep the helper outside
 of the model sandbox while preserving the core's existing egress restrictions.
 
-Before installation, integrate the native owner UI and lifecycle, verify helper
+Before installation, configure the trusted production helper and launcher, verify helper
 startup/shutdown and revocation, and exercise the actual staged sandbox boundary.
 Do not enable an endpoint merely because the library or package tests pass.
 
