@@ -33,6 +33,12 @@ The lifecycle does not subscribe to remote authority changes or obtain consent.
 An injected operation that ignores cancellation prevents storage release; it must
 remain held rather than releasing the exclusive owner while work is still running.
 
+The task-sync runner and existing Roles handoff accept an optional typed enrollment
+client. When supplied, start/poll/attest/complete use only that client, failed IPC
+never falls back to remote fetch, and activation is rejected before signing. No
+startup caller supplies this option yet. Existing deployments retain their prior
+transport until the reviewed native consent and lifecycle wiring is installed.
+
 ## Required native integration
 
 The native owner must obtain explicit, bounded consent and current source authority,

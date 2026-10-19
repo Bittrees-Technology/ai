@@ -1,3 +1,4 @@
+import type { EnrollmentClient } from "./enrollment-client.js";
 import { immediateTask, type TaskTurn } from "../agents/queue.js";
 import { RuntimeHandoff } from "./handoff.js";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
@@ -89,6 +90,7 @@ export class TaskSyncRunner {
     ) => Promise<unknown> = async () => {
       throw new Held("Device attestation unavailable");
     },
+    enrollmentTransport?: Pick<EnrollmentClient, "execute">,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -110,6 +112,7 @@ export class TaskSyncRunner {
       attestRuntime,
       this.request,
       this.now,
+      enrollmentTransport,
     );
   }
   private get(key: string): any {

@@ -13,7 +13,9 @@ import {
   runtimeEnrollmentMessage,
 } from "../modules/task-sync/runtime-contract.js";
 import { digest } from "../modules/task-sync/proof-contract.js";
-function fixture() {
+function fixture(native = false) {
+  const operations: string[] = [];
+  let unavailable = false;
   const keys = generateKeyPairSync("ed25519"),
     publicKey = keys.publicKey
       .export({ format: "pem", type: "spki" })
@@ -111,13 +113,49 @@ function fixture() {
       signed++;
       return sign(null, Buffer.from(m), keys.privateKey).toString("base64");
     },
-    async () => ({ testAttestation: true }),
-    request,
+    async () => {
+      assert.equal(
+        native,
+        false,
+        "native enrollment must not use direct attestation",
+      );
+      return { testAttestation: true };
+    },
+    native
+      ? ((async () => {
+          throw Error("Unexpected direct fetch");
+        }) as typeof fetch)
+      : request,
     () => now,
+    native
+      ? {
+          execute: async (raw: any) => {
+            if (unavailable) throw Error("Native broker unavailable");
+            const { operation, ...body } = raw;
+            operations.push(operation);
+            if (operation === "attest") return { testAttestation: true };
+            return (
+              await request(
+                "https://roles.bittrees.org/api/mcp/runtime/" + operation,
+                {
+                  method: "POST",
+                  redirect: "error",
+                  headers: {},
+                  body: JSON.stringify(body),
+                },
+              )
+            ).json();
+          },
+        }
+      : undefined,
   );
   return {
     h,
     input,
+    operations,
+    disable: () => {
+      unavailable = true;
+    },
     setMode: (v: string) => (mode = v),
     calls: () => calls,
     signed: () => signed,
@@ -152,4 +190,36 @@ test("handoff stops polling after five minute expiry", async () => {
   await f.h.tick();
   assert.equal(f.h.status()?.status, "expired");
   assert.equal(f.calls(), 1);
+});
+
+test("native enrollment routes all four handoff operations without direct fallback", async () => {
+  const f = fixture(true);
+  await f.h.start(f.input);
+  await f.h.tick();
+  assert.equal(f.h.status()?.status, "complete");
+  assert.deepEqual(f.operations, ["start", "poll", "attest", "complete"]);
+});
+test("unavailable native broker cannot fall back to direct Roles access", async () => {
+  const f = fixture(true);
+  f.disable();
+  await assert.rejects(f.h.start(f.input), /broker unavailable/);
+  assert.equal(f.calls(), 0);
+  assert.equal(f.h.status(), null);
+});
+
+test("enrollment-only transport rejects activation before signing or dispatch", async () => {
+  const f = fixture(true);
+  await assert.rejects(
+    f.h.start({
+      ...f.input,
+      kind: "activate",
+      leaseId: randomUUID(),
+      policyDigest: "a".repeat(64),
+      runtimeBindingDigest: "b".repeat(64),
+    }),
+    /cannot activate/,
+  );
+  assert.equal(f.signed(), 0);
+  assert.equal(f.calls(), 0);
+  assert.deepEqual(f.operations, []);
 });
