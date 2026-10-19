@@ -9,6 +9,10 @@ import type { EnrollmentSession } from "./enrollment-session.js";
 export class EnrollmentBroker {
   private server: Server;
   private endpoint?: string;
+  private closed = false;
+  private listening = false;
+  private closing?: Promise<void>;
+  private active = new Set<AbortController>();
   constructor(
     token: string,
     current: () => Pick<EnrollmentSession, "execute"> | null,
@@ -18,6 +22,7 @@ export class EnrollmentBroker {
     const expected = Buffer.from("Bearer " + token);
     this.server = createServer(async (req, res) => {
       const controller = new AbortController();
+      this.active.add(controller);
       const deadline = setTimeout(
         () => controller.abort(Error("Broker deadline")),
         16000,
@@ -42,6 +47,7 @@ export class EnrollmentBroker {
             : "",
         );
         if (
+          this.closed ||
           req.socket.remoteAddress !== "127.0.0.1" ||
           !this.endpoint ||
           req.headers.host !== new URL(this.endpoint).host ||
@@ -113,6 +119,7 @@ export class EnrollmentBroker {
         fail(400);
       } finally {
         clearTimeout(deadline);
+        this.active.delete(controller);
       }
     });
     this.server.requestTimeout = 17000;
@@ -121,7 +128,9 @@ export class EnrollmentBroker {
     this.server.maxConnections = 4;
   }
   async listen() {
-    if (this.endpoint) throw Error("Enrollment broker already listening");
+    if (this.closed) throw Error("Enrollment broker closed");
+    if (this.listening) throw Error("Enrollment broker already listening");
+    this.listening = true;
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(0, "127.0.0.1", () => {
@@ -129,17 +138,31 @@ export class EnrollmentBroker {
         resolve();
       });
     });
+    if (this.closed) {
+      this.server.closeAllConnections();
+      this.server.close();
+      throw Error("Enrollment broker closed during startup");
+    }
     const address = this.server.address();
     if (!address || typeof address === "string")
       throw Error("Missing broker address");
     this.endpoint = `http://127.0.0.1:${address.port}/enrollment`;
     return this.endpoint;
   }
-  async close() {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
     this.endpoint = undefined;
-    this.server.closeIdleConnections();
-    await new Promise<void>((resolve, reject) =>
-      this.server.close((e) => (e ? reject(e) : resolve())),
-    );
+    for (const controller of this.active)
+      controller.abort(Error("Enrollment broker closed"));
+    this.closing = new Promise<void>((resolve, reject) => {
+      this.server.close((e) => {
+        if (e && (e as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING")
+          reject(e);
+        else resolve();
+      });
+      this.server.closeAllConnections();
+    });
+    return this.closing;
   }
 }

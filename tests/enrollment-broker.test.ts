@@ -99,3 +99,42 @@ test("disabled or replaced session cannot release response", async () => {
     await broker.close();
   }
 });
+
+test("shutdown cancels in-flight work, discards output and cannot restart", async () => {
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let observed: AbortSignal | undefined;
+  const broker = new EnrollmentBroker(token, () => null);
+  const stable = {
+    execute: async (_raw: unknown, signal: AbortSignal) => {
+      observed = signal;
+      entered();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return { secret: "discard-on-shutdown" };
+    },
+  };
+  await broker.close();
+  const active = new EnrollmentBroker(token, () => stable);
+  const url = await active.listen();
+  const response = fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + token,
+    },
+    body: '{"operation":"heartbeat"}',
+  }).then(
+    (r) => r.text(),
+    () => "disconnected",
+  );
+  await started;
+  await Promise.all([active.close(), active.close()]);
+  assert.equal(observed?.aborted, true);
+  assert.ok(!(await response).includes("discard-on-shutdown"));
+  await assert.rejects(active.listen(), /closed/);
+  await assert.rejects(broker.listen(), /closed/);
+});
