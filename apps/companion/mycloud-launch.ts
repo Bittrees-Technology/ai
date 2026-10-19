@@ -1,3 +1,4 @@
+import { launchCentral } from "./central-launch.js";
 import { launchEnrollment } from "./enrollment-launch.js";
 import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
 import { z } from "zod";
@@ -155,15 +156,29 @@ async function main() {
       "Workflow connection held: native enrollment configuration or credential unavailable",
     );
   }
+  let central: Awaited<ReturnType<typeof launchCentral>> = null;
+  try {
+    central = await launchCentral(
+      "/Users/jhineline/Library/Application Support/Bittrees AI",
+    );
+  } catch {
+    console.error(
+      "Central workflow connection held: current protected scope, credential or cost evidence unavailable",
+    );
+  }
   const closeHelpers = async () => {
     try {
       await enrollment?.service.close();
     } finally {
-      activity.closeAllConnections();
-      activity.close();
-      cloud.closeAllConnections();
-      cloud.close();
-      await helper.close();
+      try {
+        await central?.service.close();
+      } finally {
+        activity.closeAllConnections();
+        activity.close();
+        cloud.closeAllConnections();
+        cloud.close();
+        await helper.close();
+      }
     }
   };
   const child = spawn(
@@ -181,6 +196,7 @@ async function main() {
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         LANG: "en_US.UTF-8",
         ...enrollment?.environment,
+        ...central?.environment,
         BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
         BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
         BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
