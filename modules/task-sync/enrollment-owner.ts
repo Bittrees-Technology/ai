@@ -92,7 +92,7 @@ export class EnrollmentOwner {
     }
     this.timer = setTimeout(
       () => this.revoke(),
-      Math.max(0, review.expiresAt - now()),
+      Math.max(0, this.review.expiresAt - now()),
     );
     this.timer.unref();
   }
