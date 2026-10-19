@@ -101,3 +101,15 @@ export class EnrollmentClient {
     }
   }
 }
+
+/** Only the native core capability is admitted. The consent token is never read here. */
+export function nativeEnrollmentClient(
+  environment: NodeJS.ProcessEnv = process.env,
+): EnrollmentClient | undefined {
+  const endpoint = environment.BITTREES_ENROLLMENT_HELPER_URL;
+  const token = environment.BITTREES_ENROLLMENT_HELPER_TOKEN;
+  if (endpoint === undefined && token === undefined) return undefined;
+  if (!endpoint || !token)
+    throw Error("Incomplete native enrollment capability");
+  return new EnrollmentClient(endpoint, token);
+}

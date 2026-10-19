@@ -116,6 +116,16 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             process.environment?["BITTREES_MYCLOUD_HELPER_URL"] = endpoint
             process.environment?["BITTREES_MYCLOUD_HELPER_TOKEN"] = secret
         }
+        // Enrollment execution capability only. Native consent control is never forwarded.
+        if let endpoint = inherited["BITTREES_ENROLLMENT_HELPER_URL"],
+           let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
+           let port = url.port, port > 0, port <= 65535, url.path == "/enrollment",
+           url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+           let token = inherited["BITTREES_ENROLLMENT_HELPER_TOKEN"],
+           token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_ENROLLMENT_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_ENROLLMENT_HELPER_TOKEN"] = token
+        }
         // Only the fixed cloud broker connection crosses the native boundary.
         if let endpoint = ProcessInfo.processInfo.environment["BITTREES_CLOUD_HELPER_URL"],
            let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",

@@ -1,3 +1,4 @@
+import type { EnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
 import {
   workflowProgressSchema,
   type WorkflowProgress,
@@ -32,6 +33,7 @@ export function localWorkflows(
           progress?: WorkflowProgress;
         }[]
       > = () => [],
+  enrollmentTransport?: Pick<EnrollmentClient, "execute">,
 ) {
   const deviceFile = join(directory, "workflow-device.enc");
   let coordinatorVault: Promise<Vault> | undefined;
@@ -132,6 +134,11 @@ export function localWorkflows(
       request: unknown,
       signature: string,
     ) {
+      if (enrollmentTransport && purpose === "enroll")
+        return enrollmentTransport.execute(
+          { operation: "attest", request, signature },
+          AbortSignal.timeout(15000),
+        );
       const s = await settings();
       if (!s) throw Error("Connect this Mac first");
       return call(
@@ -141,6 +148,18 @@ export function localWorkflows(
       );
     },
     async status() {
+      if (enrollmentTransport) {
+        const result = await enrollmentTransport.execute(
+          { operation: "heartbeat" },
+          AbortSignal.timeout(15000),
+        );
+        return {
+          ...z.record(z.string(), z.unknown()).parse(result),
+          connected: true,
+          catalogue,
+          models: models(),
+        };
+      }
       const s = await settings();
       if (!s)
         return { connected: false, models: models(), deviceLabel: hostname() };

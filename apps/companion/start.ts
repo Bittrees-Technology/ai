@@ -1,3 +1,4 @@
+import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
 import {
   CloudConnection,
@@ -656,6 +657,7 @@ const templateReceiver = remote
 const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
 const codePath = join(directory, "pairing-code.txt");
+const enrollmentTransport = nativeEnrollmentClient();
 const workflows = localWorkflows(
   directory,
   new Vault(key),
@@ -685,6 +687,7 @@ const workflows = localWorkflows(
       state: job.state,
     })),
   ],
+  enrollmentTransport,
 );
 const taskSync = new TaskSyncRunner(
   join(content.directory, "task-sync.db"),
@@ -704,6 +707,7 @@ const taskSync = new TaskSyncRunner(
   },
   (purpose, request, signature) =>
     workflows.attestRuntime(purpose, request, signature),
+  enrollmentTransport,
 );
 taskSync.taskTurn = agentQueue.run;
 server.on(
