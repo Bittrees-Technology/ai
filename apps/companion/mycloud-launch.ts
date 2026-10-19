@@ -1,3 +1,9 @@
+import { Vault } from "../../modules/storage/vault.js";
+import {
+  loadStorageKey,
+  macKeychainEntry,
+} from "../../modules/storage/keychain.js";
+import { launchCentral } from "./central-launch.js";
 import { launchEnrollment } from "./enrollment-launch.js";
 import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
 import { z } from "zod";
@@ -144,26 +150,55 @@ async function main() {
   const activityAddress = activity.address();
   if (!activityAddress || typeof activityAddress === "string")
     throw Error("Storage activity helper unavailable");
+  // Share existing native vault reads across optional helpers without retrying a
+  // denied/missing Keychain entry during this launch. No configuration, no read.
+  const nativeVaults = new Map<string, Promise<Vault>>();
+  const unlockNative = (profile: string) => {
+    let pending = nativeVaults.get(profile);
+    if (!pending) {
+      pending = loadStorageKey(macKeychainEntry(profile), true).then(
+        (key) => new Vault(key),
+      );
+      nativeVaults.set(profile, pending);
+    }
+    return pending;
+  };
   // Missing or held enrollment setup must not interrupt existing local workflows.
   let enrollment: Awaited<ReturnType<typeof launchEnrollment>> = null;
   try {
     enrollment = await launchEnrollment(
       "/Users/jhineline/Library/Application Support/Bittrees AI",
+      unlockNative,
     );
   } catch {
     console.error(
       "Workflow connection held: native enrollment configuration or credential unavailable",
     );
   }
+  let central: Awaited<ReturnType<typeof launchCentral>> = null;
+  try {
+    central = await launchCentral(
+      "/Users/jhineline/Library/Application Support/Bittrees AI",
+      () => unlockNative("personal"),
+    );
+  } catch {
+    console.error(
+      "Central workflow connection held: current protected scope, credential or cost evidence unavailable",
+    );
+  }
   const closeHelpers = async () => {
     try {
       await enrollment?.service.close();
     } finally {
-      activity.closeAllConnections();
-      activity.close();
-      cloud.closeAllConnections();
-      cloud.close();
-      await helper.close();
+      try {
+        await central?.service.close();
+      } finally {
+        activity.closeAllConnections();
+        activity.close();
+        cloud.closeAllConnections();
+        cloud.close();
+        await helper.close();
+      }
     }
   };
   const child = spawn(
@@ -181,6 +216,7 @@ async function main() {
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         LANG: "en_US.UTF-8",
         ...enrollment?.environment,
+        ...central?.environment,
         BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
         BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
         BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
