@@ -25,6 +25,14 @@ create a grant, or enroll a device. Enrollment alone grants no workflow permissi
   owner must supply the already-reviewed session and a random capability. It denies
   browser origins/cookies, wrong hosts, unsupported operations and excess payloads.
 
+The inactive owner lifecycle now snapshots the approved review, checks current
+authority before creating a session, cancels work on explicit revocation or expiry,
+and drains pending work before releasing encrypted storage. Native code must call
+`revoke()` immediately on an owner/source revocation event and `close()` on teardown.
+The lifecycle does not subscribe to remote authority changes or obtain consent.
+An injected operation that ignores cancellation prevents storage release; it must
+remain held rather than releasing the exclusive owner while work is still running.
+
 ## Required native integration
 
 The native owner must obtain explicit, bounded consent and current source authority,
