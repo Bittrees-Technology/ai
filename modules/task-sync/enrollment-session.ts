@@ -9,7 +9,8 @@ import {EnrollmentExchange} from "./enrollment-exchange.js";
 import {EnrollmentResponseVerifier} from "./enrollment-verifier.js";
 import {validateEnrollmentStart,validateEnrollmentPoll} from "./enrollment-response.js";
 const hash=(v:unknown)=>createHash("sha256").update(canonical(v)).digest("hex");
-type State={epoch:string;scopeDigest:string;requestId?:string;pollSecretHash?:string;enrollmentRequestDigest?:string;challenge?:unknown;start?:unknown;completion?:unknown};
+const scope=(r:EnrollmentReview)=>hash({epoch:r.epoch,expiresAt:r.expiresAt,authorityId:r.authorityId,deviceId:r.deviceId,sourceWorkspace:r.sourceWorkspace,principal:r.principal,publicKey:r.publicKey,ownerWallet:r.ownerWallet});
+type State={calls?:number;polls?:number;lastPoll?:number;epoch:string;scopeDigest:string;requestId?:string;pollSecretHash?:string;enrollmentRequestDigest?:string;challenge?:unknown;start?:unknown;completion?:unknown};
 /** Inactive assembly. Owner scope and dispatch are injected by trusted native code.
  * Does not create reviews, extend deadlines, grant roles, or automatically poll/retry.
  * State and mutation journal survive restart; uncertain mutations remain held.
@@ -34,7 +35,7 @@ export class EnrollmentSession {
   this.db=new Database(path);this.db.pragma("journal_mode=WAL");this.db.pragma("synchronous=FULL");
   this.db.exec("CREATE TABLE IF NOT EXISTS enrollment_sessions(epoch TEXT PRIMARY KEY,value BLOB NOT NULL)");
   const row=this.db.prepare("SELECT value FROM enrollment_sessions WHERE epoch=?").get(initial.epoch) as {value:Buffer}|undefined;
-  const scopeDigest=hash({epoch:initial.epoch,expiresAt:initial.expiresAt,authorityId:initial.authorityId,deviceId:initial.deviceId,sourceWorkspace:initial.sourceWorkspace,principal:initial.principal,publicKey:initial.publicKey,ownerWallet:initial.ownerWallet});
+  const scopeDigest=scope(initial);
   this.state=row?vault.open<State>(row.value,"enrollment-session:"+initial.epoch):{epoch:initial.epoch,scopeDigest};
   if(this.state.scopeDigest!==scopeDigest){this.db.close();throw Error("Persisted owner scope changed");}
   this.save();
@@ -54,7 +55,7 @@ export class EnrollmentSession {
  }
  private context():EnrollmentReview|null{
   const r=this.current();
-  if(!r||r.epoch!==this.state.epoch)return null;
+  if(!r||r.epoch!==this.state.epoch||scope(r)!==this.state.scopeDigest||!Number.isSafeInteger(this.now())||r.expiresAt<=this.now())return null;
   return {...r,requestId:this.state.requestId,pollSecretHash:this.state.pollSecretHash,enrollmentRequestDigest:this.state.enrollmentRequestDigest};
  }
  private save(){
@@ -65,6 +66,14 @@ export class EnrollmentSession {
   if(this.busy)throw Error("Enrollment session already active");
   const op=enrollmentOperation.parse(raw);this.busy=true;
   try{
+   signal.throwIfAborted();
+   if(!this.context())throw Error("Owner scope expired or changed");
+   if((this.state.calls??0)>=108)throw Error("Persisted enrollment call limit reached");
+   if(op.operation==="poll"&&((this.state.polls??0)>=100||(this.state.lastPoll!==undefined&&this.now()-this.state.lastPoll<3000)))throw Error("Persisted polling bound reached");
+   this.state.calls=(this.state.calls??0)+1;
+   if(op.operation==="poll"){this.state.polls=(this.state.polls??0)+1;this.state.lastPoll=this.now();}
+   // Reserve budget before dispatch. Failed/uncertain requests do not refund it.
+   this.save();
    const response=await this.exchange.execute(op,signal);
    const review=this.context();if(!review)throw Error("Review revoked before state persistence");
    signal.throwIfAborted();

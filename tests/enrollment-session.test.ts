@@ -52,3 +52,19 @@ test("assembled signed enrollment completes without permission and rejects revok
   allowed=false;await assert.rejects(session.execute(complete,signal));assert.equal(urls.length,4);
  }finally{session.close();rmSync(dir,{recursive:true});}
 });
+
+test("reopening a session cannot reset the persistent request budget",async()=>{
+ const dir=mkdtempSync(tmpdir()+"/enroll-budget-"),vault=new Vault(randomBytes(32));
+ const review={epoch:randomUUID(),expiresAt:400000,authorityId:randomUUID(),deviceId:randomUUID(),sourceWorkspace:randomUUID(),principal:"agent:"+randomUUID(),publicKey:"fixture",ownerWallet:"0x"+"a".repeat(40)};
+ const heartbeat={grant:{id:review.authorityId,wallet_address:review.ownerWallet,device_label:"Mac",device_id:review.deviceId,model_label:"local",paused_at:null,revoked_at:null,signed_at:new Date(50000).toISOString(),require_wallet:true,approval_expires_at:null,last_seen_at:null},activity:[],runs:[],approvalUrl:"https://ai.bittrees.org/workflows"};
+ let calls=0;const dispatch=async()=>{calls++;return new TextEncoder().encode(JSON.stringify(heartbeat));};
+ const open=()=>new EnrollmentSession(dir+"/state.db",vault,()=>review,dispatch,"unused",()=>100000);
+ let session=open();
+ try{
+  for(let i=0;i<60;i++)await session.execute({operation:"heartbeat"},new AbortController().signal);
+  session.close();session=open();
+  for(let i=0;i<48;i++)await session.execute({operation:"heartbeat"},new AbortController().signal);
+  await assert.rejects(session.execute({operation:"heartbeat"},new AbortController().signal),/Persisted.*limit/);
+  assert.equal(calls,108);
+ }finally{session.close();rmSync(dir,{recursive:true});}
+});
