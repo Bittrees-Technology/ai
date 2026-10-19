@@ -30,6 +30,7 @@ export function checkEnrollmentHTTPSPlan(plan:Plan) {
  * Never instantiate in the model core or use this as a general proxy.
  */
 export class EnrollmentHTTPS {
+  private resolving = false;
   constructor(private admit:(epoch:string)=>void,private token:()=>string,
     private resolve:typeof lookup=lookup,private send:typeof request=request) {}
   dispatch=async(plan:Plan,signal:AbortSignal):Promise<Uint8Array>=>{
@@ -39,7 +40,15 @@ export class EnrollmentHTTPS {
     const url=new URL(plan.url);
     // Pin a validated IPv4 answer; never resolve a second time inside the socket.
     // IPv6 is conservatively excluded until separately reviewed.
-    const addresses=await this.resolve(url.hostname,{all:true,family:4});
+    if(this.resolving)throw Error("Prior enrollment DNS lookup still pending");
+    this.resolving=true;
+    const pending=Promise.resolve().then(()=>this.resolve(url.hostname,{all:true,family:4})).finally(()=>{this.resolving=false;});
+    const addresses=await new Promise<Awaited<typeof pending>>((resolve,reject)=>{
+      const abort=()=>reject(bounded.reason ?? Error("Enrollment DNS cancelled"));
+      bounded.addEventListener("abort",abort,{once:true});
+      if(bounded.aborted)abort();
+      pending.then(resolve,reject).finally(()=>bounded.removeEventListener("abort",abort));
+    });
     bounded.throwIfAborted();this.admit(plan.epoch);
     if(!addresses.length||addresses.some(a=>!publicIPv4(a.address)||a.address.startsWith("192.88.99.")))throw Error("Enrollment DNS address rejected");
     const address=addresses[0]!.address;

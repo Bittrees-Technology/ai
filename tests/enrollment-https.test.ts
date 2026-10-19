@@ -20,3 +20,32 @@ test("disabled admission blocks DNS and cancelled DNS completion blocks dispatch
  const c=new AbortController();const y=new EnrollmentHTTPS(()=>{},()=>{throw Error("no token");},(async()=>{c.abort();return [{address:"8.8.8.8",family:4}];}) as any);
  await assert.rejects(y.dispatch(plan,c.signal));
 });
+
+test("cancel returns during stuck DNS, late DNS cannot dispatch or multiply lookups",async()=>{
+ let release!:(v:any)=>void;let started!:()=>void;let sends=0;
+ const began=new Promise<void>(r=>{started=r;});const pending=new Promise<any>(r=>{release=r;});
+ const x=new EnrollmentHTTPS(()=>{},()=>"a".repeat(64),(async()=>{started();return pending;}) as any,(()=>{sends++;}) as any);
+ const c=new AbortController();const result=x.dispatch(plan,c.signal);await began;c.abort(Error("cancelled"));
+ await assert.rejects(result,/cancelled/);
+ await assert.rejects(x.dispatch(plan,new AbortController().signal),/still pending/);
+ release([{address:"8.8.8.8",family:4}]);await new Promise(r=>setImmediate(r));assert.equal(sends,0);
+});
+test("HTTP adapter pins DNS and TLS, rejects redirects, encoding, overflow and interruption",async()=>{
+ const {EventEmitter}=await import("node:events");const {PassThrough}=await import("node:stream");
+ for(const mode of ["ok","redirect","gzip","oversize","abort"]){
+  let sent=0;
+  const send=((url:any,options:any,cb:any)=>{
+   sent++;assert.equal(url.hostname,"ai.bittrees.org");assert.equal(options.rejectUnauthorized,true);assert.equal(options.servername,"ai.bittrees.org");assert.equal(options.agent,false);assert.equal(options.headers.Authorization,"Bearer "+"a".repeat(64));
+   options.lookup("ai.bittrees.org",{all:true},(err:any,addresses:any)=>{assert.equal(err,null);assert.deepEqual(addresses,[{address:"8.8.8.8",family:4}]);});
+   const req=new EventEmitter() as any;req.end=()=>setImmediate(()=>{
+    const res=new PassThrough() as any;res.statusCode=mode==="redirect"?302:200;res.headers={"content-type":"application/json",...(mode==="gzip"?{"content-encoding":"gzip"}:{})};cb(res);
+    if(mode==="abort"){res.emit("aborted");res.destroy();}
+    else res.end(mode==="oversize"?Buffer.alloc(64001):Buffer.from("{}"));
+   });return req;
+  }) as any;
+  const x=new EnrollmentHTTPS(()=>{},()=>"a".repeat(64),(async()=>[{address:"8.8.8.8",family:4}]) as any,send);
+  if(mode==="ok")assert.equal(Buffer.from(await x.dispatch(plan,new AbortController().signal)).toString(),"{}");
+  else await assert.rejects(x.dispatch(plan,new AbortController().signal));
+  assert.equal(sent,1);
+ }
+});
