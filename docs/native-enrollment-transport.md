@@ -2,7 +2,7 @@
 
 The production helper is not configured or launched. Companion startup accepts an
 optional execution capability and Swift includes a conditional native consent
-dialog, but existing launchers supply neither capability. No offline policy change,
+dialog, but the native launcher supplies capabilities only after protected operator configuration passes validation. No offline policy change,
 grant or enrollment occurs by default. Enrollment grants no workflow permissions.
 
 ## Prepared components
@@ -39,7 +39,7 @@ client. When supplied, start/poll/attest/complete use only that client, failed I
 never falls back to remote fetch, and activation is rejected before signing. Core
 startup supplies this option only when the native execution capability is present.
 The native consent capability is excluded from the child engine environment.
-Existing launchers do not provide these capabilities.
+The native launcher provides these capabilities only when the bounded operator configuration is present and valid.
 
 ## Native consent preparation
 
@@ -100,6 +100,23 @@ same coordinator-first precedence as the app. An unavailable or invalid preferre
 credential never falls back to another identity. Supplied vaults must already be
 unlocked; these readers do not invoke Keychain or change credential access.
 
-These components remain unregistered in the production launcher. They do not
+The native launcher now assembles these components conditionally. They do not
 establish current server configuration, cost approval, owner approval, installation
 or live workflow execution. Tests use temporary synthetic encrypted state.
+
+## Native launcher configuration
+
+With no `native-enrollment.json` in the existing app data directory, startup does
+not open enrollment sockets or read enrollment Keychain entries. With configuration,
+the launcher requires a current owner-only regular file, exact identity and credential
+digests, explicit source approval and an independently established included-usage
+evidence reference. The configuration lasts at most one hour; each native approval
+still lasts only five minutes. Unknown cost basis fails closed. The installed app
+does not generate this approval file or claim billing evidence on its own.
+
+The helper uses the public AI signer matched independently to the recorded
+deployment. It reads existing vault keys only; it never creates replacement keys.
+Changing/removing configuration or changing saved identity/credential bytes prevents
+further dispatch. Missing or held enrollment configuration does not stop the existing
+NAS, storage or cloud helper. Source authority and wallet review remain server-owned;
+this enrollment-only helper cannot activate a lease or execute central tasks.
