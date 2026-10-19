@@ -1,3 +1,8 @@
+import { Vault } from "../../modules/storage/vault.js";
+import {
+  loadStorageKey,
+  macKeychainEntry,
+} from "../../modules/storage/keychain.js";
 import { launchCentral } from "./central-launch.js";
 import { launchEnrollment } from "./enrollment-launch.js";
 import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
@@ -145,11 +150,25 @@ async function main() {
   const activityAddress = activity.address();
   if (!activityAddress || typeof activityAddress === "string")
     throw Error("Storage activity helper unavailable");
+  // Share existing native vault reads across optional helpers without retrying a
+  // denied/missing Keychain entry during this launch. No configuration, no read.
+  const nativeVaults = new Map<string, Promise<Vault>>();
+  const unlockNative = (profile: string) => {
+    let pending = nativeVaults.get(profile);
+    if (!pending) {
+      pending = loadStorageKey(macKeychainEntry(profile), true).then(
+        (key) => new Vault(key),
+      );
+      nativeVaults.set(profile, pending);
+    }
+    return pending;
+  };
   // Missing or held enrollment setup must not interrupt existing local workflows.
   let enrollment: Awaited<ReturnType<typeof launchEnrollment>> = null;
   try {
     enrollment = await launchEnrollment(
       "/Users/jhineline/Library/Application Support/Bittrees AI",
+      unlockNative,
     );
   } catch {
     console.error(
@@ -160,6 +179,7 @@ async function main() {
   try {
     central = await launchCentral(
       "/Users/jhineline/Library/Application Support/Bittrees AI",
+      () => unlockNative("personal"),
     );
   } catch {
     console.error(
