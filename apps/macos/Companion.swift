@@ -8,6 +8,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var engine: Process?
     var output: Pipe?
     var lifetime: Pipe?
+    var enrollmentReviewBusy = false
     var ready = false
     var quitting = false
     var buffer = ""
@@ -31,6 +32,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Bittrees AI", action: #selector(showBuildInfo), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        if enrollmentControl() != nil {
+            appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")
+        }
         appMenu.addItem(withTitle: "Copy pairing code", action: #selector(copyPairingCode), keyEquivalent: "p")
         appMenu.addItem(NSMenuItem.separator())
         if recoveryPreview {
