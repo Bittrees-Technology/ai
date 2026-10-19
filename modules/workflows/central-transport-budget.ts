@@ -53,11 +53,16 @@ export class CentralTransportBudget {
     this.reviewHash = hash(this.review);
     this.assertCurrent();
     this.db = new Database(path);
-    this.db.pragma("journal_mode=WAL");
-    this.db.pragma("synchronous=FULL");
-    this.db.exec(
-      "CREATE TABLE IF NOT EXISTS central_native_budgets(epoch TEXT PRIMARY KEY,value BLOB NOT NULL)",
-    );
+    try {
+      this.db.pragma("journal_mode=WAL");
+      this.db.pragma("synchronous=FULL");
+      this.db.exec(
+        "CREATE TABLE IF NOT EXISTS central_native_budgets(epoch TEXT PRIMARY KEY,value BLOB NOT NULL)",
+      );
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
   private assertCurrent() {
     this.guard();
