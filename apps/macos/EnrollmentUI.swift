@@ -62,32 +62,14 @@ extension Companion {
         enrollmentReviewBusy = true
         _ = EnrollmentControlRequest(url: url, token: token, body: ["action": "propose"]) { [weak self] proposal in
             guard let self = self else { return }
-            guard let proposal = proposal, let digest = proposal["digest"] as? String,
-                  digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
-                  let review = proposal["review"] as? [String: Any], let disclosure = proposal["disclosure"] as? [String: Any],
-                  let serialized = try? JSONSerialization.data(withJSONObject: ["review": review, "disclosure": disclosure], options: [.sortedKeys, .withoutEscapingSlashes]),
-                  SHA256.hash(data: serialized).map({ String(format: "%02x", $0) }).joined() == digest,
-                  Set(review.keys) == Set(["epoch", "expiresAt", "authorityId", "deviceId", "sourceWorkspace", "principal", "publicKey", "ownerWallet"]),
-                  let authority = review["authorityId"] as? String, UUID(uuidString: authority) != nil,
-                  let epoch = review["epoch"] as? String, UUID(uuidString: epoch) != nil,
-                  let principal = review["principal"] as? String, principal.hasPrefix("agent:"), UUID(uuidString: String(principal.dropFirst(6))) != nil,
-                  let publicKey = review["publicKey"] as? String, publicKey.count <= 300, publicKey.hasPrefix("-----BEGIN PUBLIC KEY-----"),
-                  let wallet = review["ownerWallet"] as? String, wallet.range(of: "^0x[a-f0-9]{40}$", options: .regularExpression) != nil,
-                  let device = review["deviceId"] as? String, UUID(uuidString: device) != nil,
-                  let workspace = review["sourceWorkspace"] as? String, UUID(uuidString: workspace) != nil,
-                  let expiry = review["expiresAt"] as? Double,
-                  expiry > Date().timeIntervalSince1970 * 1000, expiry <= Date().timeIntervalSince1970 * 1000 + 300000,
-                  disclosure["hosts"] as? [String] == ["ai.bittrees.org", "roles.bittrees.org"],
-                  disclosure["operations"] as? [String] == ["heartbeat", "start", "poll", "attest", "complete"],
-                  disclosure["maximumDurationSeconds"] as? Int == 300,
-                  disclosure["maximumCalls"] as? Int == 108,
-                  disclosure["maximumPolls"] as? Int == 100,
-                  disclosure["additionalSpendingUSD"] as? Int == 0,
-                  disclosure["grantsWorkflowAuthority"] as? Bool == false else {
+            guard let proposal = proposal, let display = EnrollmentReviewDisplay.parse(proposal) else {
                 self.enrollmentReviewBusy = false
                 self.enrollmentNotice("Enrollment review is unavailable", "The local helper could not provide a valid, current review. No connection was approved.")
                 return
             }
+            let digest = display.digest, wallet = display.wallet, device = display.device
+            let workspace = display.workspace, authority = display.authority, principal = display.principal
+            let publicKey = display.publicKey, expiry = display.expiresAt
             let alert = NSAlert()
             alert.messageText = "Allow this Mac to request enrollment?"
             alert.informativeText = "Wallet: \(wallet)\nMac: \(device)\nWorkspace: \(workspace)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(SHA256.hash(data: Data(publicKey.utf8)).map({ String(format: "%02x", $0) }).joined())\n\nContact ai.bittrees.org and roles.bittrees.org for up to five minutes, with at most 108 requests. Additional spending limit: $0.\n\nThis permits the enrollment request only. Roles approval and workflow authority remain separate."
