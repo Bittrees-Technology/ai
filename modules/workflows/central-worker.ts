@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { z } from "zod";
 import { Vault } from "../storage/vault.js";
 import { Ollama } from "../models/ollama.js";
+import { centralWorkflowResponse } from "./central-response.js";
 import type { ModelTurn } from "../models/local-turns.js";
 import { canonical } from "../contracts/canonical-json.js";
 export { canonical } from "../contracts/canonical-json.js";
@@ -26,7 +27,7 @@ const jobSchema = z.strictObject({
   runId: z.uuid(),
   stepIndex: z.int().min(0).max(29),
   leaseId: z.uuid(),
-  leaseUntil: z.string(),
+  leaseUntil: z.iso.datetime({ offset: true }),
   input: z.strictObject({
     title: z.string().max(120),
     instruction: z.string().max(600),
@@ -184,12 +185,13 @@ export class CentralWorkflowWorker {
         i.privateKey,
       ).toString("base64"),
     };
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(20000)]);
     const r = await this.request(
       "https://mcp.bittrees.org/mcp?mode=selected&projects=workflow",
       {
         method: "POST",
         redirect: "error",
-        signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]),
+        signal: bounded,
         headers: {
           authorization: "Bearer " + c.mcpToken,
           "content-type": "application/json",
@@ -205,13 +207,7 @@ export class CentralWorkflowWorker {
         }),
       },
     );
-    const text = await r.text();
-    if (!r.ok || text.length > 64000)
-      throw Error("Workflow request not confirmed. Existing work is retained.");
-    const body = JSON.parse(text);
-    if (body.id !== id || body.error || body.result?.isError)
-      throw Error("Workflow permission or operation was rejected.");
-    return body.result?.structuredContent;
+    return centralWorkflowResponse(r, id, bounded);
   }
   tick() {
     if (this.running) return this.running;
@@ -256,12 +252,16 @@ export class CentralWorkflowWorker {
       this.set("pending", pending);
     }
     if (!pending.job) {
-      const r = await this.call(
-        c,
-        "claim",
-        { ...base, operationId: pending.claimId },
-        signal,
-      );
+      const r = z
+        .strictObject({ job: jobSchema.nullable() })
+        .parse(
+          await this.call(
+            c,
+            "claim",
+            { ...base, operationId: pending.claimId },
+            signal,
+          ),
+        );
       if (!r?.job) {
         this.set("pending", null);
         this.set("progress", {
@@ -277,12 +277,16 @@ export class CentralWorkflowWorker {
     }
     let j = pending.job;
     if (!pending.evidence && Date.parse(j.leaseUntil) <= Date.now()) {
-      const recovered = await this.call(
-        c,
-        "claim",
-        { ...base, operationId: pending.claimId },
-        signal,
-      );
+      const recovered = z
+        .strictObject({ job: jobSchema.nullable() })
+        .parse(
+          await this.call(
+            c,
+            "claim",
+            { ...base, operationId: pending.claimId },
+            signal,
+          ),
+        );
       if (!recovered?.job || recovered.job.id !== j.id)
         throw Error("The previous lease cannot be resumed automatically.");
       const fresh = jobSchema.parse(recovered.job);
@@ -292,12 +296,31 @@ export class CentralWorkflowWorker {
       this.set("pending", pending);
     }
     if (!pending.evidence) {
-      await this.call(
-        c,
-        "renew",
-        { ...base, operationId: randomUUID(), jobId: j.id, leaseId: j.leaseId },
-        signal,
-      );
+      const renewed = z
+        .strictObject({
+          leaseUntil: z.iso.datetime({ offset: true }),
+        })
+        .parse(
+          await this.call(
+            c,
+            "renew",
+            {
+              ...base,
+              operationId: randomUUID(),
+              jobId: j.id,
+              leaseId: j.leaseId,
+            },
+            signal,
+          ),
+        );
+      const leaseUntil = Date.parse(renewed.leaseUntil);
+      // The source issues fifteen-minute leases. Never begin a model turn on
+      // an expired, unbounded or unconfirmed renewal response.
+      if (leaseUntil <= Date.now() || leaseUntil > Date.now() + 16 * 60000)
+        throw Error("Workflow lease renewal could not be confirmed");
+      pending.job = { ...j, leaseUntil: renewed.leaseUntil };
+      j = pending.job;
+      this.set("pending", pending);
       if (this.admission().reason !== "ready") return;
       const model = await this.runtime.pin(this.profile(c.profileId), signal);
       this.set("progress", {
@@ -333,18 +356,27 @@ export class CentralWorkflowWorker {
       });
     }
     // A new Roles proof is generated on every retry; the logical completion ID stays stable.
-    const result = await this.call(
-      c,
-      "complete",
-      {
-        ...base,
-        operationId: pending.completeId,
-        jobId: j.id,
-        leaseId: j.leaseId,
-        evidence: pending.evidence,
-      },
-      signal,
-    );
+    const result = z
+      .strictObject({
+        completed: z.literal(true),
+        runId: z.uuid(),
+        followUpQueued: z.boolean(),
+        replayed: z.boolean().optional(),
+      })
+      .parse(
+        await this.call(
+          c,
+          "complete",
+          {
+            ...base,
+            operationId: pending.completeId,
+            jobId: j.id,
+            leaseId: j.leaseId,
+            evidence: pending.evidence,
+          },
+          signal,
+        ),
+      );
     if (result?.completed !== true || result.runId !== j.runId)
       throw Error("Completion not confirmed");
     const receipt = {
