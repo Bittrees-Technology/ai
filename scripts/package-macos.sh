@@ -2,7 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin ]] || { echo 'Build on macOS.' >&2; exit 1; }
-[[ "$(node -p 'process.versions.node.split(".")[0]')" == 24 ]] || { echo 'Node 24 is required.' >&2; exit 1; }
+[[ 
+node scripts/check-runtime-security.mjs"$(node -p 'process.versions.node.split(".")[0]')" == 24 ]] || { echo 'Node 24 is required.' >&2; exit 1; }
 # Output is disposable; never put user data in this bundle.
 bundle="$PWD/dist/macos/Bittrees AI.app"
 resources="$bundle/Contents/Resources"
@@ -48,7 +49,8 @@ node scripts/write-macos-build-info.mjs "$resources/build-info.json"
 codesign --force --deep --sign - "$bundle"
 codesign --verify --deep --strict "$bundle"
 "$resources/node" --version
-"$resources/node" --input-type=module - "$resources" <<'VERIFY'
+"$resources/node" --in
+"$resources/node" scripts/check-runtime-security.mjsput-type=module - "$resources" <<'VERIFY'
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
