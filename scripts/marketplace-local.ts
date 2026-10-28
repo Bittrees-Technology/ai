@@ -1,3 +1,7 @@
+import {
+  weeklyResearchDue,
+  requireResearchBrief,
+} from "../modules/coordinator/research-brief.js";
 import { researchBatches } from "../modules/coordinator/research.js";
 import { checkWorkflowAuthority } from "../modules/coordinator/authority-client.js";
 import { LocalAuthority } from "../modules/coordinator/local-authority.js";
@@ -162,8 +166,7 @@ try {
               )
               .get(settings.ownerId) as { last_research: number } | undefined
           )?.last_research || 0;
-        const due =
-          command === "research" || Date.now() - last >= 6 * 60 * 60 * 1000;
+        const due = weeklyResearchDue(last);
         const openRuns = (
           await Promise.all(
             store
@@ -210,14 +213,7 @@ try {
                 signal: AbortSignal.timeout(20000),
               },
             );
-            const value = (await r.json()) as any;
-            const brief = value.result?.structuredContent?.brief;
-            if (
-              !r.ok ||
-              !brief?.allowTasks ||
-              (host && !brief.sourceDomains?.includes(host))
-            )
-              throw Error("Research brief authority unavailable");
+            await requireResearchBrief(r, host);
           };
           const runs = await researchBatches(
             db,

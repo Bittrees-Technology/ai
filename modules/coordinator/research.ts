@@ -201,7 +201,11 @@ export async function researchBatches(
   const existing = new Set(
     catalog.items.flatMap((item: any) => {
       try {
-        return [canonical(item.source_url)];
+        const v = new URL(item.source_url).searchParams.get("variant");
+        return [
+          canonical(item.source_url) +
+            (v && /^\d+$/.test(v) ? "#variant=" + v : ""),
+        ];
       } catch {
         return [];
       }
@@ -270,38 +274,23 @@ export async function researchBatches(
               .replace(/&apos;/g, "'")
           : rawTitle;
       if (typeof title !== "string" || title.length > 160) continue;
-      if (
-        selected.some((p) => p.vendor.host === vendor.host && p.title === title)
-      )
-        continue;
       const collection = productCollection(title);
       if (!collection) continue;
-      let url: string, price: string;
-      let variant: any;
+      let url: string;
       if (vendor.adapter === "shopify") {
         if (
           typeof product.handle !== "string" ||
           !/^[\p{L}\p{N}®™_-]+$/u.test(product.handle)
         )
           continue;
-        variant = product.variants?.find(
-          (v: any) =>
-            v.available === true &&
-            /^\d+(\.\d{1,2})?$/.test(v.price) &&
-            Number(v.price) > 0,
-        );
-        if (!variant) continue;
         url = `https://${vendor.host}/products/${encodeURIComponent(product.handle)}`;
-        price = variant.price;
       } else {
         if (
           product.type !== "simple" ||
           product.is_in_stock !== true ||
           product.is_purchasable !== true ||
           product.prices?.currency_code !== vendor.currency ||
-          product.prices?.currency_minor_unit !== 2 ||
-          !/^\d+$/.test(product.prices.price) ||
-          Number(product.prices.price) <= 0
+          product.prices?.currency_minor_unit !== 2
         )
           continue;
         try {
@@ -319,10 +308,11 @@ export async function researchBatches(
         } catch {
           continue;
         }
-        price = (Number(product.prices.price) / 100).toFixed(2);
       }
+      const baseKey = canonical(url);
+      // A legacy URL-only listing or researched record is ambiguous: hold every variant.
       if (
-        existing.has(canonical(url)) ||
+        existing.has(baseKey) ||
         db
           .prepare(
             "SELECT 1 FROM marketplace_researched WHERE owner=? AND url=?",
@@ -331,21 +321,72 @@ export async function researchBatches(
       )
         continue;
       await authorize();
+      let fresh: any;
       try {
-        const fresh = await json(
+        fresh = await json(
           vendor.adapter === "shopify"
             ? `${url}.js`
             : `https://${vendor.host}/wp-json/wc/store/v1/products/${product.id}`,
           request,
         );
-        if (fresh.id !== product.id) continue;
+      } catch {
+        continue;
+      }
+      if (
+        fresh.id !== product.id ||
+        String(fresh.title ?? fresh.name) !== String(rawTitle)
+      )
+        continue;
+      const variants =
+        vendor.adapter === "shopify"
+          ? product.variants
+          : [
+              {
+                id: product.id,
+                available: product.is_in_stock,
+                price: (Number(product.prices?.price) / 100).toFixed(2),
+                title: "Exact simple product",
+                sku: product.sku,
+              },
+            ];
+      if (!Array.isArray(variants)) continue;
+      for (const variant of variants) {
+        if (
+          vendorCount >= PRODUCTS_PER_VENDOR ||
+          selected.length >= RESEARCH_PRODUCT_LIMIT
+        )
+          break;
+        if (
+          !Number.isSafeInteger(variant.id) ||
+          variant.id <= 0 ||
+          variant.available !== true ||
+          !/^\d+(\.\d{1,2})?$/.test(String(variant.price)) ||
+          Number(variant.price) <= 0
+        )
+          continue;
+        const identity =
+          vendor.adapter === "shopify"
+            ? `${baseKey}#variant=${variant.id}`
+            : baseKey;
+        if (
+          existing.has(identity) ||
+          selected.some((p) => p.identity === identity) ||
+          db
+            .prepare(
+              "SELECT 1 FROM marketplace_researched WHERE owner=? AND url=?",
+            )
+            .get(owner, identity)
+        )
+          continue;
         if (vendor.adapter === "shopify") {
           if (
             !fresh.variants?.some(
               (v: any) =>
                 v.id === variant.id &&
                 v.available === true &&
-                v.price === Math.round(Number(price) * 100),
+                v.price === Math.round(Number(variant.price) * 100) &&
+                String(v.title ?? "") === String(variant.title ?? "") &&
+                String(v.sku ?? "") === String(variant.sku ?? ""),
             )
           )
             continue;
@@ -358,12 +399,24 @@ export async function researchBatches(
           fresh.prices?.price !== product.prices.price
         )
           continue;
-      } catch {
-        continue;
+        const configuration = String(
+            variant.title || "Default configuration",
+          ).slice(0, 250),
+          sku = String(variant.sku || "").slice(0, 120);
+        selected.push({
+          vendor,
+          title,
+          collection,
+          url,
+          price: String(variant.price),
+          identity,
+          variantId: vendor.adapter === "shopify" ? String(variant.id) : null,
+          configuration,
+          sku,
+        });
+        existing.add(identity);
+        vendorCount++;
       }
-      selected.push({ vendor, title, collection, url, price });
-      existing.add(canonical(url));
-      vendorCount++;
     }
   }
   const runs: string[] = [];
@@ -372,7 +425,7 @@ export async function researchBatches(
     const time = new Date().toISOString();
     const id = uuid(
       `${owner}:${chunk
-        .map((p) => p.url)
+        .map((p) => p.identity)
         .sort()
         .join("|")}`,
     );
@@ -381,7 +434,16 @@ export async function researchBatches(
     const mercado: any[] = [];
     const authorized = new Set<string>();
     const contactEvidence = new Map<string, { url: string; email?: string }>();
-    for (const { vendor, title, collection, url, price } of chunk) {
+    for (const {
+      vendor,
+      title,
+      collection,
+      url,
+      price,
+      variantId,
+      configuration,
+      sku,
+    } of chunk) {
       if (!authorized.has(vendor.host)) {
         await authorize(vendor.host);
         authorized.add(vendor.host);
@@ -428,7 +490,7 @@ export async function researchBatches(
         researchMethod: "agent",
         category: "Vendor",
         website: `https://${vendor.host}`,
-        summary: `${vendor.name} (${vendor.region}) lists ${title} at ${price} ${vendor.currency}; publicly available when checked.`,
+        summary: `${vendor.name} (${vendor.region}) lists ${title} (${configuration}; SKU ${sku || "not supplied"}; variant ${variantId || "simple"}) at ${price} ${vendor.currency}; publicly available when checked.`,
         relevance:
           "Bitcoin mining, local AI or server equipment supplier for Mercado.",
         uncertainties:
@@ -456,14 +518,23 @@ export async function researchBatches(
       candidates.push({
         ...evidence,
         kind: "tasks",
-        name: `${vendor.name}: verify ${title}`.slice(0, 200),
+        name: `${vendor.name}: verify ${title} — ${configuration}`.slice(
+          0,
+          200,
+        ),
         organizationIndex,
       });
       mercado.push({
         product: {
           product_id: collection,
           name: title,
-          description: `${title}, offered by ${vendor.name}. Public listing checked ${time.slice(0, 10)}; stock and fulfillment require confirmation.`,
+          description: `${title}; configuration: ${configuration}; SKU: ${sku || "not supplied"}; supplier variant: ${variantId || "simple"}. Offered by ${vendor.name}. Public listing checked ${time.slice(0, 10)}; stock and fulfillment require confirmation.`,
+          specifications: JSON.stringify({
+            supplierVariantId: variantId,
+            sku,
+            configuration,
+            selectionUrl: variantId ? `${url}?variant=${variantId}` : url,
+          }),
           source_name: vendor.name,
           source_url: url,
           price,
@@ -478,7 +549,7 @@ export async function researchBatches(
       for (const p of chunk)
         db.prepare(
           "INSERT OR IGNORE INTO marketplace_researched VALUES(?,?,?,?)",
-        ).run(owner, p.url, id, Date.now());
+        ).run(owner, p.identity, id, Date.now());
     })();
     runs.push(id);
   }
