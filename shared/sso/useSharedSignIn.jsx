@@ -1,8 +1,9 @@
 import {useEffect} from 'react';
 
 // No identity, email code, signature or session token is stored in JavaScript.
-export function useSharedSignIn(sessionRevision) {
+export function useSharedSignIn(sessionRevision, ready = true) {
   useEffect(()=>{
+    if(!ready)return;
     if(location.pathname.startsWith('/connect/')||location.pathname.startsWith('/api/'))return;
     const controller=new AbortController();
     fetch('/api/sso/status',{credentials:'same-origin',cache:'no-store',signal:controller.signal})
@@ -12,5 +13,5 @@ export function useSharedSignIn(sessionRevision) {
         location.replace('/api/sso/start?'+query);
       }).catch(()=>{});
     return ()=>controller.abort();
-  },[sessionRevision]);
+  },[sessionRevision,ready]);
 }
