@@ -12,6 +12,8 @@ import type { Ollama } from "../models/ollama.js";
 import type { ModelTurn } from "../models/local-turns.js";
 export type LocalRecurringCollector = {
   capability: string;
+  /** Optional source-owned workflow binding; never selected by model arguments. */
+  workflowId?: string;
   decide?: (receipt: RecurringReceipt) => {
     decision: "wait" | "escalate" | "act";
     actionId?: string;
@@ -68,6 +70,8 @@ export function localRecurringHost(options: {
       .strictObject({ sourceAutomationId: z.literal(definition.id) })
       .parse(operation.arguments);
     const adapter = actionAdapter ?? options.collectors.get(operation.id);
+    if (adapter?.workflowId && adapter.workflowId !== definition.id)
+      throw Error("Source collector is restricted to its reviewed workflow");
     if (!adapter || adapter.capability !== operation.capability)
       throw Error(`Adapter not installed: ${operation.id}`);
     if (definition.additionalSpendingUSD !== 0)

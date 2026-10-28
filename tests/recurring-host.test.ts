@@ -91,3 +91,33 @@ test("local recurring host bounds source targets and retains model provenance wi
   answer = { decision: "act", summary: "Run something" };
   await assert.rejects(host.decide(d, receipt, signal));
 });
+
+test("source collector workflow binding cannot be selected by another definition", async () => {
+  const collector = (
+    await import("../modules/workflows/recurring-chat-source.js")
+  ).createChatMonitorCollector({ workflowId: "reviewed-chat" });
+  const host = localRecurringHost({
+    collectors: new Map([["local.chat.monitor.read", collector]]),
+    automationRoot: "/nonexistent",
+    runtime: {} as Ollama,
+    profile: () => ({}),
+    turn: async (_s, fn) => fn(),
+    admission: () => true,
+    cutoverReady: () => false,
+    recordDecision: () => {},
+  });
+  const d = {
+    id: "another-workflow",
+    collect: {
+      id: "local.chat.monitor.read",
+      capability: "local.chat.monitor.read",
+      arguments: { sourceAutomationId: "another-workflow" },
+    },
+    actions: [],
+    additionalSpendingUSD: 0,
+  } as unknown as RecurringDefinition;
+  await assert.rejects(
+    host.execute(d, d.collect, "operation", new AbortController().signal),
+    /restricted/,
+  );
+});

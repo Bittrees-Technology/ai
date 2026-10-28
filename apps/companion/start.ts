@@ -1,3 +1,4 @@
+import { createChatMonitorCollector } from "../../modules/workflows/recurring-chat-source.js";
 import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
 import {
@@ -369,6 +370,8 @@ const recurring = new RecurringWorkflows(
       string,
       import("../../modules/workflows/recurring-host.js").LocalRecurringCollector
     >([
+      // Inactive: no source transport, authority, journal or schedule is provisioned.
+      ["local.chat.monitor.read", createChatMonitorCollector()],
       [
         "local.storage.plan",
         {
