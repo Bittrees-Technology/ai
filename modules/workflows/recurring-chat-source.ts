@@ -1,11 +1,22 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   prepareChatJournalPath,
   chatJournalApplicationId,
   chatJournalVersion,
 } from "./chat-journal-path.js";
 import { z } from "zod";
+import {
+  acerBindingSchema,
+  acerFresh,
+  acerStoredResultSchema,
+  parseAcerAggregate,
+  type AcerAggregateCheck,
+  type AcerSourceBinding,
+  type AcerSourceTransport,
+  type AcerStoredResult,
+} from "./chat-acer-aggregate.js";
 import type { LocalRecurringCollector } from "./recurring-host.js";
 import type { RecurringReceipt } from "./recurring.js";
 
@@ -32,17 +43,24 @@ export const chatPublicChecks = Object.freeze([
   } as const),
 ]);
 export type ChatPublicCheck = (typeof chatPublicChecks)[number];
-const resultSchema = z.strictObject({
+const publicResultSchema = z.strictObject({
   available: z.boolean(),
   gateReady: z.boolean().optional(),
   releaseReady: z.boolean().optional(),
 });
-type Result = z.infer<typeof resultSchema>;
+type Result = z.infer<typeof publicResultSchema> | AcerStoredResult;
+function parseResult(check: string, value: unknown): Result {
+  return check === "acer_aggregate"
+    ? acerStoredResultSchema.parse(value)
+    : publicResultSchema.parse(value);
+}
+export type ChatAuthorityCheck = ChatPublicCheck | AcerAggregateCheck;
 export type ChatAuthorityContext = {
   workflowId: string;
   revision: string;
   operationId: string;
-  check: ChatPublicCheck;
+  check: ChatAuthorityCheck;
+  phase: "read" | "dispatch" | "accept" | "aggregate";
 };
 /** Implementations must validate current Roles/source bindings and enforced zero-cost scope for THIS context. */
 export type ChatAuthority = (
@@ -143,7 +161,7 @@ export class ChatOperationJournal implements ChatJournal {
       ? {
           ...row,
           result: row.result
-            ? resultSchema.parse(JSON.parse(row.result))
+            ? parseResult(check, JSON.parse(row.result))
             : null,
         }
       : undefined;
@@ -156,7 +174,8 @@ export class ChatOperationJournal implements ChatJournal {
       .regex(/^[a-f0-9]{64}$/)
       .parse(revision);
     if (
-      !chatPublicChecks.some((c) => c.id === check) ||
+      (!chatPublicChecks.some((c) => c.id === check) &&
+        check !== "acer_aggregate") ||
       !Number.isSafeInteger(now) ||
       now < 0
     )
@@ -197,7 +216,7 @@ export class ChatOperationJournal implements ChatJournal {
       .immediate();
   }
   settle(operation: string, revision: string, check: string, result: Result) {
-    const raw = JSON.stringify(resultSchema.parse(result));
+    const raw = JSON.stringify(parseResult(check, result));
     if (
       this.db
         .prepare(
@@ -215,7 +234,7 @@ async function observe(
   check: ChatPublicCheck,
   transport: ChatSourceTransport,
   parent: AbortSignal,
-): Promise<Result> {
+): Promise<z.infer<typeof publicResultSchema>> {
   const controller = new AbortController();
   let rejectAbort: (error: Error) => void = () => {};
   const aborted = new Promise<never>((_, reject) => {
@@ -236,7 +255,7 @@ async function observe(
       reject(Error("timeout"));
     }, check.timeoutMs);
   });
-  const work = async (): Promise<Result> => {
+  const work = async (): Promise<z.infer<typeof publicResultSchema>> => {
     controller.signal.throwIfAborted();
     response = await transport(check, controller.signal);
     controller.signal.throwIfAborted();
@@ -293,7 +312,60 @@ async function observe(
     }
   }
 }
-/** Optional collector for the existing localRecurringHost map. Not registered by production startup. */
+/** Bounded typed source call, never an ambient transport or command selector. */
+async function observeAcer(
+  check: AcerAggregateCheck,
+  transport: AcerSourceTransport,
+  parent: AbortSignal,
+  bindingSha256: string,
+  elapsed: () => number,
+): Promise<AcerStoredResult> {
+  const controller = new AbortController();
+  let rejectAbort: (e: Error) => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+  const abort = () => {
+    controller.abort();
+    rejectAbort(Error("aborted"));
+  };
+  parent.addEventListener("abort", abort, { once: true });
+  if (parent.aborted) abort();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(Error("timeout"));
+    }, check.timeoutMs);
+  });
+  const work = async (): Promise<AcerStoredResult> => {
+    controller.signal.throwIfAborted();
+    const response = await transport(check, controller.signal);
+    controller.signal.throwIfAborted();
+    const report = parseAcerAggregate(response.output, response.exitCode);
+    return {
+      kind: "acer",
+      available: acerFresh(report, elapsed()),
+      bindingSha256,
+      report,
+    };
+  };
+  try {
+    return await Promise.race([work(), deadline, aborted]);
+  } catch {
+    return {
+      kind: "acer",
+      available: false,
+      bindingSha256,
+      failure: "source_unavailable",
+    };
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    parent.removeEventListener("abort", abort);
+  }
+}
+/** Registered by startup with default disabled configuration and no provisioned interfaces. */
 export function createChatMonitorCollector(
   options: {
     enabled?: boolean;
@@ -303,23 +375,70 @@ export function createChatMonitorCollector(
     transport?: ChatSourceTransport;
     journal?: ChatJournal;
     now?: () => number;
+    monotonic?: () => number;
+    acer?: { binding?: AcerSourceBinding; transport?: AcerSourceTransport };
   } = {},
 ): LocalRecurringCollector {
-  const receipt = (evidence: unknown): RecurringReceipt => ({
-    state: "held",
+  const now = options.now ?? Date.now;
+  const monotonic = options.monotonic ?? (() => performance.now());
+  type Clock = {
+    wall: number;
+    mono: number;
+    attempt: number;
+    lastElapsed: number;
+  };
+  // Ephemeral clock continuity is never reconstructed from a wall timestamp.
+  // A restart holds a settled private cache rather than replaying the occurrence.
+  const clocks = new Map<string, Clock>();
+  const elapsedFor = (
+    clock: Clock | undefined,
+    row?: { at: number; attempt: number },
+  ) => {
+    if (
+      !clock ||
+      (row && (row.at !== clock.wall || row.attempt !== clock.attempt))
+    )
+      return NaN;
+    const wall = now() - clock.wall,
+      mono = monotonic() - clock.mono;
+    if (
+      !Number.isSafeInteger(wall) ||
+      wall < 0 ||
+      !Number.isFinite(mono) ||
+      mono < 0
+    )
+      return NaN;
+    const elapsed = Math.ceil(Math.max(wall, mono));
+    if (!Number.isSafeInteger(elapsed) || elapsed < clock.lastElapsed)
+      return NaN;
+    clock.lastElapsed = elapsed;
+    return elapsed;
+  };
+  const receipt = (
+    evidence: unknown,
+    state: RecurringReceipt["state"] = "held",
+  ): RecurringReceipt => ({
+    state,
     objectiveComplete: false,
     evidence,
     fingerprint: digest(evidence),
-    observedAt: (options.now ?? Date.now)(),
+    observedAt: now(),
   });
   return {
     workflowId: options.workflowId,
     capability: "local.chat.monitor.read",
-    decide: () => ({
-      decision: "escalate",
-      summary:
-        "Chat monitoring acceptance held: separate Acer scope unresolved.",
-    }),
+    decide: (r) =>
+      r.state === "confirmed"
+        ? {
+            decision: "wait",
+            summary:
+              "Read-only source aggregate healthy; monitoring activation is separate.",
+          }
+        : {
+            decision: "escalate",
+            summary:
+              "Chat monitoring source evidence held; reconcile its exact source and authority.",
+          },
     read: async (signal, operationId) => {
       signal.throwIfAborted();
       if (!options.enabled)
@@ -336,54 +455,149 @@ export function createChatMonitorCollector(
         return receipt({ reason: "unresolved_binding", acer: "unresolved" });
       if (!/^[a-zA-Z0-9:._-]{1,160}$/.test(operationId))
         return receipt({ reason: "invalid_operation", acer: "unresolved" });
-      const operation = digest([workflowId, operationId]),
-        checks = [];
-      for (const check of chatPublicChecks) {
-        const context = { workflowId, revision, operationId, check };
-        const authorized = async () => {
-          signal.throwIfAborted();
-          return (await authority(context, signal)) === "authorized";
-        };
-        try {
-          if (!(await authorized()))
-            return receipt({ reason: "authority_held", acer: "unresolved" });
-          let row = journal.load(operation, revision, check.id);
+      let acerCheck: AcerAggregateCheck | undefined;
+      const acerOptions = options.acer,
+        acerTransport = acerOptions?.transport;
+      const binding = acerBindingSchema.safeParse(acerOptions?.binding);
+      if (binding.success && acerTransport)
+        acerCheck = Object.freeze({
+          id: "acer_aggregate",
+          binding: Object.freeze(binding.data),
+          timeoutMs: 22000,
+          maxBytes: 4096,
+        });
+      const selected: ChatAuthorityCheck[] = [
+        ...chatPublicChecks,
+        ...(acerCheck ? [acerCheck] : []),
+      ];
+      const operation = digest([workflowId, operationId]);
+      const checks: {
+        checkId: string;
+        observedAt?: number;
+        available: boolean;
+        gateReady?: boolean;
+        releaseReady?: boolean;
+      }[] = [];
+      let privateRow: ReturnType<ChatJournal["load"]>;
+      const authorized = async (
+        check: ChatAuthorityCheck,
+        phase: ChatAuthorityContext["phase"],
+      ) => {
+        signal.throwIfAborted();
+        const decision = await authority(
+          Object.freeze({ workflowId, revision, operationId, check, phase }),
+          signal,
+        );
+        signal.throwIfAborted();
+        return decision === "authorized";
+      };
+      try {
+        for (const check of selected) {
+          // Keep the occurrence ID stable. Changing a private binding changes its
+          // expected revision, so pending/old records hold rather than dispatch again.
+          const expectedRevision =
+            check.id === "acer_aggregate"
+              ? digest([revision, check.binding])
+              : revision;
+          if (!(await authorized(check, "read")))
+            return receipt({ reason: "authority_held", acer: "held" });
+          let row = journal.load(operation, expectedRevision, check.id);
           if (row?.state === "pending")
-            return receipt({ reason: "uncertain_attempt", acer: "unresolved" });
+            return receipt({ reason: "uncertain_attempt", acer: "held" });
+          if (row?.result) parseResult(check.id, row.result);
           if (!row?.result?.available && !(row && row.attempt >= 2)) {
-            journal.reserve(
-              operation,
-              revision,
-              check.id,
-              (options.now ?? Date.now)(),
-            );
-            // Authorization can change during durable reservation; leave pending for reconciliation on denial.
-            if (!(await authorized()))
-              return receipt({ reason: "authority_held", acer: "unresolved" });
-            const result = await observe(check, transport, signal);
-            if (!(await authorized()))
-              return receipt({ reason: "authority_held", acer: "unresolved" });
-            journal.settle(operation, revision, check.id, result);
-            row = journal.load(operation, revision, check.id);
+            const startedAt = now(),
+              clockKey = digest([operation, expectedRevision]);
+            if (
+              check.id === "acer_aggregate" &&
+              !clocks.has(clockKey) &&
+              clocks.size >= 10000
+            )
+              throw Error("Clock evidence capacity held");
+            const clock: Clock = {
+              wall: startedAt,
+              mono: monotonic(),
+              attempt: (row?.attempt ?? 0) + 1,
+              lastElapsed: 0,
+            };
+            journal.reserve(operation, expectedRevision, check.id, startedAt);
+            if (check.id === "acer_aggregate") clocks.set(clockKey, clock);
+            if (!(await authorized(check, "dispatch")))
+              return receipt({ reason: "authority_held", acer: "held" });
+            const result =
+              check.id === "acer_aggregate"
+                ? await observeAcer(
+                    check,
+                    acerTransport!,
+                    signal,
+                    digest(check.binding),
+                    () => elapsedFor(clock),
+                  )
+                : await observe(check, transport, signal);
+            if (!(await authorized(check, "accept")))
+              return receipt({ reason: "authority_held", acer: "held" });
+            journal.settle(operation, expectedRevision, check.id, result);
+            row = journal.load(operation, expectedRevision, check.id);
           }
-          checks.push({
-            checkId: check.id,
-            observedAt: row?.at,
-            ...row?.result,
-          });
-        } catch {
-          return receipt({
-            reason: "source_or_journal_held",
-            acer: "unresolved",
-          });
+          if (check.id === "acer_aggregate") privateRow = row;
+          else {
+            const result = publicResultSchema.parse(row?.result);
+            checks.push({ checkId: check.id, observedAt: row?.at, ...result });
+          }
         }
+        // Recheck every scope before final aggregate completion or cached delivery.
+        for (const check of selected)
+          if (!(await authorized(check, "aggregate")))
+            return receipt({ reason: "authority_held", acer: "held" });
+        let acer: unknown = "unresolved",
+          acerAvailable = false;
+        if (acerCheck) {
+          const result = acerStoredResultSchema.parse(privateRow?.result);
+          if (result.bindingSha256 !== digest(acerCheck.binding))
+            return receipt({ reason: "acer_binding_held", acer: "held" });
+          const elapsed = elapsedFor(
+            clocks.get(
+              digest([operation, digest([revision, acerCheck.binding])]),
+            ),
+            privateRow,
+          );
+          acerAvailable =
+            result.available &&
+            !!result.report &&
+            acerFresh(result.report, elapsed);
+          acer = {
+            available: acerAvailable,
+            status: acerAvailable
+              ? "healthy"
+              : result.report?.status === "healthy"
+                ? "degraded"
+                : (result.report?.status ?? "unavailable"),
+            observedAt: privateRow?.at,
+            elapsedMs:
+              Number.isSafeInteger(elapsed) && elapsed >= 0 ? elapsed : null,
+            freshness: acerAvailable
+              ? "fresh"
+              : result.report?.status === "healthy"
+                ? "held"
+                : "not_healthy",
+            report: result.report,
+          };
+        }
+        const publicAvailabilityPassed = checks.every((c) => c.available);
+        const aggregateHealthy = publicAvailabilityPassed && acerAvailable;
+        return receipt(
+          {
+            checks,
+            publicAvailabilityPassed,
+            acer,
+            aggregateHealthy,
+            monitoringAccepted: false,
+          },
+          aggregateHealthy ? "confirmed" : "held",
+        );
+      } catch {
+        return receipt({ reason: "source_or_journal_held", acer: "held" });
       }
-      return receipt({
-        checks,
-        publicAvailabilityPassed: checks.every((c) => c.available === true),
-        acer: "unresolved",
-        monitoringAccepted: false,
-      });
     },
   };
 }

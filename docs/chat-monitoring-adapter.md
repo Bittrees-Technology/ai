@@ -20,7 +20,8 @@ Future operator wiring must supply all of:
 - Reviewed workflow ID and immutable scope revision; the host enforces workflow binding.
 - `ChatAuthority(context, signal)`: freshly validate Roles/source authority, exact device,
   workflow/revision/operation/check and enforced zero additional cost. It runs before
-  reservation, before dispatch, after response and before cached evidence is returned.
+  reservation, before dispatch, after response and again for each scope before final
+  aggregate completion or cached evidence is returned.
 - `ChatSourceTransport(check, signal)`: reviewed native transport that enforces the exact
   frozen check, public DNS/IP pinning, TLS, no proxy/cookies/credentials/redirects and abort.
   This module has no default transport; mock transport does not prove native enforcement.
@@ -36,11 +37,42 @@ changes, journal errors/capacity and revocation hold evidence. No timer schedule
 the workflow owner must re-enter with the same occurrence ID. Different occurrences require
 the existing single-owner scheduler/admission controls. No successor is provisioned.
 
-Acer has no approved host, pinned helper, fixed invocation or source scope. Every combined
-receipt therefore stays held, objectiveComplete false, monitoringAccepted false, and
-explicitly records Acer unresolved even if both public checks pass. Its deterministic
-collector decision escalates that hold. Do not silently omit Acer or treat these public
-checks as complete independent monitoring acceptance.
+Acer is an optional typed aggregate source, with no runtime binding or transport in
+startup. Machine addresses, host-key fingerprints, accounts and paths stay in private
+operator configuration. `AcerSourceBinding` contains only the reviewed source ID and
+opaque host/helper/contract identity digests; `AcerSourceTransport` accepts that fixed
+check and an abort signal, with no command, URL or argument selector. The trusted native
+transport and current authority provider must independently enforce the actual private
+identity. Supplying a digest alone never grants source access.
+
+The source accepts at most 4096 bytes of strict UTF-8 version 1 JSON from a bounded
+22-second call. It requires exact unique inbound/outbound components, readOnly true,
+workerStarted false and mailSent false, exact status/exit-code agreement and a small
+fixed reason vocabulary. Unknown/private fields, contradictory top-level status,
+duplicated/foreign components and malformed age values are rejected without retaining
+or echoing raw source output. A healthy component requires both reportAgeMs and
+workerHeartbeatAgeMs independently between zero and 300000 ms inclusive. A recently
+cached report never refreshes its worker heartbeat age. Conservative time elapsed since
+local reservation, including transport/authority latency, is added again on cached
+acceptance using the maximum of wall and monotonic elapsed time. Elapsed age cannot
+decrease. Clock continuity is bounded in memory and tied to the exact attempt; a process
+restart or unverifiable clock holds private cached evidence without replaying its
+occurrence. Public legacy cache behavior is unchanged.
+
+Private journal revisions additionally bind the runtime identity digests. An identity
+change in an existing occurrence holds its old record instead of producing a new
+operation ID. Pending public or private records remain unreplayable. Public legacy
+results remain readable under their original revision, and cannot substitute for a
+private aggregate result. Current authority is checked at read, dispatch, acceptance
+and again for every scope before final aggregate or cached delivery. Revocation returns
+held evidence without serving cached source observations.
+
+Unresolved private binding keeps Acer explicitly held. Valid disabled, degraded or
+unavailable reports also hold the combined aggregate. When explicitly injected trusted
+interfaces provide current authorized healthy observations for all checks, the collector
+can confirm that read-only source observation; objectiveComplete remains false and
+monitoringAccepted remains false. This is never host, installation, native policy or
+schedule acceptance. Startup remains disabled and no live transport is provisioned.
 
 Activation additionally needs exact original schedule/instruction inventory and fingerprints,
 source/owner/controller approval, native allowed/denied boundary tests, bounded live evidence,

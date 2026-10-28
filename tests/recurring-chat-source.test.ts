@@ -302,7 +302,7 @@ test("authority gets exact workflow, revision, operation and fixed scope", async
       assert.equal(context.workflowId, "fixture-chat");
       assert.equal(context.revision, revision);
       assert.equal(context.operationId, "occurrence");
-      assert.ok(chatPublicChecks.includes(context.check));
+      assert.ok(chatPublicChecks.some((c) => c === context.check));
       return "authorized";
     },
   });
