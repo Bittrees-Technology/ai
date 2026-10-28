@@ -56,8 +56,12 @@ cached report never refreshes its worker heartbeat age. Conservative time elapse
 local reservation, including transport/authority latency, is added again on cached
 acceptance using the maximum of wall and monotonic elapsed time. Elapsed age cannot
 decrease. Clock continuity is bounded in memory and tied to the exact attempt; a process
-restart or unverifiable clock holds private cached evidence without replaying its
-occurrence. Public legacy cache behavior is unchanged.
+restart or unverifiable clock holds every cached observation without replaying its
+occurrence. Both public observations have an independent 300000 ms inclusive freshness
+bound from reservation through transport, authority and final aggregate evaluation.
+A fresh private retry cannot make old public successes healthy. Settled successful
+public calls are retained without replay; stale or legacy cache rows without clock
+continuity remain held. Their stored schema and original timestamps remain readable.
 
 Private journal revisions additionally bind the runtime identity digests. An identity
 change in an existing occurrence holds its old record instead of producing a new
