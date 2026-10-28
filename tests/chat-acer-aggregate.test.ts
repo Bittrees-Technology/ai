@@ -55,6 +55,7 @@ function setup(
     binding?: AcerSourceBinding;
     journal?: ChatOperationJournal;
     enabled?: boolean;
+    monotonic?: () => number;
   } = {},
 ) {
   let at = 100000,
@@ -67,6 +68,7 @@ function setup(
     revision,
     journal,
     now: () => at,
+    monotonic: opts.monotonic,
     authority: opts.authority ?? (async () => "authorized" as const),
     transport: async () => {
       publicCalls++;
@@ -613,5 +615,58 @@ test("unresolved private authority holds without private dispatch", async () => 
   const r = await c.collector.read(signal(), "occurrence");
   assert.equal((r.evidence as any).reason, "authority_held");
   assert.equal(c.privateCalls(), 0);
+  c.journal.close();
+});
+
+test("positive wall rollback cannot extend the monotonic worker freshness window", async () => {
+  let mono = 0;
+  const c = setup({ monotonic: () => mono });
+  assert.equal(
+    (await c.collector.read(signal(), "occurrence")).state,
+    "confirmed",
+  );
+  c.advance(240000);
+  mono = 240000;
+  assert.equal(
+    (await c.collector.read(signal(), "occurrence")).state,
+    "confirmed",
+  );
+  c.advance(-180000);
+  mono = 360000;
+  const r = await c.collector.read(signal(), "occurrence");
+  assert.equal(r.state, "held");
+  assert.equal((r.evidence as any).acer.elapsedMs, 360000);
+  assert.equal(c.privateCalls(), 1);
+  c.journal.close();
+});
+test("private cached evidence after restart holds instead of replaying", async () => {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "acer-clock-restart-")),
+    path = join(dir, "journal.db");
+  try {
+    const c = setup({ journal: new ChatOperationJournal(path) });
+    await c.collector.read(signal(), "occurrence");
+    c.journal.close();
+    const d = setup({ journal: new ChatOperationJournal(path) });
+    const r = await d.collector.read(signal(), "occurrence");
+    assert.equal(r.state, "held");
+    assert.equal((r.evidence as any).acer.elapsedMs, null);
+    assert.equal(d.privateCalls(), 0);
+    assert.equal(d.publicCalls(), 0);
+    d.journal.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("a decreasing elapsed clock cannot make an old cache younger", async () => {
+  let mono = 0;
+  const c = setup({ monotonic: () => mono });
+  await c.collector.read(signal(), "occurrence");
+  c.advance(240000);
+  mono = 240000;
+  await c.collector.read(signal(), "occurrence");
+  c.advance(-180000);
+  mono = 60000;
+  assert.equal((await c.collector.read(signal(), "occurrence")).state, "held");
+  assert.equal(c.privateCalls(), 1);
   c.journal.close();
 });

@@ -54,7 +54,10 @@ or echoing raw source output. A healthy component requires both reportAgeMs and
 workerHeartbeatAgeMs independently between zero and 300000 ms inclusive. A recently
 cached report never refreshes its worker heartbeat age. Conservative time elapsed since
 local reservation, including transport/authority latency, is added again on cached
-acceptance; stale evidence and backwards clocks hold the aggregate.
+acceptance using the maximum of wall and monotonic elapsed time. Elapsed age cannot
+decrease. Clock continuity is bounded in memory and tied to the exact attempt; a process
+restart or unverifiable clock holds private cached evidence without replaying its
+occurrence. Public legacy cache behavior is unchanged.
 
 Private journal revisions additionally bind the runtime identity digests. An identity
 change in an existing occurrence holds its old record instead of producing a new

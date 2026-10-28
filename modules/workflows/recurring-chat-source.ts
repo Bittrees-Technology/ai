@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   prepareChatJournalPath,
   chatJournalApplicationId,
@@ -317,8 +318,7 @@ async function observeAcer(
   transport: AcerSourceTransport,
   parent: AbortSignal,
   bindingSha256: string,
-  now: () => number,
-  startedAt: number,
+  elapsed: () => number,
 ): Promise<AcerStoredResult> {
   const controller = new AbortController();
   let rejectAbort: (e: Error) => void = () => {};
@@ -345,7 +345,7 @@ async function observeAcer(
     const report = parseAcerAggregate(response.output, response.exitCode);
     return {
       kind: "acer",
-      available: acerFresh(report, now() - startedAt),
+      available: acerFresh(report, elapsed()),
       bindingSha256,
       report,
     };
@@ -375,10 +375,45 @@ export function createChatMonitorCollector(
     transport?: ChatSourceTransport;
     journal?: ChatJournal;
     now?: () => number;
+    monotonic?: () => number;
     acer?: { binding?: AcerSourceBinding; transport?: AcerSourceTransport };
   } = {},
 ): LocalRecurringCollector {
   const now = options.now ?? Date.now;
+  const monotonic = options.monotonic ?? (() => performance.now());
+  type Clock = {
+    wall: number;
+    mono: number;
+    attempt: number;
+    lastElapsed: number;
+  };
+  // Ephemeral clock continuity is never reconstructed from a wall timestamp.
+  // A restart holds a settled private cache rather than replaying the occurrence.
+  const clocks = new Map<string, Clock>();
+  const elapsedFor = (
+    clock: Clock | undefined,
+    row?: { at: number; attempt: number },
+  ) => {
+    if (
+      !clock ||
+      (row && (row.at !== clock.wall || row.attempt !== clock.attempt))
+    )
+      return NaN;
+    const wall = now() - clock.wall,
+      mono = monotonic() - clock.mono;
+    if (
+      !Number.isSafeInteger(wall) ||
+      wall < 0 ||
+      !Number.isFinite(mono) ||
+      mono < 0
+    )
+      return NaN;
+    const elapsed = Math.ceil(Math.max(wall, mono));
+    if (!Number.isSafeInteger(elapsed) || elapsed < clock.lastElapsed)
+      return NaN;
+    clock.lastElapsed = elapsed;
+    return elapsed;
+  };
   const receipt = (
     evidence: unknown,
     state: RecurringReceipt["state"] = "held",
@@ -421,8 +456,10 @@ export function createChatMonitorCollector(
       if (!/^[a-zA-Z0-9:._-]{1,160}$/.test(operationId))
         return receipt({ reason: "invalid_operation", acer: "unresolved" });
       let acerCheck: AcerAggregateCheck | undefined;
-      const binding = acerBindingSchema.safeParse(options.acer?.binding);
-      if (binding.success && options.acer?.transport)
+      const acerOptions = options.acer,
+        acerTransport = acerOptions?.transport;
+      const binding = acerBindingSchema.safeParse(acerOptions?.binding);
+      if (binding.success && acerTransport)
         acerCheck = Object.freeze({
           id: "acer_aggregate",
           binding: Object.freeze(binding.data),
@@ -469,19 +506,32 @@ export function createChatMonitorCollector(
             return receipt({ reason: "uncertain_attempt", acer: "held" });
           if (row?.result) parseResult(check.id, row.result);
           if (!row?.result?.available && !(row && row.attempt >= 2)) {
-            const startedAt = now();
+            const startedAt = now(),
+              clockKey = digest([operation, expectedRevision]);
+            if (
+              check.id === "acer_aggregate" &&
+              !clocks.has(clockKey) &&
+              clocks.size >= 10000
+            )
+              throw Error("Clock evidence capacity held");
+            const clock: Clock = {
+              wall: startedAt,
+              mono: monotonic(),
+              attempt: (row?.attempt ?? 0) + 1,
+              lastElapsed: 0,
+            };
             journal.reserve(operation, expectedRevision, check.id, startedAt);
+            if (check.id === "acer_aggregate") clocks.set(clockKey, clock);
             if (!(await authorized(check, "dispatch")))
               return receipt({ reason: "authority_held", acer: "held" });
             const result =
               check.id === "acer_aggregate"
                 ? await observeAcer(
                     check,
-                    options.acer!.transport!,
+                    acerTransport!,
                     signal,
                     digest(check.binding),
-                    now,
-                    startedAt,
+                    () => elapsedFor(clock),
                   )
                 : await observe(check, transport, signal);
             if (!(await authorized(check, "accept")))
@@ -505,7 +555,12 @@ export function createChatMonitorCollector(
           const result = acerStoredResultSchema.parse(privateRow?.result);
           if (result.bindingSha256 !== digest(acerCheck.binding))
             return receipt({ reason: "acer_binding_held", acer: "held" });
-          const elapsed = now() - (privateRow?.at ?? NaN);
+          const elapsed = elapsedFor(
+            clocks.get(
+              digest([operation, digest([revision, acerCheck.binding])]),
+            ),
+            privateRow,
+          );
           acerAvailable =
             result.available &&
             !!result.report &&
