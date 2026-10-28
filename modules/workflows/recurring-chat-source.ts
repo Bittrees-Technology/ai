@@ -1,6 +1,10 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync } from "node:fs";
+import {
+  prepareChatJournalPath,
+  chatJournalApplicationId,
+  chatJournalVersion,
+} from "./chat-journal-path.js";
 import { z } from "zod";
 import type { LocalRecurringCollector } from "./recurring-host.js";
 import type { RecurringReceipt } from "./recurring.js";
@@ -75,24 +79,50 @@ export interface ChatJournal {
 export class ChatOperationJournal implements ChatJournal {
   private db: Database.Database;
   constructor(path: string) {
-    if (path !== ":memory:") {
-      try {
-        const info = lstatSync(path);
-        if (!info.isFile() || info.isSymbolicLink())
-          throw Error("Invalid journal path");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const guard =
+      path === ":memory:" ? undefined : prepareChatJournalPath(path);
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(path, { fileMustExist: path !== ":memory:" });
+      guard?.assertUnchanged();
+      db.pragma("synchronous = FULL");
+      db.pragma("busy_timeout = 1000");
+      if (!guard || guard.created) {
+        // Persist the identity/schema before WAL so crash recovery never depends on a
+        // marker present only in a sidecar. No existing foreign file is initialized.
+        db.exec(
+          "CREATE TABLE chat_attempts(operation TEXT,revision TEXT,checkId TEXT,attempt INTEGER,state TEXT,at INTEGER,result TEXT,PRIMARY KEY(operation,checkId))",
+        );
+        db.pragma(`application_id = ${chatJournalApplicationId}`);
+        db.pragma(`user_version = ${chatJournalVersion}`);
+      } else {
+        const tables = db
+          .prepare(
+            "SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+          )
+          .all() as { name: string }[];
+        const columns = db.pragma("table_info(chat_attempts)") as {
+          name: string;
+        }[];
+        if (
+          tables.length !== 1 ||
+          tables[0]?.name !== "chat_attempts" ||
+          columns.map((c) => c.name).join() !==
+            "operation,revision,checkId,attempt,state,at,result"
+        )
+          throw Error("Foreign Chat journal schema");
       }
+      guard?.assertUnchanged();
+      db.pragma("journal_mode = WAL");
+      this.db = db;
+    } catch (error) {
+      db?.close();
+      throw error;
+    } finally {
+      guard?.close();
     }
-    this.db = new Database(path);
-    if (path !== ":memory:") chmodSync(path, 0o600);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("synchronous = FULL");
-    this.db.pragma("busy_timeout = 1000");
-    this.db.exec(
-      "CREATE TABLE IF NOT EXISTS chat_attempts(operation TEXT,revision TEXT,checkId TEXT,attempt INTEGER,state TEXT,at INTEGER,result TEXT,PRIMARY KEY(operation,checkId))",
-    );
   }
+
   load(operation: string, revision: string, check: string) {
     const row = this.db
       .prepare(

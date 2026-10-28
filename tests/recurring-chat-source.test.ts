@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -163,7 +163,7 @@ test("revocation during response prevents settlement", async () => {
   c.journal.close();
 });
 test("retry waits 30s and caps at two across SQLite reopen", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "chat-journal-")),
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "chat-journal-")),
     path = join(dir, "test.db");
   let calls = 0;
   try {
@@ -281,7 +281,7 @@ test("abort interrupts a noncooperating transport", async () => {
   c.journal.close();
 });
 test("pending reservation survives actual reopen", () => {
-  const dir = mkdtempSync(join(tmpdir(), "chat-pending-")),
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "chat-pending-")),
     path = join(dir, "test.db"),
     op = "c".repeat(64);
   try {

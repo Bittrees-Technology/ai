@@ -26,7 +26,7 @@ Future operator wiring must supply all of:
   This module has no default transport; mock transport does not prove native enforcement.
 - A durable `ChatJournal`; `ChatOperationJournal` uses SQLite WAL/FULL and stores only bounded
   boolean observations plus operation metadata, no response bodies or credentials.
-  Use an operator-owned safe path. Existing symlink/nonregular leaf paths are rejected.
+  Use an absolute canonical path under an operator-owned 0700 directory. Every ancestor must be a non-symlink owned by root/operator and protected from other-user writes (root sticky temporary ancestors are permitted). Existing leaf/sidecars must be owned, single-link regular 0600 files. No chmod or repair is performed. New files are exclusively created with NOFOLLOW; existing files require the dedicated application/version marker and expected schema. Foreign/empty legacy files and unsafe sidecars are held unchanged. Descriptor/path/parent identities are checked around SQLite open. This assumes a trusted same-UID owner; it is not OS isolation against another process with the operator’s full filesystem authority. WAL/FULL and crash recovery remain required.
 
 Reservation commits before dispatch. A pending record is an uncertain outcome and blocks
 replay, including after restart. Only a settled failed check can retry after 30 seconds,
