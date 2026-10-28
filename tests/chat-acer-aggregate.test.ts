@@ -381,10 +381,7 @@ test("legacy public results stay readable but cannot stand in for Acer", async (
     c.journal.reserve(op, revision, check, 100000);
     c.journal.settle(op, revision, check, { available: true });
   }
-  assert.equal(
-    (await c.collector.read(signal(), "occurrence")).state,
-    "confirmed",
-  );
+  assert.equal((await c.collector.read(signal(), "occurrence")).state, "held");
   assert.equal(c.publicCalls(), 0);
   assert.equal(c.privateCalls(), 1);
   c.journal.close();
@@ -667,6 +664,140 @@ test("a decreasing elapsed clock cannot make an old cache younger", async () => 
   c.advance(-180000);
   mono = 60000;
   assert.equal((await c.collector.read(signal(), "occurrence")).state, "held");
+  assert.equal(c.privateCalls(), 1);
+  c.journal.close();
+});
+
+test("fresh private retry cannot revive hour-old public successes", async () => {
+  let mono = 0,
+    attempts = 0;
+  const c = setup({
+    monotonic: () => mono,
+    source: async () => {
+      if (++attempts === 1) throw Error("fixture unavailable");
+      return { exitCode: 0, output: encode(report()) };
+    },
+  });
+  assert.equal((await c.collector.read(signal(), "occurrence")).state, "held");
+  c.advance(3600000);
+  mono = 3600000;
+  const r = await c.collector.read(signal(), "occurrence");
+  const e = r.evidence as any;
+  assert.equal(r.state, "held");
+  assert.equal(e.acer.available, true);
+  assert.equal(e.publicAvailabilityPassed, false);
+  assert.equal(e.aggregateHealthy, false);
+  assert.equal(e.monitoringAccepted, false);
+  assert.ok(
+    e.checks.every(
+      (x: any) =>
+        x.observedAt === 100000 &&
+        x.elapsedMs === 3600000 &&
+        x.freshness === "held" &&
+        !x.available,
+    ),
+  );
+  assert.equal(c.publicCalls(), 2);
+  assert.equal(c.privateCalls(), 2);
+  await c.collector.read(signal(), "occurrence");
+  assert.equal(c.publicCalls(), 2);
+  assert.equal(c.privateCalls(), 2);
+  c.journal.close();
+});
+
+for (const phase of ["transport", "aggregate"] as const)
+  test(`public freshness includes ${phase} latency`, async () => {
+    const c = setup({
+      authority: async (context) => {
+        if (
+          phase === "aggregate" &&
+          context.phase === "aggregate" &&
+          context.check.id === "acer_aggregate"
+        )
+          c.advance(300001);
+        return "authorized";
+      },
+      source: async () => {
+        if (phase === "transport") c.advance(300001);
+        return { exitCode: 0, output: encode(report()) };
+      },
+    });
+    const e = (await c.collector.read(signal(), "occurrence")).evidence as any;
+    assert.equal(e.publicAvailabilityPassed, false);
+    assert.ok(
+      e.checks.every((x: any) => x.elapsedMs === 300001 && !x.available),
+    );
+    assert.equal(c.publicCalls(), 2);
+    c.journal.close();
+  });
+
+test("public cache without collector clock continuity holds despite a fresh private retry", async () => {
+  const c = setup({
+    source: async () => {
+      throw Error("fixture unavailable");
+    },
+  });
+  await c.collector.read(signal(), "occurrence");
+  const d = setup({ journal: c.journal });
+  d.advance(30000);
+  const e = (await d.collector.read(signal(), "occurrence")).evidence as any;
+  assert.equal(e.acer.available, true);
+  assert.equal(e.publicAvailabilityPassed, false);
+  assert.ok(
+    e.checks.every(
+      (x: any) =>
+        x.elapsedMs === null && x.freshness === "held" && !x.available,
+    ),
+  );
+  assert.equal(d.publicCalls(), 0);
+  assert.equal(d.privateCalls(), 1);
+  c.journal.close();
+});
+
+test("public monotonic age cannot be reset by fresh private evidence after wall rollback", async () => {
+  let mono = 0,
+    attempts = 0;
+  const c = setup({
+    monotonic: () => mono,
+    source: async () => {
+      if (++attempts === 1) throw Error("fixture unavailable");
+      return { exitCode: 0, output: encode(report()) };
+    },
+  });
+  await c.collector.read(signal(), "occurrence");
+  c.advance(60000);
+  mono = 360000;
+  const e = (await c.collector.read(signal(), "occurrence")).evidence as any;
+  assert.equal(e.acer.available, true);
+  assert.equal(e.publicAvailabilityPassed, false);
+  assert.ok(e.checks.every((x: any) => x.elapsedMs === 360000 && !x.available));
+  assert.equal(c.publicCalls(), 2);
+  assert.equal(c.privateCalls(), 2);
+  c.journal.close();
+});
+
+for (const age of [300000, 300001])
+  test(`public age bound is inclusive at ${age}ms`, async () => {
+    const c = setup();
+    await c.collector.read(signal(), "occurrence");
+    c.advance(age);
+    const e = (await c.collector.read(signal(), "occurrence")).evidence as any;
+    assert.equal(e.publicAvailabilityPassed, age === 300000);
+    assert.equal(c.publicCalls(), 2);
+    c.journal.close();
+  });
+
+test("observed clock uncertainty permanently holds settled public evidence", async () => {
+  let mono = 0;
+  const c = setup({ monotonic: () => mono });
+  await c.collector.read(signal(), "occurrence");
+  mono = NaN;
+  const uncertain = await c.collector.read(signal(), "occurrence");
+  assert.equal((uncertain.evidence as any).publicAvailabilityPassed, false);
+  mono = 0;
+  const recovered = await c.collector.read(signal(), "occurrence");
+  assert.equal((recovered.evidence as any).publicAvailabilityPassed, false);
+  assert.equal(c.publicCalls(), 2);
   assert.equal(c.privateCalls(), 1);
   c.journal.close();
 });

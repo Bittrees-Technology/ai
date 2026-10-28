@@ -386,19 +386,22 @@ export function createChatMonitorCollector(
     mono: number;
     attempt: number;
     lastElapsed: number;
+    invalid?: boolean;
   };
   // Ephemeral clock continuity is never reconstructed from a wall timestamp.
-  // A restart holds a settled private cache rather than replaying the occurrence.
+  // A restart holds any settled cache rather than replaying the occurrence.
   const clocks = new Map<string, Clock>();
   const elapsedFor = (
     clock: Clock | undefined,
     row?: { at: number; attempt: number },
   ) => {
-    if (
-      !clock ||
-      (row && (row.at !== clock.wall || row.attempt !== clock.attempt))
-    )
+    if (!clock || clock.invalid) return NaN;
+    const hold = () => {
+      clock.invalid = true;
       return NaN;
+    };
+    if (row && (row.at !== clock.wall || row.attempt !== clock.attempt))
+      return hold();
     const wall = now() - clock.wall,
       mono = monotonic() - clock.mono;
     if (
@@ -407,10 +410,10 @@ export function createChatMonitorCollector(
       !Number.isFinite(mono) ||
       mono < 0
     )
-      return NaN;
+      return hold();
     const elapsed = Math.ceil(Math.max(wall, mono));
     if (!Number.isSafeInteger(elapsed) || elapsed < clock.lastElapsed)
-      return NaN;
+      return hold();
     clock.lastElapsed = elapsed;
     return elapsed;
   };
@@ -471,13 +474,7 @@ export function createChatMonitorCollector(
         ...(acerCheck ? [acerCheck] : []),
       ];
       const operation = digest([workflowId, operationId]);
-      const checks: {
-        checkId: string;
-        observedAt?: number;
-        available: boolean;
-        gateReady?: boolean;
-        releaseReady?: boolean;
-      }[] = [];
+      const publicRows = new Map<string, ReturnType<ChatJournal["load"]>>();
       let privateRow: ReturnType<ChatJournal["load"]>;
       const authorized = async (
         check: ChatAuthorityCheck,
@@ -507,12 +504,8 @@ export function createChatMonitorCollector(
           if (row?.result) parseResult(check.id, row.result);
           if (!row?.result?.available && !(row && row.attempt >= 2)) {
             const startedAt = now(),
-              clockKey = digest([operation, expectedRevision]);
-            if (
-              check.id === "acer_aggregate" &&
-              !clocks.has(clockKey) &&
-              clocks.size >= 10000
-            )
+              clockKey = digest([operation, expectedRevision, check.id]);
+            if (!clocks.has(clockKey) && clocks.size >= 10000)
               throw Error("Clock evidence capacity held");
             const clock: Clock = {
               wall: startedAt,
@@ -521,7 +514,7 @@ export function createChatMonitorCollector(
               lastElapsed: 0,
             };
             journal.reserve(operation, expectedRevision, check.id, startedAt);
-            if (check.id === "acer_aggregate") clocks.set(clockKey, clock);
+            clocks.set(clockKey, clock);
             if (!(await authorized(check, "dispatch")))
               return receipt({ reason: "authority_held", acer: "held" });
             const result =
@@ -540,10 +533,7 @@ export function createChatMonitorCollector(
             row = journal.load(operation, expectedRevision, check.id);
           }
           if (check.id === "acer_aggregate") privateRow = row;
-          else {
-            const result = publicResultSchema.parse(row?.result);
-            checks.push({ checkId: check.id, observedAt: row?.at, ...result });
-          }
+          else publicRows.set(check.id, row);
         }
         // Recheck every scope before final aggregate completion or cached delivery.
         for (const check of selected)
@@ -557,7 +547,11 @@ export function createChatMonitorCollector(
             return receipt({ reason: "acer_binding_held", acer: "held" });
           const elapsed = elapsedFor(
             clocks.get(
-              digest([operation, digest([revision, acerCheck.binding])]),
+              digest([
+                operation,
+                digest([revision, acerCheck.binding]),
+                acerCheck.id,
+              ]),
             ),
             privateRow,
           );
@@ -583,6 +577,27 @@ export function createChatMonitorCollector(
             report: result.report,
           };
         }
+        // Evaluate every observation after all source/authority calls. Settled
+        // successes are never replayed to refresh a stale occurrence.
+        const checks = chatPublicChecks.map((check) => {
+          const row = publicRows.get(check.id);
+          const result = publicResultSchema.parse(row?.result);
+          const elapsed = elapsedFor(
+            clocks.get(digest([operation, revision, check.id])),
+            row,
+          );
+          const fresh =
+            Number.isSafeInteger(elapsed) && elapsed >= 0 && elapsed <= 300000;
+          return {
+            checkId: check.id,
+            observedAt: row?.at,
+            ...result,
+            available: result.available && fresh,
+            elapsedMs:
+              Number.isSafeInteger(elapsed) && elapsed >= 0 ? elapsed : null,
+            freshness: fresh ? "fresh" : "held",
+          };
+        });
         const publicAvailabilityPassed = checks.every((c) => c.available);
         const aggregateHealthy = publicAvailabilityPassed && acerAvailable;
         return receipt(
