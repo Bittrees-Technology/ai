@@ -66,3 +66,35 @@ struct InitialPairingReviewDisplay {
                                            keyFingerprint: local, rolesKeyFingerprint: source, expiresAt: expiry)
     }
 }
+
+// Native inspection and reviewed source configuration supply this separately
+// from the proposal. A missing or changed binding cancels an open review.
+struct InitialPairingReviewBinding: Equatable {
+    let principal: String
+    let keyFingerprint: String
+    let rolesKeyFingerprint: String
+}
+
+struct InitialPairingConfirmationGate {
+    private let display: InitialPairingReviewDisplay
+    private let binding: InitialPairingReviewBinding
+    private var consumed = false
+    init?(proposal: [String: Any], binding: InitialPairingReviewBinding, now: Double) {
+        guard let display = InitialPairingReviewDisplay.parse(proposal,
+            expectedPrincipal: binding.principal, expectedKeyFingerprint: binding.keyFingerprint,
+            expectedRolesKeyFingerprint: binding.rolesKeyFingerprint, now: now) else { return nil }
+        self.display = display
+        self.binding = binding
+    }
+    var summary: String { display.summary }
+    func isCurrent(binding: InitialPairingReviewBinding?, now: Double) -> Bool {
+        !consumed && binding == self.binding && display.confirmation(now: now) != nil
+    }
+    mutating func finish(approved: Bool, binding: InitialPairingReviewBinding?, now: Double) -> [String: String]? {
+        let current = isCurrent(binding: binding, now: now)
+        // Consume denial/expiry/context loss as well as approval. Another attempt
+        // requires a new proposal and a new explicit native review.
+        consumed = true
+        return approved && current ? display.confirmation(now: now) : nil
+    }
+}
