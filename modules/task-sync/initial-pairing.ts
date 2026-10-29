@@ -8,6 +8,8 @@ export const INITIAL_PAIRING_START =
 export const INITIAL_PAIRING_POLL =
   "https://roles.bittrees.org/api/mcp/pairing/poll";
 export const INITIAL_PAIRING_AUDIENCE = "bittrees-ai-native-initial-pairing-v1";
+export const INITIAL_PAIRING_MAX_CALLS = 62;
+export const INITIAL_PAIRING_MAX_DURATION_MS = 300000;
 const hex = z.string().regex(/^[a-f0-9]{64}$/),
   time = z.number().int().nonnegative();
 const principal = z
@@ -93,7 +95,7 @@ const stateSchema = z.strictObject({
   phase: z.enum(["starting", "pending", "held", "paired"]),
   consentId: z.uuid(),
   request: initialPairingRequest,
-  calls: z.number().int().min(1).max(62),
+  calls: z.number().int().min(1).max(INITIAL_PAIRING_MAX_CALLS),
   lastPoll: time,
   challenge: challengeSchema.optional(),
   proof: z.unknown().optional(),
@@ -193,7 +195,7 @@ export function validateInitialPairingRequest(raw: unknown, now = Date.now()) {
     r.issuedAt > now ||
     r.issuedAt < now - 15000 ||
     r.expiresAt <= now ||
-    r.expiresAt > r.issuedAt + 300000 ||
+    r.expiresAt > r.issuedAt + INITIAL_PAIRING_MAX_DURATION_MS ||
     keyIdentity({ principal: r.principal, publicKey: r.publicKey })
       .keyFingerprint !== r.keyFingerprint
   )
@@ -348,7 +350,7 @@ export class NativeInitialPairing {
       c.principal !== this.identity.principal ||
       c.keyFingerprint !== this.fingerprint ||
       c.expiresAt <= now ||
-      c.expiresAt > now + 300000
+      c.expiresAt > now + INITIAL_PAIRING_MAX_DURATION_MS
     )
       fail();
     return c;
@@ -434,7 +436,7 @@ export class NativeInitialPairing {
         state.request.expiresAt !== consent.expiresAt ||
         state.request.principal !== this.identity.principal ||
         state.request.keyFingerprint !== this.fingerprint ||
-        state.calls >= 62 ||
+        state.calls >= INITIAL_PAIRING_MAX_CALLS ||
         this.now() - state.lastPoll < 5000
       )
         fail();
