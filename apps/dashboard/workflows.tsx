@@ -1,4 +1,9 @@
 import { TaskSyncStatus } from "./task-sync.js";
+import {
+  readWorkflowPermissions,
+  ownerReviewReady,
+  type WorkflowReadiness,
+} from "./workflow-readiness.js";
 import React, { useState, useEffect } from "react";
 export function Workflows({
   api,
@@ -6,21 +11,36 @@ export function Workflows({
   api: (path: string, method?: string, body?: unknown) => Promise<any>;
 }) {
   const [data, setData] = useState<any>(null),
+    [readiness, setReadiness] = useState<WorkflowReadiness | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [model, setModel] = useState("Rule-based supplier validation (no model)");
-  const refresh = async () => setData(await api("/v1/workflows"));
+  const receive = (
+    result: Awaited<ReturnType<typeof readWorkflowPermissions>>,
+  ) => {
+    setReadiness(result.readiness);
+    setData(result.data);
+    setError(
+      result.sourceUnavailable
+        ? "Workflow permissions could not be verified. Native owner approval or the current source connection may need attention."
+        : "",
+    );
+  };
+  const refresh = async () => receive(await readWorkflowPermissions(api));
   useEffect(() => {
     let active = true;
-    api("/v1/workflows")
+    readWorkflowPermissions(api)
       .then((d) => {
-        if (active) setData(d);
+        if (active) receive(d);
       })
       .catch(() => {
-        if (active)
+        if (active) {
+          setData(null);
+          setReadiness(null);
           setError(
-            "Cannot reach workflow permissions. Check your connection and refresh.",
+            "Local workflow readiness could not be verified. Owner review remains unavailable.",
           );
+        }
       });
     return () => {
       active = false;
@@ -33,6 +53,8 @@ export function Workflows({
       await fn();
       await refresh();
     } catch {
+      setData(null);
+      setReadiness(null);
       setError(
         "The request could not be confirmed. Refresh to check the current state.",
       );
@@ -55,16 +77,39 @@ export function Workflows({
             : "Operator configured — not wallet signed";
   return (
     <section>
-      <TaskSyncStatus api={api} />
+      <TaskSyncStatus
+        api={api}
+        canStartOwnerReview={ownerReviewReady(readiness, data)}
+      />
       <p>
         Delegate work to this Mac with your wallet. Your app connections keep
         their own access rules.
       </p>
       {error && <p role="alert">{error}</p>}
-      <button disabled={busy} onClick={() => void act(refresh)}>
+      {readiness && !readiness.nativeTransportAvailable && (
+        <section aria-label="Native workflow setup required">
+          <h3>Native workflow connection needs setup</h3>
+          <p>
+            This Mac has not supplied the native connection capability. This
+            check has not requested hosted workflow permissions.
+          </p>
+          <p>
+            The app operator must prepare the reviewed native connection before
+            owner enrollment. Once available, use the Bittrees AI menu’s Connect
+            workflows… control to review enrollment transport.
+          </p>
+          <p>
+            Connection setup, native owner consent, Roles enrollment and source
+            permissions are separate steps.
+          </p>
+        </section>
+      )}
+      <button disabled={busy} onClick={() => void act(async () => {})}>
         Refresh
       </button>
-      {!data && !error && <p role="status">Loading permissions…</p>}
+      {!data && !error && !readiness && (
+        <p role="status">Loading permissions…</p>
+      )}
       {data && !data.connected && (
         <>
           <h3>Connect this Mac</h3>

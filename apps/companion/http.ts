@@ -767,6 +767,9 @@ export function localApi({
     });
   }
   if (workflows) {
+    app.get("/v1/workflows/readiness", (_req, res) =>
+      res.json(workflows.readiness()),
+    );
     app.post("/v1/workflows/sync", async (req, res) => {
       z.strictObject({}).parse(req.body);
       res.json(await workflows.sync());

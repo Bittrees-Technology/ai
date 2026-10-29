@@ -2,8 +2,10 @@ import React, { useEffect, useState } from "react";
 /** Displays the generic sync runner; project mappings and task sequences remain workflow data. */
 export function TaskSyncStatus({
   api,
+  canStartOwnerReview,
 }: {
   api: (path: string, method?: string, body?: unknown) => Promise<any>;
+  canStartOwnerReview: boolean;
 }) {
   const [state, setState] = useState<any>(null),
     [error, setError] = useState(""),
@@ -42,6 +44,7 @@ export function TaskSyncStatus({
     }
   }
   async function review(action: "enroll" | "activate" | "retry-connection") {
+    if (!canStartOwnerReview) return;
     setBusy(true);
     try {
       await api("/v1/workflows/task-sync/" + action, "POST", {});
@@ -65,10 +68,17 @@ export function TaskSyncStatus({
             : "Connect this Mac to your Roles account to review the synchronization permission."}
         </p>
         {error && <p role="alert">{error}</p>}
+        {!canStartOwnerReview && (
+          <p>
+            Owner review waits for verified native transport and current
+            workflow permissions.
+          </p>
+        )}
         {!state.enrolled && (
           <button
             disabled={
               busy ||
+              !canStartOwnerReview ||
               ["pending", "approved"].includes(state.ownerReview?.status)
             }
             onClick={() => void review("enroll")}
@@ -80,6 +90,7 @@ export function TaskSyncStatus({
           <button
             disabled={
               busy ||
+              !canStartOwnerReview ||
               ["pending", "approved"].includes(state.ownerReview?.status)
             }
             onClick={() => void review("activate")}
@@ -91,7 +102,7 @@ export function TaskSyncStatus({
           <>
             <p role="alert">{state.connectionError}</p>
             <button
-              disabled={busy}
+              disabled={busy || !canStartOwnerReview}
               onClick={() => void review("retry-connection")}
             >
               Retry connection
