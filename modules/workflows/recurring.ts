@@ -23,6 +23,8 @@ export const recurringDefinitionSchema = z.strictObject({
   anchor: z.number().int().safe().positive(),
   sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   originalState: z.enum(["active", "paused"]),
+  /** Absent means legacy Codex migration; never infer origin from a pause flag. */
+  scheduleOrigin: z.literal("native").optional(),
   modelProfileId: z.uuid(),
   collect: operation,
   actions: z.array(operation).max(10),
@@ -64,6 +66,8 @@ export type RecurringHost = {
   ) => Promise<unknown>;
   /** Must verify current PAUSED source and unchanged fingerprint excluding status. */
   sourcePaused: (definition: RecurringDefinition) => Promise<boolean>;
+  /** Current reviewed single-owner native admission; no fabricated Codex original. */
+  nativeReady?: (definition: RecurringDefinition) => Promise<boolean>;
   admission: () => boolean;
 };
 const decisionSchema = z.strictObject({
@@ -261,17 +265,27 @@ export class RecurringWorkflows {
     this.put(current);
     return this.status();
   }
+  private sourceReady(d: RecurringDefinition) {
+    return d.scheduleOrigin === "native"
+      ? (this.host.nativeReady?.(d) ?? Promise.resolve(false))
+      : this.host.sourcePaused(d);
+  }
   async enable(id: string, revision: string) {
     const state = this.get(id);
     if (
       !state.approved ||
       !state.verified ||
       state.revision !== revision ||
-      state.definition.originalState !== "active"
+      (state.definition.scheduleOrigin !== "native" &&
+        state.definition.originalState !== "active")
     )
       throw Error("Reviewed and verified active workflow required");
-    if (!(await this.host.sourcePaused(state.definition)))
-      throw Error("Original recurring task must be verifiably paused first");
+    if (!(await this.sourceReady(state.definition)))
+      throw Error(
+        state.definition.scheduleOrigin === "native"
+          ? "Native schedule admission is not verified"
+          : "Original recurring task must be verifiably paused first",
+      );
     const current = this.get(id);
     if (
       current.revision !== revision ||
@@ -346,7 +360,11 @@ export class RecurringWorkflows {
         name: definition.name,
         rrule: definition.rrule,
         timezone: definition.timezone,
-        originalState: definition.originalState,
+        originalState:
+          definition.scheduleOrigin === "native"
+            ? null
+            : definition.originalState,
+        scheduleOrigin: definition.scheduleOrigin ?? "codex-migration",
         revision,
         approved,
         enabled,
@@ -463,7 +481,7 @@ export class RecurringWorkflows {
       return;
     }
     this.fence(state);
-    if (!(await this.host.sourcePaused(state.definition)))
+    if (!(await this.sourceReady(state.definition)))
       throw Error("Original schedule state changed");
     await this.host.authorize(
       state.definition,
@@ -522,7 +540,7 @@ export class RecurringWorkflows {
       await this.host.authorize(state.definition, action, signal);
       this.fence(state);
       signal.throwIfAborted();
-      if (!(await this.host.sourcePaused(state.definition)))
+      if (!(await this.sourceReady(state.definition)))
         throw Error("Original schedule state changed");
       this.fence(state);
       signal.throwIfAborted();

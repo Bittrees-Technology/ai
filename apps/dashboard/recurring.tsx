@@ -52,6 +52,10 @@ function readableSchedule(rule: string) {
   return `Custom schedule: ${rule}`;
 }
 function accessDescription(capability: string) {
+  if (capability === "local.investor.portfolio.daily")
+    return "Research public primary business sources with the local model and read only the eight approved private investor lists. Drafts remain private; no workspace publication or outreach.";
+  if (capability === "local.investor.portfolio.private-edit")
+    return "May append or enrich sourced proposals in the eight approved private investor lists only, after current source checks. No CRM records, projects, tasks, sharing or publication. Uncertain saves stop for reconciliation.";
   if (capability === "local.mycloud.health")
     return "Read-only: pinned MyCloud health checker. Access is limited to the approved NAS on port 22; no repairs or file changes.";
   if (capability === "local.storage.inspect")
@@ -134,12 +138,18 @@ export function RecurringWork({ api }: { api: Api }) {
         <article key={row.id}>
           <h4>{row.name}</h4>
           <p>
-            {row.status} · Original: {row.originalState} · {row.timezone}
+            {row.status} ·{" "}
+            {row.scheduleOrigin === "native"
+              ? "New local schedule"
+              : "Original: " + row.originalState}{" "}
+            · {row.timezone}
           </p>
           <p>
             {row.enabled
               ? "Local workflow enabled"
-              : "Local workflow inactive; original schedule remains responsible."}
+              : row.scheduleOrigin === "native"
+                ? "Local workflow inactive; no original schedule exists."
+                : "Local workflow inactive; original schedule remains responsible."}
           </p>
           <button
             onClick={async () => {
@@ -165,9 +175,11 @@ export function RecurringWork({ api }: { api: Api }) {
               </p>
               <p>
                 <strong>Original schedule:</strong>{" "}
-                {details.definition.originalState === "paused"
-                  ? "Paused — will not restart through import"
-                  : "Active"}
+                {details.definition.scheduleOrigin === "native"
+                  ? "None — new local schedule"
+                  : details.definition.originalState === "paused"
+                    ? "Paused — will not restart through import"
+                    : "Active"}
               </p>
               <p style={{ whiteSpace: "pre-wrap" }}>
                 {details.definition.executionBrief}
@@ -177,8 +189,9 @@ export function RecurringWork({ api }: { api: Api }) {
                 <p key={action.id}>{accessDescription(action.capability)}</p>
               ))}
               <p>
-                Schedule takeover requires a complete verified source adapter
-                and confirmation that the original schedule is paused.
+                {details.definition.scheduleOrigin === "native"
+                  ? "Enabling this new local schedule requires source verification and current single-owner authorization."
+                  : "Schedule takeover requires a complete verified source adapter and confirmation that the original schedule is paused."}
               </p>
               <details>
                 <summary>Full original instructions</summary>
@@ -213,7 +226,9 @@ export function RecurringWork({ api }: { api: Api }) {
           )}
           {row.verified && !row.enabled && (
             <button onClick={() => void control(row, "enable")}>
-              Enable after original is paused
+              {row.scheduleOrigin === "native"
+                ? "Enable new local schedule"
+                : "Enable after original is paused"}
             </button>
           )}
           {row.enabled && (

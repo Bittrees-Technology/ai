@@ -39,6 +39,7 @@ export function localRecurringHost(options: {
   turn: ModelTurn;
   admission: () => boolean;
   cutoverReady: (definition: RecurringDefinition) => boolean;
+  nativeScheduleReady?: (definition: RecurringDefinition) => Promise<boolean>;
   recordDecision: (id: string, evidence: unknown) => void;
 }): RecurringHost {
   function resolve(
@@ -88,6 +89,9 @@ export function localRecurringHost(options: {
       signal.throwIfAborted();
       return resolve(d, o).read(signal, operationId);
     },
+    nativeReady: async (d) =>
+      d.scheduleOrigin === "native" &&
+      !!(await options.nativeScheduleReady?.(d)),
     sourcePaused: async (d) =>
       options.cutoverReady(d) &&
       (await originalAutomationPaused(options.automationRoot, d)),

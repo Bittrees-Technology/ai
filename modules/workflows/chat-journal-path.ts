@@ -42,6 +42,16 @@ function privateFile(info: Stats) {
  * OS isolation boundary against another process with the operator's full filesystem rights.
  */
 export function prepareChatJournalPath(path: string) {
+  return prepareJournalPath(path, chatJournalApplicationId, chatJournalVersion);
+}
+export function preparePortfolioJournalPath(path: string) {
+  return prepareJournalPath(path, 1112820048, 1);
+}
+function prepareJournalPath(
+  path: string,
+  applicationId: number,
+  version: number,
+) {
   if (owner() === undefined || !isAbsolute(path) || resolve(path) !== path)
     throw Error("Absolute canonical journal path required");
   const parents: { path: string; info: Stats }[] = [];
@@ -99,8 +109,8 @@ export function prepareChatJournalPath(path: string) {
       if (
         readSync(fd, header, 0, 100, 0) !== 100 ||
         header.subarray(0, 16).toString("binary") !== "SQLite format 3\0" ||
-        header.readUInt32BE(68) !== chatJournalApplicationId ||
-        header.readUInt32BE(60) !== chatJournalVersion
+        header.readUInt32BE(68) !== applicationId ||
+        header.readUInt32BE(60) !== version
       )
         throw Error("Foreign or uninitialized Chat journal");
     }
