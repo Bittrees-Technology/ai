@@ -10,6 +10,7 @@ import {
   type InitialPairingConsent,
 } from "./initial-pairing.js";
 import type { NativeInitialPairingSession } from "./initial-pairing-native-session.js";
+import { requireSynchronousPairingAdmission } from "./initial-pairing-admission.js";
 
 type Session = Pick<
   NativeInitialPairingSession,
@@ -147,7 +148,9 @@ export class NativeInitialPairingReviewActions {
     // gain another attempt from replaying a native confirmation.
     this.used = true;
     try {
-      this.options.admitSource({ ...review });
+      requireSynchronousPairingAdmission(() =>
+        this.options.admitSource({ ...review }),
+      );
       if (this.closed || !this.validExpiry(review.expiresAt))
         throw Error("Native review cancelled or expired");
       this.active = {
@@ -180,7 +183,9 @@ export class NativeInitialPairingReviewActions {
   async poll() {
     if (!this.current() || !this.session || !this.review)
       throw Error("Current native pairing confirmation required");
-    this.options.admitSource({ ...this.review });
+    requireSynchronousPairingAdmission(() =>
+      this.options.admitSource({ ...this.review! }),
+    );
     if (!this.current()) throw Error("Native review cancelled or expired");
     const result = await this.session.poll();
     if (!this.current()) throw Error("Native review cancelled or expired");
