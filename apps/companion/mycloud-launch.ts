@@ -5,6 +5,7 @@ import {
 } from "../../modules/storage/keychain.js";
 import { launchCentral } from "./central-launch.js";
 import { launchEnrollment } from "./enrollment-launch.js";
+import { launchWorkflowSetup } from "./workflow-setup-launch.js";
 import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
 import { z } from "zod";
 import { cloudHelper } from "../../modules/agents/cloud-helper.js";
@@ -164,6 +165,16 @@ async function main() {
     return pending;
   };
   // Missing or held enrollment setup must not interrupt existing local workflows.
+  let workflowSetup: Awaited<ReturnType<typeof launchWorkflowSetup>> | null =
+    null;
+  try {
+    workflowSetup = await launchWorkflowSetup(
+      "/Users/jhineline/Library/Application Support/Bittrees AI",
+      () => unlockNative("personal"),
+    );
+  } catch {
+    console.error("Native workflow identity review unavailable");
+  }
   let enrollment: Awaited<ReturnType<typeof launchEnrollment>> = null;
   try {
     enrollment = await launchEnrollment(
@@ -188,16 +199,20 @@ async function main() {
   }
   const closeHelpers = async () => {
     try {
-      await enrollment?.service.close();
+      await workflowSetup?.close();
     } finally {
       try {
-        await central?.service.close();
+        await enrollment?.service.close();
       } finally {
-        activity.closeAllConnections();
-        activity.close();
-        cloud.closeAllConnections();
-        cloud.close();
-        await helper.close();
+        try {
+          await central?.service.close();
+        } finally {
+          activity.closeAllConnections();
+          activity.close();
+          cloud.closeAllConnections();
+          cloud.close();
+          await helper.close();
+        }
       }
     }
   };
@@ -215,6 +230,7 @@ async function main() {
         TMPDIR: process.env.TMPDIR ?? "/tmp",
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         LANG: "en_US.UTF-8",
+        ...workflowSetup?.environment,
         ...enrollment?.environment,
         ...central?.environment,
         BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
