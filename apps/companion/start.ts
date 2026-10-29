@@ -1,3 +1,4 @@
+import { portfolioDailyAdapters } from "../../modules/workflows/investor-portfolio-daily.js";
 import { createChatMonitorCollector } from "../../modules/workflows/recurring-chat-source.js";
 import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
@@ -372,6 +373,8 @@ const recurring = new RecurringWorkflows(
     >([
       // Inactive: no source transport, authority, journal or schedule is provisioned.
       ["local.chat.monitor.read", createChatMonitorCollector()],
+      // Native-only daily research stays inactive without reviewed native interfaces.
+      ["local.investor.portfolio.daily", portfolioDailyAdapters().collector],
       [
         "local.storage.plan",
         {

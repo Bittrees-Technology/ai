@@ -406,3 +406,44 @@ test("revocation aborts manual action verification and reapproval cannot revive 
   assert.notEqual(s.engine.authorityVersion(d.id), before);
   assert.equal(mutations, 0);
 });
+
+test("new native schedule requires separate admission and never fabricates an original", async (t) => {
+  let native = false,
+    originalReads = 0;
+  const s = setup(t, {
+    sourcePaused: async () => {
+      originalReads++;
+      return false;
+    },
+    nativeReady: async () => native,
+  });
+  const d = definition({ scheduleOrigin: "native", originalState: "paused" });
+  const row = s.engine.review([d])[0]!;
+  s.engine.approve(d.id, row.revision, true);
+  await s.engine.verify(d.id);
+  await assert.rejects(s.engine.enable(d.id, row.revision), /Native/);
+  native = true;
+  await s.engine.enable(d.id, row.revision);
+  assert.equal(s.engine.status()[0]!.originalState, null);
+  assert.equal(s.engine.status()[0]!.scheduleOrigin, "native");
+  s.advance();
+  await s.engine.tick();
+  assert.equal(originalReads, 0);
+  const calls = s.executes;
+  await s.reopen();
+  await s.engine.tick();
+  assert.equal(s.executes, calls);
+  native = false;
+  s.advance();
+  await s.engine.tick();
+  assert.equal(s.executes, calls);
+});
+
+test("native flag never bypasses missing native admission", async (t) => {
+  const s = setup(t);
+  const d = definition({ scheduleOrigin: "native", originalState: "paused" });
+  const row = s.engine.review([d])[0]!;
+  s.engine.approve(d.id, row.revision, true);
+  await s.engine.verify(d.id);
+  await assert.rejects(s.engine.enable(d.id, row.revision), /Native/);
+});
