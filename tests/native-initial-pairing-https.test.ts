@@ -82,6 +82,56 @@ test("unapproved source purpose denies before any DNS or socket", async () => {
   );
   assert.equal(resolves, 0);
 });
+test("async admission cannot be mistaken for completed approval before DNS", async () => {
+  for (const check of [
+    async () => {},
+    async () => {
+      throw Error("not admitted");
+    },
+  ]) {
+    let resolves = 0;
+    const client = new InitialPairingHTTPS(check, () => null, (async () => {
+      resolves++;
+      return [];
+    }) as any);
+    await assert.rejects(
+      client.dispatch(fixture(), new AbortController().signal),
+      /synchronous/,
+    );
+    assert.equal(resolves, 0);
+  }
+});
+test("async verdicts after DNS or response completion remain denied", async () => {
+  for (const at of [2, 3]) {
+    let admissions = 0,
+      sends = 0;
+    const client = new InitialPairingHTTPS(
+      () => {
+        if (++admissions === at) return Promise.resolve();
+      },
+      () => null,
+      (async () => [{ address: "8.8.8.8", family: 4 }]) as any,
+      ((_url: any, _options: any, callback: any) => {
+        sends++;
+        const req = new EventEmitter() as any;
+        req.end = () =>
+          setImmediate(() => {
+            const response = new PassThrough() as any;
+            response.statusCode = 200;
+            response.headers = { "content-type": "application/json" };
+            callback(response);
+            response.end("{}");
+          });
+        return req;
+      }) as any,
+    );
+    await assert.rejects(
+      client.dispatch(fixture(), new AbortController().signal),
+      /synchronous/,
+    );
+    assert.equal(sends, at === 2 ? 0 : 1);
+  }
+});
 test("private/mixed/IPv6 DNS answers cannot reach the socket", async () => {
   for (const ips of [
     ["127.0.0.1"],
