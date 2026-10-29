@@ -47,6 +47,10 @@ export function prepareChatJournalPath(path: string) {
 export function preparePortfolioJournalPath(path: string) {
   return prepareJournalPath(path, 1112820048, 1);
 }
+export const initialPairingJournalApplicationId = 0x42544950;
+export function prepareInitialPairingJournalPath(path: string) {
+  return prepareJournalPath(path, initialPairingJournalApplicationId, 1);
+}
 function prepareJournalPath(
   path: string,
   applicationId: number,

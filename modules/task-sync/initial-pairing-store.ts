@@ -7,6 +7,8 @@ import type {
 } from "./initial-pairing.js";
 // Inactive adapter draft. Caller supplies an owned SQLite connection and already
 // explicitly unlocked native vault. No file/Keychain/network/key creation here.
+export const initialPairingJournalSchema =
+  "CREATE TABLE IF NOT EXISTS native_initial_pairing_journal (binding TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0), sealed BLOB NOT NULL CHECK(length(sealed) BETWEEN 28 AND 81920))";
 export function encryptedInitialPairingStore(
   db: Database.Database,
   vault: Vault,
@@ -30,9 +32,7 @@ export function encryptedInitialPairingStore(
   db.pragma("busy_timeout = 2000");
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = FULL");
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS native_initial_pairing_journal (binding TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0), sealed BLOB NOT NULL CHECK(length(sealed) BETWEEN 28 AND 81920))",
-  );
+  db.exec(initialPairingJournalSchema);
   let expected: number | null = null;
   function validate(value: unknown): InitialPairingState {
     const candidate = value as InitialPairingState;
