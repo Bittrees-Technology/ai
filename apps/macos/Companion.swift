@@ -11,6 +11,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var centralReviewBusy = false
     var enrollmentReviewBusy = false
     var workflowIdentityReviewBusy = false
+    var workflowOnboarding: NativeWalletOnboarding?
     var ready = false
     var quitting = false
     var buffer = ""
@@ -34,6 +35,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Bittrees AI", action: #selector(showBuildInfo), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Agent setup…", action: #selector(showAgentSetup), keyEquivalent: "")
         if workflowSetupControl() != nil {
             appMenu.addItem(withTitle: "Review workflow identity…", action: #selector(reviewWorkflowIdentity), keyEquivalent: "")
         }
@@ -72,6 +74,13 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         if recoveryPreview { showRecoveryStart() } else { startEngine() }
+    }
+    @objc func showAgentSetup() {
+        guard !quitting, window != nil, window.attachedSheet == nil else { return }
+        if workflowOnboarding == nil {
+            workflowOnboarding = NativeWalletOnboarding(resources: Bundle.main.resourceURL, inspect: workflowSetupControl() == nil ? nil : { [weak self] in self?.reviewWorkflowIdentity() })
+        }
+        workflowOnboarding?.show()
     }
     @objc func showBuildInfo() {
         let alert = NSAlert()
@@ -223,6 +232,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         do { try process.run() } catch { engine = nil; fail() }
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(showAgentSetup) { return !quitting && window != nil && window.attachedSheet == nil }
         if menuItem.action == #selector(chooseKitRecovery) {
             return recoveryPreview && !recovery.busy && !kitRecoveryChoosing && kitSetupId == nil && !quitting && window.attachedSheet == nil && (engine == nil || ready)
         }
@@ -351,6 +361,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        workflowOnboarding?.window.close()
         if kitSetupId != nil { quitting = true; cancelKitSetup() }
         if recovery.requestQuit() {
             quitting = true

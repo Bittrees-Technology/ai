@@ -62,6 +62,7 @@ extension Companion {
                     self.enrollmentNotice("Identity review unavailable", "The saved public identity did not match its fingerprint. Nothing was changed.")
                     return
                 }
+                self.workflowOnboarding?.recordLocalIdentity(principal: principal, fingerprint: digest)
                 self.enrollmentNotice("Bittrees local AI on this Mac", "Existing principal: \(principal)\nDevice key fingerprint: \(digest)\n\nRoles enrollment and Agent controller association are unverified. Only an active person with current applicable Roles may approve delegation. This review grants no authority.")
             }
         }
