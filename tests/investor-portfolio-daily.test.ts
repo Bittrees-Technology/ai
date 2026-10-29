@@ -97,6 +97,7 @@ function setup(overrides: any = {}) {
     queue: [candidate],
     hosts: ["fixture.example"],
     modelProfileId: id(99),
+    reviewRevision: "c".repeat(64),
     datasets,
     now: () => now,
     authorize: async () => {
@@ -478,6 +479,34 @@ test("historical occurrence IDs remain durable after later cursor advancement", 
     assert.equal(c.readCount(), before);
     assert.equal(c.writeCount(), 1);
     assert.equal(c.journal.seen("action", "action1"), true);
+  } finally {
+    c.journal.close();
+  }
+});
+
+test("current authority sees exact native review, source binding and operation for every action", async () => {
+  const scopes: any[] = [];
+  const c = setup({
+    authorize: async (scope: any) => {
+      scopes.push(scope);
+      assert.ok(Object.isFrozen(scope));
+      assert.equal(scope.workflowId, "bittrees-investor-portfolio-daily");
+      assert.equal(scope.reviewRevision, "c".repeat(64));
+      assert.match(scope.bindingDigest, /^[a-f0-9]{64}$/);
+    },
+  });
+  try {
+    await c.daily.collect(signal(), "slot1");
+    assert.ok(scopes.every((s) => s.operationId === "slot1"));
+    scopes.length = 0;
+    await c.daily.apply(signal(), "action1");
+    assert.ok(scopes.every((s) => s.operationId === "action1"));
+    assert.ok(scopes.some((s) => s.action === "private-append"));
+    const changed = new InvestorPortfolioDaily(c.journal, {
+      ...c.options,
+      reviewRevision: "d".repeat(64),
+    });
+    await assert.rejects(changed.collect(signal(), "slot2"), /state held/);
   } finally {
     c.journal.close();
   }

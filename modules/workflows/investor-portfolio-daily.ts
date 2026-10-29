@@ -283,6 +283,7 @@ function stableId(identity: string) {
  */
 export class InvestorPortfolioDaily {
   private busy = false;
+  private activeOperation?: string;
   private queue: Candidate[];
   private binding: string;
   constructor(
@@ -291,6 +292,7 @@ export class InvestorPortfolioDaily {
       queue: unknown;
       hosts: readonly string[];
       modelProfileId: string;
+      reviewRevision: string;
       datasets: ReadonlyMap<
         string,
         { id: string; name: string; client: PortfolioDataset }
@@ -298,6 +300,10 @@ export class InvestorPortfolioDaily {
       /** Must enforce current exact native/source grant, expiry, workflow approval and $0 cost per action. */
       authorize: (
         scope: {
+          workflowId: "bittrees-investor-portfolio-daily";
+          operationId: string;
+          reviewRevision: string;
+          bindingDigest: string;
           action:
             | "public-read"
             | "model"
@@ -329,6 +335,7 @@ export class InvestorPortfolioDaily {
     )
       throw Error("Exact portfolio scope required");
     z.uuid().parse(options.modelProfileId);
+    digest.parse(options.reviewRevision);
     const ids = [...options.datasets.values()].map((d) => z.uuid().parse(d.id));
     if (new Set(ids).size !== 8)
       throw Error("Distinct portfolio bindings required");
@@ -341,6 +348,7 @@ export class InvestorPortfolioDaily {
       this.queue,
       options.hosts,
       options.modelProfileId,
+      options.reviewRevision,
       portfolioProfiles.map((p) => [p, options.datasets.get(p)!.id]),
     ]);
   }
@@ -348,13 +356,26 @@ export class InvestorPortfolioDaily {
     return (this.options.now ?? Date.now)();
   }
   private async authorize(
-    scope: Parameters<typeof this.options.authorize>[0],
+    scope: Omit<
+      Parameters<typeof this.options.authorize>[0],
+      "workflowId" | "operationId" | "reviewRevision" | "bindingDigest"
+    >,
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
     await within(
       signal,
-      (child) => this.options.authorize(Object.freeze(scope), child),
+      (child) =>
+        this.options.authorize(
+          Object.freeze({
+            ...scope,
+            workflowId: "bittrees-investor-portfolio-daily",
+            operationId: this.activeOperation!,
+            reviewRevision: this.options.reviewRevision,
+            bindingDigest: this.binding,
+          }),
+          child,
+        ),
       5000,
     );
     signal.throwIfAborted();
@@ -409,6 +430,7 @@ export class InvestorPortfolioDaily {
       throw Error("Invalid portfolio operation");
     if (this.busy) throw Error("Portfolio run already active");
     this.busy = true;
+    this.activeOperation = operationId;
     let s: State | undefined;
     try {
       s = this.state();
@@ -598,6 +620,7 @@ export class InvestorPortfolioDaily {
       throw Error("Portfolio state held");
     } finally {
       this.busy = false;
+      this.activeOperation = undefined;
     }
   }
   private async reconcile(s: State, signal: AbortSignal) {
@@ -635,6 +658,7 @@ export class InvestorPortfolioDaily {
       throw Error("Invalid portfolio operation");
     if (this.busy) throw Error("Portfolio run already active");
     this.busy = true;
+    this.activeOperation = operationId;
     let s = this.state();
     try {
       if (!s) throw Error("No reviewed draft");
@@ -738,6 +762,7 @@ export class InvestorPortfolioDaily {
       throw Error("Portfolio state held");
     } finally {
       this.busy = false;
+      this.activeOperation = undefined;
     }
   }
 }

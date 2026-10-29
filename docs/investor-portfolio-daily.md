@@ -30,7 +30,10 @@ identity and cursor survive restart. Stable entry IDs and current aliases are ch
 across all eight lists; ambiguous matches hold. Existing IDs/names/descriptions are
 preserved, fresh versions and duplicates are checked again before a write, and unchanged
 facts do not create repeated description blocks. Drafts expire after 24 hours. Current
-workflow/source/cost authorization is required for every operation. Per-call timeouts and
+workflow/source/cost authorization is required for every operation, bound to the exact
+workflow ID, operation ID, reviewed definition revision and source-binding digest.
+Encrypted historical operation records are retained with a bounded capacity; old
+occurrences cannot silently become new research runs after cursor advancement. Per-call timeouts and
 caller cancellation bound native callbacks; timed-out source mutations remain pending.
 
 Only one private append or enrichment may run per action. Its operation ID is durably
