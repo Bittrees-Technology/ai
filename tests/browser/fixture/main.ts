@@ -392,6 +392,8 @@ if (new URLSearchParams(location.search).has("investor-research"))
   void import("./investor-research.js");
 if (new URLSearchParams(location.search).has("research-activity"))
   void import("./research-activity.js");
+if (new URLSearchParams(location.search).has("workflow-readiness"))
+  void import("./workflow-readiness.js");
 
 if (new URLSearchParams(location.search).has("project-work"))
   void import("./project-work.js");

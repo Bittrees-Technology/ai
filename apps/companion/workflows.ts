@@ -128,6 +128,15 @@ export function localWorkflows(
     return syncing;
   }
   return {
+    // Capability presence only. No settings, Keychain, source request or helper call.
+    // This does not establish native consent, admission or a current source grant.
+    readiness() {
+      return {
+        version: 1 as const,
+        nativeTransportAvailable: !!enrollmentTransport,
+        sourceStatusVerified: false as const,
+      };
+    },
     sync,
     async attestRuntime(
       purpose: "enroll" | "activate" | "decision",
