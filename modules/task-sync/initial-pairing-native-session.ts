@@ -189,6 +189,13 @@ export class NativeInitialPairingSession {
   start() {
     return this.run((pairing) => pairing.start());
   }
+  reviewBinding() {
+    return {
+      principal: this.identity.principal,
+      keyFingerprint: this.fingerprint,
+      rolesKeyFingerprint: this.sourceFingerprint,
+    };
+  }
   poll() {
     return this.run((pairing) => pairing.poll());
   }

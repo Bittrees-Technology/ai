@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
 import { NativeInitialPairingReviewActions } from "../modules/task-sync/initial-pairing-native-review.js";
 import type { InitialPairingConsent } from "../modules/task-sync/initial-pairing.js";
 function fixture() {
@@ -17,6 +17,7 @@ function fixture() {
     polls: 0,
     closed: 0,
     unknown: false,
+    wrongSource: false,
     delay: undefined as Promise<void> | undefined,
     consent: undefined as undefined | (() => InitialPairingConsent | null),
   };
@@ -32,6 +33,19 @@ function fixture() {
       state.created++;
       state.consent = consent;
       return {
+        reviewBinding() {
+          return {
+            principal: options.identity.principal,
+            keyFingerprint: createHash("sha256")
+              .update(options.identity.publicKey)
+              .digest("hex"),
+            rolesKeyFingerprint: state.wrongSource
+              ? "f".repeat(64)
+              : createHash("sha256")
+                  .update(options.rolesPublicKey)
+                  .digest("hex"),
+          };
+        },
         async start() {
           state.starts++;
           if (state.unknown) throw Error("unknown synthetic start");
@@ -197,4 +211,17 @@ test("cancellation rejects a late successful session result and clears consent",
   release();
   await denied;
   assert.equal(f.state.starts, 1);
+});
+test("a substituted session source key is denied before signing or transport starts", async () => {
+  const f = fixture(),
+    p = f.actions.prepare();
+  f.state.wrongSource = true;
+  await assert.rejects(
+    f.actions.approve({ reviewId: p.review.reviewId, digest: p.digest }),
+    /does not match reviewed/,
+  );
+  assert.equal(f.state.starts, 0);
+  assert.equal(f.state.closed, 1);
+  assert.equal(f.state.consent!(), null);
+  await f.actions.close();
 });

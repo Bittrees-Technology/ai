@@ -9,7 +9,10 @@ import {
 } from "./initial-pairing.js";
 import type { NativeInitialPairingSession } from "./initial-pairing-native-session.js";
 
-type Session = Pick<NativeInitialPairingSession, "start" | "poll" | "close">;
+type Session = Pick<
+  NativeInitialPairingSession,
+  "start" | "poll" | "close" | "reviewBinding"
+>;
 export interface NativeInitialPairingReview {
   version: 1;
   reviewId: string;
@@ -144,6 +147,15 @@ export class NativeInitialPairingReviewActions {
         expiresAt: review.expiresAt,
       };
       this.session = this.options.createSession(this.current);
+      const binding = this.session.reviewBinding();
+      if (
+        binding.principal !== review.principal ||
+        binding.keyFingerprint !== review.keyFingerprint ||
+        binding.rolesKeyFingerprint !== review.rolesKeyFingerprint
+      )
+        throw Error(
+          "Native pairing session does not match reviewed identity/source key",
+        );
       if (!this.current()) throw Error("Native review cancelled or expired");
       const result = await this.session.start();
       if (!this.current()) throw Error("Native review cancelled or expired");
