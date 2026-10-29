@@ -112,6 +112,20 @@ test("central worker preserves signed identity and completed model evidence acro
     });
     await worker.tick();
     assert.equal(worker.status().pending, true);
+    assert.deepEqual(worker.status().currentJob, {
+      id: job.id,
+      runId: job.runId,
+      stepIndex: 0,
+      title: input.title,
+      leaseUntil: job.leaseUntil,
+      completionPending: true,
+    });
+    assert.equal(
+      JSON.stringify(worker.status()).includes("fixture-token-123456"),
+      false,
+    );
+    assert.equal(JSON.stringify(worker.status()).includes('"output"'), false);
+
     assert.equal(generations, 1);
     await worker.close();
     worker = make();
@@ -121,6 +135,8 @@ test("central worker preserves signed identity and completed model evidence acro
     assert.equal(completions, 2);
     assert.equal(worker.status().pending, false);
     assert.equal(worker.status().lastReceipt.followUpQueued, true);
+    assert.equal(worker.status().lastReceipt.workflowId, "test");
+    assert.equal(worker.status().currentJob, null);
     assert.equal(
       JSON.stringify(worker.status()).includes("fixture-token"),
       false,

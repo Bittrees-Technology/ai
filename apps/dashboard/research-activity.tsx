@@ -1,3 +1,4 @@
+import { WorkActivityBoard } from "./work-activity-board.js";
 import React, { useEffect, useState } from "react";
 export function ResearchActivity({
   api,
@@ -7,30 +8,44 @@ export function ResearchActivity({
   onConnections: () => void;
 }) {
   const [jobs, setJobs] = useState<any[]>([]),
+    [central, setCentral] = useState<any>(null),
     [error, setError] = useState(""),
     [checked, setChecked] = useState("");
   useEffect(() => {
-    let cancelled = false;
+    let cancelled = false,
+      running = false;
     const refresh = async () => {
+      if (cancelled || running || document.hidden) return;
+      running = true;
       try {
-        const value = await api("/v1/research/investors");
-        if (!cancelled) {
-          setJobs(value.jobs || []);
-          setError("");
+        const [research, connection] = await Promise.allSettled([
+          api("/v1/research/investors"),
+          api("/v1/workflows/central"),
+        ]);
+        if (cancelled) return;
+        if (research.status === "fulfilled") setJobs(research.value.jobs || []);
+        if (connection.status === "fulfilled") setCentral(connection.value);
+        setError(
+          research.status === "rejected" || connection.status === "rejected"
+            ? "Unable to refresh some activity. Displayed results may be out of date; last checked records successful checks of both sources."
+            : "",
+        );
+        if (
+          research.status === "fulfilled" &&
+          connection.status === "fulfilled"
+        )
           setChecked(new Date().toLocaleTimeString());
-        }
-      } catch {
-        if (!cancelled)
-          setError(
-            "Unable to refresh activity. Displayed results may be out of date.",
-          );
+      } finally {
+        running = false;
       }
     };
     void refresh();
     const timer = setInterval(() => void refresh(), 5000);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, [api]);
   return (
@@ -46,13 +61,10 @@ export function ResearchActivity({
       {error && <p role="alert">{error}</p>}
       <p>Last checked: {checked || "Checking…"}</p>
       {!jobs.length && <p>No research runs recorded.</p>}
-      {[...jobs]
-        .sort(
-          (a, b) =>
-            Number(b.state === "running") - Number(a.state === "running") ||
-            b.updatedAt.localeCompare(a.updatedAt),
-        )
-        .map((j) => (
+      <WorkActivityBoard
+        jobs={jobs}
+        central={central}
+        renderJob={(j) => (
           <article className="card" key={j.id}>
             <h3>{j.input.brief.slice(0, 100)}</h3>
             <p>
@@ -190,7 +202,8 @@ export function ResearchActivity({
               </details>
             )}
           </article>
-        ))}
+        )}
+      />
     </section>
   );
 }
