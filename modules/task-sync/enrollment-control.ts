@@ -1,7 +1,11 @@
 import { createServer, type Server } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { EnrollmentConsent } from "./enrollment-consent.js";
+export interface NativeEnrollmentControlActions {
+  propose(): unknown | Promise<unknown>;
+  approve(digest: string): unknown | Promise<unknown>;
+  revoke(): unknown | Promise<unknown>;
+}
 const action = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("propose") }),
   z.strictObject({
@@ -22,7 +26,7 @@ export class EnrollmentControl {
   constructor(
     nativeToken: string,
     coreToken: string,
-    private readonly consent: EnrollmentConsent,
+    private readonly consent: NativeEnrollmentControlActions,
   ) {
     if (
       !/^[a-f0-9]{64}$/.test(nativeToken) ||
@@ -89,12 +93,12 @@ export class EnrollmentControl {
             ),
           ),
         );
-        if (input.action === "propose") send(200, consent.propose());
+        if (input.action === "propose") send(200, await consent.propose());
         else if (input.action === "approve") {
-          consent.approve(input.digest);
+          await consent.approve(input.digest);
           send(200, { approved: true });
         } else {
-          consent.revoke();
+          await consent.revoke();
           send(200, { revoked: true });
         }
       } catch {
@@ -128,9 +132,9 @@ export class EnrollmentControl {
     return this.endpoint;
   }
   async close() {
-    this.consent.revoke();
     this.closed = true;
     this.endpoint = undefined;
+    await this.consent.revoke();
     await new Promise<void>((resolve, reject) => {
       this.server.close((e) => {
         if (e && (e as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING")
