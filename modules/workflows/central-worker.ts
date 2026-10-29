@@ -113,7 +113,8 @@ export class CentralWorkflowWorker {
   }
   status() {
     const c = this.get("config"),
-      i = this.get("identity");
+      i = this.get("identity"),
+      pending = this.get("pending");
     return {
       configured: !!c,
       enabled: c?.enabled === true,
@@ -125,6 +126,16 @@ export class CentralWorkflowWorker {
       connectionId: c?.connectionId ?? null,
       progress: this.get("progress"),
       pending: !!this.get("pending"),
+      currentJob: pending?.job
+        ? {
+            id: pending.job.id,
+            runId: pending.job.runId,
+            stepIndex: pending.job.stepIndex,
+            title: pending.job.input.title,
+            leaseUntil: pending.job.leaseUntil,
+            completionPending: !!pending.evidence,
+          }
+        : null,
       lastReceipt: this.get("lastReceipt"),
     };
   }
@@ -391,6 +402,8 @@ export class CentralWorkflowWorker {
       throw Error("Completion not confirmed");
     const receipt = {
       jobId: j.id,
+      workflowId: c.workflowId,
+      connectionId: c.connectionId,
       runId: j.runId,
       stepIndex: j.stepIndex,
       model: pending.evidence.model,
