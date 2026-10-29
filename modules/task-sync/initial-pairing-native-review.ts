@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   INITIAL_PAIRING_START,
   INITIAL_PAIRING_POLL,
+  INITIAL_PAIRING_MAX_CALLS,
+  INITIAL_PAIRING_MAX_DURATION_MS,
   pairingDigest,
   pairingIdentity,
   type InitialPairingConsent,
@@ -28,6 +30,9 @@ export interface NativeInitialPairingReview {
   permissionsGranted: false;
   runtimeEnrolled: false;
   walletOrSafeApproval: false;
+  maximumCalls: typeof INITIAL_PAIRING_MAX_CALLS;
+  maximumDurationSeconds: number;
+  additionalSpendingUSD: 0;
   expiresAt: number;
 }
 const digest = (review: NativeInitialPairingReview) =>
@@ -82,7 +87,7 @@ export class NativeInitialPairingReviewActions {
   prepare() {
     if (this.closed || this.used)
       throw Error("Native pairing review closed or consumed");
-    const expiresAt = this.now() + 300000;
+    const expiresAt = this.now() + INITIAL_PAIRING_MAX_DURATION_MS;
     if (!Number.isSafeInteger(expiresAt))
       throw Error("Invalid native review expiry");
     this.review = Object.freeze({
@@ -101,6 +106,9 @@ export class NativeInitialPairingReviewActions {
       permissionsGranted: false,
       runtimeEnrolled: false,
       walletOrSafeApproval: false,
+      maximumCalls: INITIAL_PAIRING_MAX_CALLS,
+      maximumDurationSeconds: INITIAL_PAIRING_MAX_DURATION_MS / 1000,
+      additionalSpendingUSD: 0,
       expiresAt,
     });
     return { review: { ...this.review }, digest: digest(this.review) };
@@ -112,7 +120,9 @@ export class NativeInitialPairingReviewActions {
   };
   private validExpiry(expiresAt: number) {
     const now = this.now();
-    return expiresAt > now && expiresAt <= now + 300000;
+    return (
+      expiresAt > now && expiresAt <= now + INITIAL_PAIRING_MAX_DURATION_MS
+    );
   }
   async approve(input: unknown) {
     const confirmation = z
@@ -151,11 +161,12 @@ export class NativeInitialPairingReviewActions {
       if (
         binding.principal !== review.principal ||
         binding.keyFingerprint !== review.keyFingerprint ||
-        binding.rolesKeyFingerprint !== review.rolesKeyFingerprint
+        binding.rolesKeyFingerprint !== review.rolesKeyFingerprint ||
+        binding.maximumCalls !== review.maximumCalls ||
+        binding.maximumDurationSeconds !== review.maximumDurationSeconds ||
+        binding.additionalSpendingUSD !== review.additionalSpendingUSD
       )
-        throw Error(
-          "Native pairing session does not match reviewed identity/source key",
-        );
+        throw Error("Native pairing session does not match reviewed scope");
       if (!this.current()) throw Error("Native review cancelled or expired");
       const result = await this.session.start();
       if (!this.current()) throw Error("Native review cancelled or expired");

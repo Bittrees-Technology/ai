@@ -18,6 +18,7 @@ function fixture() {
     closed: 0,
     unknown: false,
     wrongSource: false,
+    wrongLimits: false,
     delay: undefined as Promise<void> | undefined,
     consent: undefined as undefined | (() => InitialPairingConsent | null),
   };
@@ -35,6 +36,9 @@ function fixture() {
       return {
         reviewBinding() {
           return {
+            maximumCalls: state.wrongLimits ? 63 : 62,
+            maximumDurationSeconds: 300,
+            additionalSpendingUSD: 0,
             principal: options.identity.principal,
             keyFingerprint: createHash("sha256")
               .update(options.identity.publicKey)
@@ -223,5 +227,17 @@ test("a substituted session source key is denied before signing or transport sta
   assert.equal(f.state.starts, 0);
   assert.equal(f.state.closed, 1);
   assert.equal(f.state.consent!(), null);
+  await f.actions.close();
+});
+test("a session with larger call limits is denied before signing or transport starts", async () => {
+  const f = fixture(),
+    p = f.actions.prepare();
+  f.state.wrongLimits = true;
+  await assert.rejects(
+    f.actions.approve({ reviewId: p.review.reviewId, digest: p.digest }),
+    /does not match reviewed/,
+  );
+  assert.equal(f.state.starts, 0);
+  assert.equal(f.state.closed, 1);
   await f.actions.close();
 });

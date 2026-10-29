@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { Vault } from "../storage/vault.js";
 import {
   NativeInitialPairing,
+  INITIAL_PAIRING_MAX_CALLS,
+  INITIAL_PAIRING_MAX_DURATION_MS,
   initialPairingRequest,
   pairingConsent,
   pairingIdentity,
@@ -42,6 +44,7 @@ export class NativeInitialPairingSession {
       admitSource: (review: {
         purpose: "metadata-only-owner-pairing";
         rolesKeyFingerprint: string;
+        additionalSpendingUSD: 0;
         consent: InitialPairingConsent;
       }) => void;
       // Native dependency injection for synthetic acceptance only; never read from
@@ -77,7 +80,7 @@ export class NativeInitialPairingSession {
       consent.principal !== this.identity.principal ||
       consent.keyFingerprint !== this.fingerprint ||
       consent.expiresAt <= now ||
-      consent.expiresAt > now + 300000
+      consent.expiresAt > now + INITIAL_PAIRING_MAX_DURATION_MS
     )
       throw Error("Current exact native pairing consent required");
     return consent;
@@ -87,6 +90,7 @@ export class NativeInitialPairingSession {
     this.options.admitSource({
       purpose: "metadata-only-owner-pairing",
       rolesKeyFingerprint: this.sourceFingerprint,
+      additionalSpendingUSD: 0,
       consent: { ...before },
     });
     const after = this.consent();
@@ -194,6 +198,9 @@ export class NativeInitialPairingSession {
       principal: this.identity.principal,
       keyFingerprint: this.fingerprint,
       rolesKeyFingerprint: this.sourceFingerprint,
+      maximumCalls: INITIAL_PAIRING_MAX_CALLS,
+      maximumDurationSeconds: INITIAL_PAIRING_MAX_DURATION_MS / 1000,
+      additionalSpendingUSD: 0,
     };
   }
   poll() {
