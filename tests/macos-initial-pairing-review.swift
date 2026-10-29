@@ -23,6 +23,36 @@ import Foundation
         precondition(parse(proposal, at: good!.expiresAt) == nil, "Expired review cannot be confirmed")
         precondition(good!.confirmation(now: good!.expiresAt) == nil, "Confirmation itself rechecks expiry")
         precondition(good!.confirmation(now: now - 1) == nil, "Confirmation itself rejects clock rollback")
+        let binding = InitialPairingReviewBinding(principal: expected["principal"]!, keyFingerprint: expected["keyFingerprint"]!, rolesKeyFingerprint: expected["rolesKeyFingerprint"]!)
+        func newGate() -> InitialPairingConfirmationGate {
+            InitialPairingConfirmationGate(proposal: proposal, binding: binding, now: now)!
+        }
+        var approved = newGate()
+        precondition(approved.isCurrent(binding: binding, now: now))
+        precondition(approved.finish(approved: true, binding: binding, now: now) == good!.confirmation(now: now), "Only the exact reviewed confirmation leaves the gate")
+        precondition(approved.finish(approved: true, binding: binding, now: now) == nil, "Approval cannot replay")
+        var cancelled = newGate()
+        precondition(cancelled.finish(approved: false, binding: binding, now: now) == nil)
+        precondition(cancelled.finish(approved: true, binding: binding, now: now) == nil, "Cancellation consumes the review")
+        let changed = [
+            InitialPairingReviewBinding(principal: "agent:" + UUID().uuidString.lowercased(), keyFingerprint: binding.keyFingerprint, rolesKeyFingerprint: binding.rolesKeyFingerprint),
+            InitialPairingReviewBinding(principal: binding.principal, keyFingerprint: String(repeating: "e", count: 64), rolesKeyFingerprint: binding.rolesKeyFingerprint),
+            InitialPairingReviewBinding(principal: binding.principal, keyFingerprint: binding.keyFingerprint, rolesKeyFingerprint: String(repeating: "f", count: 64))
+        ]
+        for other in changed {
+            var gate = newGate()
+            precondition(!gate.isCurrent(binding: other, now: now))
+            precondition(gate.finish(approved: true, binding: other, now: now) == nil, "Changing native or source context cancels approval")
+            precondition(gate.finish(approved: true, binding: binding, now: now) == nil, "Restored context cannot revive a consumed review")
+        }
+        var missing = newGate()
+        precondition(missing.finish(approved: true, binding: nil, now: now) == nil, "Unavailable native context denies")
+        var expired = newGate()
+        precondition(expired.finish(approved: true, binding: binding, now: good!.expiresAt) == nil)
+        precondition(expired.finish(approved: true, binding: binding, now: now) == nil, "Clock adjustment cannot revive consumed expiry")
+        var rollback = newGate()
+        precondition(rollback.finish(approved: true, binding: binding, now: now - 1) == nil)
         print("Native initial pairing review: Node/Swift digest, 17 invalid proposals including re-digested scope changes, independent bindings, expiry and narrow confirmation passed")
+        print("Native pairing confirmation gate: single use, cancel, identity/key/source context loss, expiry, rollback and no revival passed; no human or live source approval")
     }
 }
