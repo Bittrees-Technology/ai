@@ -13,6 +13,13 @@ key is distinct from an unreadable, corrupt, symlinked or inconsistent existing 
 errors hold the flow rather than replacing state. Saved workspace context is not
 current source authorization.
 
+The saved encrypted task review may contain a batch larger than 64 KiB. Identity
+inspection accepts up to the existing 2 MB source-read budget plus the 28-byte
+Vault envelope, and rejects larger blobs in SQLite before materializing them.
+Only the validated workspace UUID is returned alongside the public identity;
+tasks, private keys and saved authority are never returned or activated. Reading
+the existing state does not rewrite it or migrate its keys.
+
 When the task key is missing, the native owner can separately choose **Create local
 identity**. This consumes a one-use, exact review digest within sixty seconds.
 The helper rechecks admission after asynchronous unlock and under the SQLite write
