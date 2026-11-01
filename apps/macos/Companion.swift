@@ -76,7 +76,10 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if recoveryPreview { showRecoveryStart() } else { startEngine() }
+        if ProcessInfo.processInfo.environment["BITTREES_CENTRAL_IDENTITY_REVIEW_ONLY"] == "1" {
+            window.title = "Bittrees AI — Central identity review preview"
+            reviewCentralIdentity()
+        } else if recoveryPreview { showRecoveryStart() } else { startEngine() }
     }
     @objc func showAgentSetup() {
         guard !quitting, window != nil, window.attachedSheet == nil else { return }
