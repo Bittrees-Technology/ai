@@ -16,6 +16,9 @@ const keySchema = z.strictObject({
   publicKey: z.string().max(1024),
   privateKey: z.string().max(4096),
 });
+// Saved reviews contain task batches, unlike the small native public response.
+// Match the existing 2 MB source-read budget plus Vault's 28-byte GCM envelope.
+const MAX_SAVED_REVIEW_BYTES = 2_000_000 + 28;
 
 /** Native owner inspection only. Existing key continuity is verified, never
  * initialized, rotated, enrolled or inferred from another local identity. */
@@ -60,18 +63,21 @@ export function readNativeWorkflowIdentity(path: string, vault: Vault) {
         throw Error("Existing workflow key is inconsistent");
       // Saved workspace is context only; it is not current source authorization.
       const review = db
-        .prepare("SELECT value FROM state WHERE key='review'")
-        .get() as { value: Buffer } | undefined;
-      if (
-        review &&
-        (!Buffer.isBuffer(review.value) || review.value.length > 65536)
-      )
-        throw Error("Invalid saved workflow review");
-      const workspace = review
-        ? z
-            .object({ sourceWorkspace: z.uuid() })
-            .parse(vault.open(review.value, "task-sync:review")).sourceWorkspace
-        : null;
+        .prepare(
+          "SELECT CASE WHEN length(value)<=? THEN value ELSE NULL END AS value FROM state WHERE key='review'",
+        )
+        .get(MAX_SAVED_REVIEW_BYTES) as { value: Buffer | null } | undefined;
+      let workspace: string | null = null;
+      if (review) {
+        if (
+          !Buffer.isBuffer(review.value) ||
+          review.value.length > MAX_SAVED_REVIEW_BYTES
+        )
+          throw Error("Invalid saved workflow review");
+        workspace = z
+          .object({ sourceWorkspace: z.uuid() })
+          .parse(vault.open(review.value, "task-sync:review")).sourceWorkspace;
+      }
       return {
         status: "existing" as const,
         principal: key.principal,

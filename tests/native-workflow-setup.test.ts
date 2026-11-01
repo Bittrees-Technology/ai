@@ -13,6 +13,76 @@ import {
 } from "../modules/task-sync/native-identity-review.js";
 import { launchWorkflowSetup } from "../apps/companion/workflow-setup-launch.js";
 
+test("native inspection preserves a realistic large saved task review and returns only public context", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "native-large-review-")),
+    path = join(dir, "task-sync.db"),
+    vault = new Vault(randomBytes(32)),
+    sourceWorkspace = randomUUID(),
+    key = {
+      principal: "agent:" + randomUUID(),
+      ...generateKeyPairSync("ed25519", {
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      }),
+    };
+  const putReview = (value: unknown) => {
+    const db = new Database(path);
+    db.prepare("INSERT OR REPLACE INTO state VALUES('review',?)").run(
+      vault.seal(value, "task-sync:review"),
+    );
+    db.close();
+  };
+  try {
+    const db = new Database(path);
+    db.exec("CREATE TABLE state(key TEXT PRIMARY KEY,value BLOB NOT NULL)");
+    db.prepare("INSERT INTO state VALUES('key',?)").run(
+      vault.seal(key, "task-sync:key"),
+    );
+    db.close();
+    putReview({
+      sourceWorkspace,
+      tasks: Array.from({ length: 66 }, () => ({
+        description: "x".repeat(1200),
+      })),
+    });
+    const before = await readFile(path);
+    const setup = await launchWorkflowSetup(dir, async () => vault);
+    try {
+      const r = await fetch(setup.environment.BITTREES_WORKFLOW_SETUP_URL, {
+        method: "POST",
+        headers: {
+          authorization:
+            "Bearer " + setup.environment.BITTREES_WORKFLOW_SETUP_TOKEN,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "propose" }),
+      });
+      assert.equal(r.status, 200);
+      const review = (await r.json()) as any;
+      assert.equal(review.status, "existing");
+      assert.equal(review.principal, key.principal);
+      assert.equal(review.sourceWorkspace, sourceWorkspace);
+      assert.equal(review.grantsAuthority, false);
+      assert.equal(Object.hasOwn(review, "tasks"), false);
+      assert.equal(JSON.stringify(review).includes(key.privateKey), false);
+      assert.deepEqual(await readFile(path), before);
+    } finally {
+      await setup.close();
+    }
+    for (const value of [
+      { sourceWorkspace: "invalid" },
+      { sourceWorkspace, tasks: "x".repeat(2_000_001) },
+    ]) {
+      putReview(value);
+      const saved = await readFile(path);
+      assert.throws(() => readNativeWorkflowIdentity(path, vault));
+      assert.deepEqual(await readFile(path), saved);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("native identity inspection does not create missing state and never substitutes another identity", async () => {
   const dir = await mkdtemp(join(tmpdir(), "native-identity-")),
     path = join(dir, "task-sync.db"),
