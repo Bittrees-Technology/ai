@@ -8,11 +8,15 @@ import { TaskSyncRunner } from "../modules/task-sync/runner.js";
 import { Vault } from "../modules/storage/vault.js";
 import { digest } from "../modules/task-sync/proof-contract.js";
 import { runtimeEnrollmentMessage } from "../modules/task-sync/runtime-contract.js";
-function fixture() {
+function fixture(
+  limits: { maxWorkAttempts?: number; maxRequests?: number } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "task-sync-")),
     path = join(dir, "runner.sqlite"),
     vault = new Vault(randomBytes(32));
-  let now = Date.now(),
+  const issuedAt = Date.now(),
+    runId = randomUUID();
+  let now = issuedAt,
     calls = 0,
     mode = "success";
   const content = {
@@ -33,6 +37,8 @@ function fixture() {
     taskId = randomUUID();
   const request = (async (url: any, init: any) => {
     calls++;
+    if (mode === "source-lost" && String(url).includes("tasks.json"))
+      throw Error("source unavailable");
     if (String(url).includes("tasks.json"))
       return Response.json({
         data: {
@@ -102,6 +108,33 @@ function fixture() {
     approval: (r: TaskSyncRunner) => {
       const a = approval(r);
       delete (a.identity as any).publicKey;
+      r.configureExecutionBudget({
+        version: 1,
+        confirmed: true,
+        runId,
+        scopeDigest: digest({
+          principal: a.identity.principal,
+          sourceWorkspace: a.identity.sourceWorkspace,
+          revision: a.revision,
+          tasks: a.tasks,
+          mappings: a.mappings,
+        }),
+        issuedAt,
+        expiresAt: issuedAt + 3600000,
+        maxWorkAttempts: limits.maxWorkAttempts ?? 100,
+        maxRequests: limits.maxRequests ?? 100,
+        maxRequestBytes: 1000000,
+        maxResponseBytes: 1000000,
+        requestsByKind: {
+          source: 100,
+          connect: 100,
+          execute: 100,
+          preview: 0,
+          owner: 100,
+          attestation: 100,
+          status: 0,
+        },
+      });
       return a;
     },
     setMode: (v: string) => (mode = v),
@@ -151,7 +184,7 @@ test("confirmed import persists across restart and is never sent again", async (
     await r.tick();
     assert.equal(r.status().progress.state, "finished");
     assert.equal(r.status().completedImports, 1);
-    assert.equal(f.calls(), 3);
+    assert.equal(f.calls(), 2);
   } finally {
     await r.close();
     f.cleanup();
@@ -212,6 +245,39 @@ test("pause survives restart and cannot renew an expired lease", async () => {
     f.advance();
     assert.throws(() => r.resume());
     await assert.rejects(() => r.activate(f.approval(r)));
+  } finally {
+    await r.close();
+    f.cleanup();
+  }
+});
+
+test("source failures consume the durable run budget before dispatch and cannot reset on restart", async () => {
+  const f = fixture({ maxWorkAttempts: 2 });
+  let r = f.create();
+  try {
+    await r.activate(f.approval(r));
+    f.setMode("source-lost");
+    for (let n = 0; n < 2; n++) {
+      await r.tick();
+      await r.close();
+      r = f.create();
+    }
+    await r.tick();
+    assert.equal(f.calls(), 2);
+    assert.equal(r.status().budget?.attempts, 2);
+    assert.equal(r.status().progress.state, "held");
+    assert.equal(r.status().enabled, false);
+    assert.throws(() => r.resume(), /stopped run/);
+    assert.throws(
+      () =>
+        r.configureExecutionBudget({
+          ...r.status().budget?.review,
+          runId: randomUUID(),
+        }),
+      /cannot be replaced/,
+    );
+    await r.tick();
+    assert.equal(f.calls(), 2);
   } finally {
     await r.close();
     f.cleanup();

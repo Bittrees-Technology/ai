@@ -67,7 +67,13 @@ export function localWorkflows(
       throw e;
     }
   }
-  async function call(action: string, input: unknown, controlToken?: string) {
+  async function call(
+    action: string,
+    input: unknown,
+    controlToken?: string,
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
     const r = await fetch("https://ai.bittrees.org/api/workflows", {
       method: "POST",
       headers: {
@@ -75,7 +81,10 @@ export function localWorkflows(
         ...(controlToken ? { authorization: "Bearer " + controlToken } : {}),
       },
       body: JSON.stringify({ action, input }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.any([
+        ...(signal ? [signal] : []),
+        AbortSignal.timeout(15000),
+      ]),
       redirect: "error",
     });
     if (!r.ok) throw Error("WORKFLOW_UNAVAILABLE");
@@ -142,11 +151,16 @@ export function localWorkflows(
       purpose: "enroll" | "activate" | "decision",
       request: unknown,
       signature: string,
+      signal?: AbortSignal,
     ) {
+      signal?.throwIfAborted();
       if (enrollmentTransport && purpose === "enroll")
         return enrollmentTransport.execute(
           { operation: "attest", request, signature },
-          AbortSignal.timeout(15000),
+          AbortSignal.any([
+            ...(signal ? [signal] : []),
+            AbortSignal.timeout(15000),
+          ]),
         );
       const s = await settings();
       if (!s) throw Error("Connect this Mac first");
@@ -154,6 +168,7 @@ export function localWorkflows(
         "runtime-attestation",
         { purpose, request, signature },
         s.controlToken,
+        signal,
       );
     },
     async status() {

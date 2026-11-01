@@ -12,6 +12,11 @@ import {
 import { Vault } from "../storage/vault.js";
 import { canonical } from "../contracts/canonical-json.js";
 import {
+  TaskSyncRunBudget,
+  TaskSyncBudgetHeld,
+  type TaskSyncRequestKind,
+} from "./run-budget.js";
+import {
   activeLease,
   digest,
   signChallenges,
@@ -65,6 +70,7 @@ export class TaskSyncRunner {
   private controller: AbortController | null = null;
   private handoff: RuntimeHandoff;
   private reviewing: Promise<void> | null = null;
+  private budget: TaskSyncRunBudget;
   constructor(
     path: string,
     private vault: Vault,
@@ -87,6 +93,7 @@ export class TaskSyncRunner {
       purpose: "enroll" | "activate",
       request: unknown,
       signature: string,
+      signal: AbortSignal,
     ) => Promise<unknown> = async () => {
       throw new Held("Device attestation unavailable");
     },
@@ -97,6 +104,48 @@ export class TaskSyncRunner {
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value BLOB NOT NULL)",
     );
+    this.budget = new TaskSyncRunBudget(
+      {
+        read: () => this.get("runBudget"),
+        write: (value) => this.put("runBudget", value),
+        atomic: (f) => this.db.transaction(f).immediate(),
+      },
+      this.now,
+    );
+    this.request = this.budget.fetch(
+      request,
+      () => this.budgetScope(),
+      (url, init) => this.requestKind(url, init),
+    );
+    this.attestProof = (payload, signature, signal) =>
+      this.budget.value(
+        this.budgetScope(),
+        "attestation",
+        { payload, signature },
+        (bounded) => attestProof(payload, signature, bounded),
+        signal,
+      );
+    const boundedAttest = (
+      purpose: "enroll" | "activate",
+      payload: unknown,
+      signature: string,
+    ) =>
+      this.budget.value(
+        this.budgetScope(),
+        "attestation",
+        { purpose, payload, signature },
+        (bounded) => attestRuntime(purpose, payload, signature, bounded),
+      );
+    const nativeEnrollment = enrollmentTransport && {
+      execute: (raw: unknown, signal: AbortSignal) =>
+        this.budget.value(
+          this.budgetScope(),
+          "owner",
+          raw,
+          (bounded) => enrollmentTransport.execute(raw, bounded),
+          signal,
+        ),
+    };
     this.handoff = new RuntimeHandoff(
       () => this.get("handoff"),
       (s) => {
@@ -109,10 +158,79 @@ export class TaskSyncRunner {
         sign(null, Buffer.from(message), this.key().privateKey).toString(
           "base64",
         ),
-      attestRuntime,
+      boundedAttest,
       this.request,
       this.now,
-      enrollmentTransport,
+      nativeEnrollment,
+    );
+  }
+  /** Trusted native owner only. Not exposed by the local web API or model. */
+  configureExecutionBudget(review: unknown) {
+    this.budget.bind(review);
+    return this.status();
+  }
+  private budgetScope(review = this.get("approval") || this.get("review")) {
+    const key = this.get("key");
+    if (!key || !review)
+      throw new TaskSyncBudgetHeld(
+        "Existing identity and exact reviewed task scope required",
+      );
+    return digest({
+      principal: key.principal,
+      sourceWorkspace:
+        review.sourceWorkspace ?? review.identity?.sourceWorkspace,
+      revision: review.revision,
+      tasks: review.tasks,
+      mappings: review.mappings,
+    });
+  }
+  private requestKind(url: string, init?: RequestInit): TaskSyncRequestKind {
+    if (
+      url === SOURCE &&
+      (!init?.method || init.method === "GET") &&
+      !init?.body
+    )
+      return "source";
+    if (
+      init?.method !== "POST" ||
+      init.redirect !== "error" ||
+      typeof init.body !== "string"
+    )
+      throw new TaskSyncBudgetHeld("Unsupported task-sync dispatch");
+    if (url === "https://mcp.bittrees.org/v1/task-sync/connect")
+      return "connect";
+    if (
+      ["start", "poll", "complete"].some(
+        (action) =>
+          url === "https://roles.bittrees.org/api/mcp/runtime/" + action,
+      )
+    )
+      return "owner";
+    const review = this.get("approval") || this.get("review");
+    const query = new URLSearchParams({
+      mode: "selected",
+      projects: [
+        ...new Set([
+          "crm",
+          ...review.mappings.map((m: any) => m.sourceProjectId),
+        ]),
+      ].join(","),
+    });
+    if (url === "https://mcp.bittrees.org/mcp?" + query) {
+      const rpc = JSON.parse(init.body);
+      if (
+        rpc.method === "tools/call" &&
+        rpc.params?.name === "task_sync_execute"
+      )
+        return "execute";
+      if (
+        rpc.method === "tools/call" &&
+        rpc.params?.name === "task_sync_preview"
+      )
+        return "preview";
+    }
+    throw new TaskSyncBudgetHeld(
+      "Unsupported task-sync destination or operation",
     );
   }
   private get(key: string): any {
@@ -201,6 +319,7 @@ export class TaskSyncRunner {
     const review = this.get("review");
     if (!review)
       throw new Held("Select a reviewed synchronization workflow first");
+    this.budget.assertCurrent(this.budgetScope());
     return this.handoff.start({
       kind: "enroll",
       ...device,
@@ -210,6 +329,7 @@ export class TaskSyncRunner {
   async startActivation(input: { leaseId: string; policyDigest: string }) {
     const e = this.get("enrollment");
     if (!e) throw new Held("Enroll this Mac first");
+    this.budget.assertCurrent(this.budgetScope());
     const b = e.binding;
     return this.handoff.start({
       kind: "activate",
@@ -304,6 +424,7 @@ export class TaskSyncRunner {
   }
   retryConnection() {
     if (this.get("approval")) throw new Held("Already connected");
+    this.budget.assertCurrent(this.budgetScope());
     this.put("connectionAttempts", 0);
     this.put("connectionRetryAt", 0);
     this.put("connectionError", null);
@@ -328,6 +449,7 @@ export class TaskSyncRunner {
       expiresAt: a?.identity.expiresAt ?? null,
       device: this.get("key") ? this.device() : null,
       receipts,
+      budget: this.budget.snapshot(),
     };
   }
   async activate(input: unknown) {
@@ -411,6 +533,7 @@ export class TaskSyncRunner {
         throw new Held("Invalid reviewed task or destination");
       ids.add(t.content.sourceId);
     }
+    this.budget.assertCurrent(this.budgetScope(a));
     this.db.transaction(() => {
       this.put("approval", a);
       this.put("enabled", true);
@@ -433,6 +556,7 @@ export class TaskSyncRunner {
     )
       throw new Held("Review the stopped run before continuing");
     activeLease(a.identity, this.now());
+    this.budget.assertCurrent(this.budgetScope());
     this.put("enabled", true);
     return this.status();
   }
@@ -446,7 +570,8 @@ export class TaskSyncRunner {
       .catch((e) => {
         if (!this.get("enabled")) return;
         const expired = this.now() >= a.identity.expiresAt;
-        const held = e instanceof Held || expired;
+        const held =
+          e instanceof Held || e instanceof TaskSyncBudgetHeld || expired;
         this.put("progress", {
           state: expired ? "expired" : held ? "held" : "retry-pending",
           message: held
@@ -532,6 +657,12 @@ export class TaskSyncRunner {
   }
   private async workExclusive(a: Approval, signal: AbortSignal) {
     activeLease(a.identity, this.now());
+    if ((this.get("receipts") || []).length === a.tasks.length) {
+      this.put("enabled", false);
+      this.put("progress", { state: "finished" });
+      return;
+    }
+    this.budget.beginWork(this.budgetScope());
     await this.source(a, signal);
     const receipts = this.get("receipts") || [],
       task = a.tasks[receipts.length];

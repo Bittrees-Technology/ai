@@ -709,12 +709,13 @@ const taskSync = new TaskSyncRunner(
       "decision",
       request,
       signature,
+      signal,
     );
     signal.throwIfAborted();
     return result;
   },
-  (purpose, request, signature) =>
-    workflows.attestRuntime(purpose, request, signature),
+  (purpose, request, signature, signal) =>
+    workflows.attestRuntime(purpose, request, signature, signal),
   enrollmentTransport,
 );
 taskSync.taskTurn = agentQueue.run;
