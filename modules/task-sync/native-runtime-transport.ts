@@ -154,18 +154,12 @@ export function taskSyncNativeTransport(options: {
         url = "https://agent.bittrees.org/tasks.json";
         kind = "source";
       } else if (op.kind === "connect") {
-        const r = op.body.leaseReceipt.receipt;
-        if (
-          r.principal !== scope.principal ||
-          r.credentialId !== scope.credentialId ||
-          r.tenant !== scope.tenant ||
-          r.workspace !== scope.workspace ||
-          r.sourceWorkspace !== scope.sourceWorkspace
-        )
-          throw new TaskSyncBudgetHeld("Connection scope mismatch");
-        url = "https://mcp.bittrees.org/v1/task-sync/connect";
-        body = op.body;
-        kind = "connect";
+        // A successful connection response contains a new gateway bearer. The
+        // protected native receiver/custody path is not assembled in this
+        // candidate. Never dispatch or return that response to the core.
+        throw new TaskSyncBudgetHeld(
+          "Native connection credential custody is not wired",
+        );
       } else if (op.kind === "execute" || op.kind === "preview") {
         if (
           op.kind === "execute" &&

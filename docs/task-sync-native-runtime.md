@@ -5,7 +5,10 @@ enrolled, granted, network approved, or ready to run against production.
 `taskSyncNativeTransport` is deliberately not imported by native startup. Its
 disabled branch returns before reading scope, keys, credentials or authority.
 There is no configuration loader or automatic fallback to direct source access.
-The installed offline policy is unchanged.
+The installed offline policy is unchanged. Connection dispatch is additionally
+held before any I/O: its successful response contains a gateway bearer and the
+protected native credential receiver is not assembled. The table below records
+the proposed connection wire contract, not an enabled route.
 
 The candidate accepts typed operations, derives destinations itself, rejects
 caller URLs/headers, obtains gateway/coordinator credentials only from the

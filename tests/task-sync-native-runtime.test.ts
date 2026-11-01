@@ -159,3 +159,39 @@ test("changed native scope is checked before dispatch and before releasing strea
   await assert.rejects(() => native.execute({ kind: "source" }));
   assert.equal(f.calls(), 1);
 });
+
+test("connection stays held before dispatch until native credential receiver is assembled", async () => {
+  const f = fixture(),
+    native = taskSyncNativeTransport(f.options)!;
+  const at = Date.now();
+  await assert.rejects(
+    () =>
+      native.execute({
+        kind: "connect",
+        body: {
+          leaseReceipt: {
+            signature: "synthetic",
+            receipt: {
+              version: 1,
+              issuer: "https://roles.bittrees.org",
+              audience: "https://mcp.bittrees.org",
+              sourceWorkspace: f.scope.sourceWorkspace,
+              leaseId: randomUUID(),
+              policyDigest: "e".repeat(64),
+              principal: f.scope.principal,
+              credentialId: f.scope.credentialId,
+              runtimeBindingDigest: "f".repeat(64),
+              tenant: f.scope.tenant,
+              workspace: f.scope.workspace,
+              activatedAt: new Date(at).toISOString(),
+              expiresAt: new Date(at + 30000).toISOString(),
+              renewable: false,
+            },
+          },
+        },
+      }),
+    /credential custody is not wired/,
+  );
+  assert.equal(f.calls(), 0);
+  assert.equal(f.budget.snapshot()?.requests, 0);
+});
