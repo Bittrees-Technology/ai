@@ -295,3 +295,37 @@ test("saved central identity refuses missing state or a mismatched private key w
     await rm(f.directory, { recursive: true, force: true });
   }
 });
+
+test("finite pilot review is part of the native saved-state binding and cannot be silently added or changed", async () => {
+  const f = await fixture();
+  try {
+    const review = {
+      version: 1,
+      reviewId: randomUUID(),
+      runId: randomUUID(),
+      approvedAt: f.now,
+      expiresAt: f.now + 60000,
+    };
+    const db = new Database(f.path);
+    db.prepare("UPDATE state SET value=? WHERE key='config'").run(
+      f.vault.seal(
+        { ...f.config, finitePilot: review },
+        "central-workflows:config",
+      ),
+    );
+    db.close();
+    const snapshot = savedCentralState(f.path, f.vault);
+    assert.deepEqual(snapshot.finitePilot, review);
+    assert.notEqual(hash(JSON.stringify(snapshot)), f.approval.stateDigest);
+    await assert.rejects(
+      launchCentral(
+        f.directory,
+        async () => f.vault,
+        () => f.now,
+      ),
+    );
+    assert.equal(existingCentralCredential(f.path, f.vault), f.config.mcpToken);
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});

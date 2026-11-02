@@ -1,4 +1,5 @@
 import { z } from "zod";
+export class CentralWorkflowDenied extends Error {}
 
 /** Bound the actual streamed bytes, including replies without Content-Length.
  * Keep the caller's deadline active until the response is fully consumed.
@@ -22,7 +23,11 @@ export async function centralWorkflowResponse(
   void aborted.catch(() => {});
   try {
     signal.throwIfAborted();
-    if (!response.ok) throw Error("Workflow request was rejected");
+    if (!response.ok) {
+      if (response.status < 500)
+        throw new CentralWorkflowDenied("Workflow request was rejected");
+      throw Error("Workflow request was rejected");
+    }
     for (;;) {
       const part = await Promise.race([reader.read(), aborted]);
       if (part.done) break;
@@ -31,6 +36,18 @@ export async function centralWorkflowResponse(
       chunks.push(part.value);
     }
     signal.throwIfAborted();
+    const envelope = z
+      .object({
+        jsonrpc: z.literal("2.0"),
+        id: z.literal(requestId),
+        error: z.unknown().optional(),
+        result: z.unknown().optional(),
+      })
+      .parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    if (envelope.error !== undefined)
+      throw new CentralWorkflowDenied(
+        "Workflow permission or operation was rejected",
+      );
     const body = z
       .object({
         jsonrpc: z.literal("2.0"),
@@ -41,13 +58,15 @@ export async function centralWorkflowResponse(
         }),
         error: z.unknown().optional(),
       })
-      .parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      .parse(envelope);
     if (
       body.error !== undefined ||
       body.result.isError === true ||
       body.result.structuredContent === undefined
     )
-      throw Error("Workflow permission or operation was rejected");
+      throw new CentralWorkflowDenied(
+        "Workflow permission or operation was rejected",
+      );
     return body.result.structuredContent;
   } finally {
     if (onAbort) signal.removeEventListener("abort", onAbort);
