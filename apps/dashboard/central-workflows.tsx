@@ -6,9 +6,7 @@ export function CentralWorkflows({
 }) {
   const [state, setState] = useState<any>(),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [profile, setProfile] = useState(""),
-    [enrollment, setEnrollment] = useState<any>();
+    [busy, setBusy] = useState(false);
   const refresh = () => api("/v1/workflows/central").then(setState);
   useEffect(() => {
     let alive = true;
@@ -101,43 +99,18 @@ export function CentralWorkflows({
           The private signing key stays encrypted on this Mac. Approval is
           separate from installing the app.
         </p>
-        <label>
-          Your Roles profile ID
-          <input
-            value={profile}
-            onChange={(e) => {
-              setProfile(e.target.value);
-              setEnrollment(null);
-            }}
-          />
-        </label>
-        <button
-          disabled={busy || !profile}
-          onClick={() =>
-            void act(async () =>
-              setEnrollment(
-                await api("/v1/workflows/central/enrollment", "POST", {
-                  profileId: profile,
-                }),
-              ),
-            )
-          }
-        >
-          Prepare device enrollment
-        </button>
-        {enrollment && (
-          <>
-            <p>
-              Enrollment proof expires after 30 seconds. Generate a new proof if
-              needed.
-            </p>
-            <textarea
-              readOnly
-              aria-label="Public device enrollment"
-              value={JSON.stringify(enrollment)}
-            />
-          </>
-        )}
+        <p>
+          <a href="bittrees-ai://review-central-identity">
+            Review central Workflows identity
+          </a>{" "}
+          opens a read-only native confirmation in the Mac app. You can also
+          choose “Review central Workflows identity…” from the Bittrees AI menu.
+          No manual Roles profile ID is needed.
+        </p>
+        <p>
+          This review creates no keys and grants no permissions. Roles
+          enrollment and an approved connection remain separate.
+        </p>
         <label>
           Approved connection package
           <input
