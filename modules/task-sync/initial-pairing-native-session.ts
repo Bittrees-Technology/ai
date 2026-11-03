@@ -15,6 +15,7 @@ import { InitialPairingHTTPS } from "./initial-pairing-https.js";
 import { openNativeInitialPairingJournal } from "./initial-pairing-native-journal.js";
 import { signNativeInitialPairingMessage } from "./initial-pairing-signer.js";
 import { readNativeWorkflowIdentity } from "./native-identity-review.js";
+import { requireSynchronousPairingAdmission } from "./initial-pairing-admission.js";
 
 type Network = {
   resolve?: ConstructorParameters<typeof InitialPairingHTTPS>[2];
@@ -87,12 +88,14 @@ export class NativeInitialPairingSession {
   }
   private admit = () => {
     const before = this.consent();
-    this.options.admitSource({
-      purpose: "metadata-only-owner-pairing",
-      rolesKeyFingerprint: this.sourceFingerprint,
-      additionalSpendingUSD: 0,
-      consent: { ...before },
-    });
+    requireSynchronousPairingAdmission(() =>
+      this.options.admitSource({
+        purpose: "metadata-only-owner-pairing",
+        rolesKeyFingerprint: this.sourceFingerprint,
+        additionalSpendingUSD: 0,
+        consent: { ...before },
+      }),
+    );
     const after = this.consent();
     if (before.id !== after.id || before.expiresAt !== after.expiresAt)
       throw Error("Native pairing consent changed during source admission");
