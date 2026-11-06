@@ -27,9 +27,19 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var kitSetupSheet: NSWindow?
     var kitRecoveryInput: Data?
     var kitRecoveryChoosing = false
-    let home = URL(string: "http://127.0.0.1:43127/")!
+    var home = URL(string: "http://127.0.0.1:43127/")!
+#if STARTUP_FIXTURE
+    let fixtureDirectory = ProcessInfo.processInfo.environment["BITTREES_STARTUP_FIXTURE_DIRECTORY"]
+#endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+#if STARTUP_FIXTURE
+        guard fixtureDirectory != nil else { NSApp.terminate(nil); return }
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Bittrees AI — Isolated startup fixture"
+        replaceWebView()
+        startEngine()
+#else
         let menu = NSMenu()
         let root = NSMenuItem()
         let appMenu = NSMenu()
@@ -74,6 +84,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         if recoveryPreview { showRecoveryStart() } else { startEngine() }
+#endif
     }
     @objc func showAgentSetup() {
         guard !quitting, window != nil, window.attachedSheet == nil else { return }
@@ -123,6 +134,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         // Do not inherit NODE_OPTIONS, injected module paths, or shell credentials.
         desktopBootstrap = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
         process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "BITTREES_DESKTOP": "1", "BITTREES_DESKTOP_BOOTSTRAP": desktopBootstrap]
+#if STARTUP_FIXTURE
+        process.environment?["BITTREES_STARTUP_FIXTURE_DIRECTORY"] = fixtureDirectory
+#endif
         // Forward only the fixed local MyCloud helper capability, never general shell environment.
         let inherited = ProcessInfo.processInfo.environment
         if let endpoint = inherited["BITTREES_MYCLOUD_HELPER_URL"], let url = URL(string: endpoint),
@@ -198,13 +212,24 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             DispatchQueue.main.async {
                 guard let self = self, self.engine === process, !self.recovery.busy, !self.quitting else { return }
                 self.buffer = String((self.buffer + text).suffix(4096))
-                if !self.ready && self.buffer.contains("Bittrees AI: http://127.0.0.1:43127") {
+#if STARTUP_FIXTURE
+                if !self.ready,
+                   let match = self.buffer.range(of: #"Bittrees AI: http://127\.0\.0\.1:[0-9]{1,5}\n"#, options: .regularExpression),
+                   let url = URL(string: String(self.buffer[match]).dropFirst("Bittrees AI: ".count).trimmingCharacters(in: .whitespacesAndNewlines) + "/"),
+                   let port = url.port, port != 43127, (1024...65535).contains(port) {
+                    self.home = url
+                }
+                let announced = self.home.port != 43127
+#else
+                let announced = self.buffer.contains("Bittrees AI: http://127.0.0.1:43127")
+#endif
+                if !self.ready && announced {
                     self.ready = true
                     self.window.title = "Bittrees AI — Local companion"
                     var request = URLRequest(url: self.home.appendingPathComponent("desktop-pair"))
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("http://127.0.0.1:43127", forHTTPHeaderField: "Origin")
+                    request.setValue("http://127.0.0.1:\(self.home.port!)", forHTTPHeaderField: "Origin")
                     request.httpBody = try? JSONSerialization.data(withJSONObject: ["code": self.desktopBootstrap])
                     self.desktopBootstrap = ""
                     self.web.load(request)
@@ -337,8 +362,18 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         NSPasteboard.general.setString(code, forType: .string)
     }
     func local(_ url: URL) -> Bool {
-        url.scheme == "http" && url.host == "127.0.0.1" && url.port == 43127 && url.user == nil && url.password == nil
+        url.scheme == "http" && url.host == "127.0.0.1" && url.port == home.port && url.user == nil && url.password == nil
     }
+#if STARTUP_FIXTURE
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard ready, webView.url == home else { return }
+        webView.evaluateJavaScript("document.title") { title, error in
+            guard error == nil, title as? String == "Bittrees AI" else { return }
+            FileHandle.standardOutput.write(Data("SWIFT_FIXTURE_PAIRED port=\(self.home.port!)\n".utf8))
+            NSApp.terminate(nil)
+        }
+    }
+#endif
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         if local(url) || (action.shouldPerformDownload && url.absoluteString.hasPrefix("blob:http://127.0.0.1:43127/")) {
