@@ -729,6 +729,15 @@ const workflows = localWorkflows(
   ],
   enrollmentTransport,
 );
+const taskSyncClient = nativeTaskSyncClient();
+if (startupFixtureBuild && taskSyncClient) {
+  const response = await taskSyncClient.execute(
+    { kind: "source" },
+    AbortSignal.timeout(5000),
+  );
+  if (!response.ok || (await response.json())?.startupFixture !== true)
+    throw Error("Isolated task sync broker probe failed");
+}
 const taskSync = new TaskSyncRunner(
   join(content.directory, "task-sync.db"),
   new Vault(key),
@@ -749,7 +758,7 @@ const taskSync = new TaskSyncRunner(
   (purpose, request, signature, signal) =>
     workflows.attestRuntime(purpose, request, signature, signal),
   enrollmentTransport,
-  nativeTaskSyncClient(),
+  taskSyncClient,
   process.env.BITTREES_DESKTOP === "1",
 );
 taskSync.taskTurn = agentQueue.run;
