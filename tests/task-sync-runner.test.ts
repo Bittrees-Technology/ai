@@ -81,6 +81,7 @@ function fixture(
   const create = (
     attest?: ConstructorParameters<typeof TaskSyncRunner>[5],
     host?: ConstructorParameters<typeof TaskSyncRunner>[8],
+    requireNative = false,
   ) =>
     new TaskSyncRunner(
       path,
@@ -92,6 +93,7 @@ function fixture(
       undefined,
       undefined,
       host,
+      requireNative,
     );
   const approval = (r: TaskSyncRunner) => {
     const d = r.device();
@@ -180,6 +182,38 @@ function fixture(
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
+test("packaged task sync holds legacy activation and persisted imports without the broker", async () => {
+  const f = fixture();
+  const legacy = f.create();
+  try {
+    const approval = f.approval(legacy);
+    const packaged = f.create(undefined, undefined, true);
+    try {
+      await assert.rejects(
+        packaged.activate(approval),
+        /Native activation receipt required/,
+      );
+      await assert.rejects(
+        packaged.activateReceipt(
+          null,
+          {} as Parameters<TaskSyncRunner["activateReceipt"]>[1],
+          "",
+          approval as Parameters<TaskSyncRunner["activateReceipt"]>[3],
+        ),
+        /Protected native task sync connection unavailable/,
+      );
+      await legacy.activate(approval);
+      await packaged.tick();
+      assert.equal(packaged.status().progress.state, "held");
+      assert.equal(f.calls(), 0);
+    } finally {
+      await packaged.close();
+    }
+  } finally {
+    await legacy.close();
+    f.cleanup();
+  }
+});
 test("protected activation and imports keep the gateway bearer out of runner state", async () => {
   const f = fixture();
   const keys = generateKeyPairSync("ed25519");

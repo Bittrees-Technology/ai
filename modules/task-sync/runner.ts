@@ -107,6 +107,7 @@ export class TaskSyncRunner {
     },
     enrollmentTransport?: Pick<EnrollmentClient, "execute">,
     private readonly nativeHost?: NativeHost | NativeTaskSyncClient,
+    private readonly requireNativeTransport = false,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -463,7 +464,8 @@ export class TaskSyncRunner {
     };
   }
   async activate(input: unknown) {
-    if (this.nativeHost) throw new Held("Native activation receipt required");
+    if (this.nativeHost || this.requireNativeTransport)
+      throw new Held("Native activation receipt required");
     if (this.connectingNative) throw new Held("Native connection in progress");
     const activation = await this.verifyActivation(input, this.device());
     if (this.connectingNative) throw new Held("Native connection in progress");
@@ -490,6 +492,8 @@ export class TaskSyncRunner {
         this.nativeHost,
       );
     }
+    if (this.requireNativeTransport)
+      throw new Held("Protected native task sync connection unavailable");
     const d = this.device();
     if (
       scope.principal !== d.principal ||
@@ -1057,7 +1061,11 @@ export class TaskSyncRunner {
     throw new Held("Signature continuation limit reached");
   }
   private transportFor(approval: Approval) {
-    if ("token" in approval) return null;
+    if ("token" in approval) {
+      if (this.requireNativeTransport)
+        throw new Held("Protected native task sync connection required");
+      return null;
+    }
     if (!this.nativeTransport)
       throw new Held(
         "Protected native connection is no longer available; review the retained receipts",

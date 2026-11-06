@@ -719,6 +719,7 @@ const taskSync = new TaskSyncRunner(
     workflows.attestRuntime(purpose, request, signature, signal),
   enrollmentTransport,
   nativeTaskSyncClient(),
+  process.env.BITTREES_DESKTOP === "1",
 );
 taskSync.taskTurn = agentQueue.run;
 server.on(
