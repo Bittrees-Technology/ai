@@ -1,6 +1,7 @@
 import { portfolioDailyAdapters } from "../../modules/workflows/investor-portfolio-daily.js";
 import { createChatMonitorCollector } from "../../modules/workflows/recurring-chat-source.js";
 import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
+import { nativeTaskSyncClient } from "../../modules/task-sync/native-loopback.js";
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
 import {
   CloudConnection,
@@ -717,6 +718,7 @@ const taskSync = new TaskSyncRunner(
   (purpose, request, signature, signal) =>
     workflows.attestRuntime(purpose, request, signature, signal),
   enrollmentTransport,
+  nativeTaskSyncClient(),
 );
 taskSync.taskTurn = agentQueue.run;
 server.on(

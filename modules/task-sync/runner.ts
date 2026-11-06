@@ -13,6 +13,7 @@ import {
   taskSyncNativeTransport,
   type TaskSyncNativeOperation,
 } from "./native-runtime-transport.js";
+import type { NativeTaskSyncClient } from "./native-loopback.js";
 import {
   runtimeEnrollmentSchema,
   runtimeEnrollmentMessage,
@@ -29,6 +30,7 @@ import {
   digest,
   signChallenges,
   taskContent,
+  taskSyncIdentitySchema,
   validateChallenge,
   type SyncIdentity,
   type SyncTask,
@@ -39,20 +41,8 @@ const taskSchema = z.strictObject({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   destination: z.strictObject({ projectId: z.uuid(), workspaceId: z.uuid() }),
 });
-const identitySchema = z.strictObject({
-  principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
-  credentialId: z.string().regex(/^[a-f0-9]{64}$/),
-  tenant: z.string().min(1).max(128),
-  workspace: z.string().min(1).max(128),
-  sourceWorkspace: z.uuid(),
-  subject: z.string().min(1).max(128),
-  leaseId: z.uuid(),
-  runtimeBindingDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  activatedAt: z.number().finite(),
-  expiresAt: z.number().finite(),
-});
 const approvalSchema = z.strictObject({
-  identity: identitySchema,
+  identity: taskSyncIdentitySchema,
   token: z.string().min(16).max(4096).regex(/^\S+$/),
   revision: z.string().regex(/^[a-f0-9]{64}$/),
   tasks: z.array(taskSchema).min(1).max(1000),
@@ -87,7 +77,7 @@ export class TaskSyncRunner {
   private handoff: RuntimeHandoff;
   private reviewing: Promise<void> | null = null;
   private budget: TaskSyncRunBudget;
-  private nativeTransport: ReturnType<typeof taskSyncNativeTransport> = null;
+  private nativeTransport: NativeTaskSyncClient | null = null;
   private connectingNative = false;
   constructor(
     path: string,
@@ -116,7 +106,7 @@ export class TaskSyncRunner {
       throw new Held("Device attestation unavailable");
     },
     enrollmentTransport?: Pick<EnrollmentClient, "execute">,
-    private readonly nativeHost?: NativeHost,
+    private readonly nativeHost?: NativeHost | NativeTaskSyncClient,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -473,6 +463,7 @@ export class TaskSyncRunner {
     };
   }
   async activate(input: unknown) {
+    if (this.nativeHost) throw new Held("Native activation receipt required");
     if (this.connectingNative) throw new Held("Native connection in progress");
     const activation = await this.verifyActivation(input, this.device());
     if (this.connectingNative) throw new Held("Native connection in progress");
@@ -543,7 +534,7 @@ export class TaskSyncRunner {
     receipt: unknown,
     scope: ActivationScope,
     rolesPublicKey: string,
-    host: NativeHost,
+    host: NativeHost | NativeTaskSyncClient,
   ) {
     if (this.running || this.get("approval") || this.connectingNative)
       throw new Held("This runner already has an activation");
@@ -580,28 +571,32 @@ export class TaskSyncRunner {
         fingerprint: t.fingerprint,
       })),
     };
-    const transport = taskSyncNativeTransport({
-      ...host,
-      enabled: true,
-      budget: this.budget,
-      current: () => (this.budgetScope() === scopeDigest ? binding : null),
-      connection: {
-        expected: scope,
-        rolesPublicKey,
-        challengeTask: review.tasks[0],
-        signAndAttest: async (challenge, deviceIdentity, signal) => {
-          const bundle = this.signBundle([challenge], deviceIdentity);
-          const proof = bundle.proofs[0];
-          if (!proof) throw new Held("Missing activation proof");
-          proof.attestation = await this.attestProof(
-            proof.request,
-            proof.signature,
-            signal,
-          );
-          return proof;
-        },
-      },
-    });
+    const transport =
+      "execute" in host
+        ? host
+        : taskSyncNativeTransport({
+            ...host,
+            enabled: true,
+            budget: this.budget,
+            current: () =>
+              this.budgetScope() === scopeDigest ? binding : null,
+            connection: {
+              expected: scope,
+              rolesPublicKey,
+              challengeTask: review.tasks[0],
+              signAndAttest: async (challenge, deviceIdentity, signal) => {
+                const bundle = this.signBundle([challenge], deviceIdentity);
+                const proof = bundle.proofs[0];
+                if (!proof) throw new Held("Missing activation proof");
+                proof.attestation = await this.attestProof(
+                  proof.request,
+                  proof.signature,
+                  signal,
+                );
+                return proof;
+              },
+            },
+          });
     if (!transport) throw new Held("Native transport unavailable");
     this.connectingNative = true;
     try {

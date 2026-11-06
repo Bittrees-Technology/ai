@@ -34,6 +34,18 @@ export type SyncIdentity = {
   activatedAt: number;
   expiresAt: number;
 };
+export const taskSyncIdentitySchema = z.strictObject({
+  principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
+  credentialId: z.string().regex(/^[a-f0-9]{64}$/),
+  tenant: z.string().min(1).max(128),
+  workspace: z.string().min(1).max(128),
+  sourceWorkspace: z.uuid(),
+  subject: z.string().min(1).max(128),
+  leaseId: z.uuid(),
+  runtimeBindingDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  activatedAt: z.number().finite(),
+  expiresAt: z.number().finite(),
+});
 export const requestSchema = z.strictObject({
   version: z.literal(1),
   source: z.literal("mcp.bittrees.org"),

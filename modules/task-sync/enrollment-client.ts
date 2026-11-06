@@ -3,18 +3,25 @@ import { enrollmentOperation } from "./enrollment-transport-plan.js";
 /** Core-side typed loopback client. Native startup must supply the capability;
  * no environment discovery, remote fetch fallback, enrollment or startup registration.
  */
-export class EnrollmentClient {
+export class ProtectedLoopbackClient {
   private readonly url: URL;
   constructor(
     endpoint: string,
     private readonly token: string,
+    private protocol: {
+      path: string;
+      parse(raw: unknown): unknown;
+      maxRequest: number;
+      maxResponse: number;
+      deadline: number;
+    },
   ) {
     this.url = new URL(endpoint);
     if (
       this.url.protocol !== "http:" ||
       this.url.hostname !== "127.0.0.1" ||
       !this.url.port ||
-      this.url.pathname !== "/enrollment" ||
+      this.url.pathname !== protocol.path ||
       this.url.username ||
       this.url.password ||
       this.url.search ||
@@ -26,14 +33,14 @@ export class EnrollmentClient {
   }
   async execute(raw: unknown, signal: AbortSignal): Promise<unknown> {
     signal.throwIfAborted();
-    const body = JSON.stringify(enrollmentOperation.parse(raw));
-    if (Buffer.byteLength(body) > 16000)
+    const body = JSON.stringify(this.protocol.parse(raw));
+    if (Buffer.byteLength(body) > this.protocol.maxRequest)
       throw Error("Enrollment request too large");
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
     const timer = setTimeout(
       () => controller.abort(Error("Enrollment IPC deadline")),
-      16000,
+      this.protocol.deadline,
     );
     try {
       return await new Promise((resolve, reject) => {
@@ -64,7 +71,7 @@ export class EnrollmentClient {
             const chunks: Buffer[] = [];
             res.on("data", (chunk) => {
               size += chunk.length;
-              if (size > 64000) {
+              if (size > this.protocol.maxResponse) {
                 res.destroy();
                 reject(Error("Enrollment response too large"));
               } else chunks.push(Buffer.from(chunk));
@@ -99,6 +106,18 @@ export class EnrollmentClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+}
+
+export class EnrollmentClient extends ProtectedLoopbackClient {
+  constructor(endpoint: string, token: string) {
+    super(endpoint, token, {
+      path: "/enrollment",
+      parse: (raw) => enrollmentOperation.parse(raw),
+      maxRequest: 16000,
+      maxResponse: 64000,
+      deadline: 16000,
+    });
   }
 }
 

@@ -29,7 +29,7 @@ const proof = z
   .regex(/^[A-Za-z0-9_-]+$/)
   .max(16384)
   .optional();
-const operation = z.discriminatedUnion("kind", [
+export const taskSyncNativeOperation = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("source") }),
   z.strictObject({
     kind: z.literal("connect"),
@@ -111,13 +111,13 @@ const scopeSchema = z.strictObject({
     .max(1000),
 });
 export type TaskSyncNativeScope = z.infer<typeof scopeSchema>;
-export type TaskSyncNativeOperation = z.infer<typeof operation>;
+export type TaskSyncNativeOperation = z.infer<typeof taskSyncNativeOperation>;
 
 /** Candidate adapter, deliberately absent from native startup. No default scope,
  * credentials, authority verifier, fetch, grants, registration or key creation.
  * The synchronous verifier must perform no I/O. The trusted native owner must
- * verify current source/Roles authority for this
- * exact digest, not accept approval or credentials from the core/model input.
+ * verify current source/Roles authority for the exact parsed operation and
+ * derived wire request. A digest alone cannot establish that authority.
  * TLS/DNS and the native IPC listener remain a separate reviewed host boundary.
  */
 export function taskSyncNativeTransport(options: {
@@ -129,6 +129,8 @@ export function taskSyncNativeTransport(options: {
       scope: TaskSyncNativeScope;
       kind: TaskSyncNativeOperation["kind"];
       requestDigest: string;
+      operation: TaskSyncNativeOperation;
+      wire: { url: string; body: string | null };
     },
     signal: AbortSignal,
   ) => void;
@@ -183,7 +185,7 @@ export function taskSyncNativeTransport(options: {
   return {
     async execute(raw: unknown, parent?: AbortSignal) {
       current();
-      const op = operation.parse(raw);
+      const op = taskSyncNativeOperation.parse(raw);
       let url: string,
         body: unknown,
         kind: TaskSyncRequestKind,
@@ -232,6 +234,8 @@ export function taskSyncNativeTransport(options: {
             },
             async (input, init) => {
               current();
+              if (typeof input !== "string" || typeof init?.body !== "string")
+                throw new TaskSyncBudgetHeld("Invalid native activation wire");
               const wireSignal = init?.signal
                 ? AbortSignal.any([signal, init.signal])
                 : signal;
@@ -240,10 +244,12 @@ export function taskSyncNativeTransport(options: {
                 {
                   scope: structuredClone(scope),
                   kind: "connect",
+                  operation: structuredClone(op),
+                  wire: { url: input, body: init.body },
                   requestDigest: digest({
                     scopeDigest: scope.scopeDigest,
                     url: input,
-                    body: init?.body,
+                    body: init.body,
                   }),
                 },
                 wireSignal,
@@ -335,7 +341,13 @@ export function taskSyncNativeTransport(options: {
       const signal = options.budget.signal(scope.scopeDigest, parent);
       signal.throwIfAborted();
       options.authorize(
-        { scope: structuredClone(scope), kind: op.kind, requestDigest },
+        {
+          scope: structuredClone(scope),
+          kind: op.kind,
+          requestDigest,
+          operation: structuredClone(op),
+          wire: { url, body: typeof init.body === "string" ? init.body : null },
+        },
         signal,
       );
       signal.throwIfAborted();

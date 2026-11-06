@@ -145,6 +145,16 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             process.environment?["BITTREES_ENROLLMENT_HELPER_TOKEN"] = token
         }
         // Only the execution capability crosses into the core; native approval stays here.
+        if let endpoint = inherited["BITTREES_TASK_SYNC_HELPER_URL"],
+           let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
+           let port = url.port, port > 0, port <= 65535, url.path == "/task-sync",
+           url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+           url.absoluteString == endpoint,
+           let token = inherited["BITTREES_TASK_SYNC_HELPER_TOKEN"],
+           token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_TASK_SYNC_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_TASK_SYNC_HELPER_TOKEN"] = token
+        }
         if let endpoint = inherited["BITTREES_CENTRAL_HELPER_URL"],
            let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
            let port = url.port, port > 0, port <= 65535, url.path == "/central-workflow",

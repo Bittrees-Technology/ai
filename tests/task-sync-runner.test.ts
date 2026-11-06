@@ -18,6 +18,12 @@ import {
   activationReceiptMessage,
   runtimeEnrollmentMessage,
 } from "../modules/task-sync/runtime-contract.js";
+import {
+  launchTaskSyncBroker,
+  nativeTaskSyncClient,
+} from "../modules/task-sync/native-loopback.js";
+import { taskSyncNativeTransport } from "../modules/task-sync/native-runtime-transport.js";
+import { TaskSyncRunBudget } from "../modules/task-sync/run-budget.js";
 import Database from "better-sqlite3";
 function fixture(
   limits: { maxWorkAttempts?: number; maxRequests?: number } = {},
@@ -134,10 +140,10 @@ function fixture(
         db.close();
       }
     },
-    approval: (r: TaskSyncRunner) => {
+    approval: (r: TaskSyncRunner, hostBudget?: TaskSyncRunBudget) => {
       const a = approval(r);
       delete (a.identity as any).publicKey;
-      r.configureExecutionBudget({
+      const budget = {
         version: 1,
         confirmed: true,
         runId,
@@ -163,7 +169,9 @@ function fixture(
           attestation: 100,
           status: 0,
         },
-      });
+      };
+      r.configureExecutionBudget(budget);
+      hostBudget?.bind(budget);
       return a;
     },
     setMode: (v: string) => (mode = v),
@@ -179,8 +187,47 @@ test("protected activation and imports keep the gateway bearer out of runner sta
   const calls: string[] = [];
   const taskId = randomUUID();
   let approval: ReturnType<typeof f.approval>;
-  const runner = f.create(undefined, {
-    authorize: ({ kind }) => calls.push(kind),
+  let hostState: unknown = null;
+  const wire: Parameters<typeof taskSyncNativeTransport>[0] = {
+    enabled: true,
+    current: () => ({
+      version: 1,
+      scopeDigest: digest({
+        principal: approval.identity.principal,
+        sourceWorkspace: approval.identity.sourceWorkspace,
+        revision: approval.revision,
+        tasks: approval.tasks,
+        mappings: approval.mappings,
+      }),
+      principal: approval.identity.principal,
+      credentialId: approval.identity.credentialId,
+      tenant: approval.identity.tenant,
+      workspace: approval.identity.workspace,
+      sourceWorkspace: approval.identity.sourceWorkspace,
+      revision: approval.revision,
+      projects: ["agent"],
+      tasks: approval.tasks.map((t) => ({
+        sourceId: t.content.sourceId,
+        fingerprint: t.fingerprint,
+      })),
+    }),
+    budget: new TaskSyncRunBudget({
+      read: () => hostState,
+      write: (state) => {
+        hostState = state;
+      },
+      atomic: (f) => f(),
+    }),
+    authorize: ({ kind, operation, wire }) => {
+      assert.equal(kind, operation.kind);
+      assert.ok(!JSON.stringify(wire).includes(token));
+      if (operation.kind === "execute") {
+        const args = JSON.parse(wire.body!).params.arguments;
+        assert.equal(args.sourceId, operation.sourceId);
+        assert.equal(args.expectedFingerprint, operation.expectedFingerprint);
+      }
+      calls.push(kind);
+    },
     credential: () => {
       throw Error("Unexpected credential lookup");
     },
@@ -215,6 +262,42 @@ test("protected activation and imports keep the gateway bearer out of runner sta
       }
       assert.equal(auth, "Bearer " + token);
       const rpc = JSON.parse(String(init?.body));
+      if (
+        rpc.params.name === "task_sync_preview" &&
+        !new Headers(init?.headers).has("x-bittrees-agent-proof")
+      ) {
+        const { activatedAt, expiresAt, subject, sourceWorkspace, ...binding } =
+          approval.identity;
+        const parameters = { tool: "projects.list", arguments: {} };
+        return Response.json(
+          {
+            id: rpc.id,
+            error: {
+              data: {
+                type: "roles-proof-required",
+                parameters,
+                request: {
+                  ...binding,
+                  version: 1,
+                  source: "mcp.bittrees.org",
+                  audience:
+                    "https://roles.bittrees.org/api/authority/mcp-decision",
+                  requestId: randomUUID(),
+                  operationId: randomUUID(),
+                  parametersDigest: digest(parameters),
+                  issuedAt: activatedAt,
+                  delegationId: null,
+                  project: "crm",
+                  resource: "workspace:projects",
+                  action: "task:read",
+                  stage: "execute",
+                },
+              },
+            },
+          },
+          { status: 428 },
+        );
+      }
       return Response.json({
         id: rpc.id,
         result: {
@@ -231,9 +314,15 @@ test("protected activation and imports keep the gateway bearer out of runner sta
         },
       });
     },
-  });
+  };
+  let host: ReturnType<typeof taskSyncNativeTransport> = null;
+  assert.equal(nativeTaskSyncClient({}), undefined);
+  const broker = await launchTaskSyncBroker(() => host);
   try {
-    approval = f.approval(runner);
+    const client = nativeTaskSyncClient(broker.environment);
+    assert.ok(client);
+    const runner = f.create(async () => ({ synthetic: true }), client);
+    approval = f.approval(runner, wire.budget);
     const { identity, revision, tasks, mappings } = approval;
     const { activatedAt, expiresAt, subject, ...binding } = identity;
     runner.configureReview({
@@ -253,6 +342,26 @@ test("protected activation and imports keep the gateway bearer out of runner sta
       expiresAt: new Date(expiresAt).toISOString(),
       renewable: false as const,
     };
+    const expected = {
+      ...binding,
+      subject,
+      policyDigest,
+      projectIds: ["crm", "agent"],
+    };
+    const rolesKey = keys.publicKey
+      .export({ type: "spki", format: "pem" })
+      .toString();
+    host = taskSyncNativeTransport({
+      ...wire,
+      connection: {
+        expected,
+        rolesPublicKey: rolesKey,
+        challengeTask: tasks[0] as SyncTask,
+        signAndAttest: async () => {
+          throw Error("Unexpected activation challenge");
+        },
+      },
+    });
     await runner.activateReceipt(
       {
         receipt,
@@ -262,8 +371,8 @@ test("protected activation and imports keep the gateway bearer out of runner sta
           keys.privateKey,
         ).toString("base64"),
       },
-      { ...binding, subject, policyDigest, projectIds: ["crm", "agent"] },
-      keys.publicKey.export({ type: "spki", format: "pem" }).toString(),
+      expected,
+      rolesKey,
       { revision, tasks, mappings } as Parameters<
         TaskSyncRunner["activateReceipt"]
       >[3],
@@ -277,9 +386,16 @@ test("protected activation and imports keep the gateway bearer out of runner sta
     });
     await runner.tick();
     assert.equal(runner.status().completedImports, 1);
-    assert.deepEqual(calls, ["connect", "preview", "source", "execute"]);
+    assert.deepEqual(calls, [
+      "connect",
+      "preview",
+      "preview",
+      "source",
+      "execute",
+    ]);
     assert.equal(f.calls(), 0);
   } finally {
+    await broker.close();
     f.cleanup();
   }
 });
