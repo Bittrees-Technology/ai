@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Ollama } from "../modules/models/ollama.js";
+import { assignmentModel } from "../modules/task-sync/assignment-model.js";
 const profile = {
   id: "p",
   runtime: "ollama",
@@ -111,6 +112,14 @@ test("optional structured format is bounded, snapshotted and never retries witho
       if (reject) {
         res.statusCode = 500;
         res.end(JSON.stringify({ error: "synthetic unsupported format" }));
+      } else if (body.format?.required?.[0] === "summary") {
+        assert.match(body.prompt, /untrusted data/);
+        assert.ok(
+          body.prompt.endsWith(JSON.stringify({ task: "Revisão 確認" })),
+        );
+        res.end(
+          JSON.stringify({ response: '{"summary":"Ready"}', done: true }),
+        );
       } else
         res.end(JSON.stringify({ response: '{"answer":"ready"}', done: true }));
     }
@@ -128,6 +137,17 @@ test("optional structured format is bounded, snapshotted and never retries witho
     assert.deepEqual(formats[0], { type: "object", required: ["answer"] });
     await runtime.generate(pinned, "Return JSON", undefined, "json");
     assert.equal(formats[1], "json");
+    const budget =
+      pinned.profile.contextTokens - pinned.profile.maxOutputTokens - 256;
+    await assert.rejects(
+      runtime.generate(
+        pinned,
+        "界".repeat(Math.floor(budget / 3)),
+        undefined,
+        format,
+      ),
+      /CAPACITY/,
+    );
     await assert.rejects(
       runtime.generate(pinned, "Return JSON", undefined, {
         description: "x".repeat(16385),
@@ -142,6 +162,15 @@ test("optional structured format is bounded, snapshotted and never retries witho
     );
     assert.equal(formats.length, 3);
     assert.equal(formats[2], "json");
+    reject = false;
+    const generateAssignment = assignmentModel(runtime, pinned);
+    assert.deepEqual(
+      await generateAssignment(
+        { instruction: "Revisão 確認" },
+        new AbortController().signal,
+      ),
+      { summary: "Ready" },
+    );
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

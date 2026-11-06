@@ -14,6 +14,7 @@ for (const mode of [
   "lost-write",
   "lost-inference",
   "changed",
+  "revoked-in-queue",
 ] as const) {
   test("REST assignment: " + mode, async () => {
     const dir = mkdtempSync(join(tmpdir(), "assignment-run-"));
@@ -32,13 +33,23 @@ for (const mode of [
     const runId = randomUUID();
     const calls: string[] = [];
     let generations = 0;
+    let enteredModelTurn = false;
     const receipts = new Map<
       string,
       { operationId: string; resultDigest: string }
     >();
     const host: ConstructorParameters<typeof AssignmentRunner>[2] = {
+      async modelTurn(_signal, work) {
+        enteredModelTurn = true;
+        return work();
+      },
       async authorize(binding) {
         assert.deepEqual(binding.assignment, assignment);
+        if (binding.action === "infer") {
+          assert.equal(enteredModelTurn, true);
+          if (mode === "revoked-in-queue")
+            throw Error("Roles authority revoked");
+        }
         if (mode === "revoked" && binding.action === "write")
           throw Error("Roles authority revoked");
       },
@@ -98,13 +109,21 @@ for (const mode of [
     let runner = new AssignmentRunner(path, vault, host);
     try {
       const run = () => runner.run(assignment, signal);
-      if (mode === "revoked" || mode === "changed") {
+      if (
+        mode === "revoked" ||
+        mode === "changed" ||
+        mode === "revoked-in-queue"
+      ) {
         await assert.rejects(
           run(),
-          mode === "revoked" ? /revoked/ : /assignment changed/,
+          mode === "changed" ? /assignment changed/ : /revoked/,
         );
         assert.equal(receipts.size, 0);
-        assert.equal(generations, mode === "changed" ? 0 : 1);
+        assert.equal(
+          runner.status(assignment.assignmentId)?.block?.reason,
+          mode === "changed" ? "assignment-changed" : "authority-unavailable",
+        );
+        assert.equal(generations, mode === "revoked" ? 1 : 0);
       } else {
         if (mode !== "success") {
           await assert.rejects(run(), /lost/);
@@ -118,6 +137,11 @@ for (const mode of [
           });
         else {
           assert.deepEqual(await run(), { state: "completed", runId });
+          assert.equal(
+            runner.status(assignment.assignmentId)?.phase,
+            "completed",
+          );
+          assert.ok(runner.status(assignment.assignmentId)?.lastReceiptId);
           assert.equal(receipts.size, 2);
           const count = calls.length;
           assert.deepEqual(await run(), { state: "completed", runId });

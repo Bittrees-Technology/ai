@@ -161,7 +161,7 @@ export class Ollama {
     if (
       !prompt ||
       prompt.length > 32000 ||
-      Buffer.byteLength(prompt) >
+      Buffer.byteLength(prompt) + Buffer.byteLength(encodedFormat ?? "") >
         model.profile.contextTokens - model.profile.maxOutputTokens - 256
     )
       throw new ModelError("CAPACITY");

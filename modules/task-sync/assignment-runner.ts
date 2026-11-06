@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { z } from "zod";
 import { Vault } from "../storage/vault.js";
+import { immediateTurn, type ModelTurn } from "../models/local-turns.js";
+import { ModelError } from "../models/ollama.js";
 import { digest } from "./proof-contract.js";
 
 const assignmentSchema = z.strictObject({
@@ -40,6 +42,14 @@ type RecordState = {
   written?: true;
   completeStarted?: true;
   completed?: true;
+  block?: {
+    action: Action;
+    reason:
+      | "authority-unavailable"
+      | "assignment-changed"
+      | "model-capacity"
+      | "invalid-model-result";
+  };
 };
 type Action =
   | "claim"
@@ -74,6 +84,7 @@ export class AssignmentRunner {
     private host: {
       authorize(binding: Binding, signal: AbortSignal): Promise<void>;
       request: typeof fetch;
+      modelTurn?: ModelTurn;
       generate(
         input: { instruction: string },
         signal: AbortSignal,
@@ -91,6 +102,43 @@ export class AssignmentRunner {
   close() {
     if (this.active) throw Error("Assignment run is active");
     this.db.close();
+  }
+  status(raw: unknown) {
+    const id = z.uuid().parse(raw);
+    const row = this.db
+      .prepare("SELECT record FROM assignments WHERE id=?")
+      .get(id) as { record: Buffer } | undefined;
+    if (!row) return null;
+    const state = this.vault.open<RecordState>(
+      row.record,
+      "task-assignment:" + id,
+    );
+    let phase = "awaiting-claim";
+    if (state.completed) phase = "completed";
+    else if (state.claim && state.claim.expiresAt <= this.now())
+      phase = "lease-expired";
+    else if (state.completeStarted) phase = "completion-reconciliation";
+    else if (state.written) phase = "crm-result-confirmed";
+    else if (state.writeStarted) phase = "crm-result-reconciliation";
+    else if (state.result) phase = "result-ready";
+    else if (state.inferenceStarted) phase = "inference-unconfirmed";
+    else if (state.claim) phase = "claimed";
+    else if ((state.claimAttempts ?? 0) >= 2) phase = "claim-unconfirmed";
+    return {
+      assignmentId: id,
+      taskId: state.assignment.taskId,
+      taskRevision: state.assignment.taskRevision,
+      workflowId: state.assignment.workflowId,
+      workflowRevision: state.assignment.workflowRevision,
+      runId: state.claim?.runId ?? null,
+      lastReceiptId: state.completed
+        ? state.completeId
+        : state.written
+          ? state.writeId
+          : null,
+      phase,
+      block: state.block ?? null,
+    };
   }
   async run(raw: unknown, parent: AbortSignal) {
     if (this.active) throw Error("Assignment runner is busy");
@@ -153,10 +201,21 @@ export class AssignmentRunner {
           throw Error("Assignment lease expired");
       };
       current();
-      await this.host.authorize(
-        structuredClone({ assignment, claim: state.claim, action, ...detail }),
-        actionSignal,
-      );
+      try {
+        await this.host.authorize(
+          structuredClone({
+            assignment,
+            claim: state.claim,
+            action,
+            ...detail,
+          }),
+          actionSignal,
+        );
+      } catch (error) {
+        state.block = { action, reason: "authority-unavailable" };
+        save(state);
+        throw error;
+      }
       current();
       return actionSignal;
     };
@@ -255,25 +314,45 @@ export class AssignmentRunner {
             instruction: z.string().min(1).max(8000),
           })
           .parse(await rest("read", task, "GET"));
-        if (digest(snapshot.assignment) !== digest(assignment))
+        if (digest(snapshot.assignment) !== digest(assignment)) {
+          state.block = { action: "read", reason: "assignment-changed" };
+          save(state);
           throw Error("CRM task assignment changed");
+        }
         return snapshot;
       };
       if (!state.result) {
         if (state.inferenceStarted)
           return { state: "held", reason: "inference-uncertain" } as const;
-        const { instruction } = await readTask();
-        const inferenceSignal = await authority("infer", {
-          inputDigest: digest(instruction),
+        await (this.host.modelTurn ?? immediateTurn)(signal, async () => {
+          const { instruction } = await readTask();
+          const inferenceSignal = await authority("infer", {
+            inputDigest: digest(instruction),
+          });
+          state.inferenceStarted = true;
+          save(state);
+          try {
+            state.result = resultSchema.parse(
+              await this.host.generate({ instruction }, inferenceSignal),
+            );
+          } catch (error) {
+            if (error instanceof ModelError && error.code === "CAPACITY") {
+              state.block = { action: "infer", reason: "model-capacity" };
+              save(state);
+            } else if (
+              error instanceof z.ZodError ||
+              (error instanceof ModelError && error.code === "INVALID_OUTPUT")
+            ) {
+              state.block = { action: "infer", reason: "invalid-model-result" };
+              save(state);
+            }
+            throw error;
+          }
+          inferenceSignal.throwIfAborted();
+          save(state);
         });
-        state.inferenceStarted = true;
-        save(state);
-        state.result = resultSchema.parse(
-          await this.host.generate({ instruction }, inferenceSignal),
-        );
-        inferenceSignal.throwIfAborted();
-        save(state);
       }
+      if (!state.result) throw Error("Missing assignment model result");
       const resultDigest = digest(state.result);
       const confirm = (rawReceipt: unknown, operationId: string) => {
         const receipt = receiptSchema.parse(rawReceipt);
@@ -340,6 +419,7 @@ export class AssignmentRunner {
         );
       }
       state.completed = true;
+      delete state.block;
       save(state);
       return { state: "completed", runId: state.claim.runId } as const;
     } finally {

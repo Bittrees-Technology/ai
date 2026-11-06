@@ -18,14 +18,19 @@ HTTPS transport. Authorization sees the exact method, URL, body digest and
 operation ID or the inference input digest. The service still authorizes the
 action at commit time. The transport must enforce the reviewed destinations,
 credential custody, TLS/DNS policy and a durable request budget. Task text is
-untrusted model input. The model host must apply the final prompt budget before
-calling the model and return only the proposed result schema.
+untrusted model input. The local assignment model adapter frames that text as
+data and requests a structured result from a pinned Ollama model. Ollama checks
+the assembled prompt and schema against the context budget. When supplied with
+the shared model queue, the runner reads the task and checks inference authority
+inside the turn, after waiting for the model.
 
 The encrypted runner journal retains stable claim, result and completion IDs.
 A claim can be attempted twice with the original key. An interrupted inference
 holds on restart. After a possibly committed result or completion the runner
 reads the original receipt and sends no second write. A missing receipt requires
 reconciliation. A resumed run requires current authority and an unexpired lease.
+The local status projection reports the assignment revision, run, last confirmed
+receipt, phase and typed block reason without returning task or result text.
 
 The fixture tests use synthetic assignment, model, authority and REST responses.
 Server routes, native authorization and model adapters, and scheduled execution
