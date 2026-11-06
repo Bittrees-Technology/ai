@@ -24,6 +24,11 @@ const signed = <T extends z.ZodType>(request: T) =>
   z.strictObject({ request, signature });
 const poll = { id: z.uuid(), pollSecret: z.string().regex(/^[a-f0-9]{64}$/) };
 const json = z.record(z.string(), z.unknown());
+const proof = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .max(16384)
+  .optional();
 const operation = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("source") }),
   z.strictObject({
@@ -35,17 +40,13 @@ const operation = z.discriminatedUnion("kind", [
       }),
     }),
   }),
-  z.strictObject({ kind: z.literal("preview"), id: z.uuid() }),
+  z.strictObject({ kind: z.literal("preview"), id: z.uuid(), proof }),
   z.strictObject({
     kind: z.literal("execute"),
     id: z.uuid(),
     sourceId: z.string().min(1).max(200),
     expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    proof: z
-      .string()
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .max(16384)
-      .optional(),
+    proof,
   }),
   z.strictObject({
     kind: z.literal("owner-start"),
@@ -356,7 +357,7 @@ export function taskSyncNativeTransport(options: {
           throw new TaskSyncBudgetHeld("Native credential unavailable");
         headers.set("Authorization", "Bearer " + token);
       }
-      if (op.kind === "execute" && op.proof)
+      if ((op.kind === "execute" || op.kind === "preview") && op.proof)
         headers.set("x-bittrees-agent-proof", op.proof);
       const response = await options.budget.fetch(
         options.request,

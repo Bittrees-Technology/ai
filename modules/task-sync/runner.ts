@@ -4,7 +4,15 @@ import { RuntimeHandoff } from "./handoff.js";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import Database from "better-sqlite3";
 import { z } from "zod";
-import { exchangeActivation, type ActivationScope } from "./activation.js";
+import {
+  exchangeActivation,
+  verifyActivationReceipt,
+  type ActivationScope,
+} from "./activation.js";
+import {
+  taskSyncNativeTransport,
+  type TaskSyncNativeOperation,
+} from "./native-runtime-transport.js";
 import {
   runtimeEnrollmentSchema,
   runtimeEnrollmentMessage,
@@ -60,7 +68,15 @@ const approvalSchema = z.strictObject({
     .min(1)
     .max(100),
 });
-type Approval = z.infer<typeof approvalSchema>;
+const nativeApprovalSchema = approvalSchema.omit({ token: true }).extend({
+  transport: z.literal("native"),
+});
+type Approval =
+  z.infer<typeof approvalSchema> | z.infer<typeof nativeApprovalSchema>;
+type NativeHost = Pick<
+  Parameters<typeof taskSyncNativeTransport>[0],
+  "authorize" | "request" | "credential"
+>;
 class Held extends Error {}
 /** One-shot deterministic source sync. Does not claim the local model authored or completed imported tasks. */
 export class TaskSyncRunner {
@@ -71,6 +87,8 @@ export class TaskSyncRunner {
   private handoff: RuntimeHandoff;
   private reviewing: Promise<void> | null = null;
   private budget: TaskSyncRunBudget;
+  private nativeTransport: ReturnType<typeof taskSyncNativeTransport> = null;
+  private connectingNative = false;
   constructor(
     path: string,
     private vault: Vault,
@@ -98,6 +116,7 @@ export class TaskSyncRunner {
       throw new Held("Device attestation unavailable");
     },
     enrollmentTransport?: Pick<EnrollmentClient, "execute">,
+    private readonly nativeHost?: NativeHost,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -291,6 +310,7 @@ export class TaskSyncRunner {
   }
   configureReview(input: unknown) {
     if (
+      this.connectingNative ||
       this.get("approval") ||
       this.get("enrollment") ||
       ["pending", "approved"].includes(this.handoff.status()?.status || "")
@@ -453,9 +473,10 @@ export class TaskSyncRunner {
     };
   }
   async activate(input: unknown) {
-    return this.saveActivation(
-      await this.verifyActivation(input, this.device()),
-    );
+    if (this.connectingNative) throw new Held("Native connection in progress");
+    const activation = await this.verifyActivation(input, this.device());
+    if (this.connectingNative) throw new Held("Native connection in progress");
+    return this.saveActivation(activation);
   }
   async activateReceipt(
     receipt: unknown,
@@ -463,6 +484,21 @@ export class TaskSyncRunner {
     rolesPublicKey: string,
     review: Pick<Approval, "revision" | "tasks" | "mappings">,
   ) {
+    if (this.nativeHost) {
+      if (
+        this.budgetScope({
+          ...review,
+          sourceWorkspace: scope.sourceWorkspace,
+        }) !== this.budgetScope()
+      )
+        throw new Held("Activation differs from saved review");
+      return this.activateNativeReceipt(
+        receipt,
+        scope,
+        rolesPublicKey,
+        this.nativeHost,
+      );
+    }
     const d = this.device();
     if (
       scope.principal !== d.principal ||
@@ -470,7 +506,7 @@ export class TaskSyncRunner {
       scope.subject !== d.principal
     )
       throw new Held("Activation is for a different device");
-    if (this.running || this.get("approval"))
+    if (this.running || this.get("approval") || this.connectingNative)
       throw new Held("This runner already has an activation");
     const task = review.tasks[0];
     if (!task) throw new Held("Review the source tasks first");
@@ -503,12 +539,143 @@ export class TaskSyncRunner {
     );
     return this.saveActivation({ ...review, ...connection });
   }
-  private saveActivation(input: unknown) {
+  async activateNativeReceipt(
+    receipt: unknown,
+    scope: ActivationScope,
+    rolesPublicKey: string,
+    host: NativeHost,
+  ) {
+    if (this.running || this.get("approval") || this.connectingNative)
+      throw new Held("This runner already has an activation");
+    const review = this.get("review");
+    const device = this.device();
+    if (
+      !review ||
+      scope.principal !== device.principal ||
+      scope.credentialId !== device.credentialId ||
+      scope.sourceWorkspace !== review.sourceWorkspace
+    )
+      throw new Held("Activation differs from the reviewed device or scope");
+    const scopeDigest = this.budgetScope(review);
+    const identity = verifyActivationReceipt(
+      receipt,
+      scope,
+      rolesPublicKey,
+      this.now(),
+    ).identity;
+    const binding = {
+      version: 1 as const,
+      scopeDigest,
+      principal: identity.principal,
+      credentialId: identity.credentialId,
+      tenant: identity.tenant,
+      workspace: identity.workspace,
+      sourceWorkspace: identity.sourceWorkspace,
+      revision: review.revision,
+      projects: review.mappings.map(
+        (m: { sourceProjectId: string }) => m.sourceProjectId,
+      ),
+      tasks: review.tasks.map((t: SyncTask) => ({
+        sourceId: t.content.sourceId,
+        fingerprint: t.fingerprint,
+      })),
+    };
+    const transport = taskSyncNativeTransport({
+      ...host,
+      enabled: true,
+      budget: this.budget,
+      current: () => (this.budgetScope() === scopeDigest ? binding : null),
+      connection: {
+        expected: scope,
+        rolesPublicKey,
+        challengeTask: review.tasks[0],
+        signAndAttest: async (challenge, deviceIdentity, signal) => {
+          const bundle = this.signBundle([challenge], deviceIdentity);
+          const proof = bundle.proofs[0];
+          if (!proof) throw new Held("Missing activation proof");
+          proof.attestation = await this.attestProof(
+            proof.request,
+            proof.signature,
+            signal,
+          );
+          return proof;
+        },
+      },
+    });
+    if (!transport) throw new Held("Native transport unavailable");
+    this.connectingNative = true;
+    try {
+      const signal = this.budget.signal(scopeDigest);
+      const response = await transport.execute(
+        {
+          kind: "connect",
+          body: { leaseReceipt: receipt },
+        },
+        signal,
+      );
+      const connected = await this.read(response, 64000);
+      if (!response.ok || digest(connected.identity) !== digest(identity))
+        throw new Held("Native connection identity mismatch");
+      const preview = z
+        .object({
+          revision: z.string(),
+          tasks: z
+            .array(
+              z.object({
+                sourceId: z.string(),
+                fingerprint: z.string(),
+                destination: taskSchema.shape.destination,
+              }),
+            )
+            .max(1000),
+        })
+        .parse(
+          await this.previewNative(
+            transport,
+            identity,
+            review.tasks[0],
+            signal,
+          ),
+        );
+      const tasks = new Map(preview.tasks.map((t) => [t.sourceId, t]));
+      if (
+        preview.revision !== review.revision ||
+        tasks.size !== review.tasks.length ||
+        tasks.size !== preview.tasks.length ||
+        review.tasks.some((task: SyncTask) => {
+          const match = tasks.get(task.content.sourceId);
+          return (
+            !match ||
+            match.fingerprint !== task.fingerprint ||
+            digest(match.destination) !== digest(task.destination)
+          );
+        })
+      )
+        throw new Held("Native preview differs from reviewed tasks");
+      const status = this.saveActivation(
+        {
+          revision: review.revision,
+          tasks: review.tasks,
+          mappings: review.mappings,
+          identity,
+          transport: "native",
+        },
+        true,
+      );
+      this.nativeTransport = transport;
+      return status;
+    } finally {
+      this.connectingNative = false;
+    }
+  }
+  private saveActivation(input: unknown, native = false) {
     if (this.running || this.get("approval"))
       throw new Held(
         "This runner already has an activation; do not renew or replace it",
       );
-    const a = approvalSchema.parse(input);
+    const a = native
+      ? nativeApprovalSchema.strict().parse(input)
+      : approvalSchema.parse(input);
     activeLease(a.identity, this.now());
     const device = this.device();
     if (
@@ -604,8 +771,97 @@ export class TaskSyncRunner {
       await reader.cancel();
     }
   }
+  private signBundle(
+    challenges: ReturnType<typeof validateChallenge>[],
+    identity: SyncIdentity,
+  ) {
+    return JSON.parse(
+      Buffer.from(
+        signChallenges(challenges, this.key().privateKey, identity, this.now()),
+        "base64url",
+      ).toString(),
+    ) as {
+      proofs: { request: unknown; signature: string; attestation?: unknown }[];
+    };
+  }
+  async previewNative(
+    transport: {
+      execute(
+        operation: TaskSyncNativeOperation,
+        signal: AbortSignal,
+      ): Promise<Response>;
+    },
+    identity: SyncIdentity,
+    task: SyncTask,
+    signal: AbortSignal,
+  ) {
+    const device = this.device();
+    if (
+      identity.principal !== device.principal ||
+      identity.subject !== device.principal ||
+      identity.credentialId !== device.credentialId
+    )
+      throw new Held("Preview is for a different device");
+    const review = this.get("approval") || this.get("review");
+    this.budget.assertCurrent(this.budgetScope(review));
+    if (
+      (review.sourceWorkspace ?? review.identity?.sourceWorkspace) !==
+        identity.sourceWorkspace ||
+      !review.tasks.some(
+        (reviewed: SyncTask) => digest(reviewed) === digest(task),
+      )
+    )
+      throw new Held("Preview is outside the reviewed task scope");
+    const id = randomUUID();
+    let proof: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      signal.throwIfAborted();
+      activeLease(identity, this.now());
+      const response = await transport.execute(
+        { kind: "preview", id, ...(proof ? { proof } : {}) },
+        signal,
+      );
+      const body = await this.read(response, 256000);
+      if (body?.id !== id) throw new Held("Mismatched gateway response");
+      if (response.status !== 428) {
+        if (
+          !response.ok ||
+          body.error ||
+          body.result?.isError ||
+          !body.result?.structuredContent
+        )
+          throw new Held("Gateway denied preview");
+        return body.result?.structuredContent;
+      }
+      if (proof) throw new Held("Gateway repeated the preview challenge");
+      const challenge = validateChallenge(
+        body.error?.data,
+        identity,
+        task,
+        undefined,
+        this.now(),
+      );
+      if (challenge.parameters.tool !== "projects.list")
+        throw new Held("Unexpected preview operation");
+      const bundle = this.signBundle([challenge], identity);
+      const signed = bundle.proofs[0];
+      if (!signed) throw new Held("Missing preview proof");
+      signed.attestation = await this.attestProof(
+        signed.request,
+        signed.signature,
+        signal,
+      );
+      proof = Buffer.from(JSON.stringify(bundle)).toString("base64url");
+      if (proof.length > 16384)
+        throw new Held("Attested preview proof exceeds limit");
+    }
+    throw new Held("Gateway preview incomplete");
+  }
   private async source(a: Approval, signal: AbortSignal) {
-    const r = await this.request(SOURCE, { redirect: "error", signal });
+    const native = this.transportFor(a);
+    const r = native
+      ? await native.execute({ kind: "source" }, signal)
+      : await this.request(SOURCE, { redirect: "error", signal });
     if (!r.ok) throw Error("Source unavailable");
     const feed = (await this.read(r, 2_000_000))?.data;
     if (
@@ -662,6 +918,7 @@ export class TaskSyncRunner {
       this.put("progress", { state: "finished" });
       return;
     }
+    const native = this.transportFor(a);
     this.budget.beginWork(this.budgetScope());
     await this.source(a, signal);
     const receipts = this.get("receipts") || [],
@@ -694,24 +951,14 @@ export class TaskSyncRunner {
       if (signal.aborted || !this.get("enabled")) return;
       const id = randomUUID(),
         headers: Record<string, string> = {
-          Authorization: "Bearer " + a.token,
+          ...("token" in a ? { Authorization: "Bearer " + a.token } : {}),
           "Content-Type": "application/json",
           Accept: "application/json",
         };
       if (challenges.length) {
-        const bundle = JSON.parse(
-          Buffer.from(
-            signChallenges(
-              challenges,
-              this.key().privateKey,
-              a.identity,
-              this.now(),
-            ),
-            "base64url",
-          ).toString(),
-        );
+        const bundle = this.signBundle(challenges, a.identity);
         await Promise.all(
-          bundle.proofs.map(async (p: any) => {
+          bundle.proofs.map(async (p) => {
             p.attestation = await this.attestProof(
               p.request,
               p.signature,
@@ -727,28 +974,38 @@ export class TaskSyncRunner {
           throw new Held("Attested signature bundle exceeds limit");
         headers["x-bittrees-agent-proof"] = encoded;
       }
-      const response = await this.request(
-        "https://mcp.bittrees.org/mcp?" + query,
-        {
-          method: "POST",
-          redirect: "error",
-          signal,
-          headers,
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id,
-            method: "tools/call",
-            params: {
-              name: "task_sync_execute",
-              arguments: {
-                sourceId: task.content.sourceId,
-                expectedFingerprint: task.fingerprint,
-                confirmed: true,
-              },
+      const response = native
+        ? await native.execute(
+            {
+              kind: "execute",
+              id,
+              sourceId: task.content.sourceId,
+              expectedFingerprint: task.fingerprint,
+              ...(headers["x-bittrees-agent-proof"]
+                ? { proof: headers["x-bittrees-agent-proof"] }
+                : {}),
             },
-          }),
-        },
-      );
+            signal,
+          )
+        : await this.request("https://mcp.bittrees.org/mcp?" + query, {
+            method: "POST",
+            redirect: "error",
+            signal,
+            headers,
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              method: "tools/call",
+              params: {
+                name: "task_sync_execute",
+                arguments: {
+                  sourceId: task.content.sourceId,
+                  expectedFingerprint: task.fingerprint,
+                  confirmed: true,
+                },
+              },
+            }),
+          });
       const body = await this.read(response, 256000);
       if (body.id !== id) throw new Held("Mismatched gateway response");
       if (response.status === 428) {
@@ -803,6 +1060,14 @@ export class TaskSyncRunner {
       return;
     }
     throw new Held("Signature continuation limit reached");
+  }
+  private transportFor(approval: Approval) {
+    if ("token" in approval) return null;
+    if (!this.nativeTransport)
+      throw new Held(
+        "Protected native connection is no longer available; review the retained receipts",
+      );
+    return this.nativeTransport;
   }
   async close() {
     this.controller?.abort();
