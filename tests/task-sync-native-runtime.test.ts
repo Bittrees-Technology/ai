@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { digest, type SyncTask } from "../modules/task-sync/proof-contract.js";
+import { activationReceiptMessage } from "../modules/task-sync/runtime-contract.js";
 import {
   taskSyncNativeTransport,
   type TaskSyncNativeScope,
 } from "../modules/task-sync/native-runtime-transport.js";
 import { TaskSyncRunBudget } from "../modules/task-sync/run-budget.js";
 
-function fixture() {
+function fixture(connect = 0) {
   let state: unknown = null,
     calls = 0,
     denied = false;
@@ -47,7 +49,7 @@ function fixture() {
       source: 3,
       execute: 3,
       preview: 3,
-      connect: 0,
+      connect,
       owner: 0,
       attestation: 0,
       status: 0,
@@ -194,4 +196,136 @@ test("connection stays held before dispatch until native credential receiver is 
   );
   assert.equal(f.calls(), 0);
   assert.equal(f.budget.snapshot()?.requests, 0);
+});
+
+test("signed activation is bound to the host scope and returns no gateway bearer", async () => {
+  for (const invalid of [null, "receipt", "response"] as const) {
+    const f = fixture(2);
+    const at = Date.now();
+    const keys = generateKeyPairSync("ed25519");
+    const task: SyncTask = {
+      content: {
+        sourceId: f.scope.tasks[0]!.sourceId,
+        projectId: "agent",
+        title: "Fixture",
+        description: "",
+        status: "todo",
+        priority: "P1",
+        area: "",
+        acceptanceCriteria: [],
+        progressNote: "",
+        sourceUrl: "https://agent.bittrees.org/readiness",
+      },
+      destination: {
+        projectId: randomUUID(),
+        workspaceId: f.scope.sourceWorkspace,
+      },
+      fingerprint: "",
+    };
+    task.fingerprint = digest(task.content);
+    f.scope.tasks[0]!.fingerprint = task.fingerprint;
+    const expected = {
+      principal: f.scope.principal,
+      subject: f.scope.principal,
+      credentialId: f.scope.credentialId,
+      tenant: f.scope.tenant,
+      workspace: f.scope.workspace,
+      sourceWorkspace: f.scope.sourceWorkspace,
+      leaseId: randomUUID(),
+      runtimeBindingDigest: "e".repeat(64),
+      policyDigest: "f".repeat(64),
+      projectIds: ["crm", "agent"],
+    };
+    const { policyDigest, projectIds, ...binding } = expected;
+    const { subject, ...receiptBinding } = binding;
+    const receipt = {
+      ...receiptBinding,
+      policyDigest,
+      version: 1 as const,
+      issuer: "https://roles.bittrees.org" as const,
+      audience: "https://mcp.bittrees.org" as const,
+      activatedAt: new Date(at).toISOString(),
+      expiresAt: new Date(at + 30000).toISOString(),
+      renewable: false as const,
+    };
+    const signature = sign(
+      null,
+      Buffer.from(activationReceiptMessage(receipt)),
+      keys.privateKey,
+    ).toString("base64");
+    const identity = {
+      ...binding,
+      subject,
+      activatedAt: at,
+      expiresAt: at + 30000,
+    };
+    const token = "synthetic-host-owned-token";
+    let requests = 0;
+    const native = taskSyncNativeTransport({
+      ...f.options,
+      credential: () => {
+        throw Error("Gateway credential must come from protected connection");
+      },
+      connection: {
+        expected,
+        challengeTask: task,
+        rolesPublicKey: keys.publicKey
+          .export({ type: "spki", format: "pem" })
+          .toString(),
+        signAndAttest: async () => {
+          throw Error("No challenge expected");
+        },
+      },
+      request: async (url, init) => {
+        requests++;
+        const auth = new Headers(init?.headers).get("authorization");
+        if (String(url).endsWith("/v1/task-sync/connect")) {
+          assert.equal(auth, null);
+          return Response.json(
+            {
+              identity:
+                invalid === "response"
+                  ? { ...identity, tenant: "other" }
+                  : identity,
+              token,
+              projectIds,
+              permissions: [
+                "catalog:read",
+                "task-sync:read",
+                "task-sync:write",
+              ],
+            },
+            { headers: { "x-test-secret": token } },
+          );
+        }
+        assert.equal(auth, "Bearer " + token);
+        return Response.json({ ok: true });
+      },
+    })!;
+    const op = {
+      kind: "connect",
+      body: {
+        leaseReceipt: {
+          receipt,
+          signature: invalid === "receipt" ? "wrong" : signature,
+        },
+      },
+    };
+    if (invalid) {
+      await assert.rejects(() => native.execute(op), /Native connection held/);
+      await assert.rejects(
+        () => native.execute({ kind: "preview", id: randomUUID() }),
+        /connection unavailable/,
+      );
+      assert.equal(requests, invalid === "receipt" ? 0 : 1);
+    } else {
+      const result = await native.execute(op);
+      assert.deepEqual(await result.json(), { identity });
+      assert.equal(result.headers.has("x-test-secret"), false);
+      await native.execute({ kind: "preview", id: randomUUID() });
+      assert.equal(requests, 2);
+      assert.equal(f.budget.snapshot()?.requests, 2);
+    }
+    await assert.rejects(() => native.execute(op), /already attempted/);
+  }
 });

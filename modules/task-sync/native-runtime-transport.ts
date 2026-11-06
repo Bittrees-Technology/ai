@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { digest, requestSchema } from "./proof-contract.js";
+import {
+  activeLease,
+  digest,
+  requestSchema,
+  type SyncIdentity,
+  type SyncTask,
+} from "./proof-contract.js";
+import { exchangeActivation, type ActivationScope } from "./activation.js";
 import {
   activationReceiptSchema,
   runtimeHandoffSchema,
@@ -26,7 +33,6 @@ const operation = z.discriminatedUnion("kind", [
         receipt: activationReceiptSchema,
         signature,
       }),
-      proof: json.optional(),
     }),
   }),
   z.strictObject({ kind: z.literal("preview"), id: z.uuid() }),
@@ -127,6 +133,12 @@ export function taskSyncNativeTransport(options: {
   ) => void;
   credential: (kind: "gateway" | "coordinator") => string;
   request: typeof fetch;
+  connection?: {
+    expected: ActivationScope;
+    rolesPublicKey: string;
+    challengeTask: SyncTask;
+    signAndAttest: Parameters<typeof exchangeActivation>[4];
+  };
 }) {
   if (!options.enabled) return null;
   const scope = scopeSchema.parse(options.current()),
@@ -142,6 +154,31 @@ export function taskSyncNativeTransport(options: {
       throw new TaskSyncBudgetHeld("Native task scope changed or revoked");
     options.budget.assertCurrent(scope.scopeDigest);
   };
+  const connection = options.connection;
+  const expected = connection && structuredClone(connection.expected);
+  const challengeTask = connection && structuredClone(connection.challengeTask);
+  if (expected && challengeTask) {
+    if (
+      expected.principal !== scope.principal ||
+      expected.credentialId !== scope.credentialId ||
+      expected.tenant !== scope.tenant ||
+      expected.workspace !== scope.workspace ||
+      expected.sourceWorkspace !== scope.sourceWorkspace ||
+      digest([...expected.projectIds].sort()) !==
+        digest(["crm", ...scope.projects].sort()) ||
+      digest(challengeTask.content) !== challengeTask.fingerprint ||
+      !scope.tasks.some(
+        (task) =>
+          task.sourceId === challengeTask.content.sourceId &&
+          task.fingerprint === challengeTask.fingerprint,
+      ) ||
+      challengeTask.destination.workspaceId !== scope.sourceWorkspace
+    )
+      throw new TaskSyncBudgetHeld("Native activation scope mismatch");
+  }
+  let connectionAttempted = false;
+  let gateway: { identity: SyncIdentity; token: string } | undefined;
+
   return {
     async execute(raw: unknown, parent?: AbortSignal) {
       current();
@@ -154,12 +191,73 @@ export function taskSyncNativeTransport(options: {
         url = "https://agent.bittrees.org/tasks.json";
         kind = "source";
       } else if (op.kind === "connect") {
-        // A successful connection response contains a new gateway bearer. The
-        // protected native receiver/custody path is not assembled in this
-        // candidate. Never dispatch or return that response to the core.
-        throw new TaskSyncBudgetHeld(
-          "Native connection credential custody is not wired",
-        );
+        if (!connection || !expected || !challengeTask)
+          throw new TaskSyncBudgetHeld(
+            "Native connection credential custody is not wired",
+          );
+        if (connectionAttempted)
+          throw new TaskSyncBudgetHeld(
+            "Native connection was already attempted",
+          );
+        const signal = options.budget.signal(scope.scopeDigest, parent);
+        signal.throwIfAborted();
+        connectionAttempted = true;
+        try {
+          const bounded = options.budget.fetch(
+            options.request,
+            () => {
+              current();
+              return scope.scopeDigest;
+            },
+            () => "connect",
+          );
+          gateway = await exchangeActivation(
+            op.body.leaseReceipt,
+            expected,
+            connection.rolesPublicKey,
+            challengeTask,
+            async (challenge, identity, activationSignal) => {
+              current();
+              const signingSignal = AbortSignal.any([signal, activationSignal]);
+              signingSignal.throwIfAborted();
+              const proof = await connection.signAndAttest(
+                challenge,
+                identity,
+                signingSignal,
+              );
+              signingSignal.throwIfAborted();
+              current();
+              return proof;
+            },
+            async (input, init) => {
+              current();
+              const wireSignal = init?.signal
+                ? AbortSignal.any([signal, init.signal])
+                : signal;
+              wireSignal.throwIfAborted();
+              options.authorize(
+                {
+                  scope: structuredClone(scope),
+                  kind: "connect",
+                  requestDigest: digest({
+                    scopeDigest: scope.scopeDigest,
+                    url: input,
+                    body: init?.body,
+                  }),
+                },
+                wireSignal,
+              );
+              wireSignal.throwIfAborted();
+              return bounded(input, { ...init, signal: wireSignal });
+            },
+          );
+          signal.throwIfAborted();
+          current();
+          return Response.json({ identity: gateway.identity });
+        } catch {
+          gateway = undefined;
+          throw new TaskSyncBudgetHeld("Native connection held");
+        }
       } else if (op.kind === "execute" || op.kind === "preview") {
         if (
           op.kind === "execute" &&
@@ -243,7 +341,17 @@ export function taskSyncNativeTransport(options: {
       current();
       const headers = new Headers(init.headers);
       if (credential) {
-        const token = options.credential(credential);
+        let token: string;
+        if (credential === "gateway" && connection) {
+          if (!gateway)
+            throw new TaskSyncBudgetHeld(
+              "Native gateway connection unavailable",
+            );
+          activeLease(gateway.identity);
+          token = gateway.token;
+        } else {
+          token = options.credential(credential);
+        }
         if (!/^\S{16,4096}$/.test(token))
           throw new TaskSyncBudgetHeld("Native credential unavailable");
         headers.set("Authorization", "Bearer " + token);

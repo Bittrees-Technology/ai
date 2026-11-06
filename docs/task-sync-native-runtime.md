@@ -69,8 +69,20 @@ digest. A hash alone is not authorization. It must not be replaced by a flag,
 model response or identity inspection result. Any future remote authorization
 request needs its own reservation through the same native ledger.
 
-The production verifier, protected IPC listener, credential custody assembly,
-TLS/DNS admission, actual source bindings and signed consent remain unwired.
+The local transport accepts a trusted activation scope, Roles public key,
+approved challenge task and host proof signer. It verifies the Roles receipt,
+uses the existing bounded challenge exchange, validates the gateway response,
+and keeps the returned bearer in the transport instance for the active lease.
+The caller receives only the verified identity. Repeated activation attempts
+on the same instance are held, and without an assembled host the connection
+still fails before dispatch.
+
+The packaged native entry point, protected IPC, durable custody across restart,
+TLS/DNS admission, and the production authority verifier remain unwired.
+The legacy runner's activation path still expects to receive a bearer. It
+cannot be pointed at this adapter without migrating its activation state and
+preview/execute calls to typed IPC. This local change does not enable startup
+or authorize actual source bindings or consent.
 Owner enrollment, activation and attestation are different typed operations;
 permitting one must not permit the others. No native configuration, enrollment,
 grant, source request or signature has been performed by this candidate.
