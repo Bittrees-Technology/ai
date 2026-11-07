@@ -103,3 +103,18 @@ before writeback. This does not establish production enrollment, source consent,
 current Roles authority, runtime cost coverage, release or live synchronization.
 The original CryptoDirectory nine-item retry scope and exhausted budgets are
 separate and remain unchanged.
+
+## Coordinator receipt retention
+
+A full 10,000-row working queue no longer prevents new tasks solely because
+terminal history exists. Before admitting the next task, the coordinator
+atomically retains terminal receipts in an encrypted history table, preserving
+the exact original ciphertext and IDs. Running and queued callbacks stay in the
+working table; their serialization, cancellation and uncertain-result rules do
+not change. Recent status includes retained receipts across restarts. This is
+history retention, not a retry-budget reset or source-operation replay.
+
+Retention fails closed on a transaction conflict, below the 20 GiB free-space
+reserve or at the 256 MiB queue database limit. Those conditions require a
+verified history export rather than automatic deletion of evidence. No original
+receipt is discarded by retention.

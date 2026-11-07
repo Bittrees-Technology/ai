@@ -1,5 +1,7 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { statfsSync } from "node:fs";
+import { dirname } from "node:path";
 import { Vault } from "../storage/vault.js";
 export type TaskTurn = <T>(
   label: string,
@@ -26,20 +28,20 @@ export class AgentQueue {
   private stopped = false;
   private wake?: () => void;
   constructor(
-    path: string,
+    private path: string,
     private vault: Vault,
   ) {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(
-      "CREATE TABLE IF NOT EXISTS entries(id TEXT PRIMARY KEY, value BLOB NOT NULL); CREATE TABLE IF NOT EXISTS controls(id INTEGER PRIMARY KEY,value INTEGER NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS entries(id TEXT PRIMARY KEY, value BLOB NOT NULL); CREATE TABLE IF NOT EXISTS controls(id INTEGER PRIMARY KEY,value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS history(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,value BLOB NOT NULL)",
     );
     this.paused = !!(
       this.db.prepare("SELECT value FROM controls WHERE id=1").get() as
         { value: number } | undefined
     )?.value;
     // Callback execution cannot safely be replayed after a crash. Source owners reconcile it.
-    for (const row of this.list())
+    for (const row of this.current())
       if (row.state === "running" || row.state === "queued")
         this.save({ ...row, state: "held", updatedAt: Date.now() });
   }
@@ -48,13 +50,72 @@ export class AgentQueue {
       .prepare("INSERT OR REPLACE INTO entries VALUES(?,?)")
       .run(row.id, this.vault.seal(row, "agent-queue:" + row.id));
   }
-  list(): QueueEntry[] {
+  private current(): QueueEntry[] {
     return (
       this.db.prepare("SELECT id,value FROM entries ORDER BY rowid").all() as {
         id: string;
         value: Buffer;
       }[]
     ).map((r) => this.vault.open<QueueEntry>(r.value, "agent-queue:" + r.id));
+  }
+  list(): QueueEntry[] {
+    const history = (
+      this.db
+        .prepare(
+          "SELECT id,value FROM history ORDER BY sequence DESC LIMIT 100",
+        )
+        .all() as { id: string; value: Buffer }[]
+    )
+      .reverse()
+      .map((r) => this.vault.open<QueueEntry>(r.value, "agent-queue:" + r.id));
+    return [...history, ...this.current()];
+  }
+  private retainHistory() {
+    const count = (
+      this.db.prepare("SELECT count(*) AS n FROM entries").get() as {
+        n: number;
+      }
+    ).n;
+    if (count < 10000) return;
+    const fs = statfsSync(dirname(this.path));
+    const pages = Number(this.db.pragma("page_count", { simple: true }));
+    const size = Number(this.db.pragma("page_size", { simple: true }));
+    if (
+      fs.bavail * fs.bsize < 20 * 1024 ** 3 ||
+      pages * size >= 256 * 1024 ** 2
+    )
+      throw Error(
+        "Queue history needs verified export; storage reserve retained",
+      );
+    // Copy ciphertext and retire only the identical terminal working row in one
+    // transaction. Every receipt remains durable; active callbacks are untouched.
+    this.db
+      .transaction(() => {
+        const rows = this.db
+          .prepare("SELECT id,value FROM entries ORDER BY rowid")
+          .all() as { id: string; value: Buffer }[];
+        let moved = 0;
+        for (const r of rows) {
+          if (this.controllers.has(r.id)) continue;
+          const row = this.vault.open<QueueEntry>(
+            r.value,
+            "agent-queue:" + r.id,
+          );
+          if (!["returned", "held", "cancelled"].includes(row.state)) continue;
+          this.db
+            .prepare("INSERT INTO history(id,value) VALUES(?,?)")
+            .run(r.id, r.value);
+          if (
+            this.db
+              .prepare("DELETE FROM entries WHERE id=? AND value=?")
+              .run(r.id, r.value).changes !== 1
+          )
+            throw Error("Queue receipt changed during retention");
+          moved++;
+        }
+        if (!moved) throw Error("Queue has no terminal history to retain");
+      })
+      .immediate();
   }
   status() {
     const rows = this.list();
@@ -88,8 +149,7 @@ export class AgentQueue {
     parent.throwIfAborted();
     if (this.controllers.size >= 200) throw Error("Task queue full");
     // Retain evidence; refuse growth rather than silently discarding history.
-    if (this.list().length >= 10000)
-      throw Error("Queue history needs export before more work");
+    this.retainHistory();
     const row: QueueEntry = {
       id: randomUUID(),
       label: label.slice(0, 160),
