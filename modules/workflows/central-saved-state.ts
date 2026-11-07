@@ -4,6 +4,7 @@ import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { Vault } from "../storage/vault.js";
+import { finitePilotReviewSchema } from "./central-finite-pilot.js";
 const identitySchema = z.strictObject({
   principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
   publicKey: z.string().max(512),
@@ -20,6 +21,7 @@ const configurationSchema = z.strictObject({
   delegationId: z.uuid(),
   profileId: z.uuid(),
   mcpToken: z.string().regex(/^[\x21-\x7e]{16,4096}$/),
+  finitePilot: finitePilotReviewSchema.optional(),
 });
 function read(path: string, vault: Vault) {
   if (!isAbsolute(path) || realpathSync(path) !== path)
@@ -73,6 +75,7 @@ function read(path: string, vault: Vault) {
           workflowId: config.workflowId,
           delegationId: config.delegationId,
           profileId: config.profileId,
+          ...(config.finitePilot ? { finitePilot: config.finitePilot } : {}),
           mcpCredentialDigest: createHash("sha256")
             .update(config.mcpToken)
             .digest("hex"),

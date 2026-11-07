@@ -54,6 +54,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         if cdDeviceControl() != nil {
             appMenu.addItem(withTitle: "Review CD device registration…", action: #selector(reviewCDDeviceRegistration), keyEquivalent: "")
         }
+        if centralIdentityControl() != nil {
+            appMenu.addItem(withTitle: "Review central Workflows identity…", action: #selector(reviewCentralIdentity), keyEquivalent: "")
+        }
         if enrollmentControl() != nil {
             appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")
         }
@@ -88,7 +91,10 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if recoveryPreview { showRecoveryStart() } else { startEngine() }
+        if ProcessInfo.processInfo.environment["BITTREES_CENTRAL_IDENTITY_REVIEW_ONLY"] == "1" {
+            window.title = "Bittrees AI — Central identity review preview"
+            reviewCentralIdentity()
+        } else if recoveryPreview { showRecoveryStart() } else { startEngine() }
 #endif
     }
     @objc func showAgentSetup() {
@@ -416,6 +422,12 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 #endif
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
+        if url.absoluteString == "bittrees-ai://review-central-identity" {
+            decisionHandler(.cancel)
+            if action.navigationType == .linkActivated, action.sourceFrame.isMainFrame,
+               let origin = action.sourceFrame.request.url, local(origin) { reviewCentralIdentity() }
+            return
+        }
         if local(url) || (action.shouldPerformDownload && url.absoluteString.hasPrefix("blob:http://127.0.0.1:43127/")) {
             decisionHandler(action.shouldPerformDownload ? .download : .allow)
         } else {
