@@ -14,6 +14,7 @@ import {
   leaseActivationMessage,
 } from "../modules/task-sync/runtime-contract.js";
 import { digest } from "../modules/task-sync/proof-contract.js";
+import { canonical } from "../modules/contracts/canonical-json.js";
 function fixture() {
   const keys = generateKeyPairSync("ed25519"),
     issuer = generateKeyPairSync("ed25519");
@@ -161,5 +162,84 @@ test("issuer rejects stale, mismatched, and tampered proofs", async () => {
   await assert.rejects(
     attestRuntime(f.pool, "b".repeat(64), body, f.privateKey),
     /REJECTED/,
+  );
+});
+
+test("assignment decisions attest an existing exact worker without granting execution or inserting keys", async () => {
+  const f = fixture();
+  await attestRuntime(f.pool, "b".repeat(64), f.body(), f.privateKey);
+  const base = {
+    version: 1,
+    source: "mcp.bittrees.org",
+    audience: "https://roles.bittrees.org/api/authority/mcp-decision",
+    requestId: randomUUID(),
+    operationId: randomUUID(),
+    parametersDigest: "a".repeat(64),
+    issuedAt: Date.now(),
+    principal: f.request.principal,
+    credentialId: createHash("sha256")
+      .update(f.request.publicKey)
+      .digest("hex"),
+    delegationId: null,
+    leaseId: randomUUID(),
+    runtimeBindingDigest: "c".repeat(64),
+    tenant: "fixture",
+    workspace: "fixture",
+    project: "workflow",
+    resource: "workflow:fixture",
+    action: "workflow:claim",
+    stage: "execute",
+  };
+  const signed = (request: unknown) => ({
+    purpose: "decision",
+    request,
+    signature: sign(
+      null,
+      Buffer.from("Bittrees MCP authority request v1\n" + canonical(request)),
+      f.keys.privateKey,
+    ).toString("base64"),
+  });
+  f.queries.length = 0;
+  for (const action of ["workflow:claim", "workflow:complete"]) {
+    const request = { ...base, action };
+    const result = await attestRuntime(
+      f.pool,
+      "b".repeat(64),
+      signed(request),
+      f.privateKey,
+    );
+    assert.equal(result.request.purpose, "decision");
+    assert.equal(result.request.requestDigest, digest(request));
+    assert.ok(
+      verify(
+        null,
+        Buffer.from(runtimeAttestationMessage(result.request)),
+        f.issuer.publicKey,
+        Buffer.from(result.signature, "base64"),
+      ),
+    );
+  }
+  assert.equal(
+    f.queries.some((q) => q.startsWith("INSERT") || q.startsWith("UPDATE")),
+    false,
+  );
+  for (const change of [
+    { action: "workflow:grant" },
+    { resource: "crm:all" },
+    { stage: "interactive" },
+    { project: "crm" },
+  ])
+    await assert.rejects(
+      attestRuntime(
+        f.pool,
+        "b".repeat(64),
+        signed({ ...base, ...change }),
+        f.privateKey,
+      ),
+    );
+  f.g.revoked_at = new Date().toISOString();
+  await assert.rejects(
+    attestRuntime(f.pool, "b".repeat(64), signed(base), f.privateKey),
+    /INACTIVE/,
   );
 });

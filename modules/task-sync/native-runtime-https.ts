@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import type { LookupAddress, LookupAllOptions } from "node:dns";
 import { request } from "node:https";
 import { publicIPv4 } from "../research/public-pages.js";
+import { assignmentGatewayOperation } from "./assignment-native.js";
 
 type Wire = {
   url: string;
@@ -10,16 +11,28 @@ type Wire = {
   proof: string | null;
 };
 
-function plan(input: Parameters<typeof fetch>[0], init?: RequestInit) {
+function plan(
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit | undefined,
+  profile: "task-sync" | "crm-assignment",
+) {
   if (typeof input !== "string" || init?.redirect !== "error")
     throw Error("Unapproved task sync request");
   const url = new URL(input);
   if (url.href !== input || url.username || url.password || url.hash)
     throw Error("Noncanonical task sync URL");
-  const source = input === "https://agent.bittrees.org/tasks.json";
-  const connect = input === "https://mcp.bittrees.org/v1/task-sync/connect";
+  const source =
+    profile === "task-sync" &&
+    input === "https://agent.bittrees.org/tasks.json";
+  const connect =
+    profile === "task-sync" &&
+    input === "https://mcp.bittrees.org/v1/task-sync/connect";
+  const assignment =
+    profile === "crm-assignment" &&
+    input === "https://mcp.bittrees.org/v1/crm-assignments";
   const projects = url.searchParams.get("projects")?.split(",") ?? [];
   const rpc =
+    profile === "task-sync" &&
     url.origin === "https://mcp.bittrees.org" &&
     url.pathname === "/mcp" &&
     projects.length > 1 &&
@@ -32,12 +45,19 @@ function plan(input: Parameters<typeof fetch>[0], init?: RequestInit) {
         new URLSearchParams({ mode: "selected", projects: projects.join(",") });
   const method = source ? "GET" : "POST";
   if (
-    (!source && !connect && !rpc) ||
+    (!source && !connect && !rpc && !assignment) ||
     init.method !== method ||
     (source ? init.body != null : typeof init.body !== "string") ||
     (typeof init.body === "string" && Buffer.byteLength(init.body) > 64000)
   )
     throw Error("Unapproved task sync request shape");
+  if (assignment) {
+    const operation = assignmentGatewayOperation.parse(
+      JSON.parse(String(init.body)),
+    );
+    if (JSON.stringify(operation) !== init.body)
+      throw Error("Noncanonical CRM assignment body");
+  }
   const headers = new Headers(init.headers);
   const bearer = headers.get("authorization"),
     proof = headers.get("x-bittrees-agent-proof");
@@ -53,10 +73,11 @@ function plan(input: Parameters<typeof fetch>[0], init?: RequestInit) {
     ) ||
     headers.get("accept") !== "application/json" ||
     headers.get("content-type") !== (source ? null : "application/json") ||
-    (rpc
+    (rpc || assignment
       ? !bearer || !/^Bearer [\x21-\x7e]{16,4096}$/.test(bearer)
       : bearer !== null) ||
-    (proof !== null && (!rpc || !/^[A-Za-z0-9_-]{1,16384}$/.test(proof)))
+    (proof !== null &&
+      ((!rpc && !assignment) || !/^[A-Za-z0-9_-]{1,16384}$/.test(proof)))
   )
     throw Error("Unapproved task sync headers");
   const body = typeof init.body === "string" ? init.body : null;
@@ -80,10 +101,11 @@ export class TaskSyncNativeHTTPS {
       options: LookupAllOptions,
     ) => Promise<LookupAddress[]> = lookup,
     private send: typeof request = request,
+    private profile: "task-sync" | "crm-assignment" = "task-sync",
   ) {}
 
   dispatch: typeof fetch = async (input, init) => {
-    const { url, wire, bearer, limit } = plan(input, init);
+    const { url, wire, bearer, limit } = plan(input, init, this.profile);
     const timeout = AbortSignal.timeout(15000);
     const signal = init?.signal
       ? AbortSignal.any([init.signal, timeout])
