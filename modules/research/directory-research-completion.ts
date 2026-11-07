@@ -30,6 +30,8 @@ const bindingSchema = z.strictObject({
     inputHash: hex,
   }),
 });
+export const directoryResearchJobSchema = bindingSchema.shape.job;
+
 const completionSchema = z.strictObject({
   completed: z.literal(true),
   runId: z.uuid(),
@@ -43,6 +45,15 @@ type RecordState = {
   evidence: z.infer<typeof evidenceSchema>;
   attempts: number;
   completion?: z.infer<typeof completionSchema>;
+  successor?: {
+    input: z.infer<typeof directoryResearchJobSchema>["input"];
+    claimId: string;
+    claimAttempts: number;
+    completeId: string;
+    completeAttempts: number;
+    job?: z.infer<typeof directoryResearchJobSchema>;
+    completion?: z.infer<typeof completionSchema>;
+  };
 };
 
 /** Completion uses the existing workflow_complete contract. Full research
@@ -56,6 +67,14 @@ export class DirectoryResearchCompletion {
     private vault: Vault,
     rawBinding: unknown,
     private complete: (args: unknown, signal: AbortSignal) => Promise<unknown>,
+    private successor?: {
+      input: z.infer<typeof directoryResearchJobSchema>["input"];
+      call(
+        operation: "claim" | "complete",
+        args: unknown,
+        signal: AbortSignal,
+      ): Promise<unknown>;
+    },
   ) {
     this.binding = bindingSchema.parse(rawBinding);
     const { job, scopeDigest, originalValidationRunId } = this.binding;
@@ -69,6 +88,19 @@ export class DirectoryResearchCompletion {
         })
     )
       throw Error("Central job does not match reviewed directory scope");
+    if (
+      successor &&
+      successor.input.instruction !==
+        canonical({
+          kind: "cryptodirectory-research-successor",
+          scopeDigest,
+          originalValidationRunId,
+        })
+    )
+      throw Error("Successor does not match reviewed directory scope");
+    this.successor = successor
+      ? { input: structuredClone(successor.input), call: successor.call }
+      : undefined;
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = FULL");
@@ -197,6 +229,106 @@ export class DirectoryResearchCompletion {
       state.completion = completion;
       this.save(state);
     }
-    return { research: state.result, completion: state.completion };
+    if (this.successor) {
+      if (!state.completion.followUpQueued)
+        throw Error("Central completion did not authorize a successor");
+      await this.advanceSuccessor(state, signal);
+    }
+    return {
+      research: state.result,
+      completion: state.completion,
+      ...(state.successor?.completion
+        ? { successor: state.successor.completion }
+        : {}),
+    };
+  }
+  private async advanceSuccessor(state: RecordState, signal: AbortSignal) {
+    const plan = this.successor!;
+    if (!state.successor) {
+      state.successor = {
+        input: plan.input,
+        claimId: randomUUID(),
+        claimAttempts: 0,
+        completeId: randomUUID(),
+        completeAttempts: 0,
+      };
+      this.save(state);
+    }
+    const next = state.successor;
+    if (canonical(next.input) !== canonical(plan.input))
+      throw Error("Reviewed successor plan changed");
+    const base = {
+      connectionId: this.binding.connectionId,
+      workflowId: this.binding.workflowId,
+    };
+    if (!next.job) {
+      if (next.claimAttempts >= 2)
+        throw Error("Successor claim budget exhausted");
+      next.claimAttempts++;
+      this.save(state);
+      signal.throwIfAborted();
+      const { job } = z
+        .strictObject({ job: directoryResearchJobSchema.nullable() })
+        .parse(
+          await plan.call(
+            "claim",
+            { ...base, operationId: next.claimId },
+            signal,
+          ),
+        );
+      signal.throwIfAborted();
+      if (
+        !job ||
+        job.runId !== this.binding.job.runId ||
+        job.stepIndex !== this.binding.job.stepIndex + 1 ||
+        job.id === this.binding.job.id ||
+        canonical(job.input) !== canonical(plan.input) ||
+        job.inputHash !== digest(plan.input) ||
+        Date.parse(job.leaseUntil) <= Date.now()
+      )
+        throw Error("Central successor differs from reviewed step");
+      next.job = job;
+      this.save(state);
+    }
+    if (!next.completion) {
+      if (next.completeAttempts >= 2)
+        throw Error("Successor completion budget exhausted");
+      next.completeAttempts++;
+      this.save(state);
+      signal.throwIfAborted();
+      const completion = completionSchema.parse(
+        await plan.call(
+          "complete",
+          {
+            ...base,
+            operationId: next.completeId,
+            jobId: next.job.id,
+            leaseId: next.job.leaseId,
+            evidence: {
+              model: state.evidence.model,
+              modelDigest: state.evidence.modelDigest,
+              inputHash: next.job.inputHash,
+              output: canonical({
+                kind: "cryptodirectory-research-successor-receipt",
+                scopeDigest: this.binding.scopeDigest,
+                originalValidationRunId: this.binding.originalValidationRunId,
+                predecessorJobId: this.binding.job.id,
+                predecessorCompletionId: state.operationId,
+                researchReceiptDigest: digest(state.result),
+              }),
+            },
+          },
+          signal,
+        ),
+      );
+      signal.throwIfAborted();
+      if (
+        completion.runId !== this.binding.job.runId ||
+        completion.followUpQueued
+      )
+        throw Error("Unexpected central successor completion");
+      next.completion = completion;
+      this.save(state);
+    }
   }
 }

@@ -111,3 +111,103 @@ test("completion recovery preserves encrypted evidence, operation ID and durable
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("successor refuses a different run, step, instruction or input hash", async () => {
+  const root = mkdtempSync(join(tmpdir(), "directory-successor."));
+  const scopeDigest = "a".repeat(64),
+    originalValidationRunId = randomUUID();
+  const input = {
+    title: "Research",
+    instruction: canonical({
+      kind: "cryptodirectory-research",
+      scopeDigest,
+      originalValidationRunId,
+    }),
+  };
+  const nextInput = {
+    title: "Accept",
+    instruction: canonical({
+      kind: "cryptodirectory-research-successor",
+      scopeDigest,
+      originalValidationRunId,
+    }),
+  };
+  const binding = {
+    scopeDigest,
+    originalValidationRunId,
+    connectionId: randomUUID(),
+    workflowId: "fixture",
+    job: {
+      id: randomUUID(),
+      runId: randomUUID(),
+      leaseId: randomUUID(),
+      leaseUntil: new Date(Date.now() + 60000).toISOString(),
+      stepIndex: 0,
+      input,
+      inputHash: digest(input),
+    },
+  };
+  const result = {
+    scopeDigest,
+    receipts: Array.from({ length: 9 }, () => ({
+      originalReceiptId: randomUUID(),
+      lastRecordedRetryReceiptId: randomUUID(),
+      sourceHash: "b".repeat(64),
+      model: "fixture",
+      modelDigest: "sha256:" + "c".repeat(64),
+      answer: {},
+    })),
+  };
+  try {
+    for (const mode of ["run", "step", "instruction", "hash", "expired"]) {
+      let successorCompletions = 0;
+      const job = {
+        id: randomUUID(),
+        runId: mode === "run" ? randomUUID() : binding.job.runId,
+        leaseId: randomUUID(),
+        leaseUntil: new Date(
+          Date.now() + (mode === "expired" ? -1000 : 60000),
+        ).toISOString(),
+        stepIndex: mode === "step" ? 2 : 1,
+        input:
+          mode === "instruction"
+            ? { ...nextInput, instruction: "Different work" }
+            : nextInput,
+        inputHash: mode === "hash" ? "e".repeat(64) : digest(nextInput),
+      };
+      const journal = new DirectoryResearchCompletion(
+        join(root, mode + ".sqlite"),
+        new Vault(randomBytes(32)),
+        binding,
+        async () => ({
+          completed: true,
+          runId: binding.job.runId,
+          followUpQueued: true,
+        }),
+        {
+          input: nextInput,
+          async call(operation) {
+            if (operation === "claim") return { job };
+            successorCompletions++;
+            return {
+              completed: true,
+              runId: binding.job.runId,
+              followUpQueued: false,
+            };
+          },
+        },
+      );
+      try {
+        await assert.rejects(
+          journal.run(result, new AbortController().signal),
+          /reviewed step/,
+        );
+        assert.equal(successorCompletions, 0);
+      } finally {
+        journal.close();
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
