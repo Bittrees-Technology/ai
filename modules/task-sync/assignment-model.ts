@@ -2,7 +2,9 @@ import { ModelError, type Ollama, type PinnedModel } from "../models/ollama.js";
 
 const format = {
   type: "object",
-  properties: { summary: { type: "string", minLength: 1, maxLength: 4000 } },
+  // Keep the generation grammar compact. The runner validates the 1..4000
+  // character bound before accepting evidence or sending any write.
+  properties: { summary: { type: "string" } },
   required: ["summary"],
   additionalProperties: false,
 };

@@ -143,6 +143,15 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 #endif
         // Forward only the fixed local MyCloud helper capability, never general shell environment.
         let inherited = ProcessInfo.processInfo.environment
+        if let endpoint = inherited["BITTREES_ASSIGNMENT_HELPER_URL"], let url = URL(string: endpoint),
+           url.scheme == "http", url.host == "127.0.0.1", let port = url.port, (1...65535).contains(port),
+           url.path == "/crm-assignments", url.query == nil, url.fragment == nil,
+           url.user == nil, url.password == nil, url.absoluteString == endpoint,
+           let token = inherited["BITTREES_ASSIGNMENT_HELPER_TOKEN"],
+           token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_ASSIGNMENT_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_ASSIGNMENT_HELPER_TOKEN"] = token
+        }
         if let endpoint = inherited["BITTREES_MYCLOUD_HELPER_URL"], let url = URL(string: endpoint),
            url.scheme == "http", url.host == "127.0.0.1", url.port != nil,
            url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,

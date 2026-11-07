@@ -1,6 +1,8 @@
 import { portfolioDailyAdapters } from "../../modules/workflows/investor-portfolio-daily.js";
 import { createChatMonitorCollector } from "../../modules/workflows/recurring-chat-source.js";
 import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
+import { AssignmentService } from "../../modules/task-sync/assignment-service.js";
+import { nativeAssignmentServiceClient } from "../../modules/task-sync/assignment-service-native.js";
 import { nativeTaskSyncClient } from "../../modules/task-sync/native-loopback.js";
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
 import {
@@ -117,6 +119,10 @@ import { LocalWorker } from "./worker.js";
 import { dashboardServer } from "./dashboard-server.js";
 import { runStartupAssignmentFixture } from "./startup-assignment-fixture.js";
 import { runStartupDirectoryResearchFixture } from "./startup-directory-research-fixture.js";
+import {
+  assignmentServiceFixtureSchema,
+  runAssignmentServiceFixture,
+} from "./startup-assignment-service-fixture.js";
 import { startupFixtureBuild } from "./startup-fixture.js";
 const fixtureDirectory = process.env.BITTREES_STARTUP_FIXTURE_DIRECTORY;
 if (startupFixtureBuild !== (fixtureDirectory !== undefined))
@@ -731,6 +737,8 @@ const workflows = localWorkflows(
   ],
   enrollmentTransport,
 );
+let assignmentServiceFixture:
+  ReturnType<typeof assignmentServiceFixtureSchema.parse> | undefined;
 const taskSyncClient = nativeTaskSyncClient();
 if (startupFixtureBuild && taskSyncClient) {
   const response = await taskSyncClient.execute(
@@ -741,9 +749,23 @@ if (startupFixtureBuild && taskSyncClient) {
   if (!response.ok || fixture?.startupFixture !== true)
     throw Error("Isolated task sync broker probe failed");
   if (fixture.directoryResearch !== undefined)
-    await runStartupDirectoryResearchFixture(taskSyncClient, fixture.directoryResearch);
+    await runStartupDirectoryResearchFixture(
+      taskSyncClient,
+      fixture.directoryResearch,
+    );
+  if (fixture.assignmentService !== undefined) {
+    assignmentServiceFixture = assignmentServiceFixtureSchema.parse(
+      fixture.assignmentService,
+    );
+    store.addProfile(owner, assignmentServiceFixture.profile);
+  }
   if (fixture.assignment !== undefined)
-    await runStartupAssignmentFixture(taskSyncClient, fixture.assignment, content.directory, new Vault(key));
+    await runStartupAssignmentFixture(
+      taskSyncClient,
+      fixture.assignment,
+      content.directory,
+      new Vault(key),
+    );
 }
 const taskSync = new TaskSyncRunner(
   join(content.directory, "task-sync.db"),
@@ -769,6 +791,18 @@ const taskSync = new TaskSyncRunner(
   process.env.BITTREES_DESKTOP === "1",
 );
 taskSync.taskTurn = agentQueue.run;
+const assignments = new AssignmentService({
+  path: join(content.directory, "assignment-service.db"),
+  runnerPath: join(content.directory, "assignment-runner.db"),
+  vault: new Vault(key),
+  client: nativeAssignmentServiceClient(),
+  runtime,
+  profile: (id) => store.profile(owner, id),
+  turn: modelTurns.run,
+  admission: () => executionControls.admission(0).reason === "ready",
+});
+if (assignmentServiceFixture)
+  await runAssignmentServiceFixture(assignments, assignmentServiceFixture);
 const dashboard = dashboardServer({
   privateKeys,
   privateRelay,
@@ -792,6 +826,7 @@ const dashboard = dashboardServer({
   directoryResearch,
   centralWorkflows,
   taskSync,
+  assignments,
   recurring,
   agents,
   localInvestorReview,
@@ -857,6 +892,7 @@ async function stop() {
   clearInterval(directoryTimer);
   clearInterval(centralWorkflowTimer);
   clearInterval(taskSyncTimer);
+  clearInterval(assignmentTimer);
   clearInterval(taskSyncReviewTimer);
   clearInterval(recurringTimer);
   const queueClosing = agentQueue.close();
@@ -865,6 +901,7 @@ async function stop() {
   myCloudSource.close();
   storageMaintenance.close();
   storageSource.close();
+  await assignments.close();
   await taskSync.close();
   await centralWorkflows.close();
   await directoryResearch.close();
@@ -941,6 +978,9 @@ const directoryTimer = setInterval(() => {
     void directoryResearch
       .tick()
       .catch(() => console.error("Directory workflow check failed"));
+}, 30000);
+const assignmentTimer = setInterval(() => {
+  if (started && !stopping) void assignments.tick();
 }, 30000);
 const taskSyncTimer = setInterval(() => {
   if (started && !stopping) void taskSync.tick();

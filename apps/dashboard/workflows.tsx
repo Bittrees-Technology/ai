@@ -1,3 +1,4 @@
+import { AssignmentStatus } from "./assignments.js";
 import { TaskSyncStatus } from "./task-sync.js";
 import {
   readWorkflowPermissions,
@@ -77,6 +78,7 @@ export function Workflows({
             : "Operator configured — not wallet signed";
   return (
     <section>
+      <AssignmentStatus api={api} />
       <TaskSyncStatus
         api={api}
         canStartOwnerReview={ownerReviewReady(readiness, data)}

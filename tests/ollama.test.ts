@@ -171,6 +171,12 @@ test("optional structured format is bounded, snapshotted and never retries witho
       ),
       { summary: "Ready" },
     );
+    assert.deepEqual(formats.at(-1), {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+      additionalProperties: false,
+    });
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

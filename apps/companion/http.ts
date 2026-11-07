@@ -100,6 +100,7 @@ export interface LocalApiOptions {
   storageMaintenance?: import("../../modules/workflows/recurring-storage-maintenance.js").StorageMaintenance;
   localInvestorReview?: import("../../modules/workflows/local-investor-review.js").LocalInvestorReview;
   recurring?: import("../../modules/workflows/recurring.js").RecurringWorkflows;
+  assignments?: import("../../modules/task-sync/assignment-service.js").AssignmentService;
   taskSync?: import("../../modules/task-sync/runner.js").TaskSyncRunner;
   centralWorkflows?: import("../../modules/workflows/central-worker.js").CentralWorkflowWorker;
   directoryResearch?: import("../../modules/research/crypto-directory.js").CryptoDirectoryResearch;
@@ -140,6 +141,7 @@ export function localApi({
   directoryResearch,
   centralWorkflows,
   taskSync,
+  assignments,
   recurring,
   agents,
   localInvestorReview,
@@ -1006,6 +1008,19 @@ export function localApi({
         return res.json(await recurring.verify(input.id));
       if (input.action === "pause") return res.json(recurring.pause(input.id));
       res.json(recurring.revoke(input.id));
+    });
+  }
+  if (assignments) {
+    app.get("/v1/workflows/assignments", (_req, res) =>
+      res.json(assignments.status()),
+    );
+    app.post("/v1/workflows/assignments/pause", async (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(await assignments.pause());
+    });
+    app.post("/v1/workflows/assignments/resume", (req, res) => {
+      z.strictObject({}).parse(req.body);
+      res.json(assignments.resume());
     });
   }
   if (taskSync) {
