@@ -3,9 +3,16 @@ import {
   loadStorageKey,
   macKeychainEntry,
 } from "../../modules/storage/keychain.js";
+import type { launchAssignmentServiceBroker } from "../../modules/task-sync/assignment-service-native.js";
+import type { launchCDDeviceRegistrationReview } from "../../modules/research/cd-device-registration-control.js";
 import { launchCentral } from "./central-launch.js";
 import { launchEnrollment } from "./enrollment-launch.js";
 import { launchWorkflowSetup } from "./workflow-setup-launch.js";
+import { startupFixtureBuild } from "./startup-fixture.js";
+import {
+  launchTaskSyncBroker,
+  type NativeTaskSyncClient,
+} from "../../modules/task-sync/native-loopback.js";
 import { storageActivityHelper } from "../../modules/workflows/storage-activity-helper.js";
 import { z } from "zod";
 import { cloudHelper } from "../../modules/agents/cloud-helper.js";
@@ -43,10 +50,112 @@ export async function verifyMyCloudSshIdentity() {
     throw Error("NAS host identity changed");
 }
 
-async function main() {
+async function runOfflineChild(
+  resources: string,
+  environment: NodeJS.ProcessEnv,
+  closeHelpers: () => Promise<void>,
+) {
+  const child = spawn(
+    "/usr/bin/sandbox-exec",
+    [
+      "-f",
+      resolve(resources, "offline.sb"),
+      resolve(
+        resources,
+        startupFixtureBuild
+          ? "../MacOS/BittreesAI"
+          : "../MacOS/BittreesAI-offline-host",
+      ),
+    ],
+    {
+      stdio: "inherit",
+      env: {
+        HOME: "/Users/jhineline",
+        TMPDIR: process.env.TMPDIR ?? "/tmp",
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        LANG: "en_US.UTF-8",
+        ...environment,
+      },
+    },
+  );
+  const stop = () => child.kill("SIGTERM");
+  process.on("SIGTERM", stop);
+  process.on("SIGINT", stop);
+  try {
+    process.exitCode = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code ?? 1));
+    });
+  } finally {
+    process.off("SIGTERM", stop);
+    process.off("SIGINT", stop);
+    await closeHelpers();
+  }
+}
+
+// A trusted native caller can supply a preassembled session. The executable
+// entry point supplies none until production authority and cost are approved.
+type AssignmentBroker = Awaited<
+  ReturnType<typeof launchAssignmentServiceBroker>
+>;
+type CDRegistrationService = NonNullable<
+  Awaited<ReturnType<typeof launchCDDeviceRegistrationReview>>
+>;
+
+export async function launchMacCompanion(
+  currentTaskSync?: () => NativeTaskSyncClient | null,
+  cdRegistration?: CDRegistrationService,
+  assignments?: AssignmentBroker,
+) {
+  try {
+    await runMacCompanion(currentTaskSync, cdRegistration, assignments);
+  } finally {
+    try {
+      await cdRegistration?.close();
+    } finally {
+      await assignments?.close();
+    }
+  }
+}
+
+async function runMacCompanion(
+  currentTaskSync?: () => NativeTaskSyncClient | null,
+  cdRegistration?: CDRegistrationService,
+  assignments?: AssignmentBroker,
+) {
   // This entry lives in Resources/engine/dist/apps/companion. Caller cannot supply a command or destination.
   if (process.argv.length !== 2) throw Error("Launcher takes no arguments");
   const resources = fileURLToPath(new URL("../../../../", import.meta.url));
+  if (startupFixtureBuild) {
+    const directory = process.env.BITTREES_STARTUP_FIXTURE_DIRECTORY;
+    if (!directory || !currentTaskSync)
+      throw Error(
+        "An isolated fixture directory and task sync session are required",
+      );
+    const taskSync = await launchTaskSyncBroker(currentTaskSync);
+    await runOfflineChild(
+      resources,
+      {
+        BITTREES_STARTUP_FIXTURE_DIRECTORY: directory,
+        ...(process.env.BITTREES_STARTUP_FIXTURE_HOLD_SECONDS !== undefined
+          ? {
+              BITTREES_STARTUP_FIXTURE_HOLD_SECONDS: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .max(120)
+                .parse(process.env.BITTREES_STARTUP_FIXTURE_HOLD_SECONDS)
+                .toString(),
+            }
+          : {}),
+        ...taskSync.environment,
+        ...cdRegistration?.environment,
+        ...assignments?.environment,
+      },
+      taskSync.close,
+    );
+    return;
+  }
   const token = randomBytes(32).toString("hex");
   const helper = myCloudHelper({
     token,
@@ -197,6 +306,14 @@ async function main() {
       "Central workflow connection held: current protected scope, credential or cost evidence unavailable",
     );
   }
+  let taskSync: Awaited<ReturnType<typeof launchTaskSyncBroker>> | undefined;
+  if (currentTaskSync) {
+    try {
+      taskSync = await launchTaskSyncBroker(currentTaskSync);
+    } catch {
+      console.error("Protected task sync broker unavailable");
+    }
+  }
   const closeHelpers = async () => {
     try {
       await workflowSetup?.close();
@@ -207,56 +324,43 @@ async function main() {
         try {
           await central?.service.close();
         } finally {
-          activity.closeAllConnections();
-          activity.close();
-          cloud.closeAllConnections();
-          cloud.close();
-          await helper.close();
+          try {
+            await taskSync?.close();
+          } finally {
+            activity.closeAllConnections();
+            activity.close();
+            cloud.closeAllConnections();
+            cloud.close();
+            await helper.close();
+          }
         }
       }
     }
   };
-  const child = spawn(
-    "/usr/bin/sandbox-exec",
-    [
-      "-f",
-      resolve(resources, "offline.sb"),
-      resolve(resources, "../MacOS/BittreesAI-offline-host"),
-    ],
+  await runOfflineChild(
+    resources,
     {
-      stdio: "inherit",
-      env: {
-        HOME: "/Users/jhineline",
-        TMPDIR: process.env.TMPDIR ?? "/tmp",
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-        LANG: "en_US.UTF-8",
-        ...workflowSetup?.environment,
-        ...enrollment?.environment,
-        ...central?.environment,
-        BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
-        BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
-        BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
-        BITTREES_MYCLOUD_HELPER_TOKEN: token,
-        BITTREES_CLOUD_HELPER_URL: `http://127.0.0.1:${cloudAddress.port}/cloud`,
-        BITTREES_CLOUD_HELPER_TOKEN: cloudToken,
-      },
+      ...workflowSetup?.environment,
+      ...enrollment?.environment,
+      ...central?.environment,
+      ...taskSync?.environment,
+      ...cdRegistration?.environment,
+      ...assignments?.environment,
+      BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
+      BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
+      BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
+      BITTREES_MYCLOUD_HELPER_TOKEN: token,
+      BITTREES_CLOUD_HELPER_URL: `http://127.0.0.1:${cloudAddress.port}/cloud`,
+      BITTREES_CLOUD_HELPER_TOKEN: cloudToken,
     },
+    closeHelpers,
   );
-  const stop = () => child.kill("SIGTERM");
-  process.on("SIGTERM", stop);
-  process.on("SIGINT", stop);
-  child.once("error", () => {
-    void closeHelpers().finally(() => process.exit(1));
-  });
-  child.once("exit", (code) => {
-    void closeHelpers().finally(() => process.exit(code ?? 1));
-  });
 }
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 )
-  void main().catch(() => {
+  void launchMacCompanion().catch(() => {
     console.error("MyCloud scoped launcher could not start");
     process.exit(1);
   });

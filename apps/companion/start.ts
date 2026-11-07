@@ -1,6 +1,9 @@
 import { portfolioDailyAdapters } from "../../modules/workflows/investor-portfolio-daily.js";
 import { createChatMonitorCollector } from "../../modules/workflows/recurring-chat-source.js";
 import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
+import { AssignmentService } from "../../modules/task-sync/assignment-service.js";
+import { nativeAssignmentServiceClient } from "../../modules/task-sync/assignment-service-native.js";
+import { nativeTaskSyncClient } from "../../modules/task-sync/native-loopback.js";
 import { helperMyCloudCheck } from "../../modules/workflows/mycloud-helper.js";
 import {
   CloudConnection,
@@ -90,9 +93,18 @@ import {
   crmKeychainEntry,
 } from "../../modules/connectors/crm.js";
 import { createServer } from "node:http";
-import { mkdir, stat, writeFile, rm, readFile, lstat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import {
+  mkdir,
+  stat,
+  writeFile,
+  rm,
+  readFile,
+  lstat,
+  readdir,
+  realpath,
+} from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { Store } from "../../modules/storage/store.js";
 import { Vault } from "../../modules/storage/vault.js";
@@ -105,19 +117,42 @@ import { Ollama } from "../../modules/models/ollama.js";
 import { sourceMemoryAccess } from "./source-memory.js";
 import { LocalWorker } from "./worker.js";
 import { dashboardServer } from "./dashboard-server.js";
-const directory = join(
-  homedir(),
-  "Library",
-  "Application Support",
-  "Bittrees AI",
-);
+import { runStartupAssignmentFixture } from "./startup-assignment-fixture.js";
+import { runStartupDirectoryResearchFixture } from "./startup-directory-research-fixture.js";
+import {
+  assignmentServiceFixtureSchema,
+  observeNaturalAssignmentFixture,
+  runAssignmentServiceFixture,
+} from "./startup-assignment-service-fixture.js";
+import { startupFixtureBuild } from "./startup-fixture.js";
+const fixtureDirectory = process.env.BITTREES_STARTUP_FIXTURE_DIRECTORY;
+if (startupFixtureBuild !== (fixtureDirectory !== undefined))
+  throw Error("Startup fixture build and configuration must match");
+if (fixtureDirectory !== undefined) {
+  const info = await lstat(fixtureDirectory);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    info.uid !== process.getuid?.() ||
+    (info.mode & 0o777) !== 0o700 ||
+    (await realpath(fixtureDirectory)) !== fixtureDirectory ||
+    dirname(fixtureDirectory) !== (await realpath(tmpdir())) ||
+    !/^bittrees-startup-fixture\.[a-zA-Z0-9]+$/.test(
+      basename(fixtureDirectory),
+    ) ||
+    (await readdir(fixtureDirectory)).length !== 0
+  )
+    throw Error("A fresh private startup fixture directory is required");
+}
+const directory =
+  fixtureDirectory ??
+  join(homedir(), "Library", "Application Support", "Bittrees AI");
 await stat(resolve("dist/dashboard/index.html"));
-const port = 43127,
-  server = createServer();
+const server = createServer();
 try {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
+    server.listen(startupFixtureBuild ? 0 : 43127, "127.0.0.1", resolve);
   });
 } catch {
   console.error(
@@ -125,6 +160,10 @@ try {
   );
   process.exit(1);
 }
+const address = server.address();
+if (!address || typeof address === "string")
+  throw Error("Missing companion address");
+const port = address.port;
 
 await mkdir(directory, { recursive: true, mode: 0o700 });
 const content = await resolveActiveContent(directory);
@@ -137,12 +176,14 @@ const exists = async (path: string) => {
     throw e;
   }
 };
-const key = await loadStorageKey(
-  macKeychainEntry("personal"),
-  (await exists(join(content.directory, "tasks.db"))) ||
-    (await exists(join(content.directory, "memory.db"))) ||
-    (await exists(join(directory, "model-imports", "jobs.db"))),
-);
+const key = startupFixtureBuild
+  ? randomBytes(32)
+  : await loadStorageKey(
+      macKeychainEntry("personal"),
+      (await exists(join(content.directory, "tasks.db"))) ||
+        (await exists(join(content.directory, "memory.db"))) ||
+        (await exists(join(directory, "model-imports", "jobs.db"))),
+    );
 const store = new Store(join(content.directory, "tasks.db"), new Vault(key)),
   owner = { userId: "local-owner", tenantId: "personal" };
 const executionControls = new ExecutionControls(
@@ -697,6 +738,36 @@ const workflows = localWorkflows(
   ],
   enrollmentTransport,
 );
+let assignmentServiceFixture:
+  ReturnType<typeof assignmentServiceFixtureSchema.parse> | undefined;
+const taskSyncClient = nativeTaskSyncClient();
+if (startupFixtureBuild && taskSyncClient) {
+  const response = await taskSyncClient.execute(
+    { kind: "source" },
+    AbortSignal.timeout(5000),
+  );
+  const fixture = await response.json();
+  if (!response.ok || fixture?.startupFixture !== true)
+    throw Error("Isolated task sync broker probe failed");
+  if (fixture.directoryResearch !== undefined)
+    await runStartupDirectoryResearchFixture(
+      taskSyncClient,
+      fixture.directoryResearch,
+    );
+  if (fixture.assignmentService !== undefined) {
+    assignmentServiceFixture = assignmentServiceFixtureSchema.parse(
+      fixture.assignmentService,
+    );
+    store.addProfile(owner, assignmentServiceFixture.profile);
+  }
+  if (fixture.assignment !== undefined)
+    await runStartupAssignmentFixture(
+      taskSyncClient,
+      fixture.assignment,
+      content.directory,
+      new Vault(key),
+    );
+}
 const taskSync = new TaskSyncRunner(
   join(content.directory, "task-sync.db"),
   new Vault(key),
@@ -709,72 +780,97 @@ const taskSync = new TaskSyncRunner(
       "decision",
       request,
       signature,
+      signal,
     );
     signal.throwIfAborted();
     return result;
   },
-  (purpose, request, signature) =>
-    workflows.attestRuntime(purpose, request, signature),
+  (purpose, request, signature, signal) =>
+    workflows.attestRuntime(purpose, request, signature, signal),
   enrollmentTransport,
+  taskSyncClient,
+  process.env.BITTREES_DESKTOP === "1",
 );
 taskSync.taskTurn = agentQueue.run;
-server.on(
-  "request",
-  dashboardServer({
-    privateKeys,
-    privateRelay,
-    retainedCopies: retainedContent(directory, content.directory),
-    backupDownload: localBackupDownload(store, memory, new Vault(key)),
-    workflows,
-    deviceStatus: () =>
-      deviceStatus(directory, executionControls.admission(worker.activeTasks)),
-    executionControls,
-    activeTasks: () => worker.activeTasks,
-    imports,
-    remote,
-    receiver,
-    templateReceiver,
-    store,
-    memory,
-    owner,
-    crm,
-    dataset,
-    investorResearch,
-    directoryResearch,
-    centralWorkflows,
-    taskSync,
-    recurring,
-    agents,
-    localInvestorReview,
-    myCloudSource,
-    storageMaintenance,
-    myCloudHelperToken: process.env.BITTREES_MYCLOUD_HELPER_TOKEN,
-    storageActivityToken: process.env.BITTREES_STORAGE_ACTIVITY_TOKEN,
-    storageActivityApproval: (id) => storageSource.activityApproval(id),
-    qualificationResearch,
-    projectWork,
-    sources,
-    autonote,
-    autonoteApproval,
-    roles,
-    news,
-    mail,
-    mailSend,
-    mailSources,
-    autonoteSources,
-    runtime,
-    port,
-    token,
-    pairCode,
-    desktopBootstrap:
-      process.env.BITTREES_DESKTOP === "1"
-        ? process.env.BITTREES_DESKTOP_BOOTSTRAP
-        : undefined,
-    assets: resolve("dist/dashboard"),
-    cancelRun: (id) => worker.cancel(id),
-    cancelSourceRun: (app) => worker.cancelSource(app),
-  }),
-);
+const assignments = new AssignmentService({
+  path: join(content.directory, "assignment-service.db"),
+  runnerPath: join(content.directory, "assignment-runner.db"),
+  vault: new Vault(key),
+  client: nativeAssignmentServiceClient(),
+  runtime,
+  profile: (id) => store.profile(owner, id),
+  turn: modelTurns.run,
+  admission: () => executionControls.admission(0).reason === "ready",
+});
+if (assignmentServiceFixture && !assignmentServiceFixture.natural)
+  await runAssignmentServiceFixture(assignments, assignmentServiceFixture);
+const dashboard = dashboardServer({
+  privateKeys,
+  privateRelay,
+  retainedCopies: retainedContent(directory, content.directory),
+  backupDownload: localBackupDownload(store, memory, new Vault(key)),
+  workflows,
+  deviceStatus: () =>
+    deviceStatus(directory, executionControls.admission(worker.activeTasks)),
+  executionControls,
+  activeTasks: () => worker.activeTasks,
+  imports,
+  remote,
+  receiver,
+  templateReceiver,
+  store,
+  memory,
+  owner,
+  crm,
+  dataset,
+  investorResearch,
+  directoryResearch,
+  centralWorkflows,
+  taskSync,
+  assignments,
+  recurring,
+  agents,
+  localInvestorReview,
+  myCloudSource,
+  storageMaintenance,
+  myCloudHelperToken: process.env.BITTREES_MYCLOUD_HELPER_TOKEN,
+  storageActivityToken: process.env.BITTREES_STORAGE_ACTIVITY_TOKEN,
+  storageActivityApproval: (id) => storageSource.activityApproval(id),
+  qualificationResearch,
+  projectWork,
+  sources,
+  autonote,
+  autonoteApproval,
+  roles,
+  news,
+  mail,
+  mailSend,
+  mailSources,
+  autonoteSources,
+  runtime,
+  port,
+  token,
+  pairCode,
+  desktopBootstrap:
+    process.env.BITTREES_DESKTOP === "1"
+      ? process.env.BITTREES_DESKTOP_BOOTSTRAP
+      : undefined,
+  assets: resolve("dist/dashboard"),
+  cancelRun: (id) => worker.cancel(id),
+  cancelSourceRun: (app) => worker.cancelSource(app),
+});
+server.on("request", (request, response) => {
+  if (
+    startupFixtureBuild &&
+    request.url !== "/desktop-pair" &&
+    request.url !== "/" &&
+    !request.url?.startsWith("/assets/")
+  ) {
+    response.writeHead(403).end();
+    return;
+  }
+  dashboard(request, response);
+});
 let stopping = false,
   started = false,
   pairingWrite: Promise<void> | undefined;
@@ -797,6 +893,7 @@ async function stop() {
   clearInterval(directoryTimer);
   clearInterval(centralWorkflowTimer);
   clearInterval(taskSyncTimer);
+  clearInterval(assignmentTimer);
   clearInterval(taskSyncReviewTimer);
   clearInterval(recurringTimer);
   const queueClosing = agentQueue.close();
@@ -805,6 +902,7 @@ async function stop() {
   myCloudSource.close();
   storageMaintenance.close();
   storageSource.close();
+  await assignments.close();
   await taskSync.close();
   await centralWorkflows.close();
   await directoryResearch.close();
@@ -882,6 +980,19 @@ const directoryTimer = setInterval(() => {
       .tick()
       .catch(() => console.error("Directory workflow check failed"));
 }, 30000);
+const assignmentTimer = setInterval(() => {
+  if (
+    (started || (startupFixtureBuild && assignmentServiceFixture?.natural)) &&
+    !stopping
+  ) {
+    if (startupFixtureBuild && assignmentServiceFixture?.natural)
+      console.error(
+        "ASSIGNMENT_NATURAL_TICK",
+        JSON.stringify({ at: Date.now() }),
+      );
+    void assignments.tick();
+  }
+}, 30000);
 const taskSyncTimer = setInterval(() => {
   if (started && !stopping) void taskSync.tick();
 }, 30000);
@@ -909,12 +1020,26 @@ const requestShutdown = bindProcessLifetime(stop);
   await pairingWrite;
   // A parent exit or signal during the write must not announce a stopped server.
   if (!stopping) {
-    started = true;
-    void workflows.sync().catch(() => {});
-    receiver?.start();
-    templateReceiver?.start();
+    if (!startupFixtureBuild) {
+      started = true;
+      void workflows.sync().catch(() => {});
+      receiver?.start();
+      templateReceiver?.start();
+    }
     console.log(
       `Bittrees AI: http://127.0.0.1:${port}\nPairing code (valid for 10 minutes): ${codePath}\nStop with Ctrl+C. Restart to pair another browser session.`,
     );
+    if (startupFixtureBuild && assignmentServiceFixture?.natural) {
+      void observeNaturalAssignmentFixture(
+        assignments,
+        assignmentServiceFixture,
+      ).catch((error) => {
+        console.error(
+          "Natural assignment fixture failed",
+          error instanceof Error ? error.message : "Held",
+        );
+        void stop().finally(() => process.exit(1));
+      });
+    }
   }
 }

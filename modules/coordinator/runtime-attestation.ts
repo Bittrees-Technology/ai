@@ -10,6 +10,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 import { canonical } from "../contracts/canonical-json.js";
 import { digest, requestSchema } from "../task-sync/proof-contract.js";
+import { assignmentAuthorityRequest } from "../task-sync/assignment-proof-contract.js";
 import {
   runtimeEnrollmentSchema,
   leaseActivationSchema,
@@ -43,7 +44,9 @@ export async function attestRuntime(
       ? runtimeEnrollmentSchema.parse(body.request)
       : body.purpose === "activate"
         ? leaseActivationSchema.parse(body.request)
-        : requestSchema.parse(body.request);
+        : z
+            .union([requestSchema, assignmentAuthorityRequest])
+            .parse(body.request);
   if (Math.abs(Date.now() - r.issuedAt) > 15000)
     throw Error("STALE_DEVICE_PROOF");
   const client = await pool.connect();

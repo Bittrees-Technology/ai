@@ -10,6 +10,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var lifetime: Pipe?
     var centralReviewBusy = false
     var enrollmentReviewBusy = false
+    var cdDeviceReviewBusy = false
     var workflowIdentityReviewBusy = false
     var workflowOnboarding: NativeWalletOnboarding?
     var ready = false
@@ -27,9 +28,20 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var kitSetupSheet: NSWindow?
     var kitRecoveryInput: Data?
     var kitRecoveryChoosing = false
-    let home = URL(string: "http://127.0.0.1:43127/")!
+    var home = URL(string: "http://127.0.0.1:43127/")!
+#if STARTUP_FIXTURE
+    let fixtureDirectory = ProcessInfo.processInfo.environment["BITTREES_STARTUP_FIXTURE_DIRECTORY"]
+    var fixtureTerminationScheduled = false
+#endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+#if STARTUP_FIXTURE
+        guard fixtureDirectory != nil else { NSApp.terminate(nil); return }
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Bittrees AI — Isolated startup fixture"
+        replaceWebView()
+        startEngine()
+#else
         let menu = NSMenu()
         let root = NSMenuItem()
         let appMenu = NSMenu()
@@ -38,6 +50,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(withTitle: "Agent setup…", action: #selector(showAgentSetup), keyEquivalent: "")
         if workflowSetupControl() != nil {
             appMenu.addItem(withTitle: "Review workflow identity…", action: #selector(reviewWorkflowIdentity), keyEquivalent: "")
+        }
+        if cdDeviceControl() != nil {
+            appMenu.addItem(withTitle: "Review CD device registration…", action: #selector(reviewCDDeviceRegistration), keyEquivalent: "")
         }
         if centralIdentityControl() != nil {
             appMenu.addItem(withTitle: "Review central Workflows identity…", action: #selector(reviewCentralIdentity), keyEquivalent: "")
@@ -80,6 +95,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             window.title = "Bittrees AI — Central identity review preview"
             reviewCentralIdentity()
         } else if recoveryPreview { showRecoveryStart() } else { startEngine() }
+#endif
     }
     @objc func showAgentSetup() {
         guard !quitting, window != nil, window.attachedSheet == nil else { return }
@@ -129,8 +145,20 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         // Do not inherit NODE_OPTIONS, injected module paths, or shell credentials.
         desktopBootstrap = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
         process.environment = ["HOME": NSHomeDirectory(), "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "BITTREES_DESKTOP": "1", "BITTREES_DESKTOP_BOOTSTRAP": desktopBootstrap]
+#if STARTUP_FIXTURE
+        process.environment?["BITTREES_STARTUP_FIXTURE_DIRECTORY"] = fixtureDirectory
+#endif
         // Forward only the fixed local MyCloud helper capability, never general shell environment.
         let inherited = ProcessInfo.processInfo.environment
+        if let endpoint = inherited["BITTREES_ASSIGNMENT_HELPER_URL"], let url = URL(string: endpoint),
+           url.scheme == "http", url.host == "127.0.0.1", let port = url.port, (1...65535).contains(port),
+           url.path == "/crm-assignments", url.query == nil, url.fragment == nil,
+           url.user == nil, url.password == nil, url.absoluteString == endpoint,
+           let token = inherited["BITTREES_ASSIGNMENT_HELPER_TOKEN"],
+           token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_ASSIGNMENT_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_ASSIGNMENT_HELPER_TOKEN"] = token
+        }
         if let endpoint = inherited["BITTREES_MYCLOUD_HELPER_URL"], let url = URL(string: endpoint),
            url.scheme == "http", url.host == "127.0.0.1", url.port != nil,
            url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
@@ -151,6 +179,16 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             process.environment?["BITTREES_ENROLLMENT_HELPER_TOKEN"] = token
         }
         // Only the execution capability crosses into the core; native approval stays here.
+        if let endpoint = inherited["BITTREES_TASK_SYNC_HELPER_URL"],
+           let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
+           let port = url.port, port > 0, port <= 65535, url.path == "/task-sync",
+           url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+           url.absoluteString == endpoint,
+           let token = inherited["BITTREES_TASK_SYNC_HELPER_TOKEN"],
+           token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil {
+            process.environment?["BITTREES_TASK_SYNC_HELPER_URL"] = endpoint
+            process.environment?["BITTREES_TASK_SYNC_HELPER_TOKEN"] = token
+        }
         if let endpoint = inherited["BITTREES_CENTRAL_HELPER_URL"],
            let url = URL(string: endpoint), url.scheme == "http", url.host == "127.0.0.1",
            let port = url.port, port > 0, port <= 65535, url.path == "/central-workflow",
@@ -185,7 +223,11 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         process.standardInput = lifetime
         let pipe = Pipe()
         process.standardOutput = pipe
+#if STARTUP_FIXTURE
+        process.standardError = FileHandle.standardError
+#else
         process.standardError = FileHandle.nullDevice
+#endif
         output = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -194,13 +236,24 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             DispatchQueue.main.async {
                 guard let self = self, self.engine === process, !self.recovery.busy, !self.quitting else { return }
                 self.buffer = String((self.buffer + text).suffix(4096))
-                if !self.ready && self.buffer.contains("Bittrees AI: http://127.0.0.1:43127") {
+#if STARTUP_FIXTURE
+                if !self.ready,
+                   let match = self.buffer.range(of: #"Bittrees AI: http://127\.0\.0\.1:[0-9]{1,5}\n"#, options: .regularExpression),
+                   let url = URL(string: String(self.buffer[match]).dropFirst("Bittrees AI: ".count).trimmingCharacters(in: .whitespacesAndNewlines) + "/"),
+                   let port = url.port, port != 43127, (1024...65535).contains(port) {
+                    self.home = url
+                }
+                let announced = self.home.port != 43127
+#else
+                let announced = self.buffer.contains("Bittrees AI: http://127.0.0.1:43127")
+#endif
+                if !self.ready && announced {
                     self.ready = true
                     self.window.title = "Bittrees AI — Local companion"
                     var request = URLRequest(url: self.home.appendingPathComponent("desktop-pair"))
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("http://127.0.0.1:43127", forHTTPHeaderField: "Origin")
+                    request.setValue("http://127.0.0.1:\(self.home.port!)", forHTTPHeaderField: "Origin")
                     request.httpBody = try? JSONSerialization.data(withJSONObject: ["code": self.desktopBootstrap])
                     self.desktopBootstrap = ""
                     self.web.load(request)
@@ -229,7 +282,13 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                     case .ignore: break
                     }
                 }
-                else if self.quitting { NSApp.reply(toApplicationShouldTerminate: true) }
+                else if self.quitting {
+#if STARTUP_FIXTURE
+                    exit(ended.terminationStatus == 0 ? EXIT_SUCCESS : EXIT_FAILURE)
+#else
+                    NSApp.reply(toApplicationShouldTerminate: true)
+#endif
+                }
                 else if self.kitRecoveryChoosing { self.ready = false; self.window.title = "Bittrees AI — Engine stopped; recovery available" }
                 else { self.fail() }
             }
@@ -312,6 +371,10 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         startEngine()
     }
     func fail() {
+#if STARTUP_FIXTURE
+        FileHandle.standardError.write(Data("SWIFT_FIXTURE_STARTUP_FAILED\n".utf8))
+        exit(EXIT_FAILURE)
+#else
         cancelKitSetup()
         ready = false
         web?.stopLoading()
@@ -324,6 +387,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window)
         } else { alert.runModal(); NSApp.terminate(nil) }
+#endif
     }
     @objc func copyPairingCode() {
         guard ready, engine?.isRunning == true else { return }
@@ -333,8 +397,29 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         NSPasteboard.general.setString(code, forType: .string)
     }
     func local(_ url: URL) -> Bool {
-        url.scheme == "http" && url.host == "127.0.0.1" && url.port == 43127 && url.user == nil && url.password == nil
+        url.scheme == "http" && url.host == "127.0.0.1" && url.port == home.port && url.user == nil && url.password == nil
     }
+#if STARTUP_FIXTURE
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard ready, webView.url == home else { return }
+        webView.evaluateJavaScript("document.title") { title, error in
+            guard error == nil, title as? String == "Bittrees AI" else { return }
+            FileHandle.standardOutput.write(Data("SWIFT_FIXTURE_PAIRED port=\(self.home.port!)\n".utf8))
+            guard !self.fixtureTerminationScheduled else { return }
+            self.fixtureTerminationScheduled = true
+            let hold = Int(ProcessInfo.processInfo.environment["BITTREES_STARTUP_FIXTURE_HOLD_SECONDS"] ?? "0") ?? 0
+            guard (0...120).contains(hold) else { exit(EXIT_FAILURE) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(hold)) {
+                // Do not enter AppKit's terminateLater nested event loop from a
+                // main-queue callback: the owned-process completion also needs
+                // this queue. Only the disposable fixture uses this exit path.
+                self.quitting = true
+                if let process = self.engine, process.isRunning { process.terminate() }
+                else { exit(EXIT_SUCCESS) }
+            }
+        }
+    }
+#endif
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         if url.absoluteString == "bittrees-ai://review-central-identity" {

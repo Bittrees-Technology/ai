@@ -49,28 +49,37 @@ export function pageText(html: string) {
     .replace(/\s+/g, " ")
     .trim();
 }
+const publicTransport = { lookup, get };
+
 export async function publicPage(
   raw: string,
   hosts: string[],
   signal: AbortSignal,
   redirects = 0,
+  transport = publicTransport,
+  maxRedirects = 3,
 ): Promise<{ url: string; text: string; links: string[] }> {
   const url = sourceURL(raw, hosts);
-  const addresses = await lookup(url.hostname, { all: true, family: 4 });
+  const addresses = await transport.lookup(url.hostname, {
+    all: true,
+    family: 4,
+  });
   if (!addresses.length || addresses.some((a) => !publicIPv4(a.address)))
     throw new Error("Source address is not public");
   const address = addresses[0]!;
+  signal.throwIfAborted();
   const response = await new Promise<{
     status: number;
     location?: string;
     type: string;
     html: string;
   }>((resolve, reject) => {
-    const req = get(
+    const req = transport.get(
       url,
       {
         signal,
         family: 4,
+        agent: false,
         headers: {
           "User-Agent": "BittreesResearch/1.0 (public investor research)",
           Accept: "text/html,text/plain",
@@ -109,13 +118,15 @@ export async function publicPage(
     response.status >= 300 &&
     response.status < 400 &&
     response.location &&
-    redirects < 3
+    redirects < maxRedirects
   )
     return publicPage(
       new URL(response.location, url).href,
       hosts,
       signal,
       redirects + 1,
+      transport,
+      maxRedirects,
     );
   if (response.status !== 200 || !/text\/(html|plain)/i.test(response.type))
     throw new Error("Source unavailable or unsupported");
@@ -137,5 +148,31 @@ export async function publicPage(
     url: url.href,
     text: pageText(response.html),
     links: [...new Set(links)].slice(0, 30),
+  };
+}
+
+/** Exact-URL reader: resolve only an approved URL and never follow a redirect. */
+export function exactPublicPageReader(
+  approved: readonly string[],
+  transport = publicTransport,
+) {
+  const urls = new Set(
+    approved.map((raw) => {
+      const url = new URL(raw);
+      if (url.hash) throw Error("Source URL contains a fragment");
+      return sourceURL(raw, [url.hostname]).href;
+    }),
+  );
+  return async (raw: string, signal: AbortSignal) => {
+    if (!urls.has(raw)) throw Error("Source URL is outside the reviewed scope");
+    const { url, text } = await publicPage(
+      raw,
+      [new URL(raw).hostname],
+      signal,
+      0,
+      transport,
+      0,
+    );
+    return { url, text };
   };
 }

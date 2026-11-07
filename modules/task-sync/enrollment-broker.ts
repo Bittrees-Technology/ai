@@ -6,7 +6,7 @@ import type { EnrollmentSession } from "./enrollment-session.js";
  * Only the trusted native owner supplies the already-reviewed session and random token.
  * Calling listen is explicit; no registration or launcher changes exist here.
  */
-export class EnrollmentBroker {
+export class ProtectedLoopbackBroker<T> {
   private server: Server;
   private endpoint?: string;
   private closed = false;
@@ -15,7 +15,16 @@ export class EnrollmentBroker {
   private active = new Set<AbortController>();
   constructor(
     token: string,
-    current: () => Pick<EnrollmentSession, "execute"> | null,
+    current: () => {
+      execute(value: T, signal: AbortSignal): Promise<unknown>;
+    } | null,
+    private protocol: {
+      path: string;
+      parse(raw: unknown): T;
+      maxRequest: number;
+      maxResponse: number;
+      deadline: number;
+    },
   ) {
     if (!/^[a-f0-9]{64}$/.test(token))
       throw Error("Invalid enrollment broker capability");
@@ -25,7 +34,7 @@ export class EnrollmentBroker {
       this.active.add(controller);
       const deadline = setTimeout(
         () => controller.abort(Error("Broker deadline")),
-        16000,
+        protocol.deadline,
       );
       res.on("close", () => {
         if (!res.writableEnded) controller.abort(Error("Caller disconnected"));
@@ -37,7 +46,7 @@ export class EnrollmentBroker {
             "Cache-Control": "no-store",
             Connection: "close",
           });
-          res.end('{"error":"Enrollment request unavailable"}');
+          res.end('{"error":"Protected request unavailable"}');
         }
       };
       try {
@@ -52,7 +61,7 @@ export class EnrollmentBroker {
           !this.endpoint ||
           req.headers.host !== new URL(this.endpoint).host ||
           req.method !== "POST" ||
-          req.url !== "/enrollment" ||
+          req.url !== protocol.path ||
           req.headers.origin ||
           req.headers.cookie ||
           auth.length !== expected.length ||
@@ -80,7 +89,7 @@ export class EnrollmentBroker {
         try {
           for await (const chunk of req) {
             size += chunk.length;
-            if (size > 16000) {
+            if (size > protocol.maxRequest) {
               fail(413);
               return;
             }
@@ -90,7 +99,7 @@ export class EnrollmentBroker {
           controller.signal.removeEventListener("abort", abort);
         }
         controller.signal.throwIfAborted();
-        const value = enrollmentOperation.parse(
+        const value = protocol.parse(
           JSON.parse(
             new TextDecoder("utf-8", { fatal: true }).decode(
               Buffer.concat(chunks),
@@ -108,7 +117,7 @@ export class EnrollmentBroker {
           return;
         }
         const body = JSON.stringify(result);
-        if (Buffer.byteLength(body) > 64000)
+        if (Buffer.byteLength(body) > protocol.maxResponse)
           throw Error("Broker response too large");
         res.writeHead(200, {
           "Content-Type": "application/json",
@@ -122,7 +131,7 @@ export class EnrollmentBroker {
         this.active.delete(controller);
       }
     });
-    this.server.requestTimeout = 17000;
+    this.server.requestTimeout = protocol.deadline + 1000;
     this.server.headersTimeout = 5000;
     this.server.maxHeadersCount = 20;
     this.server.maxConnections = 4;
@@ -146,7 +155,7 @@ export class EnrollmentBroker {
     const address = this.server.address();
     if (!address || typeof address === "string")
       throw Error("Missing broker address");
-    this.endpoint = `http://127.0.0.1:${address.port}/enrollment`;
+    this.endpoint = `http://127.0.0.1:${address.port}${this.protocol.path}`;
     return this.endpoint;
   }
   close(): Promise<void> {
@@ -164,5 +173,22 @@ export class EnrollmentBroker {
       this.server.closeAllConnections();
     });
     return this.closing;
+  }
+}
+
+export class EnrollmentBroker extends ProtectedLoopbackBroker<
+  ReturnType<typeof enrollmentOperation.parse>
+> {
+  constructor(
+    token: string,
+    current: () => Pick<EnrollmentSession, "execute"> | null,
+  ) {
+    super(token, current, {
+      path: "/enrollment",
+      parse: (raw) => enrollmentOperation.parse(raw),
+      maxRequest: 16000,
+      maxResponse: 64000,
+      deadline: 16000,
+    });
   }
 }
