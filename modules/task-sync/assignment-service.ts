@@ -6,6 +6,7 @@ import type { ModelTurn } from "../models/local-turns.js";
 import { AssignmentRunner } from "./assignment-runner.js";
 import { nativeAssignmentRequest } from "./assignment-native.js";
 import { assignmentModel } from "./assignment-model.js";
+import { assignmentValidationReceipt } from "./assignment-contract.js";
 import {
   assignmentServiceReview,
   type AssignmentServiceClient,
@@ -18,7 +19,9 @@ type Hold =
   | "source-or-authority"
   | "attempt-budget"
   | "inference-unconfirmed"
-  | "invalid-model-result";
+  | "invalid-model-result"
+  | "validation-required"
+  | "validation-rejected";
 export class AssignmentService {
   private db?: Database.Database;
   private runner?: AssignmentRunner;
@@ -77,6 +80,21 @@ export class AssignmentService {
           })(url, init, binding);
         },
         modelTurn: options.turn,
+        validator: () => this.review?.validator ?? null,
+        validate: async (input, signal) => {
+          const review = this.review;
+          if (!review?.validator)
+            throw Error("Independent assignment validator required");
+          const response = await client.execute(
+            { kind: "validate", epoch: review.epoch, input },
+            signal,
+          );
+          if (!response.ok)
+            throw Error("Independent assignment validation held");
+          return z
+            .strictObject({ validation: assignmentValidationReceipt })
+            .parse(await response.json()).validation;
+        },
         generate: async (input, signal) => {
           const review = this.review;
           if (!review || !options.admission())
@@ -209,9 +227,19 @@ export class AssignmentService {
       )
         throw Error("Native assignment review expired");
       this.review = review;
+      if (!review.validator) {
+        this.phase = "held";
+        this.hold = "validation-required";
+        return;
+      }
       for (const assignment of review.assignments) {
         const id = assignment.assignmentId;
         if (runner.status(id)?.phase === "completed") continue;
+        if (runner.status(id)?.phase === "completed-unvalidated") {
+          this.phase = "held";
+          this.hold = "validation-required";
+          continue;
+        }
         const row = db
           .prepare(
             "SELECT attempts,terminal FROM assignment_service WHERE id=?",
@@ -253,9 +281,12 @@ export class AssignmentService {
           );
           this.phase = "held";
           this.hold =
-            result.reason === "inference-uncertain"
-              ? "inference-unconfirmed"
-              : "source-or-authority";
+            result.reason === "validation-required" ||
+            result.reason === "legacy-completion-unvalidated"
+              ? "validation-required"
+              : result.reason === "inference-uncertain"
+                ? "inference-unconfirmed"
+                : "source-or-authority";
         } else this.phase = "idle";
         return;
       }
@@ -275,11 +306,15 @@ export class AssignmentService {
             : "ACTION_FAILED";
       this.phase = this.paused() ? "paused" : "held";
       this.hold =
-        error instanceof ModelError && error.code === "MODEL_CHANGED"
-          ? "model-changed"
-          : error instanceof ModelError && error.code === "INVALID_OUTPUT"
-            ? "invalid-model-result"
-            : "source-or-authority";
+        this.currentAssignment &&
+        this.runner?.status(this.currentAssignment)?.block?.reason ===
+          "validation-rejected"
+          ? "validation-rejected"
+          : error instanceof ModelError && error.code === "MODEL_CHANGED"
+            ? "model-changed"
+            : error instanceof ModelError && error.code === "INVALID_OUTPUT"
+              ? "invalid-model-result"
+              : "source-or-authority";
     }
   }
   async close() {

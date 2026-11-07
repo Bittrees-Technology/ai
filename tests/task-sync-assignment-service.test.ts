@@ -29,6 +29,7 @@ const review = () => ({
   expiresAt: Date.now() + 60000,
   profileId: "fixture",
   modelDigest: "a".repeat(64),
+  validator: { id: "fixture-review", revision: "a".repeat(64) },
   assignments: [assignment()],
 });
 
@@ -54,6 +55,41 @@ test("assignment service has no storage or model activity without native admissi
     assert.equal(existsSync(path), false);
     await service.close();
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("native capability without a validator holds before intake and inference", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "assignment-no-validator-"));
+  let otherCalls = 0;
+  const service = new AssignmentService({
+    path: join(dir, "service.db"),
+    runnerPath: join(dir, "runner.db"),
+    vault: new Vault(randomBytes(32)),
+    runtime: new Ollama(),
+    profile: () => {
+      throw Error("Unexpected model access");
+    },
+    turn: immediateTurn,
+    admission: () => true,
+    client: {
+      execute: async (raw: unknown) => {
+        if ((raw as { kind: string }).kind === "review")
+          return Response.json({
+            review: { ...review(), validator: undefined },
+          });
+        otherCalls++;
+        throw Error("Unexpected source action");
+      },
+    },
+  });
+  try {
+    await service.tick();
+    assert.equal(service.status().hold, "validation-required");
+    assert.equal(otherCalls, 0);
+    assert.equal(service.status().assignments[0]?.attempts, 0);
+  } finally {
+    await service.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

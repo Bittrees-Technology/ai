@@ -8,6 +8,11 @@ import {
 } from "./assignment-runner.js";
 import { assignmentGatewayOperation } from "./assignment-native.js";
 import { digest } from "./proof-contract.js";
+import {
+  assignmentValidatorSchema,
+  assignmentValidationInput,
+  checkAssignmentValidation,
+} from "./assignment-contract.js";
 
 export const assignmentServiceReview = z
   .strictObject({
@@ -17,6 +22,7 @@ export const assignmentServiceReview = z
     expiresAt: z.int(),
     profileId: z.string().min(1).max(128),
     modelDigest: z.string().regex(/^(?:sha256:)?[a-f0-9]{64}$/),
+    validator: assignmentValidatorSchema.optional(),
     assignments: z.array(assignmentSchema).min(1).max(60),
   })
   .refine(
@@ -39,6 +45,7 @@ const binding = z.strictObject({
     "claim",
     "read",
     "infer",
+    "validate",
     "write",
     "read-receipt",
     "complete",
@@ -60,6 +67,11 @@ const binding = z.strictObject({
 export const assignmentServiceOperation = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("review") }),
   z.strictObject({ kind: z.literal("authorize"), epoch: z.uuid(), binding }),
+  z.strictObject({
+    kind: z.literal("validate"),
+    epoch: z.uuid(),
+    input: assignmentValidationInput,
+  }),
   z.strictObject({
     kind: z.literal("assignment"),
     epoch: z.uuid(),
@@ -90,6 +102,11 @@ export async function launchAssignmentServiceBroker(options: {
     binding: AssignmentBinding,
     signal: AbortSignal,
   ) => Promise<void>;
+  validate?: (
+    review: z.infer<typeof assignmentServiceReview>,
+    input: z.infer<typeof assignmentValidationInput>,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
   forward: (
     input: z.infer<typeof assignmentGatewayOperation>,
     signal: AbortSignal,
@@ -98,6 +115,14 @@ export async function launchAssignmentServiceBroker(options: {
 }) {
   const now = options.now ?? Date.now;
   const token = randomBytes(32).toString("hex");
+  const validations = new Map<
+    string,
+    {
+      scope: string;
+      input: z.infer<typeof assignmentValidationInput>;
+      receipt: ReturnType<typeof checkAssignmentValidation>;
+    }
+  >();
   const session = {
     async execute(
       operation: z.infer<typeof assignmentServiceOperation>,
@@ -127,17 +152,108 @@ export async function launchAssignmentServiceBroker(options: {
       const id =
         operation.kind === "authorize"
           ? operation.binding.assignment.assignmentId
-          : operation.input.assignmentId;
+          : operation.kind === "validate"
+            ? operation.input.assignment.assignmentId
+            : operation.input.assignmentId;
       const selected = review.assignments.find(
         (item) => item.assignmentId === id,
       );
       if (!selected) throw Error("Assignment outside native reviewed batch");
+      if (operation.kind === "validate") {
+        if (
+          !review.validator ||
+          !options.validate ||
+          digest(selected) !== digest(operation.input.assignment)
+        )
+          throw Error(
+            "Independent assignment validator unavailable or scope changed",
+          );
+        const prior = validations.get(id);
+        if (
+          prior &&
+          prior.input.crmOperationId !== operation.input.crmOperationId
+        )
+          throw Error("Assignment result operation cannot be replaced");
+        await options.authorize(
+          review,
+          {
+            assignment: operation.input.assignment,
+            claim: operation.input.claim,
+            action: "validate",
+            inputDigest: operation.input.inputDigest,
+          },
+          signal,
+        );
+        recheck();
+        const receipt = checkAssignmentValidation(
+          await options.validate(
+            review,
+            structuredClone(operation.input),
+            signal,
+          ),
+          operation.input,
+          review.validator,
+          now(),
+        );
+        recheck();
+        if (receipt.expiresAt > review.expiresAt)
+          throw Error("Assignment validation exceeds native review");
+        validations.set(id, { scope: pin, input: operation.input, receipt });
+        return { status: 200, body: { validation: receipt } };
+      }
       if (operation.kind === "authorize") {
         if (digest(selected) !== digest(operation.binding.assignment))
           throw Error("Assignment revision changed");
         await options.authorize(review, operation.binding, signal);
         recheck();
         return { status: 200, body: { authorized: true } };
+      }
+      if (
+        ["intake", "claim", "write", "complete"].includes(
+          operation.input.kind,
+        ) &&
+        (!review.validator || !options.validate)
+      )
+        throw Error(
+          "Independent assignment validator must be configured before work",
+        );
+      if (
+        operation.input.kind === "write" ||
+        operation.input.kind === "complete"
+      ) {
+        const accepted = validations.get(id),
+          op = operation.input;
+        const resultDigest =
+          op.kind === "write" ? digest(op.result) : op.resultDigest;
+        if (
+          !accepted ||
+          accepted.scope !== pin ||
+          accepted.receipt.expiresAt <= now() ||
+          accepted.input.crmOperationId !== op.crmOperationId ||
+          accepted.input.resultDigest !== resultDigest ||
+          accepted.input.claim.runId !== op.runId ||
+          accepted.input.claim.leaseId !== op.leaseId ||
+          (op.kind === "complete" &&
+            op.expiresAt !== accepted.input.claim.expiresAt)
+        )
+          throw Error(
+            "Current independently validated result required before effects",
+          );
+        await options.authorize(
+          review,
+          {
+            assignment: selected,
+            claim: accepted.input.claim,
+            action: op.kind === "write" ? "write" : "complete",
+            inputDigest: accepted.input.inputDigest,
+          },
+          signal,
+        );
+        recheck();
+        if (accepted.receipt.expiresAt <= now())
+          throw Error(
+            "Independent assignment validation expired before effect",
+          );
       }
       const result = await options.forward(operation.input, signal);
       const reader = result.body?.getReader();

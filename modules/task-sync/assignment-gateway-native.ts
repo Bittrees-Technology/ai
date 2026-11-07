@@ -324,12 +324,16 @@ export function nativeAssignmentGateway(options: {
 export async function launchNativeAssignmentService(
   options: Parameters<typeof nativeAssignmentGateway>[0] & {
     authorize: Parameters<typeof launchAssignmentServiceBroker>[0]["authorize"];
+    validate: NonNullable<
+      Parameters<typeof launchAssignmentServiceBroker>[0]["validate"]
+    >;
   },
 ) {
   const gateway = nativeAssignmentGateway(options);
   return launchAssignmentServiceBroker({
     current: options.current,
     authorize: options.authorize,
+    validate: options.validate,
     forward: gateway.forward,
     now: options.now,
   });

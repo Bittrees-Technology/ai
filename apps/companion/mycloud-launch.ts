@@ -137,6 +137,17 @@ async function runMacCompanion(
       resources,
       {
         BITTREES_STARTUP_FIXTURE_DIRECTORY: directory,
+        ...(process.env.BITTREES_STARTUP_FIXTURE_HOLD_SECONDS !== undefined
+          ? {
+              BITTREES_STARTUP_FIXTURE_HOLD_SECONDS: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .max(120)
+                .parse(process.env.BITTREES_STARTUP_FIXTURE_HOLD_SECONDS)
+                .toString(),
+            }
+          : {}),
         ...taskSync.environment,
         ...cdRegistration?.environment,
         ...assignments?.environment,

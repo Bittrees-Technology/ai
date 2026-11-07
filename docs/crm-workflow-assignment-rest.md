@@ -49,6 +49,28 @@ native signer/attester, durable request budget and current source/cost verifier.
 It provides only the typed loopback capability to the model core. No default
 bootstrap discovers or creates these bindings.
 
+The review must additionally pin an independent validator ID and code/rule
+revision for the exact workflow. Without it the service holds before intake or
+inference. The validator is a trusted native/source implementation or independent
+review process; it is never the generating model or a caller-supplied pass flag.
+It must read the current source itself and verify task-specific acceptance
+criteria. Unsupported workflows remain held rather than using schema validation
+as a substitute for task fulfilment.
+
+After inference the runner refreshes the task and requests independent validation
+of the exact assignment/revision, workflow, input digest, result digest, source
+result operation and work lease. An accepted receipt lasts at most 30 seconds
+and cannot outlive the lease or native review. The encrypted journal retains
+the receipt and exposes only validator identity/revision/time in status. The
+native broker independently rechecks authorization and refuses write/completion
+calls without a current accepted result. A core caller cannot bypass this gate
+by omitting the separate authorization call or changing the result/operation.
+
+Rejected validation retains the existing model result. Recovery revalidates it
+under current authority without repeating inference. Old completed records
+without validation evidence are labelled `completed-unvalidated` and never
+silently promoted or replayed.
+
 `AssignmentNativeHTTPS` accepts only canonical typed POST operations to
 `https://mcp.bittrees.org/v1/crm-assignments`. The existing task-sync HTTPS profile
 does not accept that route. The adapter pins a validated public IPv4 address,

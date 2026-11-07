@@ -1,5 +1,9 @@
 import React, { useEffect, useState } from "react";
 const holdReasons: Record<string, string> = {
+  "validation-rejected":
+    "Independent validation did not accept this result. No new result write or completion is allowed.",
+  "validation-required":
+    "An independent workflow validator is required before work can complete.",
   "native-unavailable": "The native connection is unavailable.",
   "model-changed": "The local model no longer matches the approved version.",
   "source-or-authority":
@@ -87,6 +91,7 @@ export function AssignmentStatus({
               <th>Workflow</th>
               <th>Progress</th>
               <th>Last receipt</th>
+              <th>Validation evidence</th>
             </tr>
           </thead>
           <tbody>
@@ -102,6 +107,11 @@ export function AssignmentStatus({
                   {item.phase || "awaiting intake"} · attempts {item.attempts}
                 </td>
                 <td>{item.lastReceiptId || "Awaiting confirmation"}</td>
+                <td>
+                  {item.validation
+                    ? `${item.validation.validatorId} · checked ${new Date(item.validation.checkedAt).toLocaleString()}`
+                    : "Not independently validated"}
+                </td>
               </tr>
             ))}
           </tbody>

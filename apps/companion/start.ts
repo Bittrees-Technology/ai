@@ -121,6 +121,7 @@ import { runStartupAssignmentFixture } from "./startup-assignment-fixture.js";
 import { runStartupDirectoryResearchFixture } from "./startup-directory-research-fixture.js";
 import {
   assignmentServiceFixtureSchema,
+  observeNaturalAssignmentFixture,
   runAssignmentServiceFixture,
 } from "./startup-assignment-service-fixture.js";
 import { startupFixtureBuild } from "./startup-fixture.js";
@@ -801,7 +802,7 @@ const assignments = new AssignmentService({
   turn: modelTurns.run,
   admission: () => executionControls.admission(0).reason === "ready",
 });
-if (assignmentServiceFixture)
+if (assignmentServiceFixture && !assignmentServiceFixture.natural)
   await runAssignmentServiceFixture(assignments, assignmentServiceFixture);
 const dashboard = dashboardServer({
   privateKeys,
@@ -980,7 +981,17 @@ const directoryTimer = setInterval(() => {
       .catch(() => console.error("Directory workflow check failed"));
 }, 30000);
 const assignmentTimer = setInterval(() => {
-  if (started && !stopping) void assignments.tick();
+  if (
+    (started || (startupFixtureBuild && assignmentServiceFixture?.natural)) &&
+    !stopping
+  ) {
+    if (startupFixtureBuild && assignmentServiceFixture?.natural)
+      console.error(
+        "ASSIGNMENT_NATURAL_TICK",
+        JSON.stringify({ at: Date.now() }),
+      );
+    void assignments.tick();
+  }
 }, 30000);
 const taskSyncTimer = setInterval(() => {
   if (started && !stopping) void taskSync.tick();
@@ -1018,5 +1029,17 @@ const requestShutdown = bindProcessLifetime(stop);
     console.log(
       `Bittrees AI: http://127.0.0.1:${port}\nPairing code (valid for 10 minutes): ${codePath}\nStop with Ctrl+C. Restart to pair another browser session.`,
     );
+    if (startupFixtureBuild && assignmentServiceFixture?.natural) {
+      void observeNaturalAssignmentFixture(
+        assignments,
+        assignmentServiceFixture,
+      ).catch((error) => {
+        console.error(
+          "Natural assignment fixture failed",
+          error instanceof Error ? error.message : "Held",
+        );
+        void stop().finally(() => process.exit(1));
+      });
+    }
   }
 }

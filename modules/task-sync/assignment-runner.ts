@@ -5,26 +5,18 @@ import { Vault } from "../storage/vault.js";
 import { immediateTurn, type ModelTurn } from "../models/local-turns.js";
 import { ModelError } from "../models/ollama.js";
 import { digest } from "./proof-contract.js";
+import {
+  assignmentSchema,
+  assignmentClaimSchema as claimSchema,
+  assignmentResultSchema as resultSchema,
+  assignmentValidationInput,
+  assignmentValidationReceipt,
+  assignmentValidatorSchema,
+  checkAssignmentValidation,
+} from "./assignment-contract.js";
+export { assignmentSchema } from "./assignment-contract.js";
 
-export const assignmentSchema = z.strictObject({
-  assignmentId: z.uuid(),
-  taskId: z.uuid(),
-  taskRevision: z.int().positive(),
-  projectId: z.uuid(),
-  workflowId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
-  workflowRevision: z.int().positive(),
-  principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
-});
 export type TaskAssignment = z.infer<typeof assignmentSchema>;
-const claimSchema = z.strictObject({
-  assignmentDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  runId: z.uuid(),
-  leaseId: z.uuid(),
-  expiresAt: z.int().positive(),
-});
-const resultSchema = z.strictObject({
-  summary: z.string().trim().min(1).max(4000),
-});
 const receiptSchema = z.strictObject({
   operationId: z.uuid(),
   resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -38,6 +30,7 @@ type RecordState = {
   claim?: z.infer<typeof claimSchema>;
   inferenceStarted?: true;
   result?: z.infer<typeof resultSchema>;
+  validation?: z.infer<typeof assignmentValidationReceipt>;
   writeStarted?: true;
   written?: true;
   completeStarted?: true;
@@ -48,13 +41,15 @@ type RecordState = {
       | "authority-unavailable"
       | "assignment-changed"
       | "model-capacity"
-      | "invalid-model-result";
+      | "invalid-model-result"
+      | "validation-rejected";
   };
 };
 type Action =
   | "claim"
   | "read"
   | "infer"
+  | "validate"
   | "write"
   | "read-receipt"
   | "complete"
@@ -92,6 +87,11 @@ export class AssignmentRunner {
         },
       ): Promise<Response>;
       modelTurn?: ModelTurn;
+      validator?: () => z.infer<typeof assignmentValidatorSchema> | null;
+      validate?: (
+        input: z.infer<typeof assignmentValidationInput>,
+        signal: AbortSignal,
+      ) => Promise<unknown>;
       generate(
         input: { instruction: string },
         signal: AbortSignal,
@@ -121,12 +121,15 @@ export class AssignmentRunner {
       "task-assignment:" + id,
     );
     let phase = "awaiting-claim";
-    if (state.completed) phase = "completed";
+    if (state.completed)
+      phase = state.validation ? "completed" : "completed-unvalidated";
     else if (state.claim && state.claim.expiresAt <= this.now())
       phase = "lease-expired";
     else if (state.completeStarted) phase = "completion-reconciliation";
     else if (state.written) phase = "crm-result-confirmed";
     else if (state.writeStarted) phase = "crm-result-reconciliation";
+    else if (state.block?.action === "validate" && state.result)
+      phase = "validation-held";
     else if (state.result) phase = "result-ready";
     else if (state.inferenceStarted) phase = "inference-unconfirmed";
     else if (state.claim) phase = "claimed";
@@ -144,6 +147,16 @@ export class AssignmentRunner {
           ? state.writeId
           : null,
       phase,
+      validation: state.validation
+        ? {
+            validatorId: state.validation.validatorId,
+            revision: state.validation.validatorRevision,
+            checkedAt: state.validation.checkedAt,
+            crmOperationId: state.validation.crmOperationId,
+            resultDigest: state.validation.resultDigest,
+            evidenceDigest: digest(state.validation),
+          }
+        : null,
       block: state.block ?? null,
     };
   }
@@ -186,8 +199,19 @@ export class AssignmentRunner {
       .immediate();
     if (digest(state.assignment) !== digest(assignment))
       throw Error("Assignment identity or revision changed");
-    if (state.completed)
+    if (state.completed) {
+      if (!state.validation)
+        return {
+          state: "held",
+          reason: "legacy-completion-unvalidated",
+        } as const;
       return { state: "completed", runId: state.claim!.runId } as const;
+    }
+    const pin = assignmentValidatorSchema
+      .nullable()
+      .parse(this.host.validator?.() ?? null);
+    if (!pin || !this.host.validate)
+      return { state: "held", reason: "validation-required" } as const;
 
     const signal = AbortSignal.any([parent, AbortSignal.timeout(120_000)]);
     const authority = async (
@@ -204,6 +228,14 @@ export class AssignmentRunner {
         : signal;
       const current = () => {
         actionSignal.throwIfAborted();
+        if (
+          (action === "write" || action === "complete") &&
+          (!state.validation ||
+            state.validation.expiresAt <= this.now() ||
+            state.validation.validatorId !== pin.id ||
+            state.validation.validatorRevision !== pin.revision)
+        )
+          throw Error("Current independent assignment validation required");
         if (state.claim && state.claim.expiresAt <= this.now())
           throw Error("Assignment lease expired");
       };
@@ -371,6 +403,42 @@ export class AssignmentRunner {
       }
       if (!state.result) throw Error("Missing assignment model result");
       const resultDigest = digest(state.result);
+      const snapshot = await readTask();
+      const validationInput = assignmentValidationInput.parse({
+        assignment,
+        claim: state.claim,
+        crmOperationId: state.writeId,
+        inputDigest: digest(snapshot.instruction),
+        resultDigest,
+        result: state.result,
+      });
+      const validationSignal = await authority("validate", {
+        inputDigest: validationInput.inputDigest,
+      });
+      if (digest(this.host.validator?.()) !== digest(pin))
+        throw Error("Assignment validator changed");
+      let validation: z.infer<typeof assignmentValidationReceipt>;
+      try {
+        validation = checkAssignmentValidation(
+          await this.host.validate(
+            structuredClone(validationInput),
+            validationSignal,
+          ),
+          validationInput,
+          pin,
+          this.now(),
+        );
+      } catch (error) {
+        state.block = { action: "validate", reason: "validation-rejected" };
+        save(state);
+        throw error;
+      }
+      validationSignal.throwIfAborted();
+      if (digest(this.host.validator?.()) !== digest(pin))
+        throw Error("Assignment validator changed");
+      state.validation = validation;
+      delete state.block;
+      save(state);
       const confirm = (rawReceipt: unknown, operationId: string) => {
         const receipt = receiptSchema.parse(rawReceipt);
         if (

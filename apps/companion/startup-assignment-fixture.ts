@@ -39,6 +39,31 @@ export async function runStartupAssignmentFixture(
 
   let modelCalls = 0;
   const host = {
+    validator: () => ({ id: "fixture-review", revision: "a".repeat(64) }),
+    async validate(
+      input: Parameters<
+        NonNullable<
+          ConstructorParameters<typeof AssignmentRunner>[2]["validate"]
+        >
+      >[0],
+    ) {
+      if (input.result.summary !== "Fixture reviewed")
+        throw Error("Fixture validation rejected");
+      const current = await (await execute("task")).json();
+      if (digest(current.instruction) !== input.inputDigest)
+        throw Error("Fixture source changed");
+      return {
+        accepted: true,
+        validatorId: "fixture-review",
+        validatorRevision: "a".repeat(64),
+        assignmentDigest: digest(input.assignment),
+        inputDigest: input.inputDigest,
+        resultDigest: input.resultDigest,
+        crmOperationId: input.crmOperationId,
+        checkedAt: Date.now(),
+        expiresAt: Math.min(Date.now() + 10000, input.claim.expiresAt),
+      };
+    },
     async authorize(binding: AssignmentBinding, actionSignal: AbortSignal) {
       if (binding.action !== "infer") return;
       const task = await execute("task", actionSignal);

@@ -39,6 +39,22 @@ for (const mode of [
       { operationId: string; resultDigest: string }
     >();
     const host: ConstructorParameters<typeof AssignmentRunner>[2] = {
+      validator: () => ({ id: "fixture-review", revision: "a".repeat(64) }),
+      async validate(input) {
+        assert.equal(input.inputDigest, digest("Review the task."));
+        assert.equal(input.result.summary, "Review completed");
+        return {
+          accepted: true,
+          validatorId: "fixture-review",
+          validatorRevision: "a".repeat(64),
+          assignmentDigest: digest(input.assignment),
+          inputDigest: input.inputDigest,
+          resultDigest: input.resultDigest,
+          crmOperationId: input.crmOperationId,
+          checkedAt: Date.now(),
+          expiresAt: Math.min(Date.now() + 10000, input.claim.expiresAt),
+        };
+      },
       async modelTurn(_signal, work) {
         enteredModelTurn = true;
         return work();

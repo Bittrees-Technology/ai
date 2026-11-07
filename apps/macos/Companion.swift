@@ -31,6 +31,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var home = URL(string: "http://127.0.0.1:43127/")!
 #if STARTUP_FIXTURE
     let fixtureDirectory = ProcessInfo.processInfo.environment["BITTREES_STARTUP_FIXTURE_DIRECTORY"]
+    var fixtureTerminationScheduled = false
 #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -275,7 +276,13 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                     case .ignore: break
                     }
                 }
-                else if self.quitting { NSApp.reply(toApplicationShouldTerminate: true) }
+                else if self.quitting {
+#if STARTUP_FIXTURE
+                    exit(ended.terminationStatus == 0 ? EXIT_SUCCESS : EXIT_FAILURE)
+#else
+                    NSApp.reply(toApplicationShouldTerminate: true)
+#endif
+                }
                 else if self.kitRecoveryChoosing { self.ready = false; self.window.title = "Bittrees AI — Engine stopped; recovery available" }
                 else { self.fail() }
             }
@@ -392,7 +399,18 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         webView.evaluateJavaScript("document.title") { title, error in
             guard error == nil, title as? String == "Bittrees AI" else { return }
             FileHandle.standardOutput.write(Data("SWIFT_FIXTURE_PAIRED port=\(self.home.port!)\n".utf8))
-            NSApp.terminate(nil)
+            guard !self.fixtureTerminationScheduled else { return }
+            self.fixtureTerminationScheduled = true
+            let hold = Int(ProcessInfo.processInfo.environment["BITTREES_STARTUP_FIXTURE_HOLD_SECONDS"] ?? "0") ?? 0
+            guard (0...120).contains(hold) else { exit(EXIT_FAILURE) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(hold)) {
+                // Do not enter AppKit's terminateLater nested event loop from a
+                // main-queue callback: the owned-process completion also needs
+                // this queue. Only the disposable fixture uses this exit path.
+                self.quitting = true
+                if let process = self.engine, process.isRunning { process.terminate() }
+                else { exit(EXIT_SUCCESS) }
+            }
         }
     }
 #endif
