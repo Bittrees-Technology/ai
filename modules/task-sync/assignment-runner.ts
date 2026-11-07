@@ -6,7 +6,7 @@ import { immediateTurn, type ModelTurn } from "../models/local-turns.js";
 import { ModelError } from "../models/ollama.js";
 import { digest } from "./proof-contract.js";
 
-const assignmentSchema = z.strictObject({
+export const assignmentSchema = z.strictObject({
   assignmentId: z.uuid(),
   taskId: z.uuid(),
   taskRevision: z.int().positive(),
@@ -59,7 +59,7 @@ type Action =
   | "read-receipt"
   | "complete"
   | "read-completion";
-type Binding = {
+export type AssignmentBinding = {
   assignment: TaskAssignment;
   claim?: RecordState["claim"];
   action: Action;
@@ -82,8 +82,15 @@ export class AssignmentRunner {
     path: string,
     private vault: Vault,
     private host: {
-      authorize(binding: Binding, signal: AbortSignal): Promise<void>;
-      request: typeof fetch;
+      authorize(binding: AssignmentBinding, signal: AbortSignal): Promise<void>;
+      request(
+        url: string,
+        init: RequestInit,
+        context: AssignmentBinding & {
+          crmOperationId: string;
+          resultDigest?: string;
+        },
+      ): Promise<Response>;
       modelTurn?: ModelTurn;
       generate(
         input: { instruction: string },
@@ -185,7 +192,7 @@ export class AssignmentRunner {
     const signal = AbortSignal.any([parent, AbortSignal.timeout(120_000)]);
     const authority = async (
       action: Action,
-      detail: Pick<Binding, "request" | "inputDigest"> = {},
+      detail: Pick<AssignmentBinding, "request" | "inputDigest"> = {},
     ) => {
       const actionSignal = state.claim
         ? AbortSignal.any([
@@ -236,17 +243,27 @@ export class AssignmentRunner {
         },
       });
       beforeDispatch?.();
-      const response = await this.host.request(url, {
-        method,
-        signal: actionSignal,
-        redirect: "error",
-        headers: {
-          Accept: "application/json",
-          ...(payload ? { "Content-Type": "application/json" } : {}),
-          ...(operationId ? { "Idempotency-Key": operationId } : {}),
+      const response = await this.host.request(
+        url,
+        {
+          method,
+          signal: actionSignal,
+          redirect: "error",
+          headers: {
+            Accept: "application/json",
+            ...(payload ? { "Content-Type": "application/json" } : {}),
+            ...(operationId ? { "Idempotency-Key": operationId } : {}),
+          },
+          ...(payload ? { body: JSON.stringify(payload) } : {}),
         },
-        ...(payload ? { body: JSON.stringify(payload) } : {}),
-      });
+        {
+          assignment,
+          claim: state.claim,
+          action,
+          crmOperationId: state.writeId,
+          resultDigest: state.result ? digest(state.result) : undefined,
+        },
+      );
       actionSignal.throwIfAborted();
       if (!response.ok) {
         await response.body?.cancel();

@@ -203,7 +203,11 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         process.standardInput = lifetime
         let pipe = Pipe()
         process.standardOutput = pipe
+#if STARTUP_FIXTURE
+        process.standardError = FileHandle.standardError
+#else
         process.standardError = FileHandle.nullDevice
+#endif
         output = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -341,6 +345,10 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         startEngine()
     }
     func fail() {
+#if STARTUP_FIXTURE
+        FileHandle.standardError.write(Data("SWIFT_FIXTURE_STARTUP_FAILED\n".utf8))
+        exit(EXIT_FAILURE)
+#else
         cancelKitSetup()
         ready = false
         web?.stopLoading()
@@ -353,6 +361,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window)
         } else { alert.runModal(); NSApp.terminate(nil) }
+#endif
     }
     @objc func copyPairingCode() {
         guard ready, engine?.isRunning == true else { return }
