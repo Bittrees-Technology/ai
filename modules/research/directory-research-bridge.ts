@@ -23,6 +23,7 @@ const modelEvidence = z.strictObject({
   model: z.string().min(1).max(160),
   modelDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   answer: z.unknown(),
+  evidenceText: z.string().min(1).max(14_000).optional(),
 });
 
 type Item = Readonly<z.infer<typeof item>>;
@@ -163,16 +164,19 @@ export function createDirectoryResearchBridge(
         const evidence = modelEvidence.parse(
           await host.analyze(source, signal),
         );
+        const evidenceText = evidence.evidenceText ?? source.text;
+        if (!source.text.startsWith(evidenceText))
+          throw Error("Model evidence does not match source text");
         const answer = groundedDirectoryAnswer(
           evidence.answer,
-          source.text,
+          evidenceText,
           tags,
         );
         receipts.push({
           originalReceiptId: entry.originalReceiptId,
           lastRecordedRetryReceiptId: entry.lastRecordedRetryReceiptId,
           url: source.url,
-          sourceHash: sha256(source.text),
+          sourceHash: sha256(evidenceText),
           model: evidence.model,
           modelDigest: evidence.modelDigest,
           answer,
