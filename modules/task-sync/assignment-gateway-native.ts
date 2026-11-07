@@ -48,7 +48,8 @@ export function validateAssignmentChallenge(
   if (
     !assignment ||
     assignment.principal !== identity.principal ||
-    !["claim", "complete", "completion"].includes(operation.kind)
+    (["finalize", "finalization"].includes(operation.kind) &&
+      review.completeTask !== true)
   )
     throw Error("Assignment proof is outside the native reviewed operation");
   for (const field of [
@@ -70,7 +71,43 @@ export function validateAssignmentChallenge(
   )
     throw Error("Assignment proof scope or freshness rejected");
   let parameters: unknown;
-  if (operation.kind === "claim") {
+  if (operation.kind === "intake" || operation.kind === "task") {
+    if (request.action !== "workflow:claim")
+      throw Error("Assignment read operation changed");
+    parameters = {
+      tool:
+        operation.kind === "intake"
+          ? "workflow_crm_intake"
+          : "workflow_crm_task",
+      arguments: {
+        connectionId,
+        workflowId: assignment.workflowId,
+        assignmentDigest: digest(assignment),
+      },
+    };
+  } else if (operation.kind === "write" || operation.kind === "receipt") {
+    if (
+      request.action !== "workflow:complete" ||
+      request.operationId !== operation.crmOperationId
+    )
+      throw Error("Assignment result operation changed");
+    parameters = {
+      tool:
+        operation.kind === "write"
+          ? "workflow_crm_result_write"
+          : "workflow_crm_result_read",
+      arguments: {
+        connectionId,
+        assignmentDigest: digest(assignment),
+        runId: operation.runId,
+        leaseId: operation.leaseId,
+        crmOperationId: operation.crmOperationId,
+        ...(operation.kind === "write"
+          ? { resultDigest: digest(operation.result) }
+          : {}),
+      },
+    };
+  } else if (operation.kind === "claim") {
     if (
       request.action !== "workflow:claim" ||
       request.operationId !== operation.operationId
@@ -85,7 +122,12 @@ export function validateAssignmentChallenge(
         assignmentDigest: digest(assignment),
       },
     };
-  } else if (operation.kind === "complete" || operation.kind === "completion") {
+  } else if (
+    operation.kind === "complete" ||
+    operation.kind === "completion" ||
+    operation.kind === "finalize" ||
+    operation.kind === "finalization"
+  ) {
     if (
       request.action !== "workflow:complete" ||
       request.operationId !== operation.operationId
@@ -96,7 +138,10 @@ export function validateAssignmentChallenge(
       arguments: {
         runId: operation.runId,
         operationId: operation.operationId,
-        method: operation.kind === "complete" ? "PUT" : "GET",
+        method:
+          operation.kind === "complete" || operation.kind === "finalize"
+            ? "PUT"
+            : "GET",
         connectionId,
         assignmentDigest: digest(assignment),
         leaseId: operation.leaseId,
@@ -204,6 +249,11 @@ export function nativeAssignmentGateway(options: {
       try {
         const operation = assignmentGatewayOperation.parse(raw);
         current();
+        if (
+          ["finalize", "finalization"].includes(operation.kind) &&
+          review.completeTask !== true
+        )
+          throw Error("Separate native source status approval required");
         if (
           !review.assignments.some(
             (item) => item.assignmentId === operation.assignmentId,

@@ -34,6 +34,12 @@ type RecordState = {
   writeStarted?: true;
   written?: true;
   completeStarted?: true;
+  completeAttempts?: number;
+  centralCompleted?: true;
+  completeTask?: boolean;
+  finalizeStarted?: true;
+  finalizeAttempts?: number;
+  finalized?: true;
   completed?: true;
   block?: {
     action: Action;
@@ -53,7 +59,9 @@ type Action =
   | "write"
   | "read-receipt"
   | "complete"
-  | "read-completion";
+  | "read-completion"
+  | "finalize"
+  | "read-finalization";
 export type AssignmentBinding = {
   assignment: TaskAssignment;
   claim?: RecordState["claim"];
@@ -86,6 +94,7 @@ export class AssignmentRunner {
           resultDigest?: string;
         },
       ): Promise<Response>;
+      completeTask?: () => boolean;
       modelTurn?: ModelTurn;
       validator?: () => z.infer<typeof assignmentValidatorSchema> | null;
       validate?: (
@@ -123,9 +132,20 @@ export class AssignmentRunner {
     let phase = "awaiting-claim";
     if (state.completed)
       phase = state.validation ? "completed" : "completed-unvalidated";
+    else if (state.centralCompleted)
+      phase =
+        (state.finalizeAttempts ?? 0) >= 2
+          ? "source-finalization-unconfirmed"
+          : state.finalizeStarted
+            ? "source-finalization-reconciliation"
+            : "central-completed";
+    else if (state.completeStarted)
+      phase =
+        (state.completeAttempts ?? 1) >= 2
+          ? "completion-unconfirmed"
+          : "completion-reconciliation";
     else if (state.claim && state.claim.expiresAt <= this.now())
       phase = "lease-expired";
-    else if (state.completeStarted) phase = "completion-reconciliation";
     else if (state.written) phase = "crm-result-confirmed";
     else if (state.writeStarted) phase = "crm-result-reconciliation";
     else if (state.block?.action === "validate" && state.result)
@@ -141,11 +161,18 @@ export class AssignmentRunner {
       workflowId: state.assignment.workflowId,
       workflowRevision: state.assignment.workflowRevision,
       runId: state.claim?.runId ?? null,
-      lastReceiptId: state.completed
-        ? state.completeId
-        : state.written
-          ? state.writeId
-          : null,
+      centralCompleted: state.centralCompleted === true,
+      sourceFinalizationRequired: state.completeTask === true,
+      sourceFinalized: state.finalized === true,
+      completionAttempts:
+        state.completeAttempts ?? (state.completeStarted ? 1 : 0),
+      finalizationAttempts: state.finalizeAttempts ?? 0,
+      lastReceiptId:
+        state.centralCompleted || state.completed
+          ? state.completeId
+          : state.written
+            ? state.writeId
+            : null,
       phase,
       validation: state.validation
         ? {
@@ -189,6 +216,7 @@ export class AssignmentRunner {
           claimId: randomUUID(),
           writeId: randomUUID(),
           completeId: randomUUID(),
+          completeTask: this.host.completeTask?.() === true,
         };
         previous = this.vault.seal(record, aad);
         this.db
@@ -213,19 +241,29 @@ export class AssignmentRunner {
     if (!pin || !this.host.validate)
       return { state: "held", reason: "validation-required" } as const;
 
+    if (state.completeTask === true && this.host.completeTask?.() !== true)
+      return {
+        state: "held",
+        reason: "source-finalization-approval-unavailable",
+      } as const;
     const signal = AbortSignal.any([parent, AbortSignal.timeout(120_000)]);
     const authority = async (
       action: Action,
       detail: Pick<AssignmentBinding, "request" | "inputDigest"> = {},
     ) => {
-      const actionSignal = state.claim
-        ? AbortSignal.any([
-            signal,
-            AbortSignal.timeout(
-              Math.max(1, state.claim.expiresAt - this.now()),
-            ),
-          ])
-        : signal;
+      const reconciliation =
+        (action === "read-completion" && state.completeStarted === true) ||
+        (["finalize", "read-finalization"].includes(action) &&
+          state.centralCompleted === true);
+      const actionSignal =
+        state.claim && !reconciliation
+          ? AbortSignal.any([
+              signal,
+              AbortSignal.timeout(
+                Math.max(1, state.claim.expiresAt - this.now()),
+              ),
+            ])
+          : signal;
       const current = () => {
         actionSignal.throwIfAborted();
         if (
@@ -236,7 +274,11 @@ export class AssignmentRunner {
             state.validation.validatorRevision !== pin.revision)
         )
           throw Error("Current independent assignment validation required");
-        if (state.claim && state.claim.expiresAt <= this.now())
+        if (
+          !reconciliation &&
+          state.claim &&
+          state.claim.expiresAt <= this.now()
+        )
           throw Error("Assignment lease expired");
       };
       current();
@@ -325,8 +367,131 @@ export class AssignmentRunner {
         await reader.cancel();
       }
     };
+    const completionUrl = () =>
+      "https://workflow.bittrees.org/api/task-runs/" +
+      state.claim!.runId +
+      "/completions/" +
+      state.completeId;
+    const confirm = (rawReceipt: unknown, operationId: string) => {
+      const receipt = receiptSchema.parse(rawReceipt);
+      if (
+        receipt.operationId !== operationId ||
+        receipt.resultDigest !== digest(state.result)
+      )
+        throw Error("Assignment receipt mismatch");
+    };
+    const completionAttempt = () => {
+      state.completeAttempts =
+        (state.completeAttempts ?? (state.completeStarted ? 1 : 0)) + 1;
+      state.completeStarted = true;
+      save(state);
+    };
+    const finish = async () => {
+      if (!state.centralCompleted)
+        throw Error("Confirmed central completion required");
+      if (state.completeTask && !state.finalized) {
+        if ((state.finalizeAttempts ?? 0) >= 2)
+          return {
+            state: "held",
+            reason: "source-finalization-unconfirmed",
+          } as const;
+        const verify = (raw: unknown) => {
+          const receipt = z
+            .strictObject({
+              taskId: z.uuid(),
+              taskVersion: z.int().positive(),
+              status: z.literal("Done"),
+              operationId: z.uuid(),
+              replayed: z.boolean(),
+            })
+            .parse(raw);
+          if (
+            receipt.operationId !== state.completeId ||
+            receipt.taskId !== assignment.taskId ||
+            receipt.taskVersion !== assignment.taskRevision + 1
+          )
+            throw Error("CRM source finalization receipt mismatch");
+        };
+        const finalUrl =
+          "https://crm.bittrees.org/api/automation/tasks/" +
+          assignment.taskId +
+          "/finalizations/" +
+          state.completeId;
+        const attempt = () => {
+          state.finalizeAttempts = (state.finalizeAttempts ?? 0) + 1;
+          state.finalizeStarted = true;
+          save(state);
+        };
+        if (!state.finalizeStarted)
+          verify(
+            await rest(
+              "finalize",
+              finalUrl,
+              "PUT",
+              {
+                assignment,
+                crmOperationId: state.writeId,
+                resultDigest: digest(state.result),
+              },
+              state.completeId,
+              attempt,
+            ),
+          );
+        // A successful write is also confirmed through the separately authorized
+        // original-operation read route, within the same two-request budget.
+        verify(
+          await rest(
+            "read-finalization",
+            finalUrl,
+            "GET",
+            undefined,
+            undefined,
+            attempt,
+          ),
+        );
+        state.finalized = true;
+      }
+      state.completed = true;
+      delete state.block;
+      save(state);
+      return { state: "completed", runId: state.claim!.runId } as const;
+    };
     this.active = true;
     try {
+      // Recovery never reads changed task inputs, invokes a validator/model again,
+      // or repeats a mutation. The current source/central services verify receipts.
+      if (state.completeStarted || state.centralCompleted) {
+        const v = assignmentValidationReceipt.parse(state.validation);
+        if (
+          !state.written ||
+          !state.claim ||
+          !state.result ||
+          v.validatorId !== pin.id ||
+          v.validatorRevision !== pin.revision ||
+          v.assignmentDigest !== digest(assignment) ||
+          v.crmOperationId !== state.writeId ||
+          v.resultDigest !== digest(state.result)
+        )
+          throw Error("Original validated completion evidence required");
+        if (!state.centralCompleted) {
+          if ((state.completeAttempts ?? 1) >= 2)
+            return { state: "held", reason: "completion-unconfirmed" } as const;
+          confirm(
+            await rest(
+              "read-completion",
+              completionUrl(),
+              "GET",
+              undefined,
+              undefined,
+              completionAttempt,
+            ),
+            state.completeId,
+          );
+          state.centralCompleted = true;
+          save(state);
+        }
+        return await finish();
+      }
       if (!state.claim) {
         if ((state.claimAttempts ?? 0) >= 2)
           return { state: "held", reason: "claim-unconfirmed" } as const;
@@ -439,14 +604,6 @@ export class AssignmentRunner {
       state.validation = validation;
       delete state.block;
       save(state);
-      const confirm = (rawReceipt: unknown, operationId: string) => {
-        const receipt = receiptSchema.parse(rawReceipt);
-        if (
-          receipt.operationId !== operationId ||
-          receipt.resultDigest !== resultDigest
-        )
-          throw Error("Assignment receipt mismatch");
-      };
       if (!state.written) {
         const url = task + "/results/" + state.writeId;
         if (!state.writeStarted) {
@@ -475,38 +632,27 @@ export class AssignmentRunner {
         state.written = true;
         save(state);
       }
-      const url =
-        "https://workflow.bittrees.org/api/task-runs/" +
-        state.claim.runId +
-        "/completions/" +
-        state.completeId;
-      if (state.completeStarted) {
-        confirm(await rest("read-completion", url, "GET"), state.completeId);
-      } else {
-        confirm(
-          await rest(
-            "complete",
-            url,
-            "PUT",
-            {
-              assignment,
-              claim: state.claim,
-              crmOperationId: state.writeId,
-              resultDigest,
-            },
-            state.completeId,
-            () => {
-              state.completeStarted = true;
-              save(state);
-            },
-          ),
+      if ((state.completeAttempts ?? 0) >= 2)
+        return { state: "held", reason: "completion-unconfirmed" } as const;
+      confirm(
+        await rest(
+          "complete",
+          completionUrl(),
+          "PUT",
+          {
+            assignment,
+            claim: state.claim,
+            crmOperationId: state.writeId,
+            resultDigest,
+          },
           state.completeId,
-        );
-      }
-      state.completed = true;
-      delete state.block;
+          completionAttempt,
+        ),
+        state.completeId,
+      );
+      state.centralCompleted = true;
       save(state);
-      return { state: "completed", runId: state.claim.runId } as const;
+      return await finish();
     } finally {
       this.active = false;
     }

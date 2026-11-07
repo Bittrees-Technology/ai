@@ -23,6 +23,7 @@ export const assignmentServiceReview = z
     profileId: z.string().min(1).max(128),
     modelDigest: z.string().regex(/^(?:sha256:)?[a-f0-9]{64}$/),
     validator: assignmentValidatorSchema.optional(),
+    completeTask: z.boolean().optional(),
     assignments: z.array(assignmentSchema).min(1).max(60),
   })
   .refine(
@@ -50,6 +51,8 @@ const binding = z.strictObject({
     "read-receipt",
     "complete",
     "read-completion",
+    "finalize",
+    "read-finalization",
   ]),
   request: z
     .strictObject({
@@ -254,6 +257,29 @@ export async function launchAssignmentServiceBroker(options: {
           throw Error(
             "Independent assignment validation expired before effect",
           );
+      }
+      if (
+        operation.input.kind === "finalize" ||
+        operation.input.kind === "finalization"
+      ) {
+        if (review.completeTask !== true)
+          throw Error("Separate native source status approval required");
+        const op = operation.input;
+        await options.authorize(
+          review,
+          {
+            assignment: selected,
+            action: op.kind === "finalize" ? "finalize" : "read-finalization",
+            request: {
+              url: "https://mcp.bittrees.org/v1/crm-assignments",
+              method: "POST",
+              bodyDigest: digest(op),
+              operationId: op.operationId,
+            },
+          },
+          signal,
+        );
+        recheck();
       }
       const result = await options.forward(operation.input, signal);
       const reader = result.body?.getReader();

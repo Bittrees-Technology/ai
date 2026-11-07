@@ -118,3 +118,42 @@ Retention fails closed on a transaction conflict, below the 20 GiB free-space
 reserve or at the 256 MiB queue database limit. Those conditions require a
 verified history export rather than automatic deletion of evidence. No original
 receipt is discarded by retention.
+
+## Separate source status finalization
+
+An assignment review may explicitly set `completeTask: true`. Omitted/false
+keeps source status unchanged. The native runner pins this choice when creating
+its encrypted journal; enabling it later cannot promote a previous completed
+assignment into a status write. It is admission scope, not a CRM permission or
+Roles grant. CRM and Workflows still independently verify current authority.
+
+The runner durably distinguishes central completion, source finalization started,
+and source finalization confirmed. Central completion is saved before status work.
+The original central completion ID also correlates its separately approved CRM
+status transition; the result note retains its distinct original CRM operation ID.
+A successful status write is confirmed through a readback of the exact task ID,
+expected next revision, Done status and original operation. The native transport
+uses typed `finalize`/`finalization` aliases; the source receives strict mutating
+complete/read-only completion operations under fresh exact Roles parameters.
+
+A lost central reply recovers only the original central receipt. Once central
+completion is confirmed, recovery skips task-input reads, inference, validation
+and result-note writes. It can reconcile a confirmed completion after the old
+work lease or validation receipt expires, but still requires current native
+review, runtime identity, Roles and source authorization. It does not renew a
+work lease or authorize another generation/write. Expiry before an unconfirmed
+protected effect continues to fail closed.
+
+An uncertain status write can only use its read-only original-operation lookup.
+Both central completion/reconciliation and source finalization/readback are
+bounded to two dispatched operations each, including across restart. No new IDs,
+mutation replay or counter reset is used to escape a hold. Revoked status approval,
+changed/edited source revisions and missing receipts remain held. Operator status
+separates central completion, source confirmation and exhausted recovery budgets.
+The service skips redundant intake when a durable original run is already known.
+
+Native challenge validation covers exact intake/task/result-write/result-read and
+completion/finalization parameters. Source status operations require the separate
+review flag before any gateway dispatch. Runtime registration still recognizes
+only workflow:claim/complete; these signatures do not enroll or grant a worker.
+Local failure tests are synthetic evidence, not a live production acceptance run.

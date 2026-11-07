@@ -21,7 +21,10 @@ type Hold =
   | "inference-unconfirmed"
   | "invalid-model-result"
   | "validation-required"
-  | "validation-rejected";
+  | "validation-rejected"
+  | "completion-unconfirmed"
+  | "source-finalization-unconfirmed"
+  | "source-finalization-approval-unavailable";
 export class AssignmentService {
   private db?: Database.Database;
   private runner?: AssignmentRunner;
@@ -79,6 +82,7 @@ export class AssignmentService {
               ),
           })(url, init, binding);
         },
+        completeTask: () => this.review?.completeTask === true,
         modelTurn: options.turn,
         validator: () => this.review?.validator ?? null,
         validate: async (input, signal) => {
@@ -261,18 +265,20 @@ export class AssignmentService {
         db.prepare(
           "INSERT INTO assignment_service VALUES(?,1,0) ON CONFLICT(id) DO UPDATE SET attempts=attempts+1",
         ).run(id);
-        const intake = await client.execute(
-          {
-            kind: "assignment",
-            epoch: review.epoch,
-            input: { kind: "intake", assignmentId: id },
-          },
-          signal,
-        );
-        if (!intake.ok) throw Error("Assignment intake unavailable");
-        z.object({ runId: z.uuid(), replayed: z.boolean().optional() }).parse(
-          await intake.json(),
-        );
+        if (!runner.status(id)?.runId) {
+          const intake = await client.execute(
+            {
+              kind: "assignment",
+              epoch: review.epoch,
+              input: { kind: "intake", assignmentId: id },
+            },
+            signal,
+          );
+          if (!intake.ok) throw Error("Assignment intake unavailable");
+          z.object({ runId: z.uuid(), replayed: z.boolean().optional() }).parse(
+            await intake.json(),
+          );
+        }
         this.currentAssignment = id;
         const result = await runner.run(assignment, signal);
         if (result.state === "held") {
@@ -284,9 +290,13 @@ export class AssignmentService {
             result.reason === "validation-required" ||
             result.reason === "legacy-completion-unvalidated"
               ? "validation-required"
-              : result.reason === "inference-uncertain"
-                ? "inference-unconfirmed"
-                : "source-or-authority";
+              : result.reason === "completion-unconfirmed" ||
+                  result.reason === "source-finalization-unconfirmed" ||
+                  result.reason === "source-finalization-approval-unavailable"
+                ? result.reason
+                : result.reason === "inference-uncertain"
+                  ? "inference-unconfirmed"
+                  : "source-or-authority";
         } else this.phase = "idle";
         return;
       }

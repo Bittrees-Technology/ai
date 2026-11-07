@@ -316,3 +316,75 @@ test("native effect gate rejects bypass, changed result/operation and revoked au
     f.cleanup();
   }
 });
+
+test("native finalization IPC requires separate status scope and current per-wire admission", async () => {
+  const f = fixture();
+  let approved = false,
+    revoked = false,
+    changeDuringCheck = false,
+    forwarded = 0;
+  const review = {
+    version: 1 as const,
+    epoch: randomUUID(),
+    approvedAt: Date.now(),
+    expiresAt: Date.now() + 60000,
+    profileId: "fixture",
+    modelDigest: "a".repeat(64),
+    validator,
+    assignments: [f.assignment],
+  };
+  const input = {
+    kind: "finalize" as const,
+    assignmentId: f.assignment.assignmentId,
+    runId: f.claim.runId,
+    leaseId: f.claim.leaseId,
+    crmOperationId: randomUUID(),
+    operationId: randomUUID(),
+    resultDigest: "b".repeat(64),
+    expiresAt: f.claim.expiresAt,
+  };
+  const broker = await launchAssignmentServiceBroker({
+    current: () => ({ ...review, completeTask: approved }),
+    authorize: async (_review, binding) => {
+      assert.equal(
+        binding.request?.url,
+        "https://mcp.bittrees.org/v1/crm-assignments",
+      );
+      assert.equal(binding.request?.operationId, input.operationId);
+      if (revoked) throw Error("Revoked");
+      if (changeDuringCheck) approved = false;
+    },
+    forward: async () => {
+      forwarded++;
+      return Response.json({});
+    },
+  });
+  try {
+    const client = nativeAssignmentServiceClient(broker.environment)!;
+    const call = (op: unknown = input) =>
+      client.execute(
+        { kind: "assignment", epoch: review.epoch, input: op },
+        AbortSignal.timeout(3000),
+      );
+    await assert.rejects(call(), /Native enrollment unavailable/);
+    assert.equal(forwarded, 0);
+    approved = true;
+    revoked = true;
+    await assert.rejects(call(), /Native enrollment unavailable/);
+    assert.equal(forwarded, 0);
+    revoked = false;
+    changeDuringCheck = true;
+    await assert.rejects(call(), /Native enrollment unavailable/);
+    assert.equal(forwarded, 0);
+    changeDuringCheck = false;
+    approved = true;
+    assert.equal((await call()).ok, true);
+    assert.equal(forwarded, 1);
+    const { expiresAt, ...rest } = input;
+    assert.equal((await call({ ...rest, kind: "finalization" })).ok, true);
+    assert.equal(forwarded, 2);
+  } finally {
+    await broker.close();
+    f.cleanup();
+  }
+});
