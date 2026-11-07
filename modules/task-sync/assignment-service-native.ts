@@ -62,6 +62,7 @@ const binding = z.strictObject({
       operationId: z.uuid().nullable(),
     })
     .optional(),
+  crmOperationId: z.uuid().optional(),
   inputDigest: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
@@ -70,6 +71,15 @@ const binding = z.strictObject({
 export const assignmentServiceOperation = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("review") }),
   z.strictObject({ kind: z.literal("authorize"), epoch: z.uuid(), binding }),
+  z.strictObject({
+    kind: z.literal("model-admit"),
+    epoch: z.uuid(),
+    binding: binding.extend({
+      action: z.literal("infer"),
+      crmOperationId: z.uuid(),
+      inputDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+  }),
   z.strictObject({
     kind: z.literal("validate"),
     epoch: z.uuid(),
@@ -104,7 +114,8 @@ export async function launchAssignmentServiceBroker(options: {
     review: z.infer<typeof assignmentServiceReview>,
     binding: AssignmentBinding,
     signal: AbortSignal,
-  ) => Promise<void>;
+    phase?: "validation" | "effect" | "inference",
+  ) => Promise<void | number>;
   validate?: (
     review: z.infer<typeof assignmentServiceReview>,
     input: z.infer<typeof assignmentValidationInput>,
@@ -153,7 +164,7 @@ export async function launchAssignmentServiceBroker(options: {
       if (operation.epoch !== review.epoch)
         throw Error("Native assignment epoch changed");
       const id =
-        operation.kind === "authorize"
+        operation.kind === "authorize" || operation.kind === "model-admit"
           ? operation.binding.assignment.assignmentId
           : operation.kind === "validate"
             ? operation.input.assignment.assignmentId
@@ -184,8 +195,10 @@ export async function launchAssignmentServiceBroker(options: {
             claim: operation.input.claim,
             action: "validate",
             inputDigest: operation.input.inputDigest,
+            crmOperationId: operation.input.crmOperationId,
           },
           signal,
+          "validation",
         );
         recheck();
         const receipt = checkAssignmentValidation(
@@ -203,6 +216,34 @@ export async function launchAssignmentServiceBroker(options: {
           throw Error("Assignment validation exceeds native review");
         validations.set(id, { scope: pin, input: operation.input, receipt });
         return { status: 200, body: { validation: receipt } };
+      }
+      if (operation.kind === "model-admit") {
+        if (
+          !review.validator ||
+          !options.validate ||
+          digest(selected) !== digest(operation.binding.assignment)
+        )
+          throw Error("Native inference admission scope unavailable");
+        const deadline = await options.authorize(
+          review,
+          operation.binding,
+          signal,
+          "inference",
+        );
+        recheck();
+        const checkedAt = now();
+        return {
+          status: 200,
+          body: {
+            authorized: true,
+            checkedAt,
+            expiresAt: Math.min(
+              review.expiresAt,
+              checkedAt + 1000,
+              typeof deadline === "number" ? deadline : review.expiresAt,
+            ),
+          },
+        };
       }
       if (operation.kind === "authorize") {
         if (digest(selected) !== digest(operation.binding.assignment))
@@ -278,6 +319,7 @@ export async function launchAssignmentServiceBroker(options: {
             },
           },
           signal,
+          "effect",
         );
         recheck();
       }

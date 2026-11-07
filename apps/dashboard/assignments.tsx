@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from "react";
 const holdReasons: Record<string, string> = {
+  "completion-unconfirmed":
+    "Workflows completion could not be confirmed. Further attempts are blocked.",
+  "source-finalization-unconfirmed":
+    "The CRM status update could not be confirmed. Further attempts are blocked.",
+  "source-finalization-approval-unavailable":
+    "Updating the CRM task status needs current owner approval.",
   "validation-rejected":
     "Independent validation did not accept this result. No new result write or completion is allowed.",
   "validation-required":
@@ -104,7 +110,16 @@ export function AssignmentStatus({
                   {item.workflowId} · revision {item.workflowRevision}
                 </td>
                 <td>
-                  {item.phase || "awaiting intake"} · attempts {item.attempts}
+                  {item.phase === "completed"
+                    ? item.sourceFinalized
+                      ? "Workflows and CRM complete"
+                      : "Result confirmed; CRM status unchanged"
+                    : item.phase === "central-completed"
+                      ? "Workflows complete; awaiting CRM confirmation"
+                      : item.phase === "source-finalization-reconciliation"
+                        ? "Checking the original CRM status update"
+                        : item.phase || "Awaiting intake"}{" "}
+                  · attempts {item.attempts}
                 </td>
                 <td>{item.lastReceiptId || "Awaiting confirmation"}</td>
                 <td>

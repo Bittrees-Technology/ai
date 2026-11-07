@@ -2,6 +2,8 @@ import { lookup } from "node:dns/promises";
 import type { LookupAddress, LookupAllOptions } from "node:dns";
 import { request } from "node:https";
 import { publicIPv4 } from "../research/public-pages.js";
+import { z } from "zod";
+import { assignmentAuthorityRequest } from "./assignment-proof-contract.js";
 import { assignmentGatewayOperation } from "./assignment-native.js";
 
 type Wire = {
@@ -14,7 +16,7 @@ type Wire = {
 function plan(
   input: Parameters<typeof fetch>[0],
   init: RequestInit | undefined,
-  profile: "task-sync" | "crm-assignment",
+  profile: "task-sync" | "crm-assignment" | "crm-assignment-attestation",
 ) {
   if (typeof input !== "string" || init?.redirect !== "error")
     throw Error("Unapproved task sync request");
@@ -30,6 +32,9 @@ function plan(
   const assignment =
     profile === "crm-assignment" &&
     input === "https://mcp.bittrees.org/v1/crm-assignments";
+  const attestation =
+    profile === "crm-assignment-attestation" &&
+    input === "https://ai.bittrees.org/api/workflows";
   const projects = url.searchParams.get("projects")?.split(",") ?? [];
   const rpc =
     profile === "task-sync" &&
@@ -45,7 +50,7 @@ function plan(
         new URLSearchParams({ mode: "selected", projects: projects.join(",") });
   const method = source ? "GET" : "POST";
   if (
-    (!source && !connect && !rpc && !assignment) ||
+    (!source && !connect && !rpc && !assignment && !attestation) ||
     init.method !== method ||
     (source ? init.body != null : typeof init.body !== "string") ||
     (typeof init.body === "string" && Buffer.byteLength(init.body) > 64000)
@@ -57,6 +62,20 @@ function plan(
     );
     if (JSON.stringify(operation) !== init.body)
       throw Error("Noncanonical CRM assignment body");
+  }
+  if (attestation) {
+    const body = z
+      .strictObject({
+        action: z.literal("runtime-attestation"),
+        input: z.strictObject({
+          purpose: z.literal("decision"),
+          request: assignmentAuthorityRequest,
+          signature: z.string().min(1).max(128),
+        }),
+      })
+      .parse(JSON.parse(String(init.body)));
+    if (JSON.stringify(body) !== init.body)
+      throw Error("Noncanonical assignment attestation body");
   }
   const headers = new Headers(init.headers);
   const bearer = headers.get("authorization"),
@@ -73,9 +92,10 @@ function plan(
     ) ||
     headers.get("accept") !== "application/json" ||
     headers.get("content-type") !== (source ? null : "application/json") ||
-    (rpc || assignment
+    (rpc || assignment || attestation
       ? !bearer || !/^Bearer [\x21-\x7e]{16,4096}$/.test(bearer)
       : bearer !== null) ||
+    (attestation && !/^Bearer [a-f0-9]{64}$/.test(bearer ?? "")) ||
     (proof !== null &&
       ((!rpc && !assignment) || !/^[A-Za-z0-9_-]{1,16384}$/.test(proof)))
   )
@@ -86,7 +106,7 @@ function plan(
     url,
     wire,
     bearer,
-    limit: source ? 2_000_000 : connect ? 64000 : 256000,
+    limit: source ? 2_000_000 : connect || attestation ? 64000 : 256000,
   };
 }
 
@@ -101,7 +121,10 @@ export class TaskSyncNativeHTTPS {
       options: LookupAllOptions,
     ) => Promise<LookupAddress[]> = lookup,
     private send: typeof request = request,
-    private profile: "task-sync" | "crm-assignment" = "task-sync",
+    private profile:
+      | "task-sync"
+      | "crm-assignment"
+      | "crm-assignment-attestation" = "task-sync",
   ) {}
 
   dispatch: typeof fetch = async (input, init) => {

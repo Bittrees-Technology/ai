@@ -26,6 +26,11 @@ export const assignmentGatewayOperation = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("receipt"), ...lease }),
   z.strictObject({
+    kind: z.literal("lease"),
+    ...lease,
+    resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.strictObject({
     kind: z.literal("complete"),
     ...completion,
     expiresAt: z.int().positive(),

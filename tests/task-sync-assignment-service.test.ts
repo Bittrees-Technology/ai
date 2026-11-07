@@ -202,3 +202,80 @@ test("native assignment broker rejects scope drift, stale epoch and revocation b
     await broker.close();
   }
 });
+
+for (const stage of ["before-pin", "during-pin"] as const) {
+  test(
+    "native model admission expiry " + stage + " prevents generation",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "assignment-model-admission-")),
+        approved = review();
+      let now = Date.now(),
+        pins = 0,
+        generations = 0;
+      const runId = randomUUID(),
+        leaseId = randomUUID();
+      const service = new AssignmentService({
+        path: join(dir, "service.db"),
+        runnerPath: join(dir, "runner.db"),
+        vault: new Vault(randomBytes(32)),
+        runtime: {
+          pin: async () => {
+            pins++;
+            now = approved.expiresAt + 1;
+            return { digest: "a".repeat(64) };
+          },
+          generate: async () => {
+            generations++;
+            throw Error("Unapproved generation");
+          },
+        } as unknown as Ollama,
+        profile: () => ({}),
+        turn: immediateTurn,
+        admission: () => true,
+        now: () => now,
+        client: {
+          execute: async (raw: unknown) => {
+            const op = raw as any;
+            if (op.kind === "review")
+              return Response.json({ review: approved });
+            if (op.kind === "authorize") {
+              if (op.binding.action === "infer" && stage === "before-pin")
+                now = approved.expiresAt + 1;
+              return Response.json({ authorized: true });
+            }
+            if (op.kind === "assignment") {
+              if (op.input.kind === "intake") return Response.json({ runId });
+              if (op.input.kind === "claim")
+                return Response.json({
+                  assignmentDigest: (
+                    await import("../modules/task-sync/proof-contract.js")
+                  ).digest(approved.assignments[0]),
+                  runId,
+                  leaseId,
+                  expiresAt: approved.expiresAt + 60000,
+                });
+              if (op.input.kind === "task")
+                return Response.json({
+                  assignment: approved.assignments[0],
+                  instruction: "Synthetic approved input",
+                });
+            }
+            throw Error("Unexpected source effect");
+          },
+        },
+      });
+      try {
+        await service.tick();
+        assert.equal(generations, 0);
+        assert.equal(pins, stage === "before-pin" ? 0 : 1);
+        assert.equal(
+          service.status().assignments[0]?.phase,
+          "inference-unconfirmed",
+        );
+      } finally {
+        await service.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+}

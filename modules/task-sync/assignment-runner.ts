@@ -73,6 +73,7 @@ export type AssignmentBinding = {
     operationId: string | null;
   };
   inputDigest?: string;
+  crmOperationId?: string;
 };
 
 /** Inactive REST integration candidate. Only an owner-provided protected
@@ -288,6 +289,7 @@ export class AssignmentRunner {
             assignment,
             claim: state.claim,
             action,
+            crmOperationId: state.writeId,
             ...detail,
           }),
           actionSignal,

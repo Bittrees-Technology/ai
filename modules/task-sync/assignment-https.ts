@@ -13,3 +13,15 @@ export class AssignmentNativeHTTPS extends TaskSyncNativeHTTPS {
     super(admit, resolve, send, "crm-assignment");
   }
 }
+
+/** Decision attestation only, on the separately approved native control route.
+ * No enrollment, owner handoff, activation or arbitrary coordinator action. */
+export class AssignmentAttestationHTTPS extends TaskSyncNativeHTTPS {
+  constructor(
+    admit: ConstructorParameters<typeof TaskSyncNativeHTTPS>[0],
+    resolve?: ConstructorParameters<typeof TaskSyncNativeHTTPS>[1],
+    send?: ConstructorParameters<typeof TaskSyncNativeHTTPS>[2],
+  ) {
+    super(admit, resolve, send, "crm-assignment-attestation");
+  }
+}

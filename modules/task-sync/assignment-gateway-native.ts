@@ -85,7 +85,11 @@ export function validateAssignmentChallenge(
         assignmentDigest: digest(assignment),
       },
     };
-  } else if (operation.kind === "write" || operation.kind === "receipt") {
+  } else if (
+    operation.kind === "write" ||
+    operation.kind === "receipt" ||
+    operation.kind === "lease"
+  ) {
     if (
       request.action !== "workflow:complete" ||
       request.operationId !== operation.crmOperationId

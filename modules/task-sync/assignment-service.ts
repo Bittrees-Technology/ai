@@ -3,8 +3,12 @@ import { z } from "zod";
 import type { Vault } from "../storage/vault.js";
 import { Ollama, ModelError, type PinnedModel } from "../models/ollama.js";
 import type { ModelTurn } from "../models/local-turns.js";
-import { AssignmentRunner } from "./assignment-runner.js";
+import {
+  type AssignmentBinding,
+  AssignmentRunner,
+} from "./assignment-runner.js";
 import { nativeAssignmentRequest } from "./assignment-native.js";
+import { digest } from "./proof-contract.js";
 import { assignmentModel } from "./assignment-model.js";
 import { assignmentValidationReceipt } from "./assignment-contract.js";
 import {
@@ -32,6 +36,7 @@ export class AssignmentService {
   private abort?: AbortController;
   private stopping = false;
   private currentAssignment?: string;
+  private inferenceAdmission?: AssignmentBinding;
   private phase: Phase = "disabled";
   private hold: Hold | null = null;
   private failure: string | null = null;
@@ -70,6 +75,8 @@ export class AssignmentService {
           );
           if (!response.ok || (await response.json()).authorized !== true)
             throw Error("Assignment authority unavailable");
+          if (binding.action === "infer")
+            this.inferenceAdmission = structuredClone(binding);
         },
         request: async (url, init, binding) => {
           const review = this.review;
@@ -103,15 +110,55 @@ export class AssignmentService {
           const review = this.review;
           if (!review || !options.admission())
             throw Error("Local inference is paused");
+          const at = (options.now ?? Date.now)();
+          if (at < review.approvedAt || at >= review.expiresAt)
+            throw Error("Native assignment review expired before inference");
+          const admittedSignal = AbortSignal.any([
+            signal,
+            AbortSignal.timeout(Math.max(1, review.expiresAt - at)),
+          ]);
           const model = await options.runtime.pin(
             options.profile(review.profileId),
-            signal,
+            admittedSignal,
           );
           if (
             this.modelDigest(model) !==
             review.modelDigest.replace(/^sha256:/, "")
           )
             throw new ModelError("MODEL_CHANGED");
+          admittedSignal.throwIfAborted();
+          if ((options.now ?? Date.now)() >= review.expiresAt)
+            throw Error(
+              "Native assignment review expired during model pinning",
+            );
+          const inference = this.inferenceAdmission;
+          if (
+            !inference ||
+            inference.assignment.assignmentId !== this.currentAssignment ||
+            inference.inputDigest !== digest(input.instruction)
+          )
+            throw Error("Exact native inference admission required");
+          const approval = await client.execute(
+            { kind: "model-admit", epoch: review.epoch, binding: inference },
+            admittedSignal,
+          );
+          if (!approval.ok) throw Error("Native model start was not admitted");
+          const permit = z
+            .strictObject({
+              authorized: z.literal(true),
+              checkedAt: z.int(),
+              expiresAt: z.int(),
+            })
+            .parse(await approval.json());
+          const startAt = (options.now ?? Date.now)();
+          admittedSignal.throwIfAborted();
+          if (
+            permit.checkedAt > startAt + 1000 ||
+            permit.expiresAt <= startAt ||
+            permit.expiresAt > review.expiresAt ||
+            permit.expiresAt - permit.checkedAt > 1000
+          )
+            throw Error("Native model admission expired before start");
           const id = this.currentAssignment;
           if (
             !id ||
@@ -120,7 +167,7 @@ export class AssignmentService {
             ).run(id).changes !== 1
           )
             throw Error("Assignment inference already started or unconfirmed");
-          return assignmentModel(options.runtime, model)(input, signal);
+          return assignmentModel(options.runtime, model)(input, admittedSignal);
         },
       },
       options.now,
