@@ -20,6 +20,8 @@ export const directoryResearchNativeOperation = z.strictObject({
   }),
 });
 
+import type { DirectoryResearchCompletion } from "./directory-research-completion.js";
+
 type Host = Parameters<typeof createDirectoryResearchBridge>[2];
 
 /** Launcher-owned journal. Reservations are never cleared automatically, even
@@ -28,6 +30,7 @@ export function openDirectoryResearchNative(
   path: string,
   manifests: readonly { json: string; digest: string }[],
   host: Omit<Host, "reserve">,
+  completions: ReadonlyMap<string, DirectoryResearchCompletion> = new Map(),
 ) {
   const db = new Database(path);
   try {
@@ -69,9 +72,21 @@ export function openDirectoryResearchNative(
           if (rpc.params.name === "directory_research_review")
             return reply(200, { result: review });
           try {
-            return reply(200, {
-              result: await bridge.research(rpc.params.arguments, signal),
-            });
+            if (review.exhausted)
+              throw new DirectoryResearchHold(
+                "Directory research retry budget exhausted",
+              );
+            const completion = completions.get(review.scopeDigest);
+            const result = completion?.pending()
+              ? undefined
+              : await bridge.research(rpc.params.arguments, signal);
+            if (completion) {
+              await bridge.recheckEvidence(rpc.params.arguments, signal);
+              return reply(200, {
+                result: await completion.run(result, signal),
+              });
+            }
+            return reply(200, { result });
           } catch (error) {
             if (error instanceof DirectoryResearchHold)
               return reply(409, {

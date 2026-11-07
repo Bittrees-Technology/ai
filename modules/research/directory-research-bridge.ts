@@ -117,6 +117,18 @@ export function createDirectoryResearchBridge(
 
   return {
     review,
+    async recheckEvidence(raw: unknown, signal: AbortSignal) {
+      if (review(raw).exhausted)
+        throw new DirectoryResearchHold(
+          "Directory research retry budget exhausted",
+        );
+      for (const entry of scope.items) {
+        signal.throwIfAborted();
+        if (!(await host.authorize(scope, entry, "release-evidence", signal)))
+          throw Error("Directory research authorization unavailable");
+      }
+      signal.throwIfAborted();
+    },
     async research(raw: unknown, parentSignal: AbortSignal) {
       if (review(raw).exhausted)
         throw new DirectoryResearchHold(
