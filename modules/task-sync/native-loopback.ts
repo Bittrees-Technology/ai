@@ -7,12 +7,21 @@ import { taskSyncIdentitySchema } from "./proof-contract.js";
 
 import { assignmentGatewayOperation } from "./assignment-native.js";
 
+import { directoryResearchNativeOperation } from "../research/directory-research-native.js";
+
 const assignmentOperation = z.strictObject({
   kind: z.literal("assignment"),
   input: assignmentGatewayOperation,
 });
 
 function parseOperation(raw: unknown) {
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "kind" in raw &&
+    raw.kind === "directory-research"
+  )
+    return directoryResearchNativeOperation.parse(raw);
   if (
     typeof raw === "object" &&
     raw !== null &&

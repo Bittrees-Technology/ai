@@ -11,7 +11,7 @@ const item = pair.extend({
   reviewedResearchUrl: z.url({ protocol: /^https$/ }),
   historicalAttempts: z.int().min(0).max(3),
 });
-const request = z.strictObject({
+export const directoryResearchRequest = z.strictObject({
   originalValidationRunId: z.uuid(),
   pairs: z.array(pair).length(9),
 });
@@ -53,6 +53,8 @@ type Host = {
   allowedTags: readonly string[];
 };
 
+export class DirectoryResearchHold extends Error {}
+
 const sha256 = (input: string) =>
   createHash("sha256").update(input).digest("hex");
 
@@ -92,7 +94,7 @@ export function createDirectoryResearchBridge(
   const tags = [...host.allowedTags];
 
   function review(raw: unknown) {
-    const input = request.parse(raw);
+    const input = directoryResearchRequest.parse(raw);
     if (
       input.originalValidationRunId !== scope.originalValidationRunId ||
       new Set(input.pairs.map((entry) => entry.originalReceiptId)).size !== 9 ||
@@ -116,7 +118,9 @@ export function createDirectoryResearchBridge(
     review,
     async research(raw: unknown, parentSignal: AbortSignal) {
       if (review(raw).exhausted)
-        throw Error("Directory research retry budget exhausted");
+        throw new DirectoryResearchHold(
+          "Directory research retry budget exhausted",
+        );
       const signal = AbortSignal.any([
         parentSignal,
         AbortSignal.timeout(15 * 60_000),
@@ -132,7 +136,9 @@ export function createDirectoryResearchBridge(
       };
       for (const entry of scope.items) await authorize(entry, "source");
       if (!(await host.reserve(scope, signal)))
-        throw Error("Directory research batch already reserved or uncertain");
+        throw new DirectoryResearchHold(
+          "Directory research batch already reserved or uncertain",
+        );
 
       const receipts = [];
       for (const entry of scope.items) {

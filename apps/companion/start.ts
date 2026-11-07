@@ -116,6 +116,7 @@ import { sourceMemoryAccess } from "./source-memory.js";
 import { LocalWorker } from "./worker.js";
 import { dashboardServer } from "./dashboard-server.js";
 import { runStartupAssignmentFixture } from "./startup-assignment-fixture.js";
+import { runStartupDirectoryResearchFixture } from "./startup-directory-research-fixture.js";
 import { startupFixtureBuild } from "./startup-fixture.js";
 const fixtureDirectory = process.env.BITTREES_STARTUP_FIXTURE_DIRECTORY;
 if (startupFixtureBuild !== (fixtureDirectory !== undefined))
@@ -739,6 +740,8 @@ if (startupFixtureBuild && taskSyncClient) {
   const fixture = await response.json();
   if (!response.ok || fixture?.startupFixture !== true)
     throw Error("Isolated task sync broker probe failed");
+  if (fixture.directoryResearch !== undefined)
+    await runStartupDirectoryResearchFixture(taskSyncClient, fixture.directoryResearch);
   if (fixture.assignment !== undefined)
     await runStartupAssignmentFixture(taskSyncClient, fixture.assignment, content.directory, new Vault(key));
 }
