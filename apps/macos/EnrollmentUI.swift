@@ -7,7 +7,7 @@ final class EnrollmentControlRequest: NSObject, URLSessionDataDelegate, URLSessi
     private var bytes = Data()
     private var finished = false
     private let completion: ([String: Any]?) -> Void
-    init(url: URL, token: String, body: [String: Any], completion: @escaping ([String: Any]?) -> Void) {
+    init(url: URL, token: String, body: [String: Any], timeout: TimeInterval = 5, completion: @escaping ([String: Any]?) -> Void) {
         self.completion = completion
         super.init()
         let config = URLSessionConfiguration.ephemeral
@@ -15,8 +15,8 @@ final class EnrollmentControlRequest: NSObject, URLSessionDataDelegate, URLSessi
         config.urlCredentialStorage = nil
         config.urlCache = nil
         config.connectionProxyDictionary = [:]
-        config.timeoutIntervalForRequest = 5
-        config.timeoutIntervalForResource = 6
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout + 1
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

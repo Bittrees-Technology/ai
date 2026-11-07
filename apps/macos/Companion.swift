@@ -10,6 +10,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var lifetime: Pipe?
     var centralReviewBusy = false
     var enrollmentReviewBusy = false
+    var cdDeviceReviewBusy = false
     var workflowIdentityReviewBusy = false
     var workflowOnboarding: NativeWalletOnboarding?
     var ready = false
@@ -48,6 +49,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(withTitle: "Agent setup…", action: #selector(showAgentSetup), keyEquivalent: "")
         if workflowSetupControl() != nil {
             appMenu.addItem(withTitle: "Review workflow identity…", action: #selector(reviewWorkflowIdentity), keyEquivalent: "")
+        }
+        if cdDeviceControl() != nil {
+            appMenu.addItem(withTitle: "Review CD device registration…", action: #selector(reviewCDDeviceRegistration), keyEquivalent: "")
         }
         if enrollmentControl() != nil {
             appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")

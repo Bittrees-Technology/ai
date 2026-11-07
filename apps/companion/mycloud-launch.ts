@@ -3,6 +3,7 @@ import {
   loadStorageKey,
   macKeychainEntry,
 } from "../../modules/storage/keychain.js";
+import type { launchCDDeviceRegistrationReview } from "../../modules/research/cd-device-registration-control.js";
 import { launchCentral } from "./central-launch.js";
 import { launchEnrollment } from "./enrollment-launch.js";
 import { launchWorkflowSetup } from "./workflow-setup-launch.js";
@@ -93,8 +94,24 @@ async function runOfflineChild(
 
 // A trusted native caller can supply a preassembled session. The executable
 // entry point supplies none until production authority and cost are approved.
+type CDRegistrationService = NonNullable<
+  Awaited<ReturnType<typeof launchCDDeviceRegistrationReview>>
+>;
+
 export async function launchMacCompanion(
   currentTaskSync?: () => NativeTaskSyncClient | null,
+  cdRegistration?: CDRegistrationService,
+) {
+  try {
+    await runMacCompanion(currentTaskSync, cdRegistration);
+  } finally {
+    await cdRegistration?.close();
+  }
+}
+
+async function runMacCompanion(
+  currentTaskSync?: () => NativeTaskSyncClient | null,
+  cdRegistration?: CDRegistrationService,
 ) {
   // This entry lives in Resources/engine/dist/apps/companion. Caller cannot supply a command or destination.
   if (process.argv.length !== 2) throw Error("Launcher takes no arguments");
@@ -111,6 +128,7 @@ export async function launchMacCompanion(
       {
         BITTREES_STARTUP_FIXTURE_DIRECTORY: directory,
         ...taskSync.environment,
+        ...cdRegistration?.environment,
       },
       taskSync.close,
     );
@@ -304,6 +322,7 @@ export async function launchMacCompanion(
       ...enrollment?.environment,
       ...central?.environment,
       ...taskSync?.environment,
+      ...cdRegistration?.environment,
       BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
       BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
       BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,
