@@ -319,3 +319,125 @@ test("workflow profile changes model and context but fences changed assignments"
     s.clean();
   }
 });
+
+test("full legacy queue retains every encrypted receipt and processes new work across restart", async () => {
+  const s = setup();
+  await s.q.close();
+  const { default: Database } = await import("better-sqlite3");
+  const db = new Database(join(s.dir, "queue.db"));
+  const rows = Array.from({ length: 10000 }, (_, i) => {
+    const id = randomUUID();
+    return {
+      id,
+      value: s.vault.seal(
+        {
+          id,
+          label: "historic",
+          state: "returned",
+          createdAt: i,
+          updatedAt: i,
+        },
+        "agent-queue:" + id,
+      ),
+    };
+  });
+  db.transaction(() => {
+    for (const r of rows)
+      db.prepare("INSERT INTO entries VALUES(?,?)").run(r.id, r.value);
+  })();
+  db.close();
+  let q = new AgentQueue(join(s.dir, "queue.db"), s.vault);
+  let calls = 0;
+  await q.run("new work", new AbortController().signal, async () => {
+    calls++;
+  });
+  assert.equal(calls, 1);
+  await q.close();
+  const check = new Database(join(s.dir, "queue.db"));
+  const retained = check
+    .prepare("SELECT id,value FROM history ORDER BY sequence")
+    .all();
+  assert.deepEqual(retained, rows); // Exact ciphertext, not regenerated summaries.
+  assert.equal(
+    (check.prepare("SELECT count(*) AS n FROM entries").get() as any).n,
+    1,
+  );
+  check.close();
+  q = new AgentQueue(join(s.dir, "queue.db"), s.vault);
+  assert.equal(q.status().history.length, 100);
+  assert.equal(q.status().history.at(-1)?.label, "new work");
+  q.pause();
+  const pending = q.run(
+    "after restart",
+    new AbortController().signal,
+    async () => {
+      calls++;
+    },
+  );
+  await tick();
+  assert.equal(calls, 1);
+  q.resume();
+  await pending;
+  assert.equal(calls, 2);
+  await q.close();
+  s.clean();
+});
+
+test("failed history retention rolls back without losing receipts or invoking work", async () => {
+  const s = setup();
+  await s.q.close();
+  const { default: Database } = await import("better-sqlite3");
+  const path = join(s.dir, "queue.db"),
+    db = new Database(path);
+  const id = randomUUID(),
+    value = s.vault.seal(
+      { id, label: "receipt", state: "returned", createdAt: 1, updatedAt: 1 },
+      "agent-queue:" + id,
+    );
+  db.transaction(() => {
+    for (let i = 0; i < 9999; i++) {
+      const key = randomUUID();
+      db.prepare("INSERT INTO entries VALUES(?,?)").run(
+        key,
+        s.vault.seal(
+          {
+            id: key,
+            label: "receipt",
+            state: "returned",
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          "agent-queue:" + key,
+        ),
+      );
+    }
+    db.prepare("INSERT INTO entries VALUES(?,?)").run(id, value);
+    db.prepare("INSERT INTO history(id,value) VALUES(?,?)").run(id, value);
+  })();
+  db.close();
+  const q = new AgentQueue(path, s.vault);
+  let calls = 0;
+  await assert.rejects(
+    q.run("must hold", new AbortController().signal, async () => {
+      calls++;
+    }),
+  );
+  assert.equal(calls, 0);
+  await q.close();
+  const check = new Database(path);
+  assert.equal(
+    (check.prepare("SELECT count(*) AS n FROM entries").get() as any).n,
+    10000,
+  );
+  assert.equal(
+    (check.prepare("SELECT count(*) AS n FROM history").get() as any).n,
+    1,
+  );
+  assert.deepEqual(
+    (check.prepare("SELECT value FROM entries WHERE id=?").get(id) as any)
+      .value,
+    value,
+  );
+  check.close();
+  s.clean();
+});
