@@ -41,24 +41,7 @@ test("native CD UI control obtains canonical owner through fixed transport and k
     wrongOwner = false,
     redirect = false;
   const paths: string[] = [];
-  const view = () => ({
-    profileId: profile,
-    personPrincipal: "person:" + profile,
-    principals: [
-      { id: "person:" + profile, kind: "person", revoked_at: null },
-      { id: principal, kind: "agent", revoked_at: revoked ? "revoked" : null },
-    ],
-    credentials: [
-      {
-        id: credentialId,
-        principal,
-        audience: "https://mcp.bittrees.org",
-        revoked_at: null,
-        expires_at: null,
-      },
-    ],
-    runtimes: leaseOnly ? [{ credential_id: credentialId }] : [],
-  });
+  const packets: any[] = [];
   const prepared = () => ({
     request: {
       version: 1,
@@ -74,17 +57,14 @@ test("native CD UI control obtains canonical owner through fixed transport and k
       issuedAt: Date.now(),
       expiresAt: Date.now() + 60000,
     },
-    challenge: "sealed-fixture",
+    challenge: "sealed-fixture-" + randomUUID(),
     registered: false,
     permissionsGranted: false,
   });
   const send = ((url: URL, options: any, callback: Function) => {
     assert.equal(url.origin, "https://roles.bittrees.org");
-    assert.ok(
-      ["/api/profile/mcp", "/api/profile/mcp/devices/prepare"].includes(
-        url.pathname,
-      ),
-    );
+    assert.equal(url.pathname, "/api/profile/mcp/devices/prepare");
+    assert.equal(options.method, "POST");
     assert.equal(options.headers.Cookie, "__Host-roles=" + cookie);
     assert.equal(options.headers.Origin, "https://roles.bittrees.org");
     assert.equal(options.rejectUnauthorized, true);
@@ -92,19 +72,15 @@ test("native CD UI control obtains canonical owner through fixed transport and k
     paths.push(url.pathname);
     const req = new EventEmitter() as any;
     req.end = (body: string | undefined) => {
-      if (url.pathname.endsWith("/prepare"))
-        assert.deepEqual(JSON.parse(body!), selection);
-      else assert.equal(body, undefined);
+      assert.deepEqual(JSON.parse(body!), selection);
       queueMicrotask(() => {
         const response = new PassThrough() as any;
-        response.statusCode = redirect ? 302 : 200;
+        response.statusCode = redirect ? 302 : leaseOnly || revoked ? 403 : 200;
         response.headers = { "content-type": "application/json" };
         callback(response);
-        response.end(
-          JSON.stringify(
-            url.pathname.endsWith("/prepare") ? prepared() : view(),
-          ),
-        );
+        const packet = prepared();
+        packets.push(packet);
+        response.end(JSON.stringify(packet));
       });
     };
     return req;
@@ -212,10 +188,7 @@ test("native CD UI control obtains canonical owner through fixed transport and k
     assert.equal(paths.length, 0);
     const review = await call({ action: "propose" });
     assert.equal(review.status, 200);
-    assert.deepEqual(paths, [
-      "/api/profile/mcp",
-      "/api/profile/mcp/devices/prepare",
-    ]);
+    assert.deepEqual(paths, ["/api/profile/mcp/devices/prepare"]);
     assert.equal(review.body.ownerProfile, profile);
     assert.equal(review.body.credentialId, credentialId);
     assert.equal("challenge" in review.body, false);
@@ -233,8 +206,11 @@ test("native CD UI control obtains canonical owner through fixed transport and k
       registered: false,
       permissionsGranted: false,
     });
-    assert.equal(paths.at(-1), "/api/profile/mcp");
-    assert.ok(service.takeProof()?.signature);
+    assert.equal(paths.at(-1), "/api/profile/mcp/devices/prepare");
+    const proof = service.takeProof();
+    assert.ok(proof?.signature);
+    assert.equal(proof.challenge, packets[0].challenge);
+    assert.notEqual(proof.challenge, packets[1].challenge);
     assert.equal(service.takeProof(), undefined);
     assert.notEqual((await call(choice)).status, 200);
 
@@ -257,8 +233,20 @@ test("native CD UI control obtains canonical owner through fixed transport and k
     leaseOnly = true;
     assert.notEqual((await call({ action: "propose" })).status, 200);
     leaseOnly = false;
+    const ownerReview = await call({ action: "propose" });
+    assert.equal(ownerReview.status, 200);
     wrongOwner = true;
-    assert.notEqual((await call({ action: "propose" })).status, 200);
+    assert.notEqual(
+      (
+        await call({
+          ...choice,
+          id: ownerReview.body.id,
+          requestDigest: ownerReview.body.requestDigest,
+          packetDigest: ownerReview.body.packetDigest,
+        })
+      ).status,
+      200,
+    );
     wrongOwner = false;
     redirect = true;
     assert.notEqual((await call({ action: "propose" })).status, 200);

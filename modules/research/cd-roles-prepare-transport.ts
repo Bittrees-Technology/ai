@@ -33,9 +33,9 @@ export type CanonicalNativeRolesSession = () => NativeSession | null;
 
 export class CDRolesPrepareTransport {
   private packet?: z.infer<typeof packetSchema>;
-  private owner?: ReturnType<CDRolesPrepareTransport["checkedOwner"]>;
+
   private epoch?: string;
-  private checkedAt = 0;
+  private freshUntil = 0;
   private resolving = false;
   private readonly optedIn: boolean;
   private selection: z.infer<typeof selectionSchema>;
@@ -76,15 +76,11 @@ export class CDRolesPrepareTransport {
   private epochOf(session: NativeSession) {
     return sha(canonical(session));
   }
-  private async json(
-    path: "/api/profile/mcp" | "/api/profile/mcp/devices/prepare",
-    body: unknown,
-    signal: AbortSignal,
-  ) {
+  private async json(signal: AbortSignal) {
     const session = this.currentSession(),
       epoch = this.epochOf(session);
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
-    const url = new URL(path, origin);
+    const url = new URL(prepareEndpoint);
     if (this.resolving) throw Error("Prior native Roles DNS lookup is pending");
     this.resolving = true;
     const pending = Promise.resolve()
@@ -118,12 +114,12 @@ export class CDRolesPrepareTransport {
       throw Error("Native Roles public address required");
     if (this.epochOf(this.currentSession()) !== epoch)
       throw Error("Native Roles session changed");
-    const encoded = body === undefined ? undefined : JSON.stringify(body);
+    const encoded = JSON.stringify(this.selection);
     return new Promise<unknown>((resolve, reject) => {
       const req = (this.options.send ?? request)(
         url,
         {
-          method: encoded === undefined ? "GET" : "POST",
+          method: "POST",
           signal: bounded,
           family: 4,
           agent: false,
@@ -134,12 +130,8 @@ export class CDRolesPrepareTransport {
             "Accept-Encoding": "identity",
             Origin: origin,
             Cookie: "__Host-roles=" + session.cookieValue,
-            ...(encoded === undefined
-              ? {}
-              : {
-                  "Content-Type": "application/json",
-                  "Content-Length": String(Buffer.byteLength(encoded)),
-                }),
+            "Content-Type": "application/json",
+            "Content-Length": String(Buffer.byteLength(encoded)),
           },
           lookup: ((
             _host: unknown,
@@ -191,126 +183,77 @@ export class CDRolesPrepareTransport {
       req.end(encoded);
     });
   }
-  private checkedOwner(raw: unknown) {
-    const view = z
-      .object({
-        profileId: z.uuid(),
-        personPrincipal: z.string(),
-        principals: z.array(
-          z.object({
-            id: z.string(),
-            kind: z.string(),
-            revoked_at: z.unknown().nullable(),
-          }),
-        ),
-        credentials: z.array(
-          z.object({
-            id: z.string(),
-            principal: z.string(),
-            audience: z.string(),
-            revoked_at: z.unknown().nullable(),
-            expires_at: z.string().nullable(),
-          }),
-        ),
-        runtimes: z.array(z.object({ credential_id: z.string() })),
-      })
-      .parse(raw);
-    const actor = view.principals.find(
-      (row) => row.id === this.selection.principal,
-    );
-    const human = view.principals.find(
-      (row) => row.id === view.personPrincipal,
-    );
-    const key = view.credentials.find(
-      (row) => row.id === this.selection.credentialId,
-    );
+  private checkPacket(raw: unknown) {
+    const packet = packetSchema.parse(raw),
+      request = packet.request;
     if (
-      view.personPrincipal !== "person:" + view.profileId ||
-      !human ||
-      human.kind !== "person" ||
-      human.revoked_at !== null ||
-      !actor ||
-      !["agent", "service"].includes(actor.kind) ||
-      actor.revoked_at !== null ||
-      !key ||
-      key.principal !== actor.id ||
-      key.revoked_at !== null ||
-      key.audience !== "https://mcp.bittrees.org" ||
-      (key.expires_at !== null &&
-        (!Number.isFinite(Date.parse(key.expires_at)) ||
-          Date.parse(key.expires_at) <= this.now())) ||
-      view.runtimes.some((row) => row.credential_id === key.id)
+      request.principal !== this.selection.principal ||
+      request.credentialId !== this.selection.credentialId ||
+      request.label !== this.selection.label ||
+      request.issuedAt > this.now() ||
+      request.expiresAt <= this.now() ||
+      request.expiresAt <= request.issuedAt ||
+      request.expiresAt > request.issuedAt + 60000
     )
-      throw Error("Current enrolled non-lease CD owner binding required");
-    return {
-      profileId: view.profileId,
-      principal: actor.id,
-      credentialId: key.id,
-    };
+      throw Error("Canonical Roles preparation binding mismatch");
+    return packet;
   }
   async prepare(signal: AbortSignal) {
     this.revoke();
     const epoch = this.epochOf(this.currentSession());
-    const owner = this.checkedOwner(
-      await this.json("/api/profile/mcp", undefined, signal),
-    );
-    const packet = packetSchema.parse(
-      await this.json(
-        "/api/profile/mcp/devices/prepare",
-        this.selection,
-        signal,
-      ),
-    );
-    if (
-      packet.request.ownerProfile !== owner.profileId ||
-      packet.request.principal !== owner.principal ||
-      packet.request.credentialId !== owner.credentialId ||
-      packet.request.label !== this.selection.label ||
-      packet.request.issuedAt > this.now() ||
-      packet.request.expiresAt <= this.now() ||
-      packet.request.expiresAt > packet.request.issuedAt + 60000 ||
-      epoch !== this.epochOf(this.currentSession())
-    )
-      throw Error("Canonical Roles preparation binding mismatch");
+    const packet = this.checkPacket(await this.json(signal));
+    if (epoch !== this.epochOf(this.currentSession()))
+      throw Error("Native Roles session changed");
     this.packet = packet;
-    this.owner = owner;
     this.epoch = epoch;
-    this.checkedAt = this.now();
+    this.freshUntil = Math.min(this.now() + 5000, packet.request.expiresAt);
     return structuredClone(packet);
   }
   async refresh(signal: AbortSignal) {
     const packet = this.packet,
-      owner = this.owner,
       epoch = this.epoch;
-    if (!packet || !owner || packet.request.expiresAt <= this.now())
+    if (!packet || packet.request.expiresAt <= this.now())
       throw Error("Native CD review expired");
-    const current = this.checkedOwner(
-      await this.json("/api/profile/mcp", undefined, signal),
-    );
+    const probe = this.checkPacket(await this.json(signal));
+    for (const field of [
+      "ownerProfile",
+      "principal",
+      "credentialId",
+      "label",
+      "sessionBinding",
+    ] as const) {
+      if (probe.request[field] !== packet.request[field])
+        throw Error("Canonical Roles ownership changed");
+    }
     if (
-      canonical(owner) !== canonical(current) ||
-      epoch !== this.epochOf(this.currentSession())
+      epoch !== this.epochOf(this.currentSession()) ||
+      this.packet !== packet ||
+      packet.request.expiresAt <= this.now()
     )
-      throw Error("Canonical Roles ownership changed");
-    this.checkedAt = this.now();
+      throw Error("Native Roles review changed");
+    // Probe request/device IDs and sealed challenge are discarded. They never
+    // replace the original approved packet or extend its original lifetime.
+    this.freshUntil = Math.min(
+      this.now() + 5000,
+      packet.request.expiresAt,
+      probe.request.expiresAt,
+    );
   }
   currentOwner = () => {
     try {
       const session = this.currentSession(),
-        packet = this.packet,
-        owner = this.owner;
+        packet = this.packet;
       if (
         !packet ||
-        !owner ||
         this.epoch !== this.epochOf(session) ||
-        this.now() - this.checkedAt > 5000 ||
+        this.now() >= this.freshUntil ||
         packet.request.expiresAt <= this.now()
       )
         return null;
       return {
-        ownerProfile: owner.profileId,
-        principal: owner.principal,
-        credentialId: owner.credentialId,
+        ownerProfile: packet.request.ownerProfile,
+        principal: packet.request.principal,
+        credentialId: packet.request.credentialId,
         sessionBinding: packet.request.sessionBinding,
         enrolled: true as const,
         credentialKind: "non-lease" as const,
@@ -326,7 +269,8 @@ export class CDRolesPrepareTransport {
   };
   revoke() {
     this.packet = undefined;
-    this.owner = undefined;
+
     this.epoch = undefined;
+    this.freshUntil = 0;
   }
 }
