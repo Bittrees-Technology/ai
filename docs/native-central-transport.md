@@ -22,6 +22,17 @@ Before DNS, every attempt consumes a durable encrypted budget reservation. Faile
 
 Operator-written evidence or an evidence identifier is not a billing guarantee or Roles/source grant. The operator must independently verify the actual account, downstream resource ceilings and enforced controls before recording it. Configuration cannot authorize paid model fallback or bypass wallet/controller signatures.
 
+An explicit paid central review also requires the protected evidence's
+`runtimeApproval`. Its approved window must cover the central review, its total
+must cover the central sub-budget, and its central per-attempt ceiling must match.
+The shared approval permits at most fifteen minutes and US$1 combined across
+enrollment, central, CRM assignment and attestation helpers. The personal-vault
+encrypted `native-runtime-cost.db` aggregates those reservations across helper
+instances, restarts and epochs, in addition to this transport's own finite ledger.
+See [CRM native setup](crm-workflow-assignment-rest.md#normal-native-launcher-setup).
+Included-usage admission retains its verified $0 requirements and creates no paid
+allowance. Neither path creates source authority or owner signatures.
+
 ## Remaining acceptance
 
 Current independent source/price evidence, production configuration and exact native plus wallet/source approvals remain required. Staged native startup and sandbox boundaries must pass before installation. Live acceptance must demonstrate central trigger, genuine local-model execution, MCP/source action receipts, central completion and authorized successor, plus denial after revocation. Standing until-revoked runtime and actual recurring migration acceptance remain incomplete.

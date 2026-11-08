@@ -22,7 +22,8 @@ test("native session requires admission before storage and never reads credentia
     ownerWallet: "0x" + "a".repeat(40),
   };
   let allowed = false,
-    reads = 0;
+    reads = 0,
+    reservations = 0;
   const options = {
     path: dir + "/state.db",
     vault: new Vault(randomBytes(32)),
@@ -32,6 +33,10 @@ test("native session requires admission before storage and never reads credentia
       throw Error("Must not read");
     },
     admitted: () => allowed,
+    reserveCost: () => {
+      reservations++;
+      throw Error("Fixture aggregate cost exhausted");
+    },
     now: () => 100000,
   };
   try {
@@ -48,6 +53,15 @@ test("native session requires admission before storage and never reads credentia
     allowed = true;
     const session = factory(() => review);
     try {
+      assert.equal(reads, 0);
+      await assert.rejects(
+        session.execute(
+          { operation: "heartbeat" },
+          new AbortController().signal,
+        ),
+        /cost exhausted/,
+      );
+      assert.equal(reservations, 1);
       assert.equal(reads, 0);
       allowed = false;
       await assert.rejects(

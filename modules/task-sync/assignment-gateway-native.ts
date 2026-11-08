@@ -185,6 +185,7 @@ export function nativeAssignmentGateway(options: {
   publicKey: string;
   credential: () => string;
   budget: TaskSyncRunBudget;
+  reserveCost?: () => void;
   admit: ConstructorParameters<typeof AssignmentNativeHTTPS>[0];
   signAndAttest: (
     challenge: AssignmentChallenge,
@@ -240,7 +241,10 @@ export function nativeAssignmentGateway(options: {
     options.send,
   );
   const dispatch = options.budget.fetch(
-    https.dispatch,
+    (input, init) => {
+      options.reserveCost?.();
+      return https.dispatch(input, init);
+    },
     current,
     () => "execute",
   );

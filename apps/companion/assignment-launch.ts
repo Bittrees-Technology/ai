@@ -10,6 +10,10 @@ import { join, isAbsolute } from "node:path";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import Database from "better-sqlite3";
 import { z } from "zod";
+import {
+  NativeRuntimeCostBudget,
+  nativeRuntimeCostApproval,
+} from "../../modules/task-sync/native-runtime-cost.js";
 import { verifyCrmResultLease } from "../../modules/task-sync/crm-result-lease-contract.mjs";
 import { checkAssignmentNativeAction } from "../../modules/task-sync/assignment-native-admission.js";
 import { assignmentSchema } from "../../modules/task-sync/assignment-contract.js";
@@ -72,27 +76,40 @@ export const assignmentLaunchConfiguration = z.strictObject({
   budget: taskSyncBudgetReview,
   evidenceDigest: hex,
 });
-const costEvidence = z.strictObject({
-  version: z.literal(1),
-  id: z.string().min(1).max(128),
-  observedAt: z.int().positive(),
-  validUntil: z.int().positive(),
-  account: z.string().min(1).max(128),
-  project: z.string().min(1).max(128),
-  plan: z.string().min(1).max(128),
-  services: z.tuple([
-    z.literal("mcp.bittrees.org"),
-    z.literal("roles.bittrees.org"),
-    z.literal("workflow.bittrees.org"),
-    z.literal("crm.bittrees.org"),
-    z.literal("ai.bittrees.org"),
-  ]),
-  resourceClass: z.string().min(1).max(512),
-  overageControls: z.string().min(1).max(512),
-  costBasis: z.literal("verified-included-usage"),
-  maximumAdditionalMicroUSD: z.literal(0),
-  reference: z.string().min(1).max(1024),
-});
+const costEvidence = z
+  .strictObject({
+    version: z.literal(1),
+    id: z.string().min(1).max(128),
+    observedAt: z.int().positive(),
+    validUntil: z.int().positive(),
+    account: z.string().min(1).max(128),
+    project: z.string().min(1).max(128),
+    plan: z.string().min(1).max(128),
+    services: z.tuple([
+      z.literal("mcp.bittrees.org"),
+      z.literal("roles.bittrees.org"),
+      z.literal("workflow.bittrees.org"),
+      z.literal("crm.bittrees.org"),
+      z.literal("ai.bittrees.org"),
+    ]),
+    resourceClass: z.string().min(1).max(512),
+    overageControls: z.string().min(1).max(512),
+    costBasis: z.enum([
+      "verified-included-usage",
+      "explicit-one-time-approval",
+    ]),
+    maximumAdditionalMicroUSD: z.int().min(0).max(1000000),
+    runtimeApproval: nativeRuntimeCostApproval.optional(),
+    reference: z.string().min(1).max(1024),
+  })
+  .refine(
+    (p) =>
+      p.costBasis === "verified-included-usage"
+        ? p.maximumAdditionalMicroUSD === 0 && p.runtimeApproval === undefined
+        : p.runtimeApproval !== undefined &&
+          p.maximumAdditionalMicroUSD === p.runtimeApproval.maximumMicroUSD,
+    "Actual included coverage or exact explicit aggregate approval required",
+  );
 function protectedBytes(path: string, max = 128000) {
   const s = lstatSync(path);
   if (
@@ -161,6 +178,9 @@ export async function launchAssignments(
       proof.observedAt > review.approvedAt ||
       proof.validUntil < review.expiresAt ||
       proof.validUntil - proof.observedAt > 3600000 ||
+      (proof.runtimeApproval !== undefined &&
+        (proof.runtimeApproval.approvedAt > review.approvedAt ||
+          proof.runtimeApproval.expiresAt < review.expiresAt)) ||
       hash(proofBytes) !== config.evidenceDigest ||
       hash(protectedBytes(path)) !== pin ||
       hash(protectedBytes(evidencePath)) !== config.evidenceDigest ||
@@ -178,7 +198,7 @@ export async function launchAssignments(
       )
     )
       throw Error(
-        "Current exact native source, validator and zero-cost admission required",
+        "Current exact native source, validator and bounded cost admission required",
       );
   };
   admitted();
@@ -230,6 +250,15 @@ export async function launchAssignments(
     controlPin = hash(controlBytes);
   const vault = await unlock("personal");
   admitted();
+  const costs = proof.runtimeApproval
+    ? new NativeRuntimeCostBudget(
+        directory,
+        vault,
+        proof.runtimeApproval,
+        admitted,
+        now,
+      )
+    : undefined;
   const state = () => {
     admitted();
     const snapshot = savedCentralState(centralPath, vault);
@@ -337,7 +366,10 @@ export async function launchAssignments(
       network.send,
     );
     const attest = budget.fetch(
-      attestation.dispatch,
+      (input, init) => {
+        costs?.reserve("attestation");
+        return attestation.dispatch(input, init);
+      },
       () => {
         current();
         return scope;
@@ -357,6 +389,7 @@ export async function launchAssignments(
         return token;
       },
       budget,
+      reserveCost: () => costs?.reserve("assignment"),
       now,
       admit: () => {
         current();

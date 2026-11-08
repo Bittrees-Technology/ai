@@ -8,6 +8,11 @@ import {
   type CentralNativeScope,
 } from "../modules/workflows/central-transport-plan.js";
 import { CentralNativeHTTPS } from "../modules/workflows/central-native-https.js";
+import { nativeCentralSessionFactory } from "../modules/workflows/central-native-session.js";
+import { Vault } from "../modules/storage/vault.js";
+import { randomBytes } from "node:crypto";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 function fixture() {
   const keys = generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "pem" },
@@ -106,6 +111,53 @@ function fixture() {
     },
   };
 }
+test("central native assembly refuses exhausted aggregate funding before credentials or DNS", async () => {
+  const f = fixture(),
+    directory = realpathSync(mkdtempSync(tmpdir() + "/central-cost-"));
+  let reservations = 0,
+    reads = 0;
+  const review = {
+    ownerWallet: "0x" + "a".repeat(40),
+    scope: f.scope,
+    budget: {
+      epoch: f.scope.epoch,
+      approvedAt: f.scope.approvedAt,
+      expiresAt: f.scope.expiresAt,
+      maximumAttempts: 10,
+      evidenceId: "synthetic-only",
+      costBasis: "verified-included-usage" as const,
+      maximumMicroUSD: 0 as const,
+      attemptCeilingMicroUSD: 0 as const,
+    },
+  };
+  const factory = nativeCentralSessionFactory({
+    path: directory + "/local-budget.db",
+    vault: new Vault(randomBytes(32)),
+    admitted: () => true,
+    credential: () => {
+      reads++;
+      throw Error("Must not read credentials");
+    },
+    reserveCost: () => {
+      reservations++;
+      throw Error("Fixture aggregate cost exhausted");
+    },
+    now: () => f.scope.approvedAt + 1000,
+  });
+  const session = factory(() => review);
+  try {
+    await assert.rejects(
+      session.dispatch(f.signed(), new AbortController().signal),
+      /cost exhausted/,
+    );
+    assert.equal(reservations, 1);
+    assert.equal(reads, 0);
+  } finally {
+    session.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("native central plan binds each exact workflow action, operation, source and fresh device signature", () => {
   const f = fixture();
   for (const name of [

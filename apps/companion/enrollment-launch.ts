@@ -2,6 +2,10 @@ import { readFileSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  NativeRuntimeCostBudget,
+  nativeRuntimeCostApproval,
+} from "../../modules/task-sync/native-runtime-cost.js";
 import { Vault } from "../../modules/storage/vault.js";
 import {
   loadStorageKey,
@@ -16,19 +20,33 @@ const hash = (value: string | Buffer) =>
 // Public source signer independently matched to the existing deployment receipt.
 const signer =
   "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkBN/mwSFqVGMc7NfiY0pOUhk6FPZv1So5PGXo1w5WU8=\n-----END PUBLIC KEY-----\n";
-const configuration = z.strictObject({
-  version: z.literal(1),
-  authorityId: z.uuid(),
-  deviceId: z.uuid(),
-  ownerWallet: z.string().regex(/^0x[a-f0-9]{40}$/),
-  identityDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  credentialDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  sourceAccessApproved: z.literal(true),
-  costBasis: z.literal("verified-included-usage"),
-  evidenceId: z.string().min(1).max(128),
-  approvedAt: z.number().int().nonnegative(),
-  expiresAt: z.number().int().nonnegative(),
-});
+const configuration = z
+  .strictObject({
+    version: z.literal(1),
+    authorityId: z.uuid(),
+    deviceId: z.uuid(),
+    ownerWallet: z.string().regex(/^0x[a-f0-9]{40}$/),
+    identityDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    credentialDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceAccessApproved: z.literal(true),
+    costBasis: z.enum([
+      "verified-included-usage",
+      "explicit-one-time-approval",
+    ]),
+    runtimeApproval: nativeRuntimeCostApproval.optional(),
+    evidenceId: z.string().min(1).max(128),
+    approvedAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().nonnegative(),
+  })
+  .refine(
+    (c) =>
+      c.costBasis === "verified-included-usage"
+        ? c.runtimeApproval === undefined
+        : c.runtimeApproval !== undefined &&
+          c.runtimeApproval.approvedAt <= c.approvedAt &&
+          c.runtimeApproval.expiresAt >= c.expiresAt,
+    "Actual included coverage or exact explicit aggregate approval required",
+  );
 function readConfiguration(path: string) {
   const info = lstatSync(path);
   if (
@@ -88,6 +106,18 @@ export async function launchEnrollment(
   };
   if (!admitted()) throw Error("Native enrollment approval expired or changed");
   const vault = await unlock("personal");
+  const costs = config.runtimeApproval
+    ? new NativeRuntimeCostBudget(
+        directory,
+        vault,
+        config.runtimeApproval,
+        () => {
+          if (!admitted())
+            throw Error("Native enrollment source/cost admission changed");
+        },
+        now,
+      )
+    : undefined;
   let coordinator: Vault | undefined;
   try {
     lstatSync(join(directory, "marketplace/connection.enc"));
@@ -133,6 +163,7 @@ export async function launchEnrollment(
       pinnedSigner: signer,
       credential: () => token,
       admitted,
+      reserveCost: () => costs?.reserve("enrollment"),
       now,
     }),
     now,
