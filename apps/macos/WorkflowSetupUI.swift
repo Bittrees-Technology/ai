@@ -2,6 +2,78 @@ import Cocoa
 import CryptoKit
 
 extension Companion {
+    func centralGatewayControl() -> (URL, String)? {
+        let env = ProcessInfo.processInfo.environment
+        guard let endpoint = env["BITTREES_CENTRAL_GATEWAY_SETUP_URL"], let url = URL(string: endpoint),
+              url.scheme == "http", url.host == "127.0.0.1", let port = url.port, port > 0, port <= 65535,
+              url.path == "/enrollment-control", url.query == nil, url.fragment == nil, url.user == nil, url.password == nil,
+              url.absoluteString == endpoint, let token = env["BITTREES_CENTRAL_GATEWAY_SETUP_TOKEN"],
+              token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { return nil }
+        return (url, token)
+    }
+    @objc func prepareCentralGateway() {
+        guard !gatewayReviewBusy, !quitting, window.attachedSheet == nil, let (url, token) = centralGatewayControl() else { return }
+        gatewayReviewBusy = true
+        _ = EnrollmentControlRequest(url: url, token: token, body: ["action":"propose"]) { result in
+            guard let r = result, Set(r.keys) == Set(["version","purpose","enrollment","prepared","checkedAt","expiresAt","additionalSpendingUSD","permissionsGranted","configuresWorker","digest"]),
+                  r["version"] as? Int == 1, r["purpose"] as? String == "prepare-central-gateway-credential",
+                  r["additionalSpendingUSD"] as? Int == 0, r["permissionsGranted"] as? Bool == false, r["configuresWorker"] as? Bool == false,
+                  let e = r["enrollment"] as? [String:Any], let b = e["binding"] as? [String:Any],
+                  Set(e.keys) == Set(["principal","publicKey","credentialId","binding","runtimeBindingDigest","permissionsGranted"]),
+                  Set(b.keys) == Set(["version","ownerProfileId","ownerWallet","authorityId","deviceId","principal","credentialId","sourceWorkspace","tenant","workspace"]),
+                  e["permissionsGranted"] as? Bool == false, b["version"] as? Int == 1,
+                  let ownerProfile = b["ownerProfileId"] as? String, UUID(uuidString:ownerProfile) != nil,
+                  let authority = b["authorityId"] as? String, UUID(uuidString:authority) != nil,
+                  let device = b["deviceId"] as? String, UUID(uuidString:device) != nil,
+                  let principal = e["principal"] as? String, principal.hasPrefix("agent:"), UUID(uuidString:String(principal.dropFirst(6))) != nil,
+                  let fingerprint = e["credentialId"] as? String, let key = e["publicKey"] as? String,
+                  fingerprint == SHA256.hash(data:Data(key.utf8)).map({String(format:"%02x",$0)}).joined(),
+                  let bindingDigest = e["runtimeBindingDigest"] as? String,
+                  let bindingData = try? JSONSerialization.data(withJSONObject:b,options:[.sortedKeys,.withoutEscapingSlashes]),
+                  bindingDigest == SHA256.hash(data:bindingData).map({String(format:"%02x",$0)}).joined(),
+                  b["principal"] as? String == principal, b["credentialId"] as? String == fingerprint,
+                  let wallet = b["ownerWallet"] as? String, wallet.range(of:"^0x[a-f0-9]{40}$",options:.regularExpression) != nil,
+                  let source = b["sourceWorkspace"] as? String, UUID(uuidString:source) != nil,
+                  let tenant = b["tenant"] as? String, tenant == "roles:" + ownerProfile,
+                  b["workspace"] as? String == "crm:" + source,
+                  let at = r["checkedAt"] as? Double, let end = r["expiresAt"] as? Double,
+                  at <= Date().timeIntervalSince1970*1000+1000, end-at == 60000, end > Date().timeIntervalSince1970*1000,
+                  let digest = r["digest"] as? String else {
+                self.gatewayReviewBusy = false
+                self.enrollmentNotice("Gateway preparation unavailable", "Complete this Mac’s native central enrollment first. No credential, source permission or worker configuration was changed.")
+                return
+            }
+            var signed = r; signed.removeValue(forKey:"digest")
+            guard let bytes = try? JSONSerialization.data(withJSONObject:signed,options:[.sortedKeys,.withoutEscapingSlashes]),
+                  digest == SHA256.hash(data:bytes).map({String(format:"%02x",$0)}).joined() else { self.gatewayReviewBusy = false; return }
+            let alert = NSAlert()
+            alert.messageText = "Prepare this Mac’s Workflows gateway credential?"
+            alert.informativeText = "Wallet: \(wallet)\nMac: \(device)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(fingerprint)\nCRM workspace: \(source)\nNamespace: \(tenant)\nRuntime binding: \(bindingDigest)\n\nCreate a separate encrypted gateway credential on this Mac, or retain the same existing credential after an interrupted preparation. Only its public hash is available for a scoped gateway binding; the credential is never shown or copied to the model. No network request, spending, signing-key rotation, source permission, execution lease, task configuration or live sync is enabled. Gateway and source access still require their own approvals."
+            alert.addButton(withTitle:"Cancel")
+            alert.addButton(withTitle:"Prepare encrypted credential")
+            alert.beginSheetModal(for:self.window) { response in
+                let approved = response == .alertSecondButtonReturn && Date().timeIntervalSince1970*1000 < end
+                let body:[String:Any] = approved ? ["action":"approve","digest":digest] : ["action":"revoke"]
+                _ = EnrollmentControlRequest(url:url,token:token,body:body) { saved in
+                    self.gatewayReviewBusy = false
+                    if approved && saved?["approved"] as? Bool == true {
+                        _ = EnrollmentControlRequest(url:url,token:token,body:["action":"propose"]) { projection in
+                            guard let p = projection?["prepared"] as? [String:Any], p["principal"] as? String == principal,
+                                  p["credentialId"] as? String == fingerprint, p["runtimeBindingDigest"] as? String == bindingDigest,
+                                  p["permissionsGranted"] as? Bool == false, p["configuresWorker"] as? Bool == false,
+                                  let hash = p["actorTokenHash"] as? String, hash.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
+                                  p["credentialReference"] as? String == "native-central-gateway:" + hash else {
+                                self.enrollmentNotice("Preparation needs reconciliation", "The public credential receipt was not confirmed. Inspect the original encrypted record without rotating or replacing it."); return
+                            }
+                            self.enrollmentNotice("Gateway credential prepared", "Public gateway hash: \(hash)\nConfiguration reference: native-central-gateway:\(hash)\n\nThe bearer stays encrypted on this Mac. No gateway registration, source access, lease or live task processing was enabled.")
+                        }
+                    } else if approved {
+                        self.enrollmentNotice("Preparation was not confirmed", "Reconcile the existing encrypted record. Do not rotate a credential or create a replacement connection.")
+                    }
+                }
+            }
+        }
+    }
     func centralIdentityControl() -> (URL, String)? {
         let env = ProcessInfo.processInfo.environment
         guard let endpoint = env["BITTREES_CENTRAL_IDENTITY_URL"], let url = URL(string: endpoint),

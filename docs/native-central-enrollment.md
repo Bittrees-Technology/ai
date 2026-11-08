@@ -87,3 +87,34 @@ activation, protected MCP connection issuance, approved real assignments, indepe
 result validation and sustained installed execution still require their own evidence.
 The original nine CryptoDirectory receipt pairs and exhausted budgets are unaffected;
 they must not be used as fixtures or reset to demonstrate this path.
+
+## Separate native gateway credential preparation
+
+After completed central-purpose enrollment, “Prepare Workflows gateway…” offers
+a separate sixty-second native review of the exact owner, device, central key,
+CRM workspace and derived runtime binding. It reads the authenticated encrypted
+original native handoff, rather than trusting an operator draft or a core status
+projection. Missing, unfinished, inconsistent or changed enrollment fails closed.
+The native control capability is not forwarded to the core or web content.
+
+Approval prepares one new random gateway bearer in protected encrypted
+`native-central-gateway.db`. Only its public hash and
+`native-central-gateway:<hash>` reference are shown. Repeating a preparation after
+a lost reply or restart retains the same bearer. A changed binding or corrupt
+record cannot trigger rotation or replacement. Cancelled or expired consent
+cannot release a credential. Existing central signing and coordinator/task-sync
+credentials are preserved; none is substituted for the gateway bearer.
+
+A separately reviewed central configuration may use that public reference in
+`mcpToken`. The native saved-state reader resolves it only against the completed
+enrollment's exact principal, signing-key fingerprint and tenant/workspace. Its
+public state digest pins the actual gateway hash. The model/core configuration
+does not need the bearer. Missing native transport cannot authenticate a public
+reference against MCP. Existing native admission, finite request/model budgets,
+Roles action proofs and source checks still apply to each protected operation.
+
+Preparation is local-only and does not register an MCP actor, create a source
+connection, activate a Roles lease, configure a worker, start finite task clocks
+or enable live sync. The public preparation receipt is not current source or
+workflow authority. Those exact permissions and the server's hash binding must
+be separately approved and verified before task execution.

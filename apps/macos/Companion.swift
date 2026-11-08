@@ -12,6 +12,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     var enrollmentReviewBusy = false
     var cdDeviceReviewBusy = false
     var workflowIdentityReviewBusy = false
+    var gatewayReviewBusy = false
     var workflowOnboarding: NativeWalletOnboarding?
     var ready = false
     var quitting = false
@@ -59,6 +60,9 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         }
         if enrollmentControl() != nil {
             appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")
+        }
+        if centralGatewayControl() != nil {
+            appMenu.addItem(withTitle: "Prepare Workflows gateway…", action: #selector(prepareCentralGateway), keyEquivalent: "")
         }
         if centralControl() != nil {
             appMenu.addItem(withTitle: "Review task execution…", action: #selector(reviewCentralWorkflow), keyEquivalent: "")

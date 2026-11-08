@@ -41,11 +41,12 @@ const handoffSchema = z.strictObject({
   result: z.unknown().optional(),
   message: z.string().optional(),
 });
-const recordSchema = z.strictObject({
+export const centralEnrollmentRecordSchema = z.strictObject({
   review: reviewSchema,
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
 });
+const recordSchema = centralEnrollmentRecordSchema;
 export type CentralEnrollmentRecord = z.infer<typeof recordSchema>;
 type NativeSession = Pick<
   EnrollmentSession,

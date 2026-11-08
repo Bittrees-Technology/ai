@@ -6,7 +6,8 @@ import {
   sign,
 } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute } from "node:path";
+import { existingPreparedCentralGatewayCredential } from "./central-gateway-credential.js";
 import { z } from "zod";
 import { Vault } from "../storage/vault.js";
 import { assignmentAuthorityRequest } from "../task-sync/assignment-proof-contract.js";
@@ -54,6 +55,15 @@ function read(
       };
       const identity = identitySchema.parse(value("identity")),
         config = configurationSchema.parse(value("config"));
+      const token = config.mcpToken.startsWith("native-central-gateway:")
+        ? existingPreparedCentralGatewayCredential(dirname(path), vault, {
+            principal: identity.principal,
+            credentialId: identity.credentialId,
+            tenant: config.tenant,
+            workspace: config.workspace,
+            reference: config.mcpToken,
+          })
+        : config.mcpToken;
       z.uuid().parse(identity.principal.slice(6));
       const publicKey = createPublicKey(identity.publicKey),
         privateKey = createPrivateKey(identity.privateKey);
@@ -108,11 +118,9 @@ function read(
           delegationId: config.delegationId,
           profileId: config.profileId,
           ...(config.finitePilot ? { finitePilot: config.finitePilot } : {}),
-          mcpCredentialDigest: createHash("sha256")
-            .update(config.mcpToken)
-            .digest("hex"),
+          mcpCredentialDigest: createHash("sha256").update(token).digest("hex"),
         },
-        token: config.mcpToken,
+        token,
         ...(signature ? { signature } : {}),
       };
     })();
