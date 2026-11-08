@@ -19,6 +19,8 @@ export function nativeEnrollmentSessionFactory(options: {
   credential: () => string;
   admitted: () => boolean;
   reserveCost?: () => void;
+  resolve?: ConstructorParameters<typeof EnrollmentHTTPS>[2];
+  send?: ConstructorParameters<typeof EnrollmentHTTPS>[3];
   now?: () => number;
 }) {
   if (!isAbsolute(options.path))
@@ -55,10 +57,15 @@ export function nativeEnrollmentSessionFactory(options: {
         return null;
       }
     };
-    const transport = new EnrollmentHTTPS((epoch) => {
-      if (!active() || epoch !== snapshot.epoch)
-        throw Error("Enrollment admission changed");
-    }, credential);
+    const transport = new EnrollmentHTTPS(
+      (epoch) => {
+        if (!active() || epoch !== snapshot.epoch)
+          throw Error("Enrollment admission changed");
+      },
+      credential,
+      options.resolve,
+      options.send,
+    );
     return new EnrollmentSession(
       path,
       vault,

@@ -72,7 +72,7 @@ extension Companion {
             let publicKey = display.publicKey, expiry = display.expiresAt
             let alert = NSAlert()
             alert.messageText = "Allow this Mac to request enrollment?"
-            alert.informativeText = "Wallet: \(wallet)\nMac: \(device)\nWorkspace: \(workspace)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(SHA256.hash(data: Data(publicKey.utf8)).map({ String(format: "%02x", $0) }).joined())\n\nContact ai.bittrees.org and roles.bittrees.org for up to five minutes, with at most 108 requests. Additional spending limit: $0.\n\nThis permits the enrollment request only. Roles approval and workflow authority remain separate."
+            alert.informativeText = "\(display.identityPurpose)\n\nWallet: \(wallet)\nMac: \(device)\nWorkspace: \(workspace)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(SHA256.hash(data: Data(publicKey.utf8)).map({ String(format: "%02x", $0) }).joined())\n\nContact ai.bittrees.org and roles.bittrees.org for up to five minutes, with at most 108 requests. \(display.spendingSummary)\n\nThis permits the enrollment request only. Roles approval and workflow authority remain separate."
             alert.addButton(withTitle: "Cancel")
             alert.addButton(withTitle: "Allow enrollment request")
             alert.beginSheetModal(for: self.window) { response in

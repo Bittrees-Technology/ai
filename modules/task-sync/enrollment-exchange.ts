@@ -7,6 +7,7 @@ import {
 import {
   EnrollmentJournal,
   type EnrollmentOperationBinding,
+  enrollmentOperationId,
 } from "./enrollment-journal.js";
 const hash = (value: unknown) =>
   createHash("sha256").update(canonical(value)).digest("hex");
@@ -49,9 +50,8 @@ export class EnrollmentExchange {
       ) {
         // One durable mutation identity per reviewed epoch and operation kind.
         // Changing nonce/body cannot mint a fresh retry after an unknown outcome.
-        const id = hash({ epoch: plan.epoch, kind: operation.operation });
         binding = {
-          operationId: `${id.slice(0, 8)}-${id.slice(8, 12)}-4${id.slice(13, 16)}-a${id.slice(17, 20)}-${id.slice(20, 32)}`,
+          operationId: enrollmentOperationId(plan.epoch, operation.operation),
           epoch: plan.epoch,
           kind: operation.operation,
           requestDigest: hash(plan.body),

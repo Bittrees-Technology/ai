@@ -102,6 +102,10 @@ export interface LocalApiOptions {
   recurring?: import("../../modules/workflows/recurring.js").RecurringWorkflows;
   assignments?: import("../../modules/task-sync/assignment-service.js").AssignmentService;
   taskSync?: import("../../modules/task-sync/runner.js").TaskSyncRunner;
+  centralEnrollment?: Pick<
+    import("../../modules/workflows/central-enrollment-client.js").CentralEnrollmentClient,
+    "execute"
+  >;
   centralWorkflows?: import("../../modules/workflows/central-worker.js").CentralWorkflowWorker;
   directoryResearch?: import("../../modules/research/crypto-directory.js").CryptoDirectoryResearch;
   sources?: CrmTasks;
@@ -140,6 +144,7 @@ export function localApi({
   projectWork,
   directoryResearch,
   centralWorkflows,
+  centralEnrollment,
   taskSync,
   assignments,
   recurring,
@@ -1064,6 +1069,57 @@ export function localApi({
       res.json(taskSync.resume());
     });
   }
+  app.get("/v1/workflows/central/connection", async (_req, res) => {
+    if (!centralEnrollment) return res.json({ available: false });
+    try {
+      return res.json({
+        available: true,
+        ready: true,
+        ...((await centralEnrollment.execute(
+          { action: "status" },
+          AbortSignal.timeout(5000),
+        )) as object),
+      });
+    } catch {
+      return res.json({
+        available: true,
+        ready: false,
+        message:
+          "Review the current native enrollment scope in the Bittrees AI menu.",
+      });
+    }
+  });
+  app.post("/v1/workflows/central/connection", async (req, res) => {
+    if (!centralEnrollment)
+      return res
+        .status(409)
+        .json({ error: "Native central enrollment setup is unavailable" });
+    const command = z
+      .discriminatedUnion("action", [
+        z.strictObject({ action: z.literal("start") }),
+        z.strictObject({ action: z.literal("poll") }),
+      ])
+      .parse(req.body);
+    const controller = new AbortController();
+    const abort = () => {
+      if (!res.writableEnded) controller.abort();
+    };
+    req.once("aborted", abort);
+    res.once("close", abort);
+    try {
+      res.json({
+        available: true,
+        ready: true,
+        ...((await centralEnrollment.execute(
+          command,
+          AbortSignal.any([controller.signal, AbortSignal.timeout(50000)]),
+        )) as object),
+      });
+    } finally {
+      req.removeListener("aborted", abort);
+      res.removeListener("close", abort);
+    }
+  });
   if (centralWorkflows) {
     app.get("/v1/workflows/central", (_req, res) =>
       res.json(centralWorkflows.status()),

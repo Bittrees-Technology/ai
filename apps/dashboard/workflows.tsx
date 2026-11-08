@@ -1,4 +1,5 @@
 import { AssignmentStatus } from "./assignments.js";
+import { CentralEnrollment } from "./central-enrollment.js";
 import { TaskSyncStatus } from "./task-sync.js";
 import {
   readWorkflowPermissions,
@@ -79,6 +80,7 @@ export function Workflows({
   return (
     <section>
       <AssignmentStatus api={api} />
+      <CentralEnrollment api={api} />
       <TaskSyncStatus
         api={api}
         canStartOwnerReview={ownerReviewReady(readiness, data)}
@@ -90,10 +92,11 @@ export function Workflows({
       {error && <p role="alert">{error}</p>}
       {readiness && !readiness.nativeTransportAvailable && (
         <section aria-label="Native workflow setup required">
-          <h3>Native workflow connection needs setup</h3>
+          <h3>Task synchronization needs native setup</h3>
           <p>
-            This Mac has not supplied the native connection capability. This
-            check has not requested hosted workflow permissions.
+            This Mac has not supplied the native task synchronization
+            capability. This check has not requested hosted workflow
+            permissions.
           </p>
           <p>
             The app operator must prepare the reviewed native connection before

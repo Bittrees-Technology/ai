@@ -186,6 +186,11 @@ export class EnrollmentSession {
       const review = this.context();
       if (!review) throw Error("Review revoked before state persistence");
       signal.throwIfAborted();
+      if (
+        op.operation === "poll" &&
+        (response as { status?: string }).status === "complete"
+      )
+        this.journal.confirmCompletionRead(review.epoch, hash(response));
       if (op.operation === "start") {
         const start = validateEnrollmentStart(response, review, this.now());
         this.state = {
@@ -217,6 +222,17 @@ export class EnrollmentSession {
     } finally {
       this.busy = false;
     }
+  }
+  /** Trusted native orchestration only. Never publish this snapshot over IPC:
+   * it contains the original polling secret and authenticated challenge. */
+  snapshotForNativeOwner() {
+    if (this.closed || this.busy || !this.context())
+      throw Error("Current idle native enrollment session required");
+    return structuredClone({
+      start: this.state.start,
+      challenge: this.state.challenge,
+      completion: this.state.completion,
+    });
   }
   close() {
     if (this.closed) return;

@@ -22,6 +22,7 @@ type State = {
   result?: any;
   message?: string;
 };
+export type RuntimeHandoffState = State;
 /** Outbound-only owner review. Polling secret and results stay in the encrypted local store. */
 export class RuntimeHandoff {
   private running: Promise<void> | null = null;

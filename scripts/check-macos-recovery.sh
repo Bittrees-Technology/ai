@@ -15,6 +15,10 @@ xcrun swiftc apps/macos/KitRecovery.swift tests/macos-kit-recovery.swift -o "$re
 node --import tsx scripts/enrollment-review-fixture.ts > "$recovery_test_directory/enrollment-review.json"
 xcrun swiftc apps/macos/EnrollmentReview.swift tests/macos-enrollment-review.swift -o "$recovery_test_directory/enrollment-review-check"
 "$recovery_test_directory/enrollment-review-check" "$recovery_test_directory/enrollment-review.json"
+node --import tsx scripts/enrollment-review-fixture.ts --paid > "$recovery_test_directory/enrollment-review-paid.json"
+"$recovery_test_directory/enrollment-review-check" "$recovery_test_directory/enrollment-review-paid.json"
+node --import tsx scripts/enrollment-review-fixture.ts --central --paid > "$recovery_test_directory/central-enrollment-review.json"
+"$recovery_test_directory/enrollment-review-check" "$recovery_test_directory/central-enrollment-review.json"
 
 node --import tsx scripts/central-review-fixture.ts > "$recovery_test_directory/central-review.json"
 xcrun swiftc apps/macos/CentralReview.swift tests/macos-central-review.swift -o "$recovery_test_directory/central-review-check"

@@ -6,6 +6,7 @@ function fixture() {
   let now = 100000,
     allowed = true,
     revoked = 0;
+  let cost: unknown | null = null;
   let scope = {
     principal: "agent:" + randomUUID(),
     publicKey: generateKeyPairSync("ed25519")
@@ -24,7 +25,12 @@ function fixture() {
         revoked++;
       },
       () => now,
+      () => {},
+      () => cost,
     ),
+    setCost: (value: unknown | null) => {
+      cost = value;
+    },
     advance: () => {
       now += 300000;
     },
@@ -74,4 +80,49 @@ test("revocation invalidates old approval even when a new native proposal is pre
   assert.notEqual(next.review.epoch, old.review.epoch);
   assert.throws(() => f.consent.approve(old.digest));
   assert.equal(f.consent.current(), null);
+});
+
+test("paid native consent discloses one shared limit and revokes when any funded scope changes", () => {
+  const cost = {
+    approvalId: randomUUID(),
+    reference: "synthetic-owner-approval",
+    pricingReference: "synthetic-price-evidence",
+    authorizedAt: 90000,
+    authorizationExpiresAt: 200000,
+    approvedAt: 90000,
+    expiresAt: 200000,
+    providers: ["neon", "vercel"],
+    maximumMicroUSD: 1000000,
+    maximumAttempts: 108,
+    ceilings: {
+      enrollment: 10000,
+      central: 10000,
+      assignment: 10000,
+      attestation: 10000,
+    },
+  };
+  for (const approved of [false, true]) {
+    const f = fixture();
+    f.setCost(cost);
+    const p = f.consent.propose();
+    assert.equal(p.review.expiresAt, cost.expiresAt);
+    assert.equal("additionalSpendingUSD" in p.disclosure, false);
+    assert.equal(
+      "maximumAdditionalMicroUSD" in p.disclosure &&
+        p.disclosure.maximumAdditionalMicroUSD,
+      1000000,
+    );
+    assert.equal(
+      "limitScope" in p.disclosure && p.disclosure.limitScope,
+      "shared-native-runtime",
+    );
+    if (approved) f.consent.approve(p.digest);
+    f.setCost({ ...cost, pricingReference: "changed-price-evidence" });
+    if (approved) assert.equal(f.consent.current(), null);
+    else assert.throws(() => f.consent.approve(p.digest));
+    assert.equal(f.revoked(), 1);
+  }
+  const f = fixture();
+  f.setCost({ ...cost, maximumMicroUSD: 1000001 });
+  assert.throws(() => f.consent.propose());
 });

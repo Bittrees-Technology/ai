@@ -1,3 +1,4 @@
+import { nativeCentralEnrollmentClient } from "../../modules/workflows/central-enrollment-client.js";
 import { portfolioDailyAdapters } from "../../modules/workflows/investor-portfolio-daily.js";
 import { createChatMonitorCollector } from "../../modules/workflows/recurring-chat-source.js";
 import { nativeEnrollmentClient } from "../../modules/task-sync/enrollment-client.js";
@@ -707,6 +708,7 @@ const token = randomBytes(32).toString("hex"),
   pairCode = randomBytes(12).toString("hex");
 const codePath = join(directory, "pairing-code.txt");
 const enrollmentTransport = nativeEnrollmentClient();
+const centralEnrollment = nativeCentralEnrollmentClient();
 const workflows = localWorkflows(
   directory,
   new Vault(key),
@@ -805,6 +807,7 @@ const assignments = new AssignmentService({
 if (assignmentServiceFixture && !assignmentServiceFixture.natural)
   await runAssignmentServiceFixture(assignments, assignmentServiceFixture);
 const dashboard = dashboardServer({
+  centralEnrollment,
   privateKeys,
   privateRelay,
   retainedCopies: retainedContent(directory, content.directory),

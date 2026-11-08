@@ -15,29 +15,39 @@ import { EnrollmentService } from "../../modules/task-sync/enrollment-service.js
 import { savedEnrollmentIdentity } from "../../modules/task-sync/enrollment-saved-identity.js";
 import { existingEnrollmentCredential } from "../../modules/task-sync/enrollment-credential.js";
 import { nativeEnrollmentSessionFactory } from "../../modules/task-sync/enrollment-native-session.js";
+import { nativeCentralEnrollmentSessionFactory } from "../../modules/workflows/central-enrollment-session.js";
+import { readCentralIdentity } from "../../modules/workflows/central-identity-review.js";
 const hash = (value: string | Buffer) =>
   createHash("sha256").update(value).digest("hex");
 // Public source signer independently matched to the existing deployment receipt.
 const signer =
   "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkBN/mwSFqVGMc7NfiY0pOUhk6FPZv1So5PGXo1w5WU8=\n-----END PUBLIC KEY-----\n";
+const commonConfiguration = z.strictObject({
+  version: z.literal(1),
+  authorityId: z.uuid(),
+  deviceId: z.uuid(),
+  ownerWallet: z.string().regex(/^0x[a-f0-9]{40}$/),
+  credentialDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceAccessApproved: z.literal(true),
+  costBasis: z.enum(["verified-included-usage", "explicit-one-time-approval"]),
+  runtimeApproval: nativeRuntimeCostApproval.optional(),
+  evidenceId: z.string().min(1).max(128),
+  approvedAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().nonnegative(),
+});
 const configuration = z
-  .strictObject({
-    version: z.literal(1),
-    authorityId: z.uuid(),
-    deviceId: z.uuid(),
-    ownerWallet: z.string().regex(/^0x[a-f0-9]{40}$/),
-    identityDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    credentialDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    sourceAccessApproved: z.literal(true),
-    costBasis: z.enum([
-      "verified-included-usage",
-      "explicit-one-time-approval",
-    ]),
-    runtimeApproval: nativeRuntimeCostApproval.optional(),
-    evidenceId: z.string().min(1).max(128),
-    approvedAt: z.number().int().nonnegative(),
-    expiresAt: z.number().int().nonnegative(),
-  })
+  .union([
+    commonConfiguration.extend({
+      purpose: z.literal("task-sync").optional(),
+      identityDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+    commonConfiguration.extend({
+      purpose: z.literal("central-workflows"),
+      principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
+      credentialId: z.string().regex(/^[a-f0-9]{64}$/),
+      sourceWorkspace: z.uuid(),
+    }),
+  ])
   .refine(
     (c) =>
       c.costBasis === "verified-included-usage"
@@ -140,12 +150,37 @@ export async function launchEnrollment(
   if (hash(token) !== config.credentialDigest || !admitted())
     throw Error("Native enrollment credential binding changed");
   const scope = () => {
-    const identity = savedEnrollmentIdentity(
-      join(directory, "task-sync.db"),
-      vault,
-    );
-    if (hash(JSON.stringify(identity)) !== config.identityDigest)
-      throw Error("Native enrollment identity binding changed");
+    let identity: {
+      principal: string;
+      publicKey: string;
+      sourceWorkspace: string;
+    };
+    if (config.purpose === "central-workflows") {
+      const saved = readCentralIdentity(
+        join(directory, "central-workflows.db"),
+        vault,
+      );
+      if (
+        saved.status !== "existing" ||
+        saved.principal !== config.principal ||
+        saved.credentialId !== config.credentialId
+      )
+        throw Error(
+          "Existing central-purpose enrollment identity differs from review",
+        );
+      identity = {
+        principal: saved.principal,
+        publicKey: saved.publicKey,
+        sourceWorkspace: config.sourceWorkspace,
+      };
+    } else {
+      identity = savedEnrollmentIdentity(
+        join(directory, "task-sync.db"),
+        vault,
+      );
+      if (hash(JSON.stringify(identity)) !== config.identityDigest)
+        throw Error("Native enrollment identity binding changed");
+    }
     return {
       ...identity,
       authorityId: config.authorityId,
@@ -154,25 +189,42 @@ export async function launchEnrollment(
     };
   };
   scope();
+  const purpose = config.purpose ?? "task-sync";
+  const factoryOptions = {
+    path: join(
+      directory,
+      purpose === "central-workflows"
+        ? "native-central-enrollment.db"
+        : "native-enrollment.db",
+    ),
+    vault,
+    pinnedSigner: signer,
+    credential: () => token,
+    admitted,
+    reserveCost: () => costs?.reserve("enrollment"),
+    now,
+  };
+  const factory =
+    purpose === "central-workflows"
+      ? nativeCentralEnrollmentSessionFactory({
+          ...factoryOptions,
+          centralStatePath: join(directory, "central-workflows.db"),
+        })
+      : nativeEnrollmentSessionFactory(factoryOptions);
   const service = new EnrollmentService(
     scope,
     admitted,
-    nativeEnrollmentSessionFactory({
-      path: join(directory, "native-enrollment.db"),
-      vault,
-      pinnedSigner: signer,
-      credential: () => token,
-      admitted,
-      reserveCost: () => costs?.reserve("enrollment"),
-      now,
-    }),
+    factory,
     now,
+    () => config.runtimeApproval ?? null,
+    purpose,
   );
   try {
     const endpoints = await service.listen();
     return {
       service,
       environment: {
+        BITTREES_ENROLLMENT_PURPOSE: purpose,
         BITTREES_ENROLLMENT_CONTROL_URL: endpoints.native.url,
         BITTREES_ENROLLMENT_CONTROL_TOKEN: endpoints.native.token,
         BITTREES_ENROLLMENT_HELPER_URL: endpoints.core.url,
