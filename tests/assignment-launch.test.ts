@@ -986,3 +986,16 @@ test("a signed terminal Workflows lease cannot admit another model turn", async 
     f.cleanup();
   }
 });
+
+test("missing native custody files deny before unlocking any vault", async () => {
+  for (const name of ["central-workflows.db", "workflow-device.enc"]) {
+    const f = fixture();
+    try {
+      rmSync(join(f.directory, name));
+      await assert.rejects(f.launch());
+      assert.equal(f.unlocks(), 0);
+    } finally {
+      f.cleanup();
+    }
+  }
+});

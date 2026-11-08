@@ -289,9 +289,41 @@ export async function launchAssignmentServiceBroker(options: {
             assignment: selected,
             claim: accepted.input.claim,
             action: op.kind === "write" ? "write" : "complete",
+            crmOperationId: op.crmOperationId,
             inputDigest: accepted.input.inputDigest,
+            request: {
+              url:
+                op.kind === "write"
+                  ? "https://crm.bittrees.org/api/automation/tasks/" +
+                    selected.taskId +
+                    "/results/" +
+                    op.crmOperationId
+                  : "https://workflow.bittrees.org/api/task-runs/" +
+                    op.runId +
+                    "/completions/" +
+                    op.operationId,
+              method: "PUT",
+              operationId:
+                op.kind === "write" ? op.crmOperationId : op.operationId,
+              bodyDigest: digest(
+                op.kind === "write"
+                  ? {
+                      assignment: selected,
+                      claim: accepted.input.claim,
+                      result: op.result,
+                      resultDigest,
+                    }
+                  : {
+                      assignment: selected,
+                      claim: accepted.input.claim,
+                      crmOperationId: op.crmOperationId,
+                      resultDigest,
+                    },
+              ),
+            },
           },
           signal,
+          "effect",
         );
         recheck();
         if (accepted.receipt.expiresAt <= now())
@@ -310,6 +342,14 @@ export async function launchAssignmentServiceBroker(options: {
           review,
           {
             assignment: selected,
+            claim: {
+              assignmentDigest: digest(selected),
+              runId: op.runId,
+              leaseId: op.leaseId,
+              expiresAt:
+                op.kind === "finalize" ? op.expiresAt : review.expiresAt,
+            },
+            crmOperationId: op.crmOperationId,
             action: op.kind === "finalize" ? "finalize" : "read-finalization",
             request: {
               url: "https://mcp.bittrees.org/v1/crm-assignments",

@@ -205,9 +205,31 @@ export async function launchAssignments(
   const attester = createPublicKey(config.attestationPublicKey);
   if (attester.asymmetricKeyType !== "ed25519")
     throw Error("Assignment attester signer unavailable");
+  const centralPath = join(directory, "central-workflows.db");
+  const centralInfo = lstatSync(centralPath);
+  if (
+    !centralInfo.isFile() ||
+    centralInfo.isSymbolicLink() ||
+    realpathSync(centralPath) !== centralPath ||
+    centralInfo.uid !== process.getuid?.()
+  )
+    throw Error("Existing canonical central state required");
+  let preferred = false,
+    controlPath = join(directory, "workflow-device.enc");
+  try {
+    const parent = lstatSync(join(directory, "marketplace"));
+    if (!parent.isDirectory() || parent.isSymbolicLink())
+      throw Error("Canonical coordinator directory required");
+    lstatSync(join(directory, "marketplace/connection.enc"));
+    preferred = true;
+    controlPath = join(directory, "marketplace/connection.enc");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  const controlBytes = protectedBytes(controlPath, 65536),
+    controlPin = hash(controlBytes);
   const vault = await unlock("personal");
   admitted();
-  const centralPath = join(directory, "central-workflows.db");
   const state = () => {
     admitted();
     const snapshot = savedCentralState(centralPath, vault);
@@ -232,17 +254,9 @@ export async function launchAssignments(
     return snapshot;
   };
   const snapshot = state();
-  let coordinator: Vault | undefined,
-    controlPath = join(directory, "workflow-device.enc");
-  try {
-    lstatSync(join(directory, "marketplace/connection.enc"));
-    coordinator = await unlock("marketplace-coordinator");
-    controlPath = join(directory, "marketplace/connection.enc");
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-  }
-  const controlBytes = protectedBytes(controlPath, 65536),
-    controlPin = hash(controlBytes);
+  const coordinator = preferred
+    ? await unlock("marketplace-coordinator")
+    : undefined;
   const control = await existingEnrollmentCredential(
     directory,
     vault,

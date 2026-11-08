@@ -13,6 +13,8 @@ import {
   nativeAssignmentServiceClient,
 } from "../modules/task-sync/assignment-service-native.js";
 
+import { checkAssignmentNativeAction } from "../modules/task-sync/assignment-native-admission.js";
+
 const validator = {
   id: "integer-addition",
   revision: digest({ rule: "integer-addition", version: 1 }),
@@ -269,7 +271,20 @@ test("native effect gate rejects bypass, changed result/operation and revoked au
   };
   const broker = await launchAssignmentServiceBroker({
     current: () => review,
-    authorize: async () => {
+    authorize: async (review, binding) => {
+      checkAssignmentNativeAction(
+        review,
+        [
+          {
+            assignmentDigest: digest(f.assignment),
+            inputDigest: input.inputDigest,
+            resultDigest: input.resultDigest,
+            evidenceReference: "Arithmetic fixture",
+            reviewedAt: review.approvedAt,
+          },
+        ],
+        binding,
+      );
       if (revoked) throw Error("Revoked");
     },
     validate: async (_review, value) => {
@@ -308,9 +323,29 @@ test("native effect gate rejects bypass, changed result/operation and revoked au
     assert.equal(forward, 0);
     assert.equal((await effect()).ok, true);
     assert.equal(forward, 1);
+    assert.equal(
+      (
+        await execute({
+          kind: "assignment",
+          epoch: review.epoch,
+          input: {
+            kind: "complete",
+            assignmentId: f.assignment.assignmentId,
+            runId: f.claim.runId,
+            leaseId: f.claim.leaseId,
+            crmOperationId: input.crmOperationId,
+            operationId: randomUUID(),
+            resultDigest: input.resultDigest,
+            expiresAt: f.claim.expiresAt,
+          },
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(forward, 2);
     revoked = true;
     await assert.rejects(effect());
-    assert.equal(forward, 1);
+    assert.equal(forward, 2);
   } finally {
     await broker.close();
     f.cleanup();
@@ -346,6 +381,10 @@ test("native finalization IPC requires separate status scope and current per-wir
   const broker = await launchAssignmentServiceBroker({
     current: () => ({ ...review, completeTask: approved }),
     authorize: async (_review, binding) => {
+      checkAssignmentNativeAction(_review, [], binding);
+      assert.equal(binding.claim?.runId, input.runId);
+      assert.equal(binding.claim?.leaseId, input.leaseId);
+      assert.equal(binding.crmOperationId, input.crmOperationId);
       assert.equal(
         binding.request?.url,
         "https://mcp.bittrees.org/v1/crm-assignments",
