@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   mkdtempSync,
@@ -254,5 +255,202 @@ test("invalid scope, oversized allowance, corrupt or substituted ledger fails cl
     assert.throws(() => g.budget().reserve("central"), /Protected/);
   } finally {
     g.cleanup();
+  }
+});
+
+test("a verified shared resource is reserved once, across helpers, restart and lost replies", () => {
+  const directory = realpathSync(
+      mkdtempSync(join(tmpdir(), "shared-native-cost-")),
+    ),
+    key = randomBytes(32),
+    vault = new Vault(key);
+  let now = Date.now();
+  const review = {
+    approvalId: randomUUID(),
+    reference: "synthetic-owner-shared-window",
+    pricingReference: "synthetic-reviewed-whole-endpoint-upper-bound",
+    providers: ["neon", "vercel"],
+    authorizedAt: now - 1000,
+    authorizationExpiresAt: now + 14400000,
+    approvedAt: now - 1000,
+    expiresAt: now + 60000,
+    maximumMicroUSD: 9600000,
+    maximumAttempts: 240,
+    sharedResourceReservation: {
+      provider: "neon",
+      resourceId: "neon:fixture-project/fixture-endpoint",
+      reference: "synthetic-endpoint-covers-all-five-services",
+      maximumMicroUSD: 3650000,
+      coversFrom: now - 1000,
+      coversUntil: now + 60000 + 900000,
+    },
+    ceilings: {
+      enrollment: 17000,
+      central: 27000,
+      assignment: 32000,
+      attestation: 17000,
+    },
+  };
+  const budget = (r: unknown = review) =>
+    new NativeRuntimeCostBudget(
+      directory,
+      new Vault(key),
+      r,
+      () => {},
+      () => now,
+    );
+  const read = () => {
+    const db = new Database(join(directory, "native-runtime-cost.db"), {
+      readonly: true,
+    });
+    try {
+      const row = db.prepare("SELECT id,record FROM approvals").get() as {
+        id: string;
+        record: Buffer;
+      };
+      return vault.open<{
+        attempts: number;
+        reservedMicroUSD: number;
+        sharedReservedMicroUSD: number;
+        held: string | null;
+      }>(row.record, "native-runtime-cost:" + row.id);
+    } finally {
+      db.close();
+    }
+  };
+  try {
+    assert.equal(nativeRuntimeCostApproval.safeParse(review).success, true);
+    // Separate real processes reopen the same encrypted aggregate. A late
+    // helper still reserves the entire original resource window, not a new or
+    // prorated window. All keys/requests here are synthetic and local-only.
+    now = review.approvedAt + 30000;
+    const child = (channel: string, count: number) =>
+      execFileSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `
+      import {NativeRuntimeCostBudget} from ${JSON.stringify(new URL("../modules/task-sync/native-runtime-cost.ts", import.meta.url).href)};
+      import {Vault} from ${JSON.stringify(new URL("../modules/storage/vault.ts", import.meta.url).href)};
+      const p=process.env,b=new NativeRuntimeCostBudget(p.FIXTURE_DIRECTORY,new Vault(Buffer.from(p.FIXTURE_STORAGE_KEY,'hex')),JSON.parse(p.FIXTURE_REVIEW),()=>{},()=>Number(p.FIXTURE_NOW));
+      for(let n=0;n<Number(p.FIXTURE_COUNT);n++)b.reserve(p.FIXTURE_CHANNEL);
+    `,
+        ],
+        {
+          cwd: new URL("..", import.meta.url),
+          env: {
+            PATH: process.env.PATH,
+            TMPDIR: tmpdir(),
+            FIXTURE_DIRECTORY: directory,
+            FIXTURE_STORAGE_KEY: key.toString("hex"),
+            FIXTURE_REVIEW: JSON.stringify(review),
+            FIXTURE_NOW: String(now),
+            FIXTURE_CHANNEL: channel,
+            FIXTURE_COUNT: String(count),
+          },
+          timeout: 10000,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+    assert.equal(child("assignment", 68).toString(), "");
+    assert.equal(child("attestation", 34).toString(), "");
+    for (let n = 0; n < 8; n++) budget().reserve("enrollment");
+    const shared = read();
+    assert.equal(shared.attempts, 110);
+    assert.equal(shared.reservedMicroUSD, 6540000);
+    assert.equal(shared.sharedReservedMicroUSD, 3650000);
+    assert.equal(shared.held, null);
+    budget().reserve("central");
+    assert.equal(read().reservedMicroUSD, 6567000);
+    assert.throws(
+      () =>
+        budget({
+          ...review,
+          sharedResourceReservation: {
+            ...review.sharedResourceReservation,
+            maximumMicroUSD: 1,
+          },
+        }).reserve("assignment"),
+      /cannot be replaced/,
+    );
+    const { sharedResourceReservation: _shared, ...withoutShared } = review;
+    assert.throws(
+      () => budget(withoutShared).reserve("assignment"),
+      /cannot be replaced/,
+    );
+    assert.throws(
+      () =>
+        budget({
+          ...review,
+          sharedResourceReservation: {
+            ...review.sharedResourceReservation,
+            resourceId: "neon:another-endpoint",
+          },
+        }).reserve("assignment"),
+      /cannot be replaced/,
+    );
+    const before = read();
+    now = review.expiresAt;
+    assert.throws(() => budget().reserve("enrollment"), /expired/);
+    assert.deepEqual(read(), before);
+    // Priced downstream/idle tail is NOT authority for a new post-expiry wire.
+    now = review.expiresAt + 1;
+    assert.throws(() => budget().reserve("assignment"), /expired/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("shared resource coverage cannot omit the funding window or exceed aggregate authority", () => {
+  const f = fixture();
+  try {
+    const shared = {
+      provider: "neon",
+      resourceId: "neon:fixture-endpoint",
+      reference: "independent synthetic resource evidence",
+      maximumMicroUSD: 600000,
+      coversFrom: f.review.approvedAt,
+      coversUntil: f.review.expiresAt + 900000,
+    };
+    assert.equal(
+      nativeRuntimeCostApproval.safeParse({
+        ...f.review,
+        sharedResourceReservation: shared,
+      }).success,
+      true,
+    );
+    for (const patch of [
+      { coversFrom: shared.coversFrom + 1 },
+      { coversUntil: f.review.expiresAt - 1 },
+      { coversUntil: f.review.expiresAt + 900001 },
+      { maximumMicroUSD: 600001 },
+      { maximumMicroUSD: 0 },
+      { provider: "vercel" },
+      { resourceId: "bad resource" },
+    ])
+      assert.equal(
+        nativeRuntimeCostApproval.safeParse({
+          ...f.review,
+          sharedResourceReservation: { ...shared, ...patch },
+        }).success,
+        false,
+      );
+    // An already used legacy allowance cannot gain a different price review.
+    f.budget().reserve("enrollment");
+    assert.throws(
+      () =>
+        f
+          .budget({
+            ...f.review,
+            sharedResourceReservation: shared,
+          } as typeof f.review)
+          .reserve("enrollment"),
+      /cannot be replaced/,
+    );
+  } finally {
+    f.cleanup();
   }
 });
