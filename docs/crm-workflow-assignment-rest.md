@@ -204,6 +204,25 @@ continuity failures stay held. Existing request/byte/work limits, one-use model
 admission and current source/Role checks still apply independently. No runtime
 approval is generated, enabled or inferred by installing this code.
 
+A review may additionally specify one `sharedResourceReservation` for an
+independently verified physical Neon resource shared by every covered wire. It
+pins the provider, exact resource/evidence reference, full fixed interval and
+maximum microdollars. The interval must cover the entire funding window; at
+most fifteen additional minutes may be priced for already dispatched downstream
+work and idle suspension. That priced tail never permits another request after
+the original funding expiry. Resource identity, CU limit, current price, service
+bindings, time bounds, storage and transfer coverage must be verified separately;
+the optional schema itself is not admission or a price calculator.
+
+The full shared amount is durably reserved in the same transaction as the first
+wire, even if a helper starts late. Other helpers and restarted processes retain
+that exact reservation. Per-wire ceilings still cover every resource not already
+covered by the fixed amount. Reviews without this optional field retain their
+original full per-wire accounting. No used approval can be repriced to add or
+remove a shared reservation, change its resource/interval, recover funds, shift
+the financial window or reset attempts. Aggregate exhaustion, clock discontinuity
+and revocation continue to stop dispatch before DNS.
+
 Only the existing central signing key is used, with the exact native challenge,
 workflow and credential scope. The separate existing coordinator control bearer
 can request a signed decision attestation for that registered principal. It is

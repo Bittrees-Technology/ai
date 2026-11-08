@@ -15,7 +15,9 @@ const channels = [
 ] as const;
 export type NativeCostChannel = (typeof channels)[number];
 /** This is an operator-reviewed price ceiling, not inferred provider pricing or
- * authority. Every ceiling must include ALL downstream services for that wire.
+ * authority. Per-wire ceilings plus any independently verified fixed shared
+ * reservation must cover ALL downstream resources. Nothing is discounted by
+ * default; a shared reservation requires its own exact resource/time evidence.
  * A single approval is shared by setup, central, assignment and attester calls.
  * Its ID identifies the actual owner approval, never a fresh worker/run epoch. */
 export const nativeRuntimeCostApproval = z
@@ -30,6 +32,16 @@ export const nativeRuntimeCostApproval = z
     expiresAt: z.int().positive(),
     maximumMicroUSD: z.int().min(1).max(10000000),
     maximumAttempts: z.int().min(1).max(240),
+    sharedResourceReservation: z
+      .strictObject({
+        provider: z.literal("neon"),
+        resourceId: z.string().regex(/^[a-z0-9][a-z0-9._:/-]{0,255}$/),
+        reference: z.string().min(1).max(1024),
+        maximumMicroUSD: z.int().min(1).max(10000000),
+        coversFrom: z.int().positive(),
+        coversUntil: z.int().positive(),
+      })
+      .optional(),
     ceilings: z.strictObject({
       enrollment: microUSD,
       central: microUSD,
@@ -45,7 +57,15 @@ export const nativeRuntimeCostApproval = z
       r.authorizationExpiresAt - r.authorizedAt <= 86400000 &&
       r.approvedAt >= r.authorizedAt &&
       r.expiresAt <= r.authorizationExpiresAt &&
-      channels.every((c) => r.ceilings[c] <= r.maximumMicroUSD),
+      channels.every(
+        (c) =>
+          r.ceilings[c] + (r.sharedResourceReservation?.maximumMicroUSD ?? 0) <=
+          r.maximumMicroUSD,
+      ) &&
+      (!r.sharedResourceReservation ||
+        (r.sharedResourceReservation.coversFrom === r.approvedAt &&
+          r.sharedResourceReservation.coversUntil >= r.expiresAt &&
+          r.sharedResourceReservation.coversUntil <= r.expiresAt + 900000)),
     "One bounded funding window of at most four hours and aggregate price ceilings required",
   );
 export type NativeRuntimeCostApproval = z.infer<
@@ -57,6 +77,7 @@ const stateSchema = z.strictObject({
   reviewHash: z.string().regex(/^[a-f0-9]{64}$/),
   attempts: z.int().min(0).max(240),
   reservedMicroUSD: z.int().min(0).max(10000000),
+  sharedReservedMicroUSD: z.int().min(0).max(10000000).optional(),
   lastAt: z.int().positive(),
   held: z.string().min(1).max(128).nullable(),
 });
@@ -146,7 +167,13 @@ export class NativeRuntimeCostBudget {
           : {
               reviewHash: this.reviewHash,
               attempts: 0,
-              reservedMicroUSD: 0,
+              // Reserve the FULL reviewed shared interval before the first
+              // wire, even if this helper starts late or its reply is lost.
+              // The interval never rolls forward on helper/run restart.
+              reservedMicroUSD:
+                this.review.sharedResourceReservation?.maximumMicroUSD ?? 0,
+              sharedReservedMicroUSD:
+                this.review.sharedResourceReservation?.maximumMicroUSD ?? 0,
               lastAt: at,
               held: null,
             };
@@ -156,7 +183,10 @@ export class NativeRuntimeCostBudget {
           );
         if (
           state.attempts > this.review.maximumAttempts ||
-          state.reservedMicroUSD > this.review.maximumMicroUSD
+          state.reservedMicroUSD > this.review.maximumMicroUSD ||
+          (state.sharedReservedMicroUSD ?? 0) !==
+            (this.review.sharedResourceReservation?.maximumMicroUSD ?? 0) ||
+          state.reservedMicroUSD < (state.sharedReservedMicroUSD ?? 0)
         )
           throw Error("Native aggregate cost continuity invalid");
         failure =
