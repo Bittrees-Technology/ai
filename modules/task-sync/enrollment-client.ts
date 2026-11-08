@@ -125,6 +125,10 @@ export class EnrollmentClient extends ProtectedLoopbackClient {
 export function nativeEnrollmentClient(
   environment: NodeJS.ProcessEnv = process.env,
 ): EnrollmentClient | undefined {
+  const purpose = environment.BITTREES_ENROLLMENT_PURPOSE;
+  if (purpose === "central-workflows") return undefined;
+  if (purpose !== undefined && purpose !== "task-sync")
+    throw Error("Unsupported native enrollment purpose");
   const endpoint = environment.BITTREES_ENROLLMENT_HELPER_URL;
   const token = environment.BITTREES_ENROLLMENT_HELPER_TOKEN;
   if (endpoint === undefined && token === undefined) return undefined;

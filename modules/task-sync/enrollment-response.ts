@@ -98,6 +98,39 @@ export function validateEnrollmentComplete(
     review,
     now,
   );
+  return validateEnrollmentCompletionReceipt(raw, review, request, now);
+}
+/** Read-only reconciliation of an already completed ORIGINAL owner request.
+ * Challenge freshness remains mandatory for new mutations. Here the challenge
+ * must be the previously authenticated, persisted one, inside its original
+ * native review; this establishes historical enrollment only, never a grant. */
+export function validateEnrollmentCompletionReceipt(
+  raw: unknown,
+  review: EnrollmentReview,
+  challenge: unknown,
+  now = Date.now(),
+) {
+  const request = runtimeEnrollmentSchema.parse(challenge);
+  if (
+    !Number.isSafeInteger(now) ||
+    review.expiresAt <= now ||
+    request.issuedAt > now + 1000 ||
+    request.issuedAt < review.expiresAt - 300000 ||
+    [
+      "principal",
+      "publicKey",
+      "authorityId",
+      "deviceId",
+      "sourceWorkspace",
+    ].some(
+      (key) =>
+        request[key as keyof typeof request] !==
+        review[key as keyof typeof review],
+    )
+  )
+    throw Error(
+      "Original persisted enrollment challenge and current review required",
+    );
   if (digest(request) !== review.enrollmentRequestDigest)
     throw Error("Unreviewed completion challenge");
   const key = credential(review.publicKey);

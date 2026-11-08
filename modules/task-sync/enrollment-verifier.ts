@@ -5,6 +5,7 @@ import {
   validateEnrollmentStart,
   validateEnrollmentPoll,
   validateEnrollmentComplete,
+  validateEnrollmentCompletionReceipt,
   validateEnrollmentAttestation,
 } from "./enrollment-response.js";
 const time = z.iso.datetime({ offset: true });
@@ -67,7 +68,12 @@ export class EnrollmentResponseVerifier {
         return;
       case "poll":
         if (z.object({ status: z.string() }).parse(raw).status === "complete")
-          validateEnrollmentComplete(raw, review, this.challenge(), now);
+          validateEnrollmentCompletionReceipt(
+            raw,
+            review,
+            this.challenge(),
+            now,
+          );
         else validateEnrollmentPoll(raw, review, now);
         return;
       case "attest":

@@ -106,8 +106,11 @@ test("completion and signed attestation bind exact device without granting permi
   const { canonical } = await import("../modules/contracts/canonical-json.js");
   const { runtimeAttestationMessage } =
     await import("../modules/task-sync/runtime-contract.js");
-  const { validateEnrollmentComplete, validateEnrollmentAttestation } =
-    await import("../modules/task-sync/enrollment-response.js");
+  const {
+    validateEnrollmentComplete,
+    validateEnrollmentAttestation,
+    validateEnrollmentCompletionReceipt,
+  } = await import("../modules/task-sync/enrollment-response.js");
   const hash = (v: unknown) =>
     createHash("sha256").update(canonical(v)).digest("hex");
   const device = generateKeyPairSync("ed25519"),
@@ -147,6 +150,31 @@ test("completion and signed attestation bind exact device without granting permi
     validateEnrollmentComplete(complete, reviewed, c, now),
     complete,
   );
+  assert.throws(
+    () => validateEnrollmentComplete(complete, reviewed, c, now + 30000),
+    /Stale/,
+  );
+  assert.deepEqual(
+    validateEnrollmentCompletionReceipt(complete, reviewed, c, now + 30000),
+    complete,
+  );
+  assert.throws(() =>
+    validateEnrollmentCompletionReceipt(
+      complete,
+      { ...reviewed, enrollmentRequestDigest: "a".repeat(64) },
+      c,
+      now + 30000,
+    ),
+  );
+  assert.throws(() =>
+    validateEnrollmentCompletionReceipt(
+      complete,
+      reviewed,
+      c,
+      reviewed.expiresAt,
+    ),
+  );
+
   assert.throws(() =>
     validateEnrollmentComplete(
       { ...complete, result: { ...complete.result, permissionsGranted: true } },

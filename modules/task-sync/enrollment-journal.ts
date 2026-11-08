@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import { z } from "zod";
 import { Vault } from "../storage/vault.js";
+import { createHash } from "node:crypto";
+import { canonical } from "../contracts/canonical-json.js";
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const bindingSchema = z.strictObject({
   operationId: z.uuid(),
@@ -9,6 +11,15 @@ const bindingSchema = z.strictObject({
   requestDigest: digest,
 });
 export type EnrollmentOperationBinding = z.infer<typeof bindingSchema>;
+export function enrollmentOperationId(
+  epoch: string,
+  kind: "start" | "complete",
+) {
+  const id = createHash("sha256")
+    .update(canonical({ epoch, kind }))
+    .digest("hex");
+  return `${id.slice(0, 8)}-${id.slice(8, 12)}-4${id.slice(13, 16)}-a${id.slice(17, 20)}-${id.slice(20, 32)}`;
+}
 type Entry = EnrollmentOperationBinding & {
   state: "reserved" | "confirmed";
   responseDigest?: string;
@@ -100,6 +111,24 @@ export class EnrollmentJournal {
           );
       })
       .immediate();
+  }
+  /** Only after the original authenticated poll has independently verified the
+   * completed receipt. Preserve its mutation ID/body digest; no dispatch, new
+   * reservation, budget refund or replacement completion is permitted here. */
+  confirmCompletionRead(epoch: string, verifiedResponseDigest: string) {
+    this.assertCurrent();
+    const row = this.read(enrollmentOperationId(epoch, "complete"));
+    if (!row || row.epoch !== epoch || row.kind !== "complete")
+      throw Error("Original enrollment completion reservation required");
+    this.confirm(
+      {
+        operationId: row.operationId,
+        epoch: row.epoch,
+        kind: row.kind,
+        requestDigest: row.requestDigest,
+      },
+      verifiedResponseDigest,
+    );
   }
   close() {
     this.db.close();
