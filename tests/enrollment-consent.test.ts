@@ -123,6 +123,6 @@ test("paid native consent discloses one shared limit and revokes when any funded
     assert.equal(f.revoked(), 1);
   }
   const f = fixture();
-  f.setCost({ ...cost, maximumMicroUSD: 1000001 });
+  f.setCost({ ...cost, maximumMicroUSD: 10000001 });
   assert.throws(() => f.consent.propose());
 });

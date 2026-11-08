@@ -61,7 +61,7 @@ struct EnrollmentReviewDisplay {
             guard Set(disclosure.keys) == common.union(["costBasis", "maximumAdditionalMicroUSD", "maximumAggregateAttempts", "approvalId", "approvalReference", "approvalDigest", "approvalExpiresAt", "limitScope"]),
                   disclosure["costBasis"] as? String == "explicit-one-time-approval",
                   disclosure["limitScope"] as? String == "shared-native-runtime",
-                  let maximum = integer(disclosure["maximumAdditionalMicroUSD"]), maximum >= 1, maximum <= 1000000,
+                  let maximum = integer(disclosure["maximumAdditionalMicroUSD"]), maximum >= 1, maximum <= 10000000,
                   let attempts = integer(disclosure["maximumAggregateAttempts"]), attempts >= 1, attempts <= 240,
                   let approval = text(disclosure["approvalId"], maximum: 128),
                   let reference = text(disclosure["approvalReference"], maximum: 1024),
@@ -69,7 +69,8 @@ struct EnrollmentReviewDisplay {
                   let approvalExpiry = integer(disclosure["approvalExpiresAt"]), approvalExpiry >= expiry else { return nil }
             let amount = Int(maximum), fraction = String(format: "%06d", amount % 1000000).replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
             let dollars = String(amount / 1000000) + (fraction.isEmpty ? "" : "." + fraction)
-            spending = "Combined additional spending limit: US$\(dollars) on existing Neon/Vercel services. This same allowance covers enrollment, Workflows, CRM assignments and attestations; each helper does not receive another allowance. At most \(Int(attempts)) aggregate attempts.\nApproval: \(approval)\nReference: \(reference)"
+            let fundingEnds = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: approvalExpiry / 1000))
+            spending = "Combined additional spending limit: US$\(dollars) on existing Neon/Vercel services. This same allowance covers enrollment, Workflows, CRM assignments and attestations; each helper does not receive another allowance. At most \(Int(attempts)) aggregate attempts.\nFunding expires: \(fundingEnds)\nApproval: \(approval)\nReference: \(reference)"
         }
         return EnrollmentReviewDisplay(digest: digest, wallet: wallet, device: device, workspace: workspace, authority: authority, principal: principal, publicKey: publicKey, expiresAt: expiry, spendingSummary: spending, identityPurpose: purpose)
     }

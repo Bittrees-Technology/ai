@@ -145,6 +145,45 @@ test("same owner approval cannot be repriced or renewed under another helper/epo
   }
 });
 
+test("an explicitly larger funding review retains the shared cap across helper restarts", () => {
+  const f = fixture();
+  try {
+    const review = {
+      ...f.review,
+      authorizationExpiresAt: f.review.approvedAt + 14400000,
+      expiresAt: f.review.approvedAt + 14400000,
+      maximumMicroUSD: 10000000,
+      ceilings: {
+        enrollment: 1000000,
+        central: 1000000,
+        assignment: 1000000,
+        attestation: 1000000,
+      },
+    };
+    assert.equal(nativeRuntimeCostApproval.safeParse(review).success, true);
+    const channels = [
+      "enrollment",
+      "central",
+      "assignment",
+      "attestation",
+    ] as const;
+    for (let i = 0; i < 10; i++) f.budget(review).reserve(channels[i % 4]!);
+    assert.throws(
+      () => f.budget(review).reserve("enrollment"),
+      /spending budget exhausted/,
+    );
+    assert.throws(
+      () =>
+        f.budget({ ...review, maximumMicroUSD: 9000000 }).reserve("central"),
+      /cannot be replaced/,
+    );
+    f.clock(review.expiresAt);
+    assert.throws(() => f.budget(review), /expired/);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("count, revocation, expiry and clock continuity deny without restoring reservations", () => {
   const f = fixture();
   try {
@@ -179,14 +218,15 @@ test("invalid scope, oversized allowance, corrupt or substituted ledger fails cl
     assert.equal(
       nativeRuntimeCostApproval.safeParse({
         ...f.review,
-        maximumMicroUSD: 1000001,
+        maximumMicroUSD: 10000001,
       }).success,
       false,
     );
     assert.equal(
       nativeRuntimeCostApproval.safeParse({
         ...f.review,
-        expiresAt: f.review.approvedAt + 900001,
+        authorizationExpiresAt: f.review.approvedAt + 86400000,
+        expiresAt: f.review.approvedAt + 14400001,
       }).success,
       false,
     );

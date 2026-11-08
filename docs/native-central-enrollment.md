@@ -33,6 +33,13 @@ most five minutes and never outlives the funding window. The Mac parser independ
 checks Node's digest, canonical Ed25519 public key, identity purpose, destinations,
 limits and both cost modes. A paid review cannot be presented as a zero-cost one.
 
+The shared funding guard supports an explicitly approved total of at most US$10
+and a fixed funding window of at most four hours. Those are supported bounds,
+not default approval. The native display shows the actual amount and funding
+deadline. Enrollment consent still lasts at most five minutes; a longer funding
+window does not enroll a device, extend a work lease or reset task retries. An
+existing ledger review remains immutable under its original approval reference.
+
 ## Typed owner flow
 
 After native consent, the core receives only a purpose-specific loopback capability

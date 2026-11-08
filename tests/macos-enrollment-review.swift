@@ -29,8 +29,11 @@ import CryptoKit
         let original = proposal["disclosure"] as! [String: Any]
         if original["costBasis"] != nil {
             precondition(EnrollmentReviewDisplay.parse(proposal)!.spendingSummary.contains("US$1"))
+            let extended = try repin(original.merging(["maximumAdditionalMicroUSD": 10000000]) { _, new in new })
+            precondition(EnrollmentReviewDisplay.parse(extended)!.spendingSummary.contains("US$10 on existing Neon/Vercel"))
+            precondition(EnrollmentReviewDisplay.parse(extended)!.spendingSummary.contains("Funding expires:"))
             for change: [String: Any] in [
-                ["maximumAdditionalMicroUSD": 1000001], ["maximumAdditionalMicroUSD": true],
+                ["maximumAdditionalMicroUSD": 10000001], ["maximumAdditionalMicroUSD": true],
                 ["costBasis": "verified-included-usage"], ["limitScope": "per-helper"],
                 ["maximumAggregateAttempts": 241], ["approvalReference": ""],
                 ["approvalExpiresAt": 1], ["additionalSpendingUSD": 0],

@@ -98,7 +98,7 @@ const costEvidence = z
       "verified-included-usage",
       "explicit-one-time-approval",
     ]),
-    maximumAdditionalMicroUSD: z.int().min(0).max(1000000),
+    maximumAdditionalMicroUSD: z.int().min(0).max(10000000),
     runtimeApproval: nativeRuntimeCostApproval.optional(),
     reference: z.string().min(1).max(1024),
   })
