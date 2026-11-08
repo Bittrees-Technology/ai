@@ -28,7 +28,7 @@ export const nativeRuntimeCostApproval = z
     providers: z.tuple([z.literal("neon"), z.literal("vercel")]),
     approvedAt: z.int().positive(),
     expiresAt: z.int().positive(),
-    maximumMicroUSD: microUSD,
+    maximumMicroUSD: z.int().min(1).max(10000000),
     maximumAttempts: z.int().min(1).max(240),
     ceilings: z.strictObject({
       enrollment: microUSD,
@@ -40,13 +40,13 @@ export const nativeRuntimeCostApproval = z
   .refine(
     (r) =>
       r.expiresAt > r.approvedAt &&
-      r.expiresAt - r.approvedAt <= 900000 &&
+      r.expiresAt - r.approvedAt <= 14400000 &&
       r.authorizationExpiresAt > r.authorizedAt &&
       r.authorizationExpiresAt - r.authorizedAt <= 86400000 &&
       r.approvedAt >= r.authorizedAt &&
       r.expiresAt <= r.authorizationExpiresAt &&
       channels.every((c) => r.ceilings[c] <= r.maximumMicroUSD),
-    "One bounded window of at most fifteen minutes and aggregate price ceilings required",
+    "One bounded funding window of at most four hours and aggregate price ceilings required",
   );
 export type NativeRuntimeCostApproval = z.infer<
   typeof nativeRuntimeCostApproval
@@ -56,7 +56,7 @@ const hash = (v: unknown) =>
 const stateSchema = z.strictObject({
   reviewHash: z.string().regex(/^[a-f0-9]{64}$/),
   attempts: z.int().min(0).max(240),
-  reservedMicroUSD: z.int().min(0).max(1000000),
+  reservedMicroUSD: z.int().min(0).max(10000000),
   lastAt: z.int().positive(),
   held: z.string().min(1).max(128).nullable(),
 });
