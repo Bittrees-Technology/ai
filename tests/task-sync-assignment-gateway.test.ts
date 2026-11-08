@@ -4,6 +4,7 @@ import { randomUUID, generateKeyPairSync, createHash, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import type { request } from "node:https";
+import { nativeAssignmentRequest } from "../modules/task-sync/assignment-native.js";
 import { canonical } from "../modules/contracts/canonical-json.js";
 import { digest } from "../modules/task-sync/proof-contract.js";
 import { TaskSyncRunBudget } from "../modules/task-sync/run-budget.js";
@@ -480,4 +481,221 @@ test("assignment HTTPS rejects old task routes, extra keys, private DNS and revo
   current = false;
   await assert.rejects(adapter.dispatch(url, init), /Revoked/);
   assert.equal(lookups, 1);
+});
+
+for (const kind of [
+  "intake",
+  "task",
+  "write",
+  "receipt",
+  "finalize",
+  "finalization",
+] as const) {
+  test("native challenge pins exact " + kind + " authority", () => {
+    const f = fixture(),
+      refs = {
+        assignmentId: f.assignment.assignmentId,
+        runId: randomUUID(),
+        leaseId: randomUUID(),
+        crmOperationId: randomUUID(),
+      };
+    const result = { summary: "Checked synthetic source" },
+      operationId = randomUUID(),
+      resultDigest = digest(result);
+    const operation =
+      kind === "intake" || kind === "task"
+        ? { kind, assignmentId: refs.assignmentId }
+        : kind === "write"
+          ? { kind, ...refs, result }
+          : kind === "receipt"
+            ? { kind, ...refs }
+            : kind === "finalize"
+              ? {
+                  kind,
+                  ...refs,
+                  operationId,
+                  resultDigest,
+                  expiresAt: f.now + 30000,
+                }
+              : { kind, ...refs, operationId, resultDigest };
+    const parameters =
+      kind === "intake" || kind === "task"
+        ? {
+            tool:
+              kind === "intake" ? "workflow_crm_intake" : "workflow_crm_task",
+            arguments: {
+              connectionId: f.connectionId,
+              workflowId: f.assignment.workflowId,
+              assignmentDigest: digest(f.assignment),
+            },
+          }
+        : kind === "write" || kind === "receipt"
+          ? {
+              tool:
+                kind === "write"
+                  ? "workflow_crm_result_write"
+                  : "workflow_crm_result_read",
+              arguments: {
+                connectionId: f.connectionId,
+                assignmentDigest: digest(f.assignment),
+                runId: refs.runId,
+                leaseId: refs.leaseId,
+                crmOperationId: refs.crmOperationId,
+                ...(kind === "write" ? { resultDigest } : {}),
+              },
+            }
+          : {
+              tool: "workflow_crm_completion",
+              arguments: {
+                runId: refs.runId,
+                operationId,
+                method: kind === "finalize" ? "PUT" : "GET",
+                connectionId: f.connectionId,
+                assignmentDigest: digest(f.assignment),
+                leaseId: refs.leaseId,
+                crmOperationId: refs.crmOperationId,
+                resultDigest,
+              },
+            };
+    const review = { ...f.review, completeTask: true };
+    const challenge = {
+      ...f.challenge,
+      parameters,
+      request: {
+        ...f.challenge.request,
+        action:
+          kind === "intake" || kind === "task"
+            ? "workflow:claim"
+            : "workflow:complete",
+        operationId:
+          kind === "write" || kind === "receipt"
+            ? refs.crmOperationId
+            : operationId,
+        parametersDigest: digest(parameters),
+      },
+    };
+    assert.deepEqual(
+      validateAssignmentChallenge(
+        challenge,
+        review,
+        f.identity,
+        f.connectionId,
+        operation,
+        f.now,
+      ),
+      challenge,
+    );
+    assert.throws(() =>
+      validateAssignmentChallenge(
+        { ...challenge, parameters: { ...parameters, extra: true } },
+        review,
+        f.identity,
+        f.connectionId,
+        operation,
+        f.now,
+      ),
+    );
+    assert.throws(() =>
+      validateAssignmentChallenge(
+        challenge,
+        review,
+        f.identity,
+        randomUUID(),
+        operation,
+        f.now,
+      ),
+    );
+    if (kind === "finalize" || kind === "finalization")
+      assert.throws(() =>
+        validateAssignmentChallenge(
+          challenge,
+          { ...review, completeTask: false },
+          f.identity,
+          f.connectionId,
+          operation,
+          f.now,
+        ),
+      );
+    if (
+      "crmOperationId" in operation &&
+      (kind === "write" || kind === "receipt")
+    )
+      assert.throws(() =>
+        validateAssignmentChallenge(
+          challenge,
+          review,
+          f.identity,
+          f.connectionId,
+          { ...operation, crmOperationId: randomUUID() },
+          f.now,
+        ),
+      );
+  });
+}
+
+test("native REST translation retains original IDs for source finalization and readback", async () => {
+  const f = fixture(),
+    id = randomUUID(),
+    crmOperationId = randomUUID(),
+    claim = {
+      assignmentDigest: digest(f.assignment),
+      runId: randomUUID(),
+      leaseId: randomUUID(),
+      expiresAt: f.now + 30000,
+    };
+  const sent: unknown[] = [];
+  const request = nativeAssignmentRequest({
+    execute: async (raw) => {
+      sent.push(raw);
+      return Response.json({});
+    },
+  });
+  for (const action of ["finalize", "read-finalization"] as const) {
+    await request(
+      "https://crm.bittrees.org/api/automation/tasks/" +
+        f.assignment.taskId +
+        "/finalizations/" +
+        id,
+      {
+        method: action === "finalize" ? "PUT" : "GET",
+        ...(action === "finalize"
+          ? { headers: { "Idempotency-Key": id } }
+          : {}),
+      },
+      {
+        assignment: f.assignment,
+        claim,
+        action,
+        crmOperationId,
+        resultDigest: "d".repeat(64),
+      },
+    );
+  }
+  assert.deepEqual(sent, [
+    {
+      kind: "assignment",
+      input: {
+        kind: "finalize",
+        assignmentId: f.assignment.assignmentId,
+        runId: claim.runId,
+        leaseId: claim.leaseId,
+        crmOperationId,
+        operationId: id,
+        resultDigest: "d".repeat(64),
+        expiresAt: claim.expiresAt,
+      },
+    },
+    {
+      kind: "assignment",
+      input: {
+        kind: "finalization",
+        assignmentId: f.assignment.assignmentId,
+        runId: claim.runId,
+        leaseId: claim.leaseId,
+        crmOperationId,
+        operationId: id,
+        resultDigest: "d".repeat(64),
+      },
+    },
+  ]);
 });

@@ -1,3 +1,4 @@
+import { launchAssignments } from "./assignment-launch.js";
 import { Vault } from "../../modules/storage/vault.js";
 import {
   loadStorageKey,
@@ -94,7 +95,7 @@ async function runOfflineChild(
 }
 
 // A trusted native caller can supply a preassembled session. The executable
-// entry point supplies none until production authority and cost are approved.
+// normal launcher separately assembles only already-approved protected setup.
 type AssignmentBroker = Awaited<
   ReturnType<typeof launchAssignmentServiceBroker>
 >;
@@ -314,9 +315,26 @@ async function runMacCompanion(
       console.error("Protected task sync broker unavailable");
     }
   }
+  let ownedAssignments: Awaited<ReturnType<typeof launchAssignments>> = null;
+  if (!assignments) {
+    try {
+      ownedAssignments = await launchAssignments(
+        "/Users/jhineline/Library/Application Support/Bittrees AI",
+        unlockNative,
+      );
+    } catch {
+      console.error(
+        "Assignment connection held: current native owner, source, validator or runtime approval unavailable",
+      );
+    }
+  }
   const closeHelpers = async () => {
     try {
-      await workflowSetup?.close();
+      try {
+        await ownedAssignments?.close();
+      } finally {
+        await workflowSetup?.close();
+      }
     } finally {
       try {
         await enrollment?.service.close();
@@ -345,7 +363,7 @@ async function runMacCompanion(
       ...central?.environment,
       ...taskSync?.environment,
       ...cdRegistration?.environment,
-      ...assignments?.environment,
+      ...(assignments ?? ownedAssignments)?.environment,
       BITTREES_STORAGE_ACTIVITY_URL: `http://127.0.0.1:${activityAddress.port}/activity`,
       BITTREES_STORAGE_ACTIVITY_TOKEN: activityToken,
       BITTREES_MYCLOUD_HELPER_URL: `http://127.0.0.1:${address.port}`,

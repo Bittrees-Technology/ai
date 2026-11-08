@@ -26,11 +26,22 @@ export const assignmentGatewayOperation = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("receipt"), ...lease }),
   z.strictObject({
+    kind: z.literal("lease"),
+    ...lease,
+    resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.strictObject({
     kind: z.literal("complete"),
     ...completion,
     expiresAt: z.int().positive(),
   }),
   z.strictObject({ kind: z.literal("completion"), ...completion }),
+  z.strictObject({
+    kind: z.literal("finalize"),
+    ...completion,
+    expiresAt: z.int().positive(),
+  }),
+  z.strictObject({ kind: z.literal("finalization"), ...completion }),
 ]);
 
 export type AssignmentGatewayOperation = z.infer<
@@ -79,15 +90,23 @@ export function nativeAssignmentRequest(client: NativeTaskSyncClient) {
       case "read-receipt":
         input = { kind: "receipt", ...lease };
         break;
+      case "finalize":
       case "complete":
         input = {
-          kind: "complete",
+          kind: binding.action === "finalize" ? "finalize" : "complete",
           ...completion,
           expiresAt: binding.claim?.expiresAt,
         };
         break;
+      case "read-finalization":
       case "read-completion":
-        input = { kind: "completion", ...completion };
+        input = {
+          kind:
+            binding.action === "read-finalization"
+              ? "finalization"
+              : "completion",
+          ...completion,
+        };
         break;
       default:
         throw Error("Assignment action has no gateway operation");

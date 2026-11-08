@@ -1,9 +1,16 @@
 import Database from "better-sqlite3";
-import { createHash, createPublicKey, createPrivateKey } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  createPrivateKey,
+  sign,
+} from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { Vault } from "../storage/vault.js";
+import { assignmentAuthorityRequest } from "../task-sync/assignment-proof-contract.js";
+import { canonical } from "../contracts/canonical-json.js";
 import { finitePilotReviewSchema } from "./central-finite-pilot.js";
 const identitySchema = z.strictObject({
   principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
@@ -23,7 +30,12 @@ const configurationSchema = z.strictObject({
   mcpToken: z.string().regex(/^[\x21-\x7e]{16,4096}$/),
   finitePilot: finitePilotReviewSchema.optional(),
 });
-function read(path: string, vault: Vault) {
+function read(
+  path: string,
+  vault: Vault,
+  decision?: z.infer<typeof assignmentAuthorityRequest>,
+  now = Date.now(),
+) {
   if (!isAbsolute(path) || realpathSync(path) !== path)
     throw Error("Canonical existing central state path required");
   const before = lstatSync(path);
@@ -56,6 +68,26 @@ function read(path: string, vault: Vault) {
           identity.credentialId
       )
         throw Error("Saved central signing identity is inconsistent");
+      let signature: string | undefined;
+      if (decision) {
+        if (
+          decision.principal !== identity.principal ||
+          decision.credentialId !== identity.credentialId ||
+          decision.tenant !== config.tenant ||
+          decision.workspace !== config.workspace ||
+          decision.resource !== "workflow:" + config.workflowId ||
+          decision.issuedAt > now + 1000 ||
+          decision.issuedAt < now - 15000
+        )
+          throw Error("Existing central assignment signing scope changed");
+        signature = sign(
+          null,
+          Buffer.from(
+            "Bittrees MCP authority request v1\n" + canonical(decision),
+          ),
+          privateKey,
+        ).toString("base64");
+      }
       const after = lstatSync(path);
       if (
         after.isSymbolicLink() ||
@@ -81,6 +113,7 @@ function read(path: string, vault: Vault) {
             .digest("hex"),
         },
         token: config.mcpToken,
+        ...(signature ? { signature } : {}),
       };
     })();
   } finally {
@@ -97,4 +130,16 @@ export function savedCentralState(path: string, vault: Vault) {
 /** Native-only existing credential reader; no fallback or credential creation. */
 export function existingCentralCredential(path: string, vault: Vault) {
   return read(path, vault).token;
+}
+
+/** Native-only decision signer. Uses the existing central key in its own vault;
+ * returns only a signature, never enrolls, creates or exports a signing key. */
+export function signExistingCentralAssignmentRequest(
+  path: string,
+  vault: Vault,
+  raw: unknown,
+  now = Date.now(),
+) {
+  const request = assignmentAuthorityRequest.parse(raw);
+  return read(path, vault, request, now).signature!;
 }
