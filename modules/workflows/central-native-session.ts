@@ -16,6 +16,7 @@ export function nativeCentralSessionFactory(options: {
   vault: Vault;
   credential: () => string;
   admitted: () => boolean;
+  reserveCost?: () => void;
   now?: () => number;
 }) {
   if (!isAbsolute(options.path))
@@ -37,10 +38,17 @@ export function nativeCentralSessionFactory(options: {
       now,
     );
     try {
-      const transport = new CentralNativeHTTPS(plan, budget.reserve, () => {
-        admitted();
-        return options.credential();
-      });
+      const transport = new CentralNativeHTTPS(
+        plan,
+        (input) => {
+          budget.reserve(input);
+          options.reserveCost?.();
+        },
+        () => {
+          admitted();
+          return options.credential();
+        },
+      );
       return { dispatch: transport.dispatch, close: () => budget.close() };
     } catch (error) {
       budget.close();

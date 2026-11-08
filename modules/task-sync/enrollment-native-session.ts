@@ -18,6 +18,7 @@ export function nativeEnrollmentSessionFactory(options: {
   pinnedSigner: string;
   credential: () => string;
   admitted: () => boolean;
+  reserveCost?: () => void;
   now?: () => number;
 }) {
   if (!isAbsolute(options.path))
@@ -62,7 +63,12 @@ export function nativeEnrollmentSessionFactory(options: {
       path,
       vault,
       active,
-      transport.dispatch,
+      (plan, signal) => {
+        admit(plan.epoch);
+        signal.throwIfAborted();
+        options.reserveCost?.();
+        return transport.dispatch(plan, signal);
+      },
       pinnedSigner,
       now,
     );

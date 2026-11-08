@@ -42,6 +42,14 @@ test("native launcher needs protected current operator configuration before any 
       JSON.stringify({ ...config, costBasis: "unknown" }),
     );
     await assert.rejects(launchEnrollment(dir, unlock, () => 1500));
+    await writeFile(
+      dir + "/native-enrollment.json",
+      JSON.stringify({ ...config, costBasis: "explicit-one-time-approval" }),
+    );
+    await assert.rejects(
+      launchEnrollment(dir, unlock, () => 1500),
+      /aggregate approval/,
+    );
     assert.equal(unlocks, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });

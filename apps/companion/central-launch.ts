@@ -2,6 +2,10 @@ import { readFileSync, lstatSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  NativeRuntimeCostBudget,
+  nativeRuntimeCostApproval,
+} from "../../modules/task-sync/native-runtime-cost.js";
 import { Vault } from "../../modules/storage/vault.js";
 import {
   loadStorageKey,
@@ -25,25 +29,39 @@ const configuration = z.strictObject({
   evidenceDigest: hex,
   sourceAccessApproved: z.literal(true),
 });
-const evidence = z.strictObject({
-  version: z.literal(1),
-  id: z.string().min(1).max(128),
-  observedAt: z.number().int().nonnegative(),
-  validUntil: z.number().int().nonnegative(),
-  account: z.string().min(1).max(128),
-  project: z.string().min(1).max(128),
-  plan: z.string().min(1).max(128),
-  services: z.tuple([
-    z.literal("mcp.bittrees.org"),
-    z.literal("roles.bittrees.org"),
-    z.literal("workflow.bittrees.org"),
-  ]),
-  resourceClass: z.string().min(1).max(256),
-  overageControls: z.string().min(1).max(256),
-  costBasis: z.enum(["verified-included-usage", "explicit-one-time-approval"]),
-  aggregateAttemptCeilingMicroUSD: z.number().int().min(0).max(1000000),
-  reference: z.string().min(1).max(1024),
-});
+const evidence = z
+  .strictObject({
+    version: z.literal(1),
+    id: z.string().min(1).max(128),
+    observedAt: z.number().int().nonnegative(),
+    validUntil: z.number().int().nonnegative(),
+    account: z.string().min(1).max(128),
+    project: z.string().min(1).max(128),
+    plan: z.string().min(1).max(128),
+    services: z.tuple([
+      z.literal("mcp.bittrees.org"),
+      z.literal("roles.bittrees.org"),
+      z.literal("workflow.bittrees.org"),
+    ]),
+    resourceClass: z.string().min(1).max(256),
+    overageControls: z.string().min(1).max(256),
+    costBasis: z.enum([
+      "verified-included-usage",
+      "explicit-one-time-approval",
+    ]),
+    runtimeApproval: nativeRuntimeCostApproval.optional(),
+    aggregateAttemptCeilingMicroUSD: z.number().int().min(0).max(1000000),
+    reference: z.string().min(1).max(1024),
+  })
+  .refine(
+    (p) =>
+      p.costBasis === "verified-included-usage"
+        ? p.runtimeApproval === undefined
+        : p.runtimeApproval !== undefined &&
+          p.aggregateAttemptCeilingMicroUSD ===
+            p.runtimeApproval.ceilings.central,
+    "Actual included coverage or exact explicit aggregate approval required",
+  );
 function protectedBytes(path: string) {
   const before = lstatSync(path);
   if (
@@ -108,6 +126,10 @@ export async function launchCentral(
         proof.validUntil - proof.observedAt <= 3600000 &&
         proof.id === budget.evidenceId &&
         proof.costBasis === budget.costBasis &&
+        (!proof.runtimeApproval ||
+          (proof.runtimeApproval.approvedAt <= budget.approvedAt &&
+            proof.runtimeApproval.expiresAt >= budget.expiresAt &&
+            proof.runtimeApproval.maximumMicroUSD >= budget.maximumMicroUSD)) &&
         proof.aggregateAttemptCeilingMicroUSD ===
           budget.attemptCeilingMicroUSD &&
         hash(proofBytes) === config.evidenceDigest &&
@@ -121,6 +143,18 @@ export async function launchCentral(
   if (!admitted())
     throw Error("Current native central source/cost evidence required");
   const vault = await unlock();
+  const costs = proof.runtimeApproval
+    ? new NativeRuntimeCostBudget(
+        directory,
+        vault,
+        proof.runtimeApproval,
+        () => {
+          if (!admitted())
+            throw Error("Native central source/cost admission changed");
+        },
+        now,
+      )
+    : undefined;
   const state = () => {
     const value = savedCentralState(statePath, vault);
     if (hash(JSON.stringify(value)) !== config.stateDigest)
@@ -164,6 +198,7 @@ export async function launchCentral(
       vault,
       credential,
       admitted,
+      reserveCost: () => costs?.reserve("central"),
       now,
     }),
     now,

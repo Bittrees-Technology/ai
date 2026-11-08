@@ -40,6 +40,7 @@ import { nativeAssignmentServiceClient } from "../modules/task-sync/assignment-s
 import { digest } from "../modules/task-sync/proof-contract.js";
 import { exactOutcomeValidatorPin } from "../modules/task-sync/assignment-exact-validator.js";
 import { launchAssignments } from "../apps/companion/assignment-launch.js";
+import { NativeRuntimeCostBudget } from "../modules/task-sync/native-runtime-cost.js";
 const hash = (v: string | Buffer) =>
   createHash("sha256").update(v).digest("hex");
 function fixture() {
@@ -440,6 +441,94 @@ function fixture() {
     cleanup: () => rmSync(directory, { recursive: true, force: true }),
   };
 }
+test("native paid admission shares helper reservations and survives assignment review replacement", async () => {
+  const f = fixture();
+  let service: Awaited<ReturnType<typeof f.launch>>;
+  try {
+    const runtimeApproval = {
+      approvalId: randomUUID(),
+      reference: "synthetic-only-no-runtime-approval",
+      pricingReference: "synthetic-aggregate-downstream-ceilings",
+      authorizedAt: f.config.review.approvedAt,
+      authorizationExpiresAt: f.config.review.expiresAt,
+      providers: ["neon", "vercel"],
+      approvedAt: f.config.review.approvedAt,
+      expiresAt: f.config.review.expiresAt,
+      maximumMicroUSD: 600000,
+      maximumAttempts: 20,
+      ceilings: {
+        enrollment: 100000,
+        central: 100000,
+        assignment: 100000,
+        attestation: 100000,
+      },
+    };
+    const proofPath = join(f.directory, "native-assignments-evidence.json");
+    const proof = JSON.parse(readFileSync(proofPath, "utf8"));
+    Object.assign(proof, {
+      costBasis: "explicit-one-time-approval",
+      maximumAdditionalMicroUSD: 600000,
+      runtimeApproval,
+    });
+    const bytes = JSON.stringify(proof);
+    writeFileSync(proofPath, bytes);
+    f.config.evidenceDigest = hash(bytes);
+    f.save();
+    service = await f.launch();
+    assert.ok(service);
+    let client = nativeAssignmentServiceClient(service.environment)!;
+    const input = {
+      assignment: f.assignment,
+      claim: {
+        assignmentDigest: digest(f.assignment),
+        runId: randomUUID(),
+        leaseId: randomUUID(),
+        expiresAt: f.now + 60000,
+      },
+      crmOperationId: randomUUID(),
+      inputDigest: digest("12 + 30"),
+      resultDigest: digest({ summary: "42" }),
+      result: { summary: "42" },
+    };
+    const validate = () =>
+      client.execute(
+        { kind: "validate", epoch: f.config.review.epoch, input },
+        AbortSignal.timeout(3000),
+      );
+    assert.equal((await (await validate()).json()).validation.accepted, true);
+    assert.equal(f.networkCalls(), 6);
+    await service.close();
+    // Neither another helper nor a new request-budget epoch gets fresh funding.
+    assert.throws(
+      () =>
+        new NativeRuntimeCostBudget(
+          f.directory,
+          f.vault,
+          runtimeApproval,
+          () => {},
+          () => f.now,
+        ).reserve("enrollment"),
+      /spending budget exhausted/,
+    );
+    f.config.review.epoch = randomUUID();
+    f.config.budget.runId = randomUUID();
+    f.config.budget.scopeDigest = assignmentGatewayScope(
+      f.config.review,
+      f.identity,
+      f.config.connectionId,
+    );
+    f.save();
+    service = await f.launch();
+    assert.ok(service);
+    client = nativeAssignmentServiceClient(service.environment)!;
+    await assert.rejects(validate());
+    assert.equal(f.networkCalls(), 6);
+  } finally {
+    await service!?.close();
+    f.cleanup();
+  }
+});
+
 test("absent native setup cannot unlock, create storage or begin network work", async () => {
   const f = fixture();
   try {
