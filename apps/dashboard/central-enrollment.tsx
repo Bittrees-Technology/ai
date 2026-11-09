@@ -5,6 +5,7 @@ type View = {
   available: boolean;
   ready?: boolean;
   state?: CentralEnrollmentStatus["state"];
+  originalReviewExpiresAt?: number;
   originalReviewExpired?: boolean;
 };
 type NativeReview = { postMessage: (body: null) => Promise<boolean> };
@@ -18,7 +19,8 @@ export function CentralEnrollment({
   const [view, setView] = useState<View>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [rolesOpened, setRolesOpened] = useState(false);
+    [rolesOpened, setRolesOpened] = useState(false),
+    [now, setNow] = useState(Date.now);
   const active = useRef(false);
   const inFlight = useRef(false);
   const nativeReview = (
@@ -43,8 +45,34 @@ export function CentralEnrollment({
     };
   }, []);
 
+  const state = view?.state;
+  const complete = state?.status === "complete";
+  const waiting = state?.status === "pending" || state?.status === "approved";
+  const deadline = waiting
+    ? Math.min(
+        view?.originalReviewExpiresAt ?? Infinity,
+        Date.parse(state.expiresAt) || Infinity,
+      )
+    : Infinity;
+  const expired =
+    view?.originalReviewExpired ||
+    state?.status === "expired" ||
+    now >= deadline;
+  useEffect(() => {
+    if (!Number.isFinite(deadline)) return;
+    const timer = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.max(0, deadline - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [deadline]);
+
   async function act(action: "review" | "start" | "poll" | "status") {
     if (inFlight.current) return;
+    if (action === "poll" && (expired || Date.now() >= deadline)) {
+      setNow(Date.now());
+      return;
+    }
     inFlight.current = true;
     setBusy(true);
     setError("");
@@ -67,7 +95,10 @@ export function CentralEnrollment({
         action === "status"
           ? await api(connection)
           : await api(connection, "POST", { action });
-      if (active.current) setView(result);
+      // A local status read without active consent cannot supersede a known
+      // expired request. Keep the existing review visible for reconciliation.
+      if (active.current && (action !== "status" || result.ready || !expired))
+        setView(result);
     } catch {
       if (active.current)
         setError(
@@ -79,11 +110,7 @@ export function CentralEnrollment({
     }
   }
 
-  const state = view?.state;
-  const complete = state?.status === "complete";
-  const expired = view?.originalReviewExpired || state?.status === "expired";
   const reviewUrl = state && "reviewUrl" in state ? state.reviewUrl : null;
-  const waiting = state?.status === "pending" || state?.status === "approved";
   const readyToConfirm = rolesOpened || state?.status === "approved";
   const step = complete || (waiting && readyToConfirm) ? 3 : waiting ? 2 : 1;
   const button = (label: string, action: Parameters<typeof act>[0]) => (
@@ -134,7 +161,7 @@ export function CentralEnrollment({
         <>
           <p role="status">
             {expired
-              ? "The Roles review expired."
+              ? "The connection review expired."
               : "This request needs attention."}{" "}
             The original request is saved.
           </p>
