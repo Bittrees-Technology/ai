@@ -20,7 +20,9 @@ import {
   runtimeHandoffMessage,
   runtimeEnrollmentMessage,
   runtimeAttestationMessage,
+  runtimeReconciliationMessage,
 } from "../modules/task-sync/runtime-contract.js";
+import { enrollmentOperationId } from "../modules/task-sync/enrollment-journal.js";
 import { nativeCentralEnrollmentSessionFactory } from "../modules/workflows/central-enrollment-session.js";
 const hash = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
@@ -54,6 +56,8 @@ function fixture() {
     allowed = true,
     dropStart = false,
     dropComplete = false,
+    preventCommit = false,
+    wrongSettlement = false,
     committed = false,
     revokeOnPoll = false,
     sourceRevoked = false;
@@ -67,10 +71,11 @@ function fixture() {
     sourceWorkspace: randomUUID(),
     ownerWallet: "0x" + "a".repeat(40),
   };
-  const requestId = randomUUID(),
-    pollSecret = randomBytes(32).toString("hex"),
-    profileId = randomUUID();
-  let challenge: any, result: any;
+  let requestId = randomUUID(),
+    pollSecret = randomBytes(32).toString("hex");
+  const profileId = randomUUID();
+  let challenge: any, result: any, candidateDigest: string, rolesExpiry: string;
+  const originalEpoch = review.epoch;
   const seal = vault.seal.bind(vault);
   let failSave = false,
     handoffWrites = 0;
@@ -93,6 +98,7 @@ function fixture() {
     poll: 0,
     attest: 0,
     complete: 0,
+    reconcile: 0,
     reservations: 0,
   };
   const send = ((url: URL, options: any, callback: any) => {
@@ -176,7 +182,11 @@ function fixture() {
             const action = url.pathname.split("/").at(-1);
             if (action === "start") {
               counts.start++;
-              assert.equal(counts.start, 1);
+              assert(counts.start <= 2);
+              if (counts.start === 2) {
+                requestId = randomUUID();
+                pollSecret = randomBytes(32).toString("hex");
+              }
               assert.equal(body.request.principal, saved.principal);
               assert.equal(
                 verify(
@@ -187,13 +197,15 @@ function fixture() {
                 ),
                 true,
               );
+              candidateDigest = hash(body.request);
+              rolesExpiry = new Date(time + 60000).toISOString();
               response = {
                 id: requestId,
                 pollSecret,
                 reviewUrl:
                   "https://roles.bittrees.org/profile?runtimeRequest=" +
                   requestId,
-                expiresAt: new Date(time + 60000).toISOString(),
+                expiresAt: rolesExpiry,
               };
               if (dropStart) {
                 req.emit(
@@ -253,7 +265,7 @@ function fixture() {
                 runtimeBindingDigest: hash(binding),
                 permissionsGranted: false,
               };
-              committed = true;
+              committed = !preventCommit;
               response = { status: "complete", result };
               if (dropComplete) {
                 req.emit(
@@ -262,6 +274,41 @@ function fixture() {
                 );
                 return;
               }
+            } else if (action === "reconcile") {
+              counts.reconcile++;
+              assert.equal(body.pollSecret, pollSecret);
+              assert.equal(body.request.id, requestId);
+              assert.equal(body.request.candidateDigest, candidateDigest);
+              assert.equal(
+                body.request.operationId,
+                enrollmentOperationId(originalEpoch, "complete"),
+              );
+              assert.equal(
+                body.request.pollSecretHash,
+                createHash("sha256").update(pollSecret).digest("hex"),
+              );
+              assert.equal(
+                verify(
+                  null,
+                  Buffer.from(runtimeReconciliationMessage(body.request)),
+                  key.publicKey,
+                  Buffer.from(body.signature, "base64"),
+                ),
+                true,
+              );
+              response = {
+                version: 1,
+                id: requestId,
+                operationId: wrongSettlement
+                  ? randomUUID()
+                  : body.request.operationId,
+                candidateDigest,
+                expiresAt: rolesExpiry,
+                checkedAt: time,
+                ...(committed
+                  ? { status: "committed", result }
+                  : { status: "not-committed" }),
+              };
             } else throw Error("Unapproved fixture source route");
           }
           const res = Readable.from([JSON.stringify(response)]) as any;
@@ -308,6 +355,23 @@ function fixture() {
       }
     },
     counts,
+    archive: () => {
+      const db = new Database(path, { readonly: true });
+      try {
+        const row = db
+          .prepare("SELECT id,epoch,record FROM central_native_handoff_archive")
+          .get() as { id: string; epoch: string; record: Buffer } | undefined;
+        return (
+          row &&
+          vault.open<any>(
+            row.record,
+            "central-native-handoff-archive:" + row.id + ":" + row.epoch,
+          )
+        );
+      } finally {
+        db.close();
+      }
+    },
     failHandoffSave: () => {
       failSave = true;
       handoffWrites = 0;
@@ -315,8 +379,12 @@ function fixture() {
     dropStart: () => {
       dropStart = true;
     },
-    dropComplete: () => {
+    dropComplete: (commits = true) => {
       dropComplete = true;
+      preventCommit = !commits;
+    },
+    wrongSettlement: () => {
+      wrongSettlement = true;
     },
     revokeDevice: () => {
       sourceRevoked = true;
@@ -336,6 +404,116 @@ function fixture() {
   };
 }
 const signal = () => AbortSignal.timeout(4000);
+test("a separately approved replacement archives the uncommitted handoff and retains its reservations", async () => {
+  const f = fixture();
+  let native = f.make();
+  try {
+    const first = await native.execute({ action: "start" }, signal());
+    f.dropComplete(false);
+    await native.execute({ action: "poll" }, signal());
+    const original = f.journal();
+    native.close();
+    f.restartReview(240000);
+    native = f.make();
+    assert.equal(
+      (await native.execute({ action: "reconcile" }, signal())).reconciliation,
+      "not-committed",
+    );
+    await assert.rejects(
+      () => native.execute({ action: "start" }, signal()),
+      /Separate fresh native approval/,
+    );
+    assert.equal(f.counts.start, 1);
+    assert.equal(f.archive(), undefined);
+    native.close();
+    f.restartReview();
+    native = f.make();
+    assert.equal(
+      (await native.execute({ action: "status" }, signal()))
+        .replacementReviewReady,
+      true,
+    );
+    const replacement = await native.execute({ action: "start" }, signal());
+    assert.equal(replacement.state.status, "pending");
+    assert.notEqual(
+      (replacement.state as any).reviewUrl,
+      (first.state as any).reviewUrl,
+    );
+    assert.equal(replacement.permissionsGranted, false);
+    assert.equal(
+      f.archive()?.handoff.reviewUrl,
+      (first.state as any).reviewUrl,
+    );
+    assert.equal(f.archive()?.settlement.outcome, "not-committed");
+    assert.deepEqual(
+      f
+        .journal()
+        .filter((entry) =>
+          original.some((old) => old.operationId === entry.operationId),
+        ),
+      original,
+    );
+    assert.equal(f.journal().length, original.length + 1);
+    assert.equal(f.counts.start, 2);
+    assert.equal(f.counts.complete, 1);
+  } finally {
+    native.close();
+    f.cleanup();
+  }
+});
+for (const outcome of [
+  "not-committed",
+  "committed",
+  "wrong-operation",
+] as const) {
+  test(`expired native enrollment reconciles the original reservation with ${outcome} evidence`, async () => {
+    const f = fixture();
+    let native = f.make();
+    try {
+      await native.execute({ action: "start" }, signal());
+      f.dropComplete(outcome === "committed");
+      await native.execute({ action: "poll" }, signal());
+      const original = f.journal();
+      assert.equal(
+        original.find((entry) => entry.kind === "complete")?.state,
+        "reserved",
+      );
+      const priorCounts = { ...f.counts };
+      native.close();
+      f.restartReview(240000);
+      native = f.make();
+      if (outcome === "wrong-operation") {
+        f.wrongSettlement();
+        await assert.rejects(
+          () => native.execute({ action: "reconcile" }, signal()),
+          /differs from the original/,
+        );
+      } else {
+        const status = await native.execute({ action: "reconcile" }, signal());
+        assert.equal(status.reconciliation, outcome);
+        assert.equal(Boolean(status.enrollment), outcome === "committed");
+        assert(!JSON.stringify(status).includes(f.pollSecret));
+        native.close();
+        f.restartReview();
+        native = f.make();
+        assert.equal(
+          (await native.execute({ action: "reconcile" }, signal()))
+            .reconciliation,
+          outcome,
+        );
+      }
+      assert.equal(f.counts.reconcile, 1);
+      assert.equal(f.counts.start, priorCounts.start);
+      assert.equal(f.counts.complete, priorCounts.complete);
+      assert.equal(f.counts.reservations, priorCounts.reservations + 2);
+      assert.equal(f.counts.heartbeat, priorCounts.heartbeat + 1);
+      assert.deepEqual(f.journal(), original);
+    } finally {
+      native.close();
+      f.cleanup();
+    }
+  });
+}
 test("native central enrollment uses the existing central signer through verified fixed source exchange", async () => {
   const f = fixture();
   let owner = f.make();
@@ -366,6 +544,7 @@ test("native central enrollment uses the existing central signer through verifie
       poll: 1,
       attest: 1,
       complete: 1,
+      reconcile: 0,
       reservations: 6,
     });
     owner.close();
@@ -412,6 +591,7 @@ test("lost completion is reconciled by original poll after restart and fresh con
       poll: 2,
       attest: 1,
       complete: 1,
+      reconcile: 0,
       reservations: 8,
     });
   } finally {

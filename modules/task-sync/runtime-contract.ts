@@ -46,6 +46,21 @@ export const runtimeAttestationSchema = z.strictObject({
 });
 export const runtimeEnrollmentMessage = (r: unknown) =>
   "Bittrees local AI enrollment v1\n" + canonical(r);
+export const runtimeReconciliationRequest = z.strictObject({
+  version: z.literal(1),
+  id: z.uuid(),
+  operationId: z.uuid(),
+  candidateDigest: hash,
+  pollSecretHash: hash,
+  issuedAt: z.int().positive(),
+});
+export const runtimeReconciliationBody = z.strictObject({
+  request: runtimeReconciliationRequest,
+  pollSecret: hash,
+  signature: z.string().min(1).max(200),
+});
+export const runtimeReconciliationMessage = (r: unknown) =>
+  "Bittrees native enrollment reconciliation v1\n" + canonical(r);
 export const leaseActivationMessage = (r: unknown) =>
   "Bittrees MCP lease activation v1\n" + canonical(r);
 export const runtimeAttestationMessage = (r: unknown) =>

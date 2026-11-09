@@ -14,7 +14,10 @@ import {
 import type { EnrollmentReview } from "../task-sync/enrollment-transport-plan.js";
 import type { EnrollmentSession } from "../task-sync/enrollment-session.js";
 import { validateEnrollmentStart } from "../task-sync/enrollment-response.js";
+import { enrollmentOperationId } from "../task-sync/enrollment-journal.js";
 import { centralEnrollmentSigner } from "./central-enrollment-signer.js";
+import { centralEnrollmentSettlement } from "./central-enrollment-reconciliation.js";
+import type { centralEnrollmentReconciliation } from "./central-enrollment-reconciliation.js";
 
 import {
   centralEnrollmentCommand,
@@ -45,6 +48,7 @@ export const centralEnrollmentRecordSchema = z.strictObject({
   review: reviewSchema,
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
+  settlement: centralEnrollmentSettlement.optional(),
 });
 const recordSchema = centralEnrollmentRecordSchema;
 export type CentralEnrollmentRecord = z.infer<typeof recordSchema>;
@@ -65,8 +69,8 @@ function binding(review: EnrollmentReview) {
 /** Native-only orchestration. The core can ask start/poll/status, never supply a
  * key, request, challenge, polling secret or signature. One durable start marker
  * per existing central identity blocks a fresh POST after uncertainty/restart.
- * Fresh owner reviews may continue the ORIGINAL session inside its ORIGINAL
- * deadline; they cannot replace its nonce, scope, source IDs or retry budget. */
+ * Fresh owner reviews may continue the original session inside its deadline
+ * or reconcile it read-only after expiry. They cannot replay its mutations. */
 export class CentralEnrollmentOwner {
   private readonly handoff: RuntimeHandoff;
   private session?: NativeSession;
@@ -83,9 +87,15 @@ export class CentralEnrollmentOwner {
       store: {
         read(): unknown;
         write(record: CentralEnrollmentRecord): void;
+        replace?(
+          original: CentralEnrollmentRecord,
+          replacement: CentralEnrollmentRecord,
+        ): void;
+        canReplace?(): boolean;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
+      reconcile?: ReturnType<typeof centralEnrollmentReconciliation>;
       now?: () => number;
     },
   ) {
@@ -157,6 +167,17 @@ export class CentralEnrollmentOwner {
         hash(record.handoff.candidate) !== hash(record.candidate))
     )
       throw Error("Central enrollment continuity invalid");
+    if (
+      record.settlement &&
+      (!record.candidate ||
+        !record.handoff ||
+        record.settlement.operationId !==
+          enrollmentOperationId(record.review.epoch, "complete") ||
+        record.settlement.candidateDigest !== hash(record.candidate) ||
+        (record.settlement.outcome === "committed") !==
+          (record.handoff.status === "complete"))
+    )
+      throw Error("Original central enrollment settlement binding invalid");
     return record;
   }
   private activeReview(): EnrollmentReview {
@@ -239,6 +260,7 @@ export class CentralEnrollmentOwner {
   private summary() {
     const current = this.activeReview(),
       record = this.record();
+    const liveReview = this.options.current();
     const status = this.handoff.status();
     return centralEnrollmentStatus.parse({
       purpose: "central-workflows",
@@ -250,6 +272,17 @@ export class CentralEnrollmentOwner {
       permissionsGranted: false,
       originalReviewExpiresAt: current.expiresAt,
       originalReviewExpired: current.expiresAt <= this.now(),
+      ...(record?.settlement
+        ? { reconciliation: record.settlement.outcome }
+        : {}),
+      ...(record && this.replacementReview(record)
+        ? { replacementReviewReady: true }
+        : {}),
+      ...(record?.settlement?.outcome === "not-committed" &&
+      liveReview &&
+      liveReview.epoch === record.settlement.recoveryEpoch
+        ? { recoveryReviewExpiresAt: liveReview.expiresAt }
+        : {}),
       state:
         (status?.message
           ? {
@@ -268,6 +301,67 @@ export class CentralEnrollmentOwner {
       enrollment: this.handoff.result(),
     });
   }
+  private replacementReview(record: CentralEnrollmentRecord) {
+    const fresh = this.options.current();
+    if (
+      !fresh ||
+      !this.options.store.replace ||
+      this.options.store.canReplace?.() === false ||
+      this.session ||
+      this.signer ||
+      record.settlement?.outcome !== "not-committed" ||
+      fresh.epoch === record.review.epoch ||
+      fresh.epoch === record.settlement.recoveryEpoch
+    )
+      return null;
+    this.activeReview();
+    return reviewSchema.parse(fresh);
+  }
+  private async startReplacement(
+    original: CentralEnrollmentRecord,
+    signal: AbortSignal,
+  ) {
+    const review = this.replacementReview(original);
+    const replace = this.options.store.replace;
+    if (!review || !replace)
+      throw Error("Separate fresh native approval required for a replacement");
+    const expected = hash(review);
+    const current = () => {
+      const live = this.options.current(),
+        now = this.now();
+      return !this.closing &&
+        live &&
+        live.expiresAt > now &&
+        live.expiresAt <= now + 300000 &&
+        hash(live) === expected
+        ? review
+        : null;
+    };
+    const transport = this.options.session(current);
+    try {
+      await transport.execute({ operation: "heartbeat" }, signal);
+      signal.throwIfAborted();
+      if (!current())
+        throw Error("Replacement review changed before persistence");
+      this.options.store.atomic(() => {
+        if (hash(this.record()) !== hash(original))
+          throw Error("Original settlement changed before replacement");
+        replace(original, { review });
+      });
+    } catch (error) {
+      transport.close();
+      throw error;
+    }
+    this.session = transport;
+    await this.handoff.start({
+      kind: "enroll",
+      authorityId: review.authorityId,
+      deviceId: review.deviceId,
+      sourceWorkspace: review.sourceWorkspace,
+      ownerWallet: review.ownerWallet,
+    });
+    return this.summary();
+  }
   async execute(raw: unknown, signal: AbortSignal) {
     const command = centralEnrollmentCommand.parse(raw);
     signal.throwIfAborted();
@@ -278,6 +372,48 @@ export class CentralEnrollmentOwner {
     this.signal = signal;
     try {
       let record = this.record();
+      if (
+        command.action === "start" &&
+        record?.settlement?.outcome === "not-committed"
+      )
+        return await this.startReplacement(
+          record,
+          AbortSignal.any([signal, this.stop.signal]),
+        );
+      if (command.action === "reconcile") {
+        if (!record?.handoff || !this.options.reconcile)
+          throw Error(
+            "Original native enrollment is unavailable for reconciliation",
+          );
+        if (record.settlement || record.handoff.status === "complete")
+          return this.summary();
+        const original = record;
+        const { settlement, result } = await this.options.reconcile(
+          original,
+          AbortSignal.any([signal, this.stop.signal]),
+        );
+        signal.throwIfAborted();
+        this.activeReview();
+        if (this.options.current()?.epoch !== settlement.recoveryEpoch)
+          throw Error("Native recovery review changed before persistence");
+        this.update((saved) => {
+          if (hash(saved) !== hash(original))
+            throw Error("Original enrollment changed during reconciliation");
+          return {
+            ...saved,
+            settlement,
+            handoff: result
+              ? {
+                  ...original.handoff!,
+                  status: "complete",
+                  result,
+                  message: undefined,
+                }
+              : original.handoff,
+          };
+        });
+        return this.summary();
+      }
       if (!record) {
         if (command.action !== "start")
           throw Error("Explicit central enrollment start required");

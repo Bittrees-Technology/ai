@@ -6,10 +6,11 @@ import {
   type EnrollmentTransportPlan,
 } from "./enrollment-transport-plan.js";
 import { z } from "zod";
+import { runtimeReconciliationBody } from "./runtime-contract.js";
 type Plan = ReturnType<EnrollmentTransportPlan["prepare"]>;
 const paths = new Set([
   "https://ai.bittrees.org/api/workflows",
-  ...["start", "poll", "complete"].map(
+  ...["start", "poll", "complete", "reconcile"].map(
     (x) => "https://roles.bittrees.org/api/mcp/runtime/" + x,
   ),
 ]);
@@ -28,7 +29,8 @@ export function checkEnrollmentHTTPSPlan(plan: Plan) {
     const action = plan.url.slice(plan.url.lastIndexOf("/") + 1);
     const body = z.record(z.string(), z.unknown()).parse(plan.body);
     if ("operation" in body) throw Error("Unexpected operation override");
-    enrollmentOperation.parse({ operation: action, ...body });
+    if (action === "reconcile") runtimeReconciliationBody.parse(body);
+    else enrollmentOperation.parse({ operation: action, ...body });
   } else {
     const body = z.record(z.string(), z.unknown()).parse(plan.body);
     if (body.action === "device")

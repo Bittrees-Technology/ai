@@ -100,9 +100,11 @@ extension Companion {
             let publicKey = display.publicKey, expiry = display.expiresAt
             let alert = NSAlert()
             alert.messageText = "Connect this Mac to Workflows?"
-            alert.informativeText = "\(display.identityPurpose)\n\nWallet: \(wallet)\nMac: \(device)\nWorkspace: \(workspace)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(SHA256.hash(data: Data(publicKey.utf8)).map({ String(format: "%02x", $0) }).joined())\n\nContact ai.bittrees.org and roles.bittrees.org for up to five minutes, with at most 108 requests. \(display.spendingSummary)\n\nThis permits the enrollment request only. Roles approval and workflow authority remain separate."
+            let central = display.identityPurpose.contains("central Workflows")
+            let action = central ? "This allows checking the saved enrollment outcome or requesting a new review after the original outcome is recorded. Roles approval and workflow authority remain separate." : "This permits the enrollment request only. Roles approval and workflow authority remain separate."
+            alert.informativeText = "\(display.identityPurpose)\n\nWallet: \(wallet)\nMac: \(device)\nWorkspace: \(workspace)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(SHA256.hash(data: Data(publicKey.utf8)).map({ String(format: "%02x", $0) }).joined())\n\nContact ai.bittrees.org and roles.bittrees.org for up to five minutes, with at most 108 requests. \(display.spendingSummary)\n\n\(action)"
             alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: onResult == nil ? "Allow enrollment request" : "Request review in Roles")
+            alert.addButton(withTitle: central ? "Allow Workflows setup" : (onResult == nil ? "Allow enrollment request" : "Request review in Roles"))
             alert.beginSheetModal(for: self.window) { response in
                 let approving = response == .alertSecondButtonReturn && Date().timeIntervalSince1970 * 1000 < expiry
                 let body: [String: Any] = approving ? ["action": "approve", "digest": digest] : ["action": "revoke"]

@@ -1098,6 +1098,7 @@ export function localApi({
       .discriminatedUnion("action", [
         z.strictObject({ action: z.literal("start") }),
         z.strictObject({ action: z.literal("poll") }),
+        z.strictObject({ action: z.literal("reconcile") }),
       ])
       .parse(req.body);
     const controller = new AbortController();
