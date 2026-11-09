@@ -163,3 +163,44 @@ test("cancelling the native review does not send a Roles request", async ({
   await expect(review).toBeEnabled();
   expect(posts).toBe(0);
 });
+
+test("an expired native review keeps the original request visible without another POST", async ({
+  page,
+}) => {
+  const start = new Date("2026-11-09T15:26:00Z");
+  await page.clock.install({ time: start });
+  const requests: string[] = [];
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    requests.push(route.request().method());
+    return route.fulfill({
+      json:
+        requests.length === 1
+          ? {
+              available: true,
+              ready: true,
+              originalReviewExpiresAt: start.getTime() + 60_000,
+              state: {
+                status: "approved",
+                reviewUrl: "https://roles.bittrees.org/review/example",
+                expiresAt: new Date(start.getTime() + 90_000).toISOString(),
+              },
+            }
+          : { available: true, ready: false },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  const confirm = setup.getByRole("button", { name: "Confirm connection" });
+  await expect(confirm).toBeVisible();
+  await page.clock.fastForward(61_000);
+  await expect(confirm).toHaveCount(0);
+  const saved = setup.getByText("The original request is saved.", {
+    exact: false,
+  });
+  await expect(saved).toBeVisible();
+  await setup.getByRole("button", { name: "Check connection status" }).click();
+  await expect(saved).toBeVisible();
+  expect(requests).toEqual(["GET", "GET"]);
+});
