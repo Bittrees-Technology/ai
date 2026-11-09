@@ -399,9 +399,23 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     @objc func copyPairingCode() {
         guard ready, engine?.isRunning == true else { return }
         let file = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Bittrees AI/pairing-code.txt")
-        guard let code = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), code.range(of: "^[a-f0-9]{24}$", options: .regularExpression) != nil else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
+        let alert = NSAlert()
+        if let code = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           code.range(of: "^[a-f0-9]{24}$", options: .regularExpression) != nil {
+            NSPasteboard.general.clearContents()
+            if NSPasteboard.general.setString(code, forType: .string) {
+                alert.messageText = "Pairing code copied"
+                alert.informativeText = "Paste it into Connect to this Mac in your browser and choose Open workspace. If the code has expired or was already used, quit and reopen Bittrees AI, then copy the new code."
+            } else {
+                alert.messageText = "Pairing code could not be copied"
+                alert.informativeText = "Try Copy pairing code again."
+            }
+        } else {
+            alert.messageText = "Pairing code unavailable"
+            alert.informativeText = "Quit and reopen Bittrees AI, then choose Copy pairing code again."
+        }
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
     }
     func local(_ url: URL) -> Bool {
         url.scheme == "http" && url.host == "127.0.0.1" && url.port == home.port && url.user == nil && url.password == nil

@@ -122,6 +122,9 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix .integration/news
       - run: npm ci --prefix .integration/autonote
+        env:
+          # This integration stubs inference and does not need CUDA.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - run: npm ci --prefix .integration/crm
       - name: Actual companion, AutoNote and CRM synthetic acceptance
         run: npx tsx scripts/autonote-integration-check.ts
@@ -236,6 +239,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm ci --prefix .integration/autonote
+        env:
+          # Browser fixtures exercise the protocol without CUDA inference.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - name: Prepare pinned browser key compatibility providers
         run: |
           git fetch --no-tags --depth=1 origin 84132a15d0ddf6027bc9bc8d8d9dbf4217fa69f0
