@@ -53,6 +53,7 @@ export const runtimeReconciliationRequest = z.strictObject({
   candidateDigest: hash,
   pollSecretHash: hash,
   issuedAt: z.int().positive(),
+  operation: z.literal("start").optional(),
 });
 export const runtimeReconciliationBody = z.strictObject({
   request: runtimeReconciliationRequest,

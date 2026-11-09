@@ -7,6 +7,27 @@ import type { EnrollmentReview } from "../task-sync/enrollment-transport-plan.js
 import { CentralEnrollmentOwner } from "./central-enrollment-owner.js";
 import { centralEnrollmentReconciliation } from "./central-enrollment-reconciliation.js";
 
+const archiveTable = `CREATE TABLE IF NOT EXISTS central_native_handoff_archive(
+  id TEXT NOT NULL, epoch TEXT NOT NULL, record BLOB NOT NULL, PRIMARY KEY(id,epoch)
+)`;
+
+function ensureArchive(db: Database.Database) {
+  db.transaction(() => {
+    db.exec(archiveTable);
+    const columns = db.pragma("table_info(central_native_handoff_archive)") as {
+      name: string;
+      pk: number;
+    }[];
+    if (columns.find((column) => column.name === "epoch")?.pk !== 0) return;
+    db.exec(`
+      ALTER TABLE central_native_handoff_archive RENAME TO central_native_handoff_archive_legacy;
+      ${archiveTable};
+      INSERT INTO central_native_handoff_archive SELECT id,epoch,record FROM central_native_handoff_archive_legacy;
+      DROP TABLE central_native_handoff_archive_legacy;
+    `);
+  }).immediate();
+}
+
 /** A separate central-purpose native store. No task-sync state or credential
  * fallback. Construct only after exact native owner consent; no network occurs
  * until a typed start/poll command. Existing original-session receipts and
@@ -68,14 +89,21 @@ export function nativeCentralEnrollmentSessionFactory(
       db.exec(
         "CREATE TABLE IF NOT EXISTS central_native_handoffs(id TEXT PRIMARY KEY,record BLOB NOT NULL)",
       );
-      db.exec(
-        "CREATE TABLE IF NOT EXISTS central_native_handoff_archive(id TEXT PRIMARY KEY,epoch TEXT NOT NULL,record BLOB NOT NULL)",
-      );
+      ensureArchive(db);
       const id = createHash("sha256")
           .update(review.principal + "\n" + review.publicKey)
           .digest("hex"),
         aad = "central-native-handoff:" + id;
       const admittedReview = () => (options.admitted() ? current() : null);
+      const archiveCount = db.prepare(
+        "SELECT count(*) AS n FROM central_native_handoff_archive WHERE id=?",
+      );
+      const canReplace = (operationKind: "start" | "complete") => {
+        const { n } = archiveCount.get(id) as { n: number };
+        // A second replacement is available only after a confirmed start
+        // with no completion reservation. All earlier epochs remain archived.
+        return n === 0 || (n === 1 && operationKind === "start");
+      };
       const owner = new CentralEnrollmentOwner({
         path: options.centralStatePath,
         vault: options.vault,
@@ -100,6 +128,8 @@ export function nativeCentralEnrollmentSessionFactory(
             ).run(id, options.vault.seal(record, aad));
           },
           replace: (original, replacement) => {
+            if (!canReplace(original.settlement?.operationKind ?? "complete"))
+              throw Error("Central enrollment replacement limit reached");
             if (JSON.stringify(original).length > 128000)
               throw Error("Original enrollment archive limit exceeded");
             db.prepare(
@@ -119,12 +149,7 @@ export function nativeCentralEnrollmentSessionFactory(
               "UPDATE central_native_handoffs SET record=? WHERE id=?",
             ).run(options.vault.seal(replacement, aad), id);
           },
-          canReplace: () =>
-            !db
-              .prepare(
-                "SELECT 1 FROM central_native_handoff_archive WHERE id=?",
-              )
-              .get(id),
+          canReplace,
           atomic: (work) => db.transaction(work).immediate(),
         },
         session: sessionFactory,

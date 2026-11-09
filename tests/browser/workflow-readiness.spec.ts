@@ -194,6 +194,10 @@ test("an expired native review keeps the original request visible without anothe
   });
   const confirm = setup.getByRole("button", { name: "Confirm connection" });
   await expect(confirm).toBeVisible();
+  await expect(setup.locator("time")).toHaveAttribute(
+    "datetime",
+    new Date(start.getTime() + 60_000).toISOString(),
+  );
   await page.clock.fastForward(61_000);
   await expect(confirm).toHaveCount(0);
   const saved = setup.getByText("The original request is saved.", {
