@@ -5,6 +5,7 @@ import { Templates } from "./templates.js";
 import { WorkTools } from "./work-tools.js";
 import { Workflows } from "./workflows.js";
 export function WorkflowWorkspace(props: {
+  initialView?: "permissions";
   api: (
     path: string,
     method?: string,
@@ -16,7 +17,7 @@ export function WorkflowWorkspace(props: {
   onTask: (id: string) => void;
   onActivity: () => void;
 }) {
-  const [view, setView] = useState("sequences");
+  const [view, setView] = useState<string>(props.initialView ?? "sequences");
   return (
     <section className="content" aria-label="Workflows">
       <h2>Workflows</h2>
@@ -31,7 +32,7 @@ export function WorkflowWorkspace(props: {
             ["agents", "Task queue & agents"],
             ["instructions", "Saved instructions"],
             ["recurring", "Recurring work"],
-            ["permissions", "Permissions & sync"],
+            ["permissions", "Connection & permissions"],
           ] as const
         ).map(([id, label]) => (
           <button

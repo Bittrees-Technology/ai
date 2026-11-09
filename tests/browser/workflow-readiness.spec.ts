@@ -27,6 +27,9 @@ test("missing native transport prevents permission requests and blind owner enro
     });
   });
   await page.goto("/?workflow-readiness");
+  await page
+    .getByText("Other sync and permission settings", { exact: true })
+    .click();
   await expect(
     page.getByRole("region", { name: "Native workflow setup required" }),
   ).toBeVisible();
@@ -62,6 +65,9 @@ test("supplied capability with denied source status still cannot enable owner re
     }),
   );
   await page.goto("/?workflow-readiness");
+  await page
+    .getByText("Other sync and permission settings", { exact: true })
+    .click();
   await expect(
     page.getByText("Workflow permissions could not be verified.", {
       exact: false,
@@ -70,4 +76,90 @@ test("supplied capability with denied source status still cannot enable owner re
   await expect(
     page.getByRole("button", { name: "Connect this Mac in Roles" }),
   ).toBeDisabled();
+});
+
+test("a native review leads to one Roles request and confirmation", async ({
+  page,
+}) => {
+  let reads = 0;
+  const actions: string[] = [];
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "webkit", {
+      value: {
+        messageHandlers: {
+          reviewWorkflowEnrollment: {
+            postMessage: async (message: unknown) => message === null,
+          },
+        },
+      },
+    });
+  });
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({
+        json:
+          ++reads === 1
+            ? { available: true, ready: false }
+            : {
+                available: true,
+                ready: true,
+                state: { status: "not-started" },
+              },
+      });
+    const { action } = route.request().postDataJSON();
+    actions.push(action);
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        state:
+          action === "start"
+            ? {
+                status: "pending",
+                reviewUrl: "https://roles.bittrees.org/review/example",
+              }
+            : { status: "complete" },
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  await setup.getByRole("button", { name: "Review this Mac" }).click();
+  await expect(
+    setup.getByRole("link", { name: "Open Roles review" }),
+  ).toBeVisible();
+  expect(actions).toEqual(["start"]);
+  await setup
+    .getByRole("button", { name: "Already approved? Confirm connection" })
+    .click();
+  await expect(
+    setup.getByText("This Mac is registered.", { exact: false }),
+  ).toBeVisible();
+  expect(actions).toEqual(["start", "poll"]);
+});
+
+test("cancelling the native review does not send a Roles request", async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "webkit", {
+      value: {
+        messageHandlers: {
+          reviewWorkflowEnrollment: { postMessage: async () => false },
+        },
+      },
+    });
+  });
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    if (route.request().method() === "POST") posts++;
+    return route.fulfill({ json: { available: true, ready: false } });
+  });
+  await page.goto("/?workflow-readiness");
+  const review = page.getByRole("button", { name: "Review this Mac" });
+  await review.click();
+  await expect(review).toBeEnabled();
+  expect(posts).toBe(0);
 });

@@ -7,11 +7,32 @@ import {
   type WorkflowReadiness,
 } from "./workflow-readiness.js";
 import React, { useState, useEffect } from "react";
-export function Workflows({
-  api,
-}: {
-  api: (path: string, method?: string, body?: unknown) => Promise<any>;
-}) {
+type WorkflowApi = (
+  path: string,
+  method?: string,
+  body?: unknown,
+) => Promise<any>;
+
+export function Workflows({ api }: { api: WorkflowApi }) {
+  const [showOtherSettings, setShowOtherSettings] = useState(false);
+  return (
+    <section>
+      <CentralEnrollment api={api} />
+      <AssignmentStatus api={api} />
+      <details
+        className="workflow-advanced"
+        onToggle={(event) => {
+          if (event.currentTarget.open) setShowOtherSettings(true);
+        }}
+      >
+        <summary>Other sync and permission settings</summary>
+        {showOtherSettings && <OtherWorkflowSettings api={api} />}
+      </details>
+    </section>
+  );
+}
+
+function OtherWorkflowSettings({ api }: { api: WorkflowApi }) {
   const [data, setData] = useState<any>(null),
     [readiness, setReadiness] = useState<WorkflowReadiness | null>(null),
     [error, setError] = useState(""),
@@ -79,8 +100,6 @@ export function Workflows({
             : "Operator configured — not wallet signed";
   return (
     <section>
-      <AssignmentStatus api={api} />
-      <CentralEnrollment api={api} />
       <TaskSyncStatus
         api={api}
         canStartOwnerReview={ownerReviewReady(readiness, data)}

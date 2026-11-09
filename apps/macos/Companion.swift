@@ -2,7 +2,7 @@ import Cocoa
 import WebKit
 
 // The native shell owns only its child engine. Source permissions remain in the engine.
-final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, NSMenuItemValidation {
+final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply, NSMenuItemValidation {
     var window: NSWindow!
     var web: WKWebView!
     var engine: Process?
@@ -59,7 +59,11 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             appMenu.addItem(withTitle: "Review central Workflows identity…", action: #selector(reviewCentralIdentity), keyEquivalent: "")
         }
         if enrollmentControl() != nil {
-            appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")
+            if ProcessInfo.processInfo.environment["BITTREES_ENROLLMENT_PURPOSE"] == "central-workflows" {
+                appMenu.addItem(withTitle: "Set up Workflows…", action: #selector(openWorkflowSetup), keyEquivalent: "")
+            } else {
+                appMenu.addItem(withTitle: "Connect workflows…", action: #selector(reviewEnrollment), keyEquivalent: "")
+            }
         }
         if centralGatewayControl() != nil {
             appMenu.addItem(withTitle: "Prepare Workflows gateway…", action: #selector(prepareCentralGateway), keyEquivalent: "")
@@ -130,7 +134,12 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         web?.stopLoading()
         web?.navigationDelegate = nil
         web?.uiDelegate = nil
+        web?.configuration.userContentController.removeScriptMessageHandler(forName: "reviewWorkflowEnrollment", contentWorld: .page)
         let config = WKWebViewConfiguration()
+        if ProcessInfo.processInfo.environment["BITTREES_ENROLLMENT_PURPOSE"] == "central-workflows",
+           enrollmentControl() != nil {
+            config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "reviewWorkflowEnrollment")
+        }
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
@@ -441,6 +450,17 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         }
     }
 #endif
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard message.name == "reviewWorkflowEnrollment", message.body is NSNull,
+              message.webView === web, message.frameInfo.isMainFrame,
+              let origin = message.frameInfo.request.url, local(origin),
+              ready, !quitting, !recovery.busy, !kitRecoveryChoosing,
+              kitSetupId == nil, window.attachedSheet == nil else {
+            replyHandler(nil, "Open the workflow setup page in Bittrees AI.")
+            return
+        }
+        presentEnrollmentReview { approved, error in replyHandler(approved, error) }
+    }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         if url.absoluteString == "bittrees-ai://review-central-identity" {

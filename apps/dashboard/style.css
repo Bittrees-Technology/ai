@@ -1255,3 +1255,41 @@ select.model-profile-select {
   width: 100%;
   box-sizing: border-box;
 }
+
+.connection-setup {
+  margin-block: 1.25rem;
+  padding: 1.25rem;
+  border: 1px solid #dce6e9;
+  border-inline-start: 4px solid #237266;
+  border-radius: 10px;
+}
+.connection-setup h3 {
+  margin-block-start: 0;
+}
+.connection-setup p {
+  max-width: 62ch;
+}
+.connection-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  padding-inline-start: 1.4rem;
+  color: #526b69;
+}
+.connection-steps [aria-current="step"] {
+  color: #173e38;
+  font-weight: 700;
+}
+.connection-setup a.primary {
+  display: inline-block;
+  text-decoration: none;
+  padding: 0.55rem 0.85rem;
+  border-radius: 6px;
+  margin-block-end: 0.5rem;
+}
+.connection-setup a + div {
+  margin-block-start: 0.5rem;
+}
+.workflow-advanced {
+  margin-block-start: 1rem;
+}
