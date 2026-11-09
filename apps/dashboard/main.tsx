@@ -103,7 +103,7 @@ const explanations: Record<string, string> = {
   CAPACITY:
     "A size or capacity limit was reached. Shorten the request, review pending work, or free saved storage before retrying.",
   PAIRING_DENIED:
-    "Code incorrect, expired or already used. Restart the companion for a new code.",
+    "This code could not open the workspace. Copy the code from the Bittrees AI menu on this Mac. If it still fails, quit and reopen Bittrees AI to get a fresh code.",
   FORBIDDEN: "This request is not permitted.",
   INVALID_INPUT: "Check your entries and try again.",
   INVALID_OUTPUT:
@@ -363,19 +363,19 @@ function App() {
           <section className="pair">
             <h2>Connect to this Mac</h2>
             <p>
-              The installed Mac app connects automatically when opened. For a
-              separate browser window, use the macOS menu bar: choose{" "}
-              <strong>Bittrees AI → Copy pairing code</strong>. Paste the code
-              below, then select <strong>Open workspace</strong>. The menu
-              copies the code without displaying it; the field hides it as dots.
+              Open Bittrees AI on this Mac to use your workspace directly. To
+              connect this browser instead:
             </p>
-            <details>
-              <summary>Started the companion from a terminal?</summary>
-              <p>
-                Use the one-time code in the pairing-code file whose location
-                was printed when the companion started.
-              </p>
-            </details>
+            <ol>
+              <li>
+                Switch to Bittrees AI. In the menu bar at the top of the screen,
+                choose <strong>Bittrees AI → Copy pairing code</strong>.
+              </li>
+              <li>
+                Return here, paste the code below, and select{" "}
+                <strong>Open workspace</strong>.
+              </li>
+            </ol>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -391,6 +391,7 @@ function App() {
                 <input
                   type="password"
                   autoComplete="off"
+                  aria-describedby="pairing-code-hint"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   required
@@ -400,11 +401,23 @@ function App() {
                 Open workspace
               </button>
             </form>
-            <p className="hint">
-              The code is single-use and expires after ten minutes. If it has
-              expired or was already used, quit and reopen Bittrees AI to get a
-              new code.
+            <p className="hint" id="pairing-code-hint">
+              The code is hidden as you enter it. It works once and expires ten
+              minutes after the companion starts. To get a fresh code, quit and
+              reopen Bittrees AI, then copy it again.
             </p>
+            <details>
+              <summary>Find the code in Finder or Terminal</summary>
+              <p>
+                In Finder, press <kbd>⌘⇧G</kbd> and open{" "}
+                <code>~/Library/Application Support/Bittrees AI/</code>. Open{" "}
+                <strong>pairing-code.txt</strong> and copy its contents.
+              </p>
+              <p>
+                If you started the companion in Terminal, use the file path
+                printed at startup.
+              </p>
+            </details>
           </section>
         ) : (
           <React.Fragment key={epoch.current}>
