@@ -8,6 +8,8 @@ type View = {
   originalReviewExpiresAt?: number;
   originalReviewExpired?: boolean;
   reconciliation?: CentralEnrollmentStatus["reconciliation"];
+  replacementReviewReady?: CentralEnrollmentStatus["replacementReviewReady"];
+  recoveryReviewExpiresAt?: number;
 };
 type NativeReview = { postMessage: (body: null) => Promise<boolean> };
 const connection = "/v1/workflows/central/connection";
@@ -59,14 +61,15 @@ export function CentralEnrollment({
     view?.originalReviewExpired ||
     state?.status === "expired" ||
     now >= deadline;
+  const displayDeadline = view?.recoveryReviewExpiresAt ?? deadline;
   useEffect(() => {
-    if (!Number.isFinite(deadline)) return;
+    if (!Number.isFinite(displayDeadline)) return;
     const timer = window.setTimeout(
       () => setNow(Date.now()),
-      Math.max(0, deadline - Date.now()),
+      Math.max(0, displayDeadline - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [deadline]);
+  }, [displayDeadline]);
 
   async function act(
     action: "review" | "start" | "poll" | "status" | "reconcile",
@@ -100,6 +103,7 @@ export function CentralEnrollment({
           : await api(connection, "POST", { action });
       // A local status read without active consent cannot supersede a known
       // expired request. Keep the existing review visible for reconciliation.
+      if (active.current && action === "start") setRolesOpened(false);
       if (active.current && (action !== "status" || result.ready || !expired))
         setView(result);
     } catch {
@@ -161,10 +165,23 @@ export function CentralEnrollment({
           separately.
         </p>
       ) : view.reconciliation === "not-committed" ? (
-        <p role="status">
-          Roles confirmed the original enrollment did not complete. The Mac
-          saved the outcome with the original request.
-        </p>
+        <>
+          <p role="status">
+            Roles confirmed the original enrollment did not complete. The Mac
+            saved the outcome with the original request.
+          </p>
+          {view.replacementReviewReady ? (
+            button("Request a new review in Roles", "start")
+          ) : view.recoveryReviewExpiresAt &&
+            now < view.recoveryReviewExpiresAt ? (
+            <p>
+              A separate native review becomes available when this review
+              closes.
+            </p>
+          ) : nativeReview ? (
+            button("Review this Mac for a new request", "review")
+          ) : null}
+        </>
       ) : expired || state?.status === "held" || state?.status === "failed" ? (
         <>
           <p role="status">

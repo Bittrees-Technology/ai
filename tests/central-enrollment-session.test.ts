@@ -71,9 +71,9 @@ function fixture() {
     sourceWorkspace: randomUUID(),
     ownerWallet: "0x" + "a".repeat(40),
   };
-  const requestId = randomUUID(),
-    pollSecret = randomBytes(32).toString("hex"),
-    profileId = randomUUID();
+  let requestId = randomUUID(),
+    pollSecret = randomBytes(32).toString("hex");
+  const profileId = randomUUID();
   let challenge: any, result: any, candidateDigest: string, rolesExpiry: string;
   const originalEpoch = review.epoch;
   const seal = vault.seal.bind(vault);
@@ -182,7 +182,11 @@ function fixture() {
             const action = url.pathname.split("/").at(-1);
             if (action === "start") {
               counts.start++;
-              assert.equal(counts.start, 1);
+              assert(counts.start <= 2);
+              if (counts.start === 2) {
+                requestId = randomUUID();
+                pollSecret = randomBytes(32).toString("hex");
+              }
               assert.equal(body.request.principal, saved.principal);
               assert.equal(
                 verify(
@@ -351,6 +355,23 @@ function fixture() {
       }
     },
     counts,
+    archive: () => {
+      const db = new Database(path, { readonly: true });
+      try {
+        const row = db
+          .prepare("SELECT id,epoch,record FROM central_native_handoff_archive")
+          .get() as { id: string; epoch: string; record: Buffer } | undefined;
+        return (
+          row &&
+          vault.open<any>(
+            row.record,
+            "central-native-handoff-archive:" + row.id + ":" + row.epoch,
+          )
+        );
+      } finally {
+        db.close();
+      }
+    },
     failHandoffSave: () => {
       failSave = true;
       handoffWrites = 0;
@@ -383,6 +404,63 @@ function fixture() {
   };
 }
 const signal = () => AbortSignal.timeout(4000);
+test("a separately approved replacement archives the uncommitted handoff and retains its reservations", async () => {
+  const f = fixture();
+  let native = f.make();
+  try {
+    const first = await native.execute({ action: "start" }, signal());
+    f.dropComplete(false);
+    await native.execute({ action: "poll" }, signal());
+    const original = f.journal();
+    native.close();
+    f.restartReview(240000);
+    native = f.make();
+    assert.equal(
+      (await native.execute({ action: "reconcile" }, signal())).reconciliation,
+      "not-committed",
+    );
+    await assert.rejects(
+      () => native.execute({ action: "start" }, signal()),
+      /Separate fresh native approval/,
+    );
+    assert.equal(f.counts.start, 1);
+    assert.equal(f.archive(), undefined);
+    native.close();
+    f.restartReview();
+    native = f.make();
+    assert.equal(
+      (await native.execute({ action: "status" }, signal()))
+        .replacementReviewReady,
+      true,
+    );
+    const replacement = await native.execute({ action: "start" }, signal());
+    assert.equal(replacement.state.status, "pending");
+    assert.notEqual(
+      (replacement.state as any).reviewUrl,
+      (first.state as any).reviewUrl,
+    );
+    assert.equal(replacement.permissionsGranted, false);
+    assert.equal(
+      f.archive()?.handoff.reviewUrl,
+      (first.state as any).reviewUrl,
+    );
+    assert.equal(f.archive()?.settlement.outcome, "not-committed");
+    assert.deepEqual(
+      f
+        .journal()
+        .filter((entry) =>
+          original.some((old) => old.operationId === entry.operationId),
+        ),
+      original,
+    );
+    assert.equal(f.journal().length, original.length + 1);
+    assert.equal(f.counts.start, 2);
+    assert.equal(f.counts.complete, 1);
+  } finally {
+    native.close();
+    f.cleanup();
+  }
+});
 for (const outcome of [
   "not-committed",
   "committed",

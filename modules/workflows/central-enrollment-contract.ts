@@ -48,6 +48,8 @@ export const centralEnrollmentStatus = z
     originalReviewExpiresAt: z.int().positive(),
     originalReviewExpired: z.boolean(),
     reconciliation: z.enum(["not-committed", "committed"]).optional(),
+    replacementReviewReady: z.literal(true).optional(),
+    recoveryReviewExpiresAt: z.int().positive().optional(),
     state: z.union([
       z.strictObject({ status: z.literal("not-started") }),
       z.strictObject({
@@ -80,6 +82,11 @@ export const centralEnrollmentStatus = z
       .nullable(),
   })
   .refine((value) => {
+    if (
+      (value.replacementReviewReady || value.recoveryReviewExpiresAt) &&
+      value.reconciliation !== "not-committed"
+    )
+      return false;
     if (value.reconciliation && !value.originalReviewExpired) return false;
     if (
       value.reconciliation &&

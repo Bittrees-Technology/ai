@@ -87,6 +87,11 @@ export class CentralEnrollmentOwner {
       store: {
         read(): unknown;
         write(record: CentralEnrollmentRecord): void;
+        replace?(
+          original: CentralEnrollmentRecord,
+          replacement: CentralEnrollmentRecord,
+        ): void;
+        canReplace?(): boolean;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
@@ -255,6 +260,7 @@ export class CentralEnrollmentOwner {
   private summary() {
     const current = this.activeReview(),
       record = this.record();
+    const liveReview = this.options.current();
     const status = this.handoff.status();
     return centralEnrollmentStatus.parse({
       purpose: "central-workflows",
@@ -268,6 +274,14 @@ export class CentralEnrollmentOwner {
       originalReviewExpired: current.expiresAt <= this.now(),
       ...(record?.settlement
         ? { reconciliation: record.settlement.outcome }
+        : {}),
+      ...(record && this.replacementReview(record)
+        ? { replacementReviewReady: true }
+        : {}),
+      ...(record?.settlement?.outcome === "not-committed" &&
+      liveReview &&
+      liveReview.epoch === record.settlement.recoveryEpoch
+        ? { recoveryReviewExpiresAt: liveReview.expiresAt }
         : {}),
       state:
         (status?.message
@@ -287,6 +301,67 @@ export class CentralEnrollmentOwner {
       enrollment: this.handoff.result(),
     });
   }
+  private replacementReview(record: CentralEnrollmentRecord) {
+    const fresh = this.options.current();
+    if (
+      !fresh ||
+      !this.options.store.replace ||
+      this.options.store.canReplace?.() === false ||
+      this.session ||
+      this.signer ||
+      record.settlement?.outcome !== "not-committed" ||
+      fresh.epoch === record.review.epoch ||
+      fresh.epoch === record.settlement.recoveryEpoch
+    )
+      return null;
+    this.activeReview();
+    return reviewSchema.parse(fresh);
+  }
+  private async startReplacement(
+    original: CentralEnrollmentRecord,
+    signal: AbortSignal,
+  ) {
+    const review = this.replacementReview(original);
+    const replace = this.options.store.replace;
+    if (!review || !replace)
+      throw Error("Separate fresh native approval required for a replacement");
+    const expected = hash(review);
+    const current = () => {
+      const live = this.options.current(),
+        now = this.now();
+      return !this.closing &&
+        live &&
+        live.expiresAt > now &&
+        live.expiresAt <= now + 300000 &&
+        hash(live) === expected
+        ? review
+        : null;
+    };
+    const transport = this.options.session(current);
+    try {
+      await transport.execute({ operation: "heartbeat" }, signal);
+      signal.throwIfAborted();
+      if (!current())
+        throw Error("Replacement review changed before persistence");
+      this.options.store.atomic(() => {
+        if (hash(this.record()) !== hash(original))
+          throw Error("Original settlement changed before replacement");
+        replace(original, { review });
+      });
+    } catch (error) {
+      transport.close();
+      throw error;
+    }
+    this.session = transport;
+    await this.handoff.start({
+      kind: "enroll",
+      authorityId: review.authorityId,
+      deviceId: review.deviceId,
+      sourceWorkspace: review.sourceWorkspace,
+      ownerWallet: review.ownerWallet,
+    });
+    return this.summary();
+  }
   async execute(raw: unknown, signal: AbortSignal) {
     const command = centralEnrollmentCommand.parse(raw);
     signal.throwIfAborted();
@@ -297,6 +372,14 @@ export class CentralEnrollmentOwner {
     this.signal = signal;
     try {
       let record = this.record();
+      if (
+        command.action === "start" &&
+        record?.settlement?.outcome === "not-committed"
+      )
+        return await this.startReplacement(
+          record,
+          AbortSignal.any([signal, this.stop.signal]),
+        );
       if (command.action === "reconcile") {
         if (!record?.handoff || !this.options.reconcile)
           throw Error(

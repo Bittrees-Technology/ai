@@ -205,7 +205,7 @@ test("an expired native review keeps the original request visible without anothe
   expect(requests).toEqual(["GET", "GET"]);
 });
 
-test("the expired setup sends only a typed reconciliation command", async ({
+test("the expired setup reconciles and requests separate consent before replacement", async ({
   page,
 }) => {
   const actions: unknown[] = [];
@@ -219,10 +219,41 @@ test("the expired setup sends only a typed reconciliation command", async ({
       reviewUrl: "https://roles.bittrees.org/review/example",
     },
   };
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "webkit", {
+      value: {
+        messageHandlers: {
+          reviewWorkflowEnrollment: {
+            postMessage: async (value: unknown) => value === null,
+          },
+        },
+      },
+    });
+  });
   await page.route("**/v1/workflows/central/connection", (route) => {
     if (route.request().method() === "GET")
-      return route.fulfill({ json: status });
-    actions.push(route.request().postDataJSON());
+      return route.fulfill({
+        json: actions.length
+          ? {
+              ...status,
+              reconciliation: "not-committed",
+              replacementReviewReady: true,
+            }
+          : status,
+      });
+    const command = route.request().postDataJSON();
+    actions.push(command);
+    if (command.action === "start")
+      return route.fulfill({
+        json: {
+          available: true,
+          ready: true,
+          state: {
+            status: "pending",
+            reviewUrl: "https://roles.bittrees.org/review/replacement",
+          },
+        },
+      });
     return route.fulfill({
       json: { ...status, reconciliation: "not-committed" },
     });
@@ -239,4 +270,17 @@ test("the expired setup sends only a typed reconciliation command", async ({
     setup.getByRole("button", { name: "Confirm connection" }),
   ).toHaveCount(0);
   expect(actions).toEqual([{ action: "reconcile" }]);
+  await setup
+    .getByRole("button", { name: "Review this Mac for a new request" })
+    .click();
+  const replacement = setup.getByRole("button", {
+    name: "Request a new review in Roles",
+  });
+  await expect(replacement).toBeVisible();
+  expect(actions).toEqual([{ action: "reconcile" }]);
+  await replacement.click();
+  await expect(
+    setup.getByRole("link", { name: "Open Roles review" }),
+  ).toHaveAttribute("href", "https://roles.bittrees.org/review/replacement");
+  expect(actions).toEqual([{ action: "reconcile" }, { action: "start" }]);
 });
