@@ -23,7 +23,7 @@ import {
 } from "./enrollment-response.js";
 const hash = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
-const scope = (r: EnrollmentReview) =>
+export const enrollmentSessionScopeDigest = (r: EnrollmentReview) =>
   hash({
     epoch: r.epoch,
     expiresAt: r.expiresAt,
@@ -94,7 +94,7 @@ export class EnrollmentSession {
       const row = this.db
         .prepare("SELECT value FROM enrollment_sessions WHERE epoch=?")
         .get(initial.epoch) as { value: Buffer } | undefined;
-      const scopeDigest = scope(initial);
+      const scopeDigest = enrollmentSessionScopeDigest(initial);
       this.state = row
         ? vault.open<State>(row.value, "enrollment-session:" + initial.epoch)
         : { epoch: initial.epoch, scopeDigest };
@@ -138,7 +138,7 @@ export class EnrollmentSession {
     if (
       !r ||
       r.epoch !== this.state.epoch ||
-      scope(r) !== this.state.scopeDigest ||
+      enrollmentSessionScopeDigest(r) !== this.state.scopeDigest ||
       !Number.isSafeInteger(this.now()) ||
       r.expiresAt <= this.now()
     )

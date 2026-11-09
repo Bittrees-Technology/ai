@@ -14,7 +14,10 @@ import {
 import type { EnrollmentReview } from "../task-sync/enrollment-transport-plan.js";
 import type { EnrollmentSession } from "../task-sync/enrollment-session.js";
 import { validateEnrollmentStart } from "../task-sync/enrollment-response.js";
+import { enrollmentOperationId } from "../task-sync/enrollment-journal.js";
 import { centralEnrollmentSigner } from "./central-enrollment-signer.js";
+import { centralEnrollmentSettlement } from "./central-enrollment-reconciliation.js";
+import type { centralEnrollmentReconciliation } from "./central-enrollment-reconciliation.js";
 
 import {
   centralEnrollmentCommand,
@@ -45,6 +48,7 @@ export const centralEnrollmentRecordSchema = z.strictObject({
   review: reviewSchema,
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
+  settlement: centralEnrollmentSettlement.optional(),
 });
 const recordSchema = centralEnrollmentRecordSchema;
 export type CentralEnrollmentRecord = z.infer<typeof recordSchema>;
@@ -65,8 +69,8 @@ function binding(review: EnrollmentReview) {
 /** Native-only orchestration. The core can ask start/poll/status, never supply a
  * key, request, challenge, polling secret or signature. One durable start marker
  * per existing central identity blocks a fresh POST after uncertainty/restart.
- * Fresh owner reviews may continue the ORIGINAL session inside its ORIGINAL
- * deadline; they cannot replace its nonce, scope, source IDs or retry budget. */
+ * Fresh owner reviews may continue the original session inside its deadline
+ * or reconcile it read-only after expiry. They cannot replay its mutations. */
 export class CentralEnrollmentOwner {
   private readonly handoff: RuntimeHandoff;
   private session?: NativeSession;
@@ -86,6 +90,7 @@ export class CentralEnrollmentOwner {
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
+      reconcile?: ReturnType<typeof centralEnrollmentReconciliation>;
       now?: () => number;
     },
   ) {
@@ -157,6 +162,17 @@ export class CentralEnrollmentOwner {
         hash(record.handoff.candidate) !== hash(record.candidate))
     )
       throw Error("Central enrollment continuity invalid");
+    if (
+      record.settlement &&
+      (!record.candidate ||
+        !record.handoff ||
+        record.settlement.operationId !==
+          enrollmentOperationId(record.review.epoch, "complete") ||
+        record.settlement.candidateDigest !== hash(record.candidate) ||
+        (record.settlement.outcome === "committed") !==
+          (record.handoff.status === "complete"))
+    )
+      throw Error("Original central enrollment settlement binding invalid");
     return record;
   }
   private activeReview(): EnrollmentReview {
@@ -250,6 +266,9 @@ export class CentralEnrollmentOwner {
       permissionsGranted: false,
       originalReviewExpiresAt: current.expiresAt,
       originalReviewExpired: current.expiresAt <= this.now(),
+      ...(record?.settlement
+        ? { reconciliation: record.settlement.outcome }
+        : {}),
       state:
         (status?.message
           ? {
@@ -278,6 +297,40 @@ export class CentralEnrollmentOwner {
     this.signal = signal;
     try {
       let record = this.record();
+      if (command.action === "reconcile") {
+        if (!record?.handoff || !this.options.reconcile)
+          throw Error(
+            "Original native enrollment is unavailable for reconciliation",
+          );
+        if (record.settlement || record.handoff.status === "complete")
+          return this.summary();
+        const original = record;
+        const { settlement, result } = await this.options.reconcile(
+          original,
+          AbortSignal.any([signal, this.stop.signal]),
+        );
+        signal.throwIfAborted();
+        this.activeReview();
+        if (this.options.current()?.epoch !== settlement.recoveryEpoch)
+          throw Error("Native recovery review changed before persistence");
+        this.update((saved) => {
+          if (hash(saved) !== hash(original))
+            throw Error("Original enrollment changed during reconciliation");
+          return {
+            ...saved,
+            settlement,
+            handoff: result
+              ? {
+                  ...original.handoff!,
+                  status: "complete",
+                  result,
+                  message: undefined,
+                }
+              : original.handoff,
+          };
+        });
+        return this.summary();
+      }
       if (!record) {
         if (command.action !== "start")
           throw Error("Explicit central enrollment start required");

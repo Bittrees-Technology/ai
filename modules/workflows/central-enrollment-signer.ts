@@ -16,6 +16,8 @@ import {
   runtimeEnrollmentMessage,
   runtimeHandoffSchema,
   runtimeHandoffMessage,
+  runtimeReconciliationRequest,
+  runtimeReconciliationMessage,
 } from "../task-sync/runtime-contract.js";
 
 export const centralEnrollmentSigningScope = runtimeEnrollmentSchema
@@ -167,6 +169,12 @@ export function centralEnrollmentSigner(
       )
         throw Error("Exact central enrollment handoff required");
       return signed(request, runtimeHandoffMessage(request));
+    },
+    reconcile(raw: unknown) {
+      const request = runtimeReconciliationRequest.parse(raw);
+      if (Math.abs(now() - request.issuedAt) > 15000)
+        throw Error("Fresh native reconciliation proof required");
+      return signed(request, runtimeReconciliationMessage(request));
     },
     approved() {
       const review = scope(),

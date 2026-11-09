@@ -5,6 +5,7 @@ import { isAbsolute } from "node:path";
 import { nativeEnrollmentSessionFactory } from "../task-sync/enrollment-native-session.js";
 import type { EnrollmentReview } from "../task-sync/enrollment-transport-plan.js";
 import { CentralEnrollmentOwner } from "./central-enrollment-owner.js";
+import { centralEnrollmentReconciliation } from "./central-enrollment-reconciliation.js";
 
 /** A separate central-purpose native store. No task-sync state or credential
  * fallback. Construct only after exact native owner consent; no network occurs
@@ -71,10 +72,11 @@ export function nativeCentralEnrollmentSessionFactory(
           .update(review.principal + "\n" + review.publicKey)
           .digest("hex"),
         aad = "central-native-handoff:" + id;
+      const admittedReview = () => (options.admitted() ? current() : null);
       const owner = new CentralEnrollmentOwner({
         path: options.centralStatePath,
         vault: options.vault,
-        current: () => (options.admitted() ? current() : null),
+        current: admittedReview,
         store: {
           read: () => {
             const row = db
@@ -97,6 +99,11 @@ export function nativeCentralEnrollmentSessionFactory(
           atomic: (work) => db.transaction(work).immediate(),
         },
         session: sessionFactory,
+        reconcile: centralEnrollmentReconciliation({
+          ...options,
+          db,
+          current: admittedReview,
+        }),
         now: options.now,
       });
       return {

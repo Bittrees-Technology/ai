@@ -114,7 +114,23 @@ export function validateEnrollmentCompletionReceipt(
   if (
     !Number.isSafeInteger(now) ||
     review.expiresAt <= now ||
-    request.issuedAt > now + 1000 ||
+    request.issuedAt > now + 1000
+  )
+    throw Error(
+      "Original persisted enrollment challenge and current review required",
+    );
+  return validateHistoricalEnrollmentReceipt(raw, review, request);
+}
+/** Binding check for a persisted challenge. The caller supplies either the
+ * original active review or a separately authenticated post-expiry read. */
+export function validateHistoricalEnrollmentReceipt(
+  raw: unknown,
+  review: EnrollmentReview,
+  challenge: unknown,
+) {
+  const request = runtimeEnrollmentSchema.parse(challenge);
+  if (
+    request.issuedAt > review.expiresAt + 1000 ||
     request.issuedAt < review.expiresAt - 300000 ||
     [
       "principal",

@@ -5,6 +5,7 @@ export const centralEnrollmentCommand = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("status") }),
   z.strictObject({ action: z.literal("start") }),
   z.strictObject({ action: z.literal("poll") }),
+  z.strictObject({ action: z.literal("reconcile") }),
 ]);
 const agent = z.string().regex(/^agent:[a-f0-9-]{36}$/),
   hex = z.string().regex(/^[a-f0-9]{64}$/);
@@ -46,6 +47,7 @@ export const centralEnrollmentStatus = z
     permissionsGranted: z.literal(false),
     originalReviewExpiresAt: z.int().positive(),
     originalReviewExpired: z.boolean(),
+    reconciliation: z.enum(["not-committed", "committed"]).optional(),
     state: z.union([
       z.strictObject({ status: z.literal("not-started") }),
       z.strictObject({
@@ -78,6 +80,12 @@ export const centralEnrollmentStatus = z
       .nullable(),
   })
   .refine((value) => {
+    if (value.reconciliation && !value.originalReviewExpired) return false;
+    if (
+      value.reconciliation &&
+      (value.reconciliation === "committed") !== (value.enrollment !== null)
+    )
+      return false;
     if ((value.state.status === "complete") !== (value.enrollment !== null))
       return false;
     const e = value.enrollment;

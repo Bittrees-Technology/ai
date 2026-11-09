@@ -7,6 +7,7 @@ type View = {
   state?: CentralEnrollmentStatus["state"];
   originalReviewExpiresAt?: number;
   originalReviewExpired?: boolean;
+  reconciliation?: CentralEnrollmentStatus["reconciliation"];
 };
 type NativeReview = { postMessage: (body: null) => Promise<boolean> };
 const connection = "/v1/workflows/central/connection";
@@ -67,7 +68,9 @@ export function CentralEnrollment({
     return () => window.clearTimeout(timer);
   }, [deadline]);
 
-  async function act(action: "review" | "start" | "poll" | "status") {
+  async function act(
+    action: "review" | "start" | "poll" | "status" | "reconcile",
+  ) {
     if (inFlight.current) return;
     if (action === "poll" && (expired || Date.now() >= deadline)) {
       setNow(Date.now());
@@ -157,6 +160,11 @@ export function CentralEnrollment({
           This Mac is registered. CRM access and task permissions are set up
           separately.
         </p>
+      ) : view.reconciliation === "not-committed" ? (
+        <p role="status">
+          Roles confirmed the original enrollment did not complete. The Mac
+          saved the outcome with the original request.
+        </p>
       ) : expired || state?.status === "held" || state?.status === "failed" ? (
         <>
           <p role="status">
@@ -166,6 +174,9 @@ export function CentralEnrollment({
             The original request is saved.
           </p>
           {button("Check connection status", "status")}
+          {expired && view.ready && state && "expiresAt" in state
+            ? button("Check original enrollment outcome", "reconcile")
+            : null}
         </>
       ) : !view.available ? (
         <>
