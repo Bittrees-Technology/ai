@@ -122,6 +122,9 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix .integration/news
       - run: npm ci --prefix .integration/autonote
+        env:
+          # This integration stubs inference and does not need CUDA.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - run: npm ci --prefix .integration/crm
       - name: Actual companion, AutoNote and CRM synthetic acceptance
         run: npx tsx scripts/autonote-integration-check.ts
