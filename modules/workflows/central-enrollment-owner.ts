@@ -91,7 +91,7 @@ export class CentralEnrollmentOwner {
           original: CentralEnrollmentRecord,
           replacement: CentralEnrollmentRecord,
         ): void;
-        canReplace?(): boolean;
+        canReplace?(operationKind: "start" | "complete"): boolean;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
@@ -172,7 +172,12 @@ export class CentralEnrollmentOwner {
       (!record.candidate ||
         !record.handoff ||
         record.settlement.operationId !==
-          enrollmentOperationId(record.review.epoch, "complete") ||
+          enrollmentOperationId(
+            record.review.epoch,
+            record.settlement.operationKind ?? "complete",
+          ) ||
+        (record.settlement.operationKind === "start" &&
+          record.settlement.outcome !== "not-committed") ||
         record.settlement.candidateDigest !== hash(record.candidate) ||
         (record.settlement.outcome === "committed") !==
           (record.handoff.status === "complete"))
@@ -306,10 +311,12 @@ export class CentralEnrollmentOwner {
     if (
       !fresh ||
       !this.options.store.replace ||
-      this.options.store.canReplace?.() === false ||
       this.session ||
       this.signer ||
       record.settlement?.outcome !== "not-committed" ||
+      this.options.store.canReplace?.(
+        record.settlement.operationKind ?? "complete",
+      ) === false ||
       fresh.epoch === record.review.epoch ||
       fresh.epoch === record.settlement.recoveryEpoch
     )

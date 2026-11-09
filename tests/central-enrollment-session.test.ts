@@ -26,7 +26,7 @@ import { enrollmentOperationId } from "../modules/task-sync/enrollment-journal.j
 import { nativeCentralEnrollmentSessionFactory } from "../modules/workflows/central-enrollment-session.js";
 const hash = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
-function fixture() {
+function fixture(maximumStarts = 2) {
   const directory = realpathSync(
       mkdtempSync(join(tmpdir(), "central-native-enrollment-")),
     ),
@@ -75,7 +75,8 @@ function fixture() {
     pollSecret = randomBytes(32).toString("hex");
   const profileId = randomUUID();
   let challenge: any, result: any, candidateDigest: string, rolesExpiry: string;
-  const originalEpoch = review.epoch;
+  let requestEpoch = review.epoch;
+  let completionAttempted = false;
   const seal = vault.seal.bind(vault);
   let failSave = false,
     handoffWrites = 0;
@@ -182,8 +183,10 @@ function fixture() {
             const action = url.pathname.split("/").at(-1);
             if (action === "start") {
               counts.start++;
-              assert(counts.start <= 2);
-              if (counts.start === 2) {
+              assert(counts.start <= maximumStarts);
+              requestEpoch = review.epoch;
+              completionAttempted = false;
+              if (counts.start > 1) {
                 requestId = randomUUID();
                 pollSecret = randomBytes(32).toString("hex");
               }
@@ -240,6 +243,7 @@ function fixture() {
               }
               if (revokeOnPoll) allowed = false;
             } else if (action === "complete") {
+              completionAttempted = true;
               counts.complete++;
               assert.equal(counts.complete, 1);
               assert.equal(body.id, requestId);
@@ -280,8 +284,15 @@ function fixture() {
               assert.equal(body.request.id, requestId);
               assert.equal(body.request.candidateDigest, candidateDigest);
               assert.equal(
+                body.request.operation,
+                completionAttempted ? undefined : "start",
+              );
+              assert.equal(
                 body.request.operationId,
-                enrollmentOperationId(originalEpoch, "complete"),
+                enrollmentOperationId(
+                  requestEpoch,
+                  completionAttempted ? "complete" : "start",
+                ),
               );
               assert.equal(
                 body.request.pollSecretHash,
@@ -355,19 +366,33 @@ function fixture() {
       }
     },
     counts,
-    archive: () => {
+    archives: () => {
       const db = new Database(path, { readonly: true });
       try {
-        const row = db
-          .prepare("SELECT id,epoch,record FROM central_native_handoff_archive")
-          .get() as { id: string; epoch: string; record: Buffer } | undefined;
-        return (
-          row &&
-          vault.open<any>(
-            row.record,
-            "central-native-handoff-archive:" + row.id + ":" + row.epoch,
+        return db
+          .prepare(
+            "SELECT id,epoch,record FROM central_native_handoff_archive ORDER BY rowid",
           )
-        );
+          .all()
+          .map((row: any) =>
+            vault.open<any>(
+              row.record,
+              "central-native-handoff-archive:" + row.id + ":" + row.epoch,
+            ),
+          );
+      } finally {
+        db.close();
+      }
+    },
+    restoreLegacyArchiveLayout: () => {
+      const db = new Database(path);
+      try {
+        db.exec(`
+          ALTER TABLE central_native_handoff_archive RENAME TO test_archive;
+          CREATE TABLE central_native_handoff_archive(id TEXT PRIMARY KEY,epoch TEXT NOT NULL,record BLOB NOT NULL);
+          INSERT INTO central_native_handoff_archive SELECT id,epoch,record FROM test_archive;
+          DROP TABLE test_archive;
+        `);
       } finally {
         db.close();
       }
@@ -404,8 +429,8 @@ function fixture() {
   };
 }
 const signal = () => AbortSignal.timeout(4000);
-test("a separately approved replacement archives the uncommitted handoff and retains its reservations", async () => {
-  const f = fixture();
+test("an expired replacement with only a confirmed start preserves both journals and admits one separately approved recovery", async () => {
+  const f = fixture(3);
   let native = f.make();
   try {
     const first = await native.execute({ action: "start" }, signal());
@@ -424,7 +449,7 @@ test("a separately approved replacement archives the uncommitted handoff and ret
       /Separate fresh native approval/,
     );
     assert.equal(f.counts.start, 1);
-    assert.equal(f.archive(), undefined);
+    assert.deepEqual(f.archives(), []);
     native.close();
     f.restartReview();
     native = f.make();
@@ -441,10 +466,10 @@ test("a separately approved replacement archives the uncommitted handoff and ret
     );
     assert.equal(replacement.permissionsGranted, false);
     assert.equal(
-      f.archive()?.handoff.reviewUrl,
+      f.archives()[0]?.handoff.reviewUrl,
       (first.state as any).reviewUrl,
     );
-    assert.equal(f.archive()?.settlement.outcome, "not-committed");
+    assert.equal(f.archives()[0]?.settlement.outcome, "not-committed");
     assert.deepEqual(
       f
         .journal()
@@ -456,6 +481,62 @@ test("a separately approved replacement archives the uncommitted handoff and ret
     assert.equal(f.journal().length, original.length + 1);
     assert.equal(f.counts.start, 2);
     assert.equal(f.counts.complete, 1);
+
+    const originalArchive = f.archives()[0];
+    const replacementJournal = f.journal();
+    native.close();
+    f.restoreLegacyArchiveLayout();
+    f.restartReview(360000);
+    native = f.make();
+    assert.deepEqual(f.archives(), [originalArchive]);
+    assert.equal(
+      (await native.execute({ action: "reconcile" }, signal())).reconciliation,
+      "not-committed",
+    );
+    assert.deepEqual(f.journal(), replacementJournal);
+    assert.equal(f.counts.complete, 1);
+    await assert.rejects(
+      () => native.execute({ action: "start" }, signal()),
+      /Separate fresh native approval/,
+    );
+    native.close();
+    f.restartReview(300001);
+    native = f.make();
+    const recovery = await native.execute({ action: "start" }, signal());
+    assert.equal(recovery.state.status, "pending");
+    assert.equal(recovery.permissionsGranted, false);
+    assert.deepEqual(f.archives()[0], originalArchive);
+    assert.equal(
+      f.archives()[1]?.handoff.reviewUrl,
+      (replacement.state as any).reviewUrl,
+    );
+    assert.equal(f.archives()[1]?.settlement.operationKind, "start");
+    assert.deepEqual(
+      f
+        .journal()
+        .filter((row) =>
+          replacementJournal.some(
+            (prior) => prior.operationId === row.operationId,
+          ),
+        ),
+      replacementJournal,
+    );
+    assert.equal(f.counts.start, 3);
+    assert.equal(f.counts.complete, 1);
+
+    native.close();
+    f.restartReview(360000);
+    native = f.make();
+    await native.execute({ action: "reconcile" }, signal());
+    native.close();
+    f.restartReview(300001);
+    native = f.make();
+    await assert.rejects(
+      () => native.execute({ action: "start" }, signal()),
+      /Separate fresh native approval/,
+    );
+    assert.equal(f.archives().length, 2);
+    assert.equal(f.counts.start, 3);
   } finally {
     native.close();
     f.cleanup();

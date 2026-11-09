@@ -31,6 +31,7 @@ const responseSchema = z.discriminatedUnion("status", [
 ]);
 export const centralEnrollmentSettlement = z.strictObject({
   operationId: z.uuid(),
+  operationKind: z.literal("start").optional(),
   candidateDigest: hex,
   requestDigest: hex,
   outcome: z.enum(["not-committed", "committed"]),
@@ -41,7 +42,7 @@ export const centralEnrollmentSettlement = z.strictObject({
 const operationSchema = z.strictObject({
   operationId: z.uuid(),
   epoch: z.uuid(),
-  kind: z.literal("complete"),
+  kind: z.enum(["start", "complete"]),
   requestDigest: hex,
   state: z.enum(["reserved", "confirmed"]),
   responseDigest: hex.optional(),
@@ -51,9 +52,9 @@ const sessionSchema = z.object({
   scopeDigest: hex,
   requestId: z.uuid(),
   pollSecretHash: hex,
-  enrollmentRequestDigest: hex,
+  enrollmentRequestDigest: hex.optional(),
   start: z.unknown(),
-  challenge: z.unknown(),
+  challenge: z.unknown().optional(),
   completion: z.unknown().optional(),
 });
 const sha256 = (value: string) =>
@@ -112,20 +113,28 @@ export function centralEnrollmentReconciliation(options: {
     };
     admit(fresh.epoch);
     signal.throwIfAborted();
-    const operationId = enrollmentOperationId(review.epoch, "complete");
     const read = (sql: string, id: string, aad: string) => {
       const row = options.db.prepare(sql).get(id) as
         { value?: Buffer } | undefined;
-      if (!row || !Buffer.isBuffer(row.value) || row.value.length > 160000)
+      if (!row) return undefined;
+      if (!Buffer.isBuffer(row.value) || row.value.length > 160000)
         throw Error("Original enrollment journal entry required");
       return options.vault.open(row.value, aad + id);
     };
-    const operation = operationSchema.parse(
+    const readOperation = (id: string) =>
       read(
         "SELECT value FROM enrollment_operations WHERE id=?",
-        operationId,
+        id,
         "enrollment-operation:",
-      ),
+      );
+    const completionId = enrollmentOperationId(review.epoch, "complete");
+    const completion = readOperation(completionId);
+    const checkingStart = completion === undefined;
+    const operationId = checkingStart
+      ? enrollmentOperationId(review.epoch, "start")
+      : completionId;
+    const operation = operationSchema.parse(
+      checkingStart ? readOperation(operationId) : completion,
     );
     const session = sessionSchema.parse(
       read(
@@ -143,15 +152,24 @@ export function centralEnrollmentReconciliation(options: {
     if (
       operation.operationId !== operationId ||
       operation.epoch !== review.epoch ||
+      operation.kind !== (checkingStart ? "start" : "complete") ||
       (operation.state === "confirmed") !== Boolean(operation.responseDigest) ||
       session.epoch !== review.epoch ||
       session.scopeDigest !== enrollmentSessionScopeDigest(review) ||
       session.requestId !== handoff.id ||
       session.pollSecretHash !== digest(handoff.pollSecret) ||
-      session.enrollmentRequestDigest !== digest(session.challenge) ||
       digest(session.start) !== digest(start)
     )
       throw Error("Original enrollment journals disagree");
+    if (
+      checkingStart
+        ? operation.state !== "confirmed" ||
+          operation.responseDigest !== digest(start) ||
+          session.completion !== undefined
+        : !session.enrollmentRequestDigest ||
+          session.enrollmentRequestDigest !== digest(session.challenge)
+    )
+      throw Error("Original enrollment mutation evidence disagrees");
     const signer = centralEnrollmentSigner(
       options.centralStatePath,
       options.vault,
@@ -213,6 +231,7 @@ export function centralEnrollmentReconciliation(options: {
       candidateDigest: digest(candidate),
       pollSecretHash: sha256(handoff.pollSecret),
       issuedAt: now(),
+      ...(checkingStart ? { operation: "start" as const } : {}),
     };
     const packet = signer.reconcile(request);
     const response = responseSchema.parse(
@@ -231,12 +250,14 @@ export function centralEnrollmentReconciliation(options: {
     )
       throw Error("Roles reconciliation differs from the original enrollment");
     if (
-      response.status === "not-committed" &&
-      (operation.state === "confirmed" || session.completion)
+      (checkingStart && response.status !== "not-committed") ||
+      (!checkingStart &&
+        response.status === "not-committed" &&
+        (operation.state === "confirmed" || session.completion))
     )
       throw Error("Roles outcome conflicts with a saved native completion");
     const result =
-      response.status === "committed"
+      response.status === "committed" && session.enrollmentRequestDigest
         ? validateHistoricalEnrollmentReceipt(
             { status: "complete", result: response.result },
             {
@@ -256,6 +277,7 @@ export function centralEnrollmentReconciliation(options: {
     return {
       settlement: centralEnrollmentSettlement.parse({
         operationId,
+        ...(checkingStart ? { operationKind: "start" } : {}),
         candidateDigest: request.candidateDigest,
         requestDigest: operation.requestDigest,
         outcome: response.status,

@@ -229,6 +229,20 @@ export function CentralEnrollment({
             Approve this Mac in Roles, then return here to confirm the
             connection.
           </p>
+          {Number.isFinite(deadline) && (
+            <p>
+              Confirm on this Mac by{" "}
+              <time dateTime={new Date(deadline).toISOString()}>
+                {new Intl.DateTimeFormat(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  second: "2-digit",
+                  timeZoneName: "short",
+                }).format(deadline)}
+              </time>
+              .
+            </p>
+          )}
           <a
             className={readyToConfirm ? undefined : "primary"}
             href={reviewUrl}
