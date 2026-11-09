@@ -24,8 +24,9 @@ coordinator bearer stays native and is used only for the fixed AI registration
 endpoint. It must never be installed as the central MCP bearer. This implementation
 does not discover missing owner/source bindings or write an activation package.
 
-“Connect workflows…” displays the exact identity, source scope and spending
-disclosure. Included usage remains exactly US$0. Explicit spending displays the
+Choose “Set up Workflows…” in the Mac app menu to open the guided connection
+page. “Review this Mac” opens a native sheet with the exact identity, source
+scope and spending disclosure. Included usage remains exactly US$0. Explicit spending displays the
 same aggregate allowance shared by enrollment, Workflows, CRM assignments and
 attestations, along with its approval reference and aggregate attempt limit.
 Changing any funded review invalidates consent. The native review ends after at
@@ -48,11 +49,14 @@ there are no caller-provided identities, requests, challenges, signatures or sec
 The native consent token is never forwarded to the core. The legacy `/enrollment`
 client cannot use this capability.
 
-The Permissions & sync view requests the owner review, links only to the exact
-Roles runtime-request URL, and lets the owner check the original review after
-approval. Refreshing local status makes no provider request. There is no new
-background source poller. Roles derives the profile from its authenticated owner
-session; the model and operator do not invent it.
+The connection page opens the native sheet through the main frame of the
+installed Mac app's local dashboard. The bridge accepts an empty request and
+returns the consent outcome. The page sends one typed start command after
+confirmed consent and a fresh local status check. It links to the original Roles
+review and offers “Confirm connection” after the owner returns. If the start
+reply is uncertain, “Check connection status” reads local state before another
+action is offered. Roles derives the profile from the authenticated owner
+session. Other sync settings remain under a separate disclosure.
 
 The existing fixed-host TLS/DNS transport and independent response verifier remain
 in use. Before start or another owner poll, a bounded native heartbeat verifies

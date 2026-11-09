@@ -57,31 +57,61 @@ extension Companion {
               token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { return nil }
         return (url, token)
     }
-    @objc func reviewEnrollment() {
-        guard !enrollmentReviewBusy, let (url, token) = enrollmentControl() else { return }
+    @objc func openWorkflowSetup() {
+        guard ready, !quitting, window.attachedSheet == nil,
+              !recovery.busy, !kitRecoveryChoosing, kitSetupId == nil,
+              var destination = URLComponents(url: home, resolvingAgainstBaseURL: false) else { return }
+        destination.queryItems = [URLQueryItem(name: "workflow-setup", value: nil)]
+        guard let url = destination.url, local(url) else { return }
+        web.load(URLRequest(url: url))
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    @objc func reviewEnrollment() { presentEnrollmentReview(onResult: nil) }
+
+    func presentEnrollmentReview(onResult: ((Bool, String?) -> Void)?) {
+        guard !enrollmentReviewBusy, window.attachedSheet == nil,
+              let (url, token) = enrollmentControl() else {
+            onResult?(false, "Close other reviews and try again.")
+            return
+        }
         enrollmentReviewBusy = true
         _ = EnrollmentControlRequest(url: url, token: token, body: ["action": "propose"]) { [weak self] proposal in
-            guard let self = self else { return }
+            guard let self = self else {
+                onResult?(false, "The enrollment window closed.")
+                return
+            }
+            guard !self.quitting, self.window.attachedSheet == nil else {
+                self.enrollmentReviewBusy = false
+                onResult?(false, "Close other reviews and try again.")
+                return
+            }
             guard let proposal = proposal, let display = EnrollmentReviewDisplay.parse(proposal) else {
                 self.enrollmentReviewBusy = false
-                self.enrollmentNotice("Enrollment review is unavailable", "The local helper could not provide a valid, current review. No connection was approved.")
+                if let onResult {
+                    onResult(false, "The local setup has expired or is unavailable.")
+                } else {
+                    self.enrollmentNotice("Enrollment review is unavailable", "The local helper could not provide a valid, current review.")
+                }
                 return
             }
             let digest = display.digest, wallet = display.wallet, device = display.device
             let workspace = display.workspace, authority = display.authority, principal = display.principal
             let publicKey = display.publicKey, expiry = display.expiresAt
             let alert = NSAlert()
-            alert.messageText = "Allow this Mac to request enrollment?"
+            alert.messageText = "Connect this Mac to Workflows?"
             alert.informativeText = "\(display.identityPurpose)\n\nWallet: \(wallet)\nMac: \(device)\nWorkspace: \(workspace)\nAuthority: \(authority)\nAgent: \(principal)\nDevice key: \(SHA256.hash(data: Data(publicKey.utf8)).map({ String(format: "%02x", $0) }).joined())\n\nContact ai.bittrees.org and roles.bittrees.org for up to five minutes, with at most 108 requests. \(display.spendingSummary)\n\nThis permits the enrollment request only. Roles approval and workflow authority remain separate."
             alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: "Allow enrollment request")
+            alert.addButton(withTitle: onResult == nil ? "Allow enrollment request" : "Request review in Roles")
             alert.beginSheetModal(for: self.window) { response in
                 let approving = response == .alertSecondButtonReturn && Date().timeIntervalSince1970 * 1000 < expiry
                 let body: [String: Any] = approving ? ["action": "approve", "digest": digest] : ["action": "revoke"]
                 _ = EnrollmentControlRequest(url: url, token: token, body: body) { result in
                     self.enrollmentReviewBusy = false
-                    if approving {
-                        let approved = result?["approved"] as? Bool == true
+                    let approved = approving && result?["approved"] as? Bool == true
+                    if let onResult {
+                        onResult(approved, approving && !approved ? "The app could not confirm this approval." : nil)
+                    } else if approving {
                         self.enrollmentNotice(approved ? "Enrollment request allowed" : "Approval was not confirmed", approved ? "The local helper may now request enrollment. No workflow authority has been granted." : "The review may have expired or changed. Check the connection before trying again.")
                     }
                 }

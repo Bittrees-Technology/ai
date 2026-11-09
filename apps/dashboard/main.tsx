@@ -119,8 +119,11 @@ function App() {
     ...defaultProfileFields,
   });
   const checkedProfile = readProfileFields(profileFields);
+  const workflowSetup = new URLSearchParams(location.search).has(
+    "workflow-setup",
+  );
   const [paired, setPaired] = useState(false),
-    [page, setPage] = useState("Tasks"),
+    [page, setPage] = useState(workflowSetup ? "Workflows" : "Tasks"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [code, setCode] = useState("");
@@ -1025,6 +1028,7 @@ function App() {
             </div>
             {page === "Workflows" && (
               <WorkflowWorkspace
+                initialView={workflowSetup ? "permissions" : undefined}
                 api={api}
                 profiles={profiles}
                 onError={fail}
