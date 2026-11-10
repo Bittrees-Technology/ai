@@ -47,6 +47,9 @@ export const centralEnrollmentStatus = z
     permissionsGranted: z.literal(false),
     originalReviewExpiresAt: z.int().positive(),
     originalReviewExpired: z.boolean(),
+    deferredOwnerReview: z.literal(true).optional(),
+    deferredReplacement: z.literal(true).optional(),
+    replacementLimitReached: z.literal(true).optional(),
     reconciliation: z.enum(["not-committed", "committed"]).optional(),
     replacementReviewReady: z.literal(true).optional(),
     recoveryReviewExpiresAt: z.int().positive().optional(),
@@ -83,8 +86,16 @@ export const centralEnrollmentStatus = z
   })
   .refine((value) => {
     if (
-      (value.replacementReviewReady || value.recoveryReviewExpiresAt) &&
+      (value.replacementReviewReady ||
+        value.recoveryReviewExpiresAt ||
+        value.deferredReplacement ||
+        value.replacementLimitReached) &&
       value.reconciliation !== "not-committed"
+    )
+      return false;
+    if (
+      value.replacementLimitReached &&
+      (value.replacementReviewReady || value.deferredReplacement)
     )
       return false;
     if (value.reconciliation && !value.originalReviewExpired) return false;

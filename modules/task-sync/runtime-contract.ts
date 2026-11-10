@@ -94,8 +94,12 @@ export const activationReceiptMessage = (r: unknown) =>
 const handoffBase = runtimeEnrollmentSchema
   .omit({ profileId: true })
   .extend({ ownerWallet: z.string().regex(/^0x[a-f0-9]{40}$/) });
+export const DEFERRED_ENROLLMENT_REVIEW_MS = 2 * 60 * 60 * 1000;
 export const runtimeHandoffSchema = z.discriminatedUnion("kind", [
-  handoffBase.extend({ kind: z.literal("enroll") }),
+  handoffBase.extend({
+    kind: z.literal("enroll"),
+    deferredFrom: z.uuid().optional(),
+  }),
   handoffBase.extend({
     kind: z.literal("activate"),
     leaseId: z.uuid(),

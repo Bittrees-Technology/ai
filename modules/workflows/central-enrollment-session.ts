@@ -98,11 +98,13 @@ export function nativeCentralEnrollmentSessionFactory(
       const archiveCount = db.prepare(
         "SELECT count(*) AS n FROM central_native_handoff_archive WHERE id=?",
       );
-      const canReplace = (operationKind: "start" | "complete") => {
+      const replacementMode = (operationKind: "start" | "complete") => {
         const { n } = archiveCount.get(id) as { n: number };
-        // A second replacement is available only after a confirmed start
-        // with no completion reservation. All earlier epochs remain archived.
-        return n === 0 || (n === 1 && operationKind === "start");
+        if (n === 0 || (n === 1 && operationKind === "start"))
+          return "standard";
+        // Only a verified start without a completion reservation can use the
+        // one deferred recovery. Earlier archives and the same ledger survive.
+        return n === 2 && operationKind === "start" ? "deferred" : null;
       };
       const owner = new CentralEnrollmentOwner({
         path: options.centralStatePath,
@@ -128,7 +130,15 @@ export function nativeCentralEnrollmentSessionFactory(
             ).run(id, options.vault.seal(record, aad));
           },
           replace: (original, replacement) => {
-            if (!canReplace(original.settlement?.operationKind ?? "complete"))
+            const mode = replacementMode(
+              original.settlement?.operationKind ?? "complete",
+            );
+            if (
+              !mode ||
+              original.deferredFrom ||
+              replacement.deferredFrom !==
+                (mode === "deferred" ? original.handoff?.id : undefined)
+            )
               throw Error("Central enrollment replacement limit reached");
             if (JSON.stringify(original).length > 128000)
               throw Error("Original enrollment archive limit exceeded");
@@ -149,7 +159,7 @@ export function nativeCentralEnrollmentSessionFactory(
               "UPDATE central_native_handoffs SET record=? WHERE id=?",
             ).run(options.vault.seal(replacement, aad), id);
           },
-          canReplace,
+          replacementMode,
           atomic: (work) => db.transaction(work).immediate(),
         },
         session: sessionFactory,

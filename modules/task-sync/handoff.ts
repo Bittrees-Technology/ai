@@ -4,6 +4,7 @@ import { z } from "zod";
 import { canonical } from "../contracts/canonical-json.js";
 import { digest } from "./proof-contract.js";
 import {
+  DEFERRED_ENROLLMENT_REVIEW_MS,
   runtimeHandoffSchema,
   runtimeHandoffMessage,
   runtimeEnrollmentSchema,
@@ -141,7 +142,11 @@ export class RuntimeHandoff {
       result.reviewUrl !==
         "https://roles.bittrees.org/profile?runtimeRequest=" + result.id ||
       Date.parse(result.expiresAt) <= this.now() ||
-      Date.parse(result.expiresAt) > this.now() + 300000
+      Date.parse(result.expiresAt) >
+        this.now() +
+          (candidate.kind === "enroll" && candidate.deferredFrom
+            ? DEFERRED_ENROLLMENT_REVIEW_MS
+            : 300000)
     )
       throw Error("Invalid owner review destination or expiry");
     this.save({ ...result, candidate, status: "pending" });

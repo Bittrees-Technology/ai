@@ -209,6 +209,58 @@ test("an expired native review keeps the original request visible without anothe
   expect(requests).toEqual(["GET", "GET"]);
 });
 
+test("a deferred Roles review keeps its link and renews Mac consent without another start", async ({
+  page,
+}) => {
+  const start = new Date("2026-11-09T15:26:00Z");
+  const requests: string[] = [];
+  const link =
+    "https://roles.bittrees.org/profile?runtimeRequest=17ae26aa-10e0-4d33-a60c-b5ce7457b1da";
+  await page.clock.install({ time: start });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "webkit", {
+      value: {
+        messageHandlers: {
+          reviewWorkflowEnrollment: { postMessage: async () => true },
+        },
+      },
+    });
+  });
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    requests.push(route.request().method());
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        deferredOwnerReview: true,
+        originalReviewExpiresAt:
+          start.getTime() + (requests.length === 1 ? 60_000 : 360_000),
+        state: {
+          status: "pending",
+          reviewUrl: link,
+          expiresAt: new Date(start.getTime() + 7_200_000).toISOString(),
+        },
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  const confirm = setup.getByRole("button", { name: /Confirm connection/ });
+  await expect(confirm).toBeVisible();
+  await page.clock.fastForward(61_000);
+  await expect(confirm).toHaveCount(0);
+  await expect(
+    setup.getByRole("link", { name: "Open Roles review" }),
+  ).toHaveAttribute("href", link);
+  await setup
+    .getByRole("button", { name: "Review this Mac to confirm" })
+    .click();
+  await expect(confirm).toBeVisible();
+  expect(requests).toEqual(["GET", "GET"]);
+});
+
 test("the expired setup reconciles and requests separate consent before replacement", async ({
   page,
 }) => {

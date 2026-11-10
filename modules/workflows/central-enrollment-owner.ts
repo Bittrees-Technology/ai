@@ -46,6 +46,7 @@ const handoffSchema = z.strictObject({
 });
 export const centralEnrollmentRecordSchema = z.strictObject({
   review: reviewSchema,
+  deferredFrom: z.uuid().optional(),
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
   settlement: centralEnrollmentSettlement.optional(),
@@ -91,7 +92,9 @@ export class CentralEnrollmentOwner {
           original: CentralEnrollmentRecord,
           replacement: CentralEnrollmentRecord,
         ): void;
-        canReplace?(operationKind: "start" | "complete"): boolean;
+        replacementMode?(
+          operationKind: "start" | "complete",
+        ): "standard" | "deferred" | null;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
@@ -162,6 +165,11 @@ export class CentralEnrollmentOwner {
     if (record.candidate && record.candidate.kind !== "enroll")
       throw Error("Central enrollment activation is forbidden");
     if (
+      record.candidate?.kind === "enroll" &&
+      record.candidate.deferredFrom !== record.deferredFrom
+    )
+      throw Error("Deferred enrollment binding changed");
+    if (
       record.handoff &&
       (!record.candidate ||
         hash(record.handoff.candidate) !== hash(record.candidate))
@@ -207,15 +215,37 @@ export class CentralEnrollmentOwner {
     }
     return current;
   }
+  private wireReview(): EnrollmentReview {
+    const original = this.activeReview();
+    const record = this.record();
+    if (!record?.deferredFrom || record.settlement) return original;
+    const current = reviewSchema.parse(this.options.current());
+    if (current.epoch === original.epoch)
+      return { ...original, deferredFrom: record.deferredFrom };
+    if (
+      !record.handoff ||
+      !["pending", "approved"].includes(record.handoff.status)
+    )
+      return original;
+    return {
+      ...original,
+      deferredFrom: record.deferredFrom,
+      originalExpiresAt: original.expiresAt,
+      expiresAt: Math.min(
+        current.expiresAt,
+        Date.parse(record.handoff.expiresAt),
+      ),
+    };
+  }
   private transport() {
-    const review = this.activeReview();
+    const review = this.wireReview();
     if (review.expiresAt <= this.now())
       throw Error(
         "Original central enrollment review expired; reconciliation required",
       );
     this.session ??= this.options.session(() => {
       try {
-        const value = this.activeReview();
+        const value = this.wireReview();
         return value.expiresAt > this.now() ? value : null;
       } catch {
         return null;
@@ -228,7 +258,13 @@ export class CentralEnrollmentOwner {
       this.options.path,
       this.options.vault,
       () => {
-        const review = this.activeReview();
+        const {
+          originalExpiresAt: _originalExpiresAt,
+          deferredFrom: _deferredFrom,
+          sourceReviewExpiresAt: _sourceReviewExpiresAt,
+          challengeReviewExpiresAt: _challengeReviewExpiresAt,
+          ...review
+        } = this.wireReview();
         return {
           ...review,
           purpose: "central-workflows",
@@ -267,6 +303,15 @@ export class CentralEnrollmentOwner {
       record = this.record();
     const liveReview = this.options.current();
     const status = this.handoff.status();
+    const deferred = Boolean(
+      record?.deferredFrom &&
+      record.handoff &&
+      !record.settlement &&
+      ["pending", "approved"].includes(record.handoff.status) &&
+      Date.parse(record.handoff.expiresAt) > this.now(),
+    );
+    const deadline = deferred ? this.wireReview().expiresAt : current.expiresAt;
+    const replacementMode = record ? this.replacementMode(record) : null;
     return centralEnrollmentStatus.parse({
       purpose: "central-workflows",
       principal: current.principal,
@@ -275,11 +320,16 @@ export class CentralEnrollmentOwner {
         .digest("hex"),
       sourceWorkspace: current.sourceWorkspace,
       permissionsGranted: false,
-      originalReviewExpiresAt: current.expiresAt,
-      originalReviewExpired: current.expiresAt <= this.now(),
+      originalReviewExpiresAt: deadline,
+      originalReviewExpired: deadline <= this.now(),
+      ...(deferred ? { deferredOwnerReview: true } : {}),
       ...(record?.settlement
         ? { reconciliation: record.settlement.outcome }
         : {}),
+      ...(record?.settlement?.outcome === "not-committed" && !replacementMode
+        ? { replacementLimitReached: true }
+        : {}),
+      ...(replacementMode === "deferred" ? { deferredReplacement: true } : {}),
       ...(record && this.replacementReview(record)
         ? { replacementReviewReady: true }
         : {}),
@@ -308,30 +358,42 @@ export class CentralEnrollmentOwner {
   }
   private replacementReview(record: CentralEnrollmentRecord) {
     const fresh = this.options.current();
+    const mode = this.replacementMode(record);
     if (
       !fresh ||
       !this.options.store.replace ||
       this.session ||
       this.signer ||
       record.settlement?.outcome !== "not-committed" ||
-      this.options.store.canReplace?.(
-        record.settlement.operationKind ?? "complete",
-      ) === false ||
+      !mode ||
       fresh.epoch === record.review.epoch ||
       fresh.epoch === record.settlement.recoveryEpoch
     )
       return null;
     this.activeReview();
-    return reviewSchema.parse(fresh);
+    return { review: reviewSchema.parse(fresh), mode };
+  }
+  private replacementMode(record: CentralEnrollmentRecord) {
+    if (record.deferredFrom || record.settlement?.outcome !== "not-committed")
+      return null;
+    return (
+      this.options.store.replacementMode?.(
+        record.settlement.operationKind ?? "complete",
+      ) ?? null
+    );
   }
   private async startReplacement(
     original: CentralEnrollmentRecord,
     signal: AbortSignal,
   ) {
-    const review = this.replacementReview(original);
+    const replacement = this.replacementReview(original);
     const replace = this.options.store.replace;
-    if (!review || !replace)
+    if (!replacement || !replace)
       throw Error("Separate fresh native approval required for a replacement");
+    const { review, mode } = replacement;
+    const deferredFrom = mode === "deferred" ? original.handoff?.id : undefined;
+    if (mode === "deferred" && !deferredFrom)
+      throw Error("Exact prior enrollment required for deferred review");
     const expected = hash(review);
     const current = () => {
       const live = this.options.current(),
@@ -341,7 +403,7 @@ export class CentralEnrollmentOwner {
         live.expiresAt > now &&
         live.expiresAt <= now + 300000 &&
         hash(live) === expected
-        ? review
+        ? { ...review, ...(deferredFrom ? { deferredFrom } : {}) }
         : null;
     };
     const transport = this.options.session(current);
@@ -353,7 +415,10 @@ export class CentralEnrollmentOwner {
       this.options.store.atomic(() => {
         if (hash(this.record()) !== hash(original))
           throw Error("Original settlement changed before replacement");
-        replace(original, { review });
+        replace(original, {
+          review,
+          ...(deferredFrom ? { deferredFrom } : {}),
+        });
       });
     } catch (error) {
       transport.close();
@@ -366,6 +431,7 @@ export class CentralEnrollmentOwner {
       deviceId: review.deviceId,
       sourceWorkspace: review.sourceWorkspace,
       ownerWallet: review.ownerWallet,
+      ...(deferredFrom ? { deferredFrom } : {}),
     });
     return this.summary();
   }

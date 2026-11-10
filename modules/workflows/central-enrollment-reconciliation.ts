@@ -55,6 +55,7 @@ const sessionSchema = z.object({
   enrollmentRequestDigest: hex.optional(),
   start: z.unknown(),
   challenge: z.unknown().optional(),
+  challengeReviewExpiresAt: z.int().positive().optional(),
   completion: z.unknown().optional(),
 });
 const sha256 = (value: string) =>
@@ -170,6 +171,10 @@ export function centralEnrollmentReconciliation(options: {
           session.enrollmentRequestDigest !== digest(session.challenge)
     )
       throw Error("Original enrollment mutation evidence disagrees");
+    const challengeDeadline = recordChallengeDeadline(
+      original,
+      session.challengeReviewExpiresAt,
+    );
     const signer = centralEnrollmentSigner(
       options.centralStatePath,
       options.vault,
@@ -262,6 +267,7 @@ export function centralEnrollmentReconciliation(options: {
             { status: "complete", result: response.result },
             {
               ...review,
+              expiresAt: challengeDeadline,
               enrollmentRequestDigest: session.enrollmentRequestDigest,
             },
             session.challenge,
@@ -288,4 +294,21 @@ export function centralEnrollmentReconciliation(options: {
       result: result?.result,
     };
   };
+}
+
+function recordChallengeDeadline(
+  record: CentralEnrollmentRecord,
+  deadline?: number,
+) {
+  if (!record.deferredFrom || deadline === undefined)
+    return record.review.expiresAt;
+  if (
+    deadline < record.review.expiresAt ||
+    !record.handoff ||
+    deadline > Date.parse(record.handoff.expiresAt)
+  )
+    throw Error(
+      "Deferred completion review exceeds the original Roles deadline",
+    );
+  return deadline;
 }

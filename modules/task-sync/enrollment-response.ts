@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { canonical } from "../contracts/canonical-json.js";
 import {
+  DEFERRED_ENROLLMENT_REVIEW_MS,
   runtimeAttestationSchema,
   runtimeAttestationMessage,
 } from "./runtime-contract.js";
@@ -27,7 +28,10 @@ function expiry(value: string, review: EnrollmentReview, now: number) {
   if (
     !Number.isSafeInteger(now) ||
     end <= now ||
-    end > now + 300000 ||
+    end >
+      now + (review.deferredFrom ? DEFERRED_ENROLLMENT_REVIEW_MS : 300000) ||
+    (review.sourceReviewExpiresAt !== undefined &&
+      value !== review.sourceReviewExpiresAt) ||
     review.expiresAt <= now
   )
     throw Error("Owner response exceeds reviewed session");
@@ -93,7 +97,9 @@ export function validateEnrollmentComplete(
     {
       status: "approved",
       request,
-      expiresAt: new Date(review.expiresAt).toISOString(),
+      expiresAt:
+        review.sourceReviewExpiresAt ??
+        new Date(review.expiresAt).toISOString(),
     },
     review,
     now,
@@ -119,7 +125,14 @@ export function validateEnrollmentCompletionReceipt(
     throw Error(
       "Original persisted enrollment challenge and current review required",
     );
-  return validateHistoricalEnrollmentReceipt(raw, review, request);
+  return validateHistoricalEnrollmentReceipt(
+    raw,
+    {
+      ...review,
+      expiresAt: review.challengeReviewExpiresAt ?? review.expiresAt,
+    },
+    request,
+  );
 }
 /** Binding check for a persisted challenge. The caller supplies either the
  * original active review or a separately authenticated post-expiry read. */
@@ -197,7 +210,9 @@ export function validateEnrollmentAttestation(
     {
       status: "approved",
       request,
-      expiresAt: new Date(review.expiresAt).toISOString(),
+      expiresAt:
+        review.sourceReviewExpiresAt ??
+        new Date(review.expiresAt).toISOString(),
     },
     review,
     now,
