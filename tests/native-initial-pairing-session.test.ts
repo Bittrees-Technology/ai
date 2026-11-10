@@ -168,6 +168,14 @@ function fixture(t: TestContext) {
     network,
   };
 }
+test("async source admission denies before existing-key read, journal or network", async (t) => {
+  const f = fixture(t);
+  const session = f.session({ admitSource: async () => {} });
+  await assert.rejects(session.start(), /synchronous/);
+  assert.equal(existsSync(f.journalPath), false);
+  assert.equal(f.state.resolves, 0);
+  assert.equal(f.state.sends, 0);
+});
 test("construction and denied native/source consent perform no journal or network I/O", async (t) => {
   const f = fixture(t),
     s = f.session();
