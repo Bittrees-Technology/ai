@@ -26,7 +26,7 @@ const hash = (v: unknown) =>
 export const enrollmentSessionScopeDigest = (r: EnrollmentReview) =>
   hash({
     epoch: r.epoch,
-    expiresAt: r.expiresAt,
+    expiresAt: r.originalExpiresAt ?? r.expiresAt,
     authorityId: r.authorityId,
     deviceId: r.deviceId,
     sourceWorkspace: r.sourceWorkspace,
@@ -44,6 +44,7 @@ type State = {
   pollSecretHash?: string;
   enrollmentRequestDigest?: string;
   challenge?: unknown;
+  challengeReviewExpiresAt?: number;
   start?: unknown;
   completion?: unknown;
 };
@@ -148,6 +149,15 @@ export class EnrollmentSession {
       requestId: this.state.requestId,
       pollSecretHash: this.state.pollSecretHash,
       enrollmentRequestDigest: this.state.enrollmentRequestDigest,
+      ...(this.state.challengeReviewExpiresAt !== undefined
+        ? { challengeReviewExpiresAt: this.state.challengeReviewExpiresAt }
+        : {}),
+      ...(r.deferredFrom && this.state.start
+        ? {
+            sourceReviewExpiresAt: (this.state.start as { expiresAt: string })
+              .expiresAt,
+          }
+        : {}),
     };
   }
   private save() {
@@ -203,11 +213,16 @@ export class EnrollmentSession {
         op.operation === "poll" &&
         (response as { status?: string }).status === "approved"
       ) {
+        if (review.deferredFrom && this.journal.hasCompletion(review.epoch))
+          throw Error("Original completion requires read-only reconciliation");
         const approved = validateEnrollmentPoll(response, review, this.now());
         if (approved.status !== "approved") throw Error("Expected challenge");
         this.state = {
           ...this.state,
           challenge: approved.request,
+          ...(review.deferredFrom
+            ? { challengeReviewExpiresAt: review.expiresAt }
+            : {}),
           enrollmentRequestDigest: hash(approved.request),
         };
       } else if (

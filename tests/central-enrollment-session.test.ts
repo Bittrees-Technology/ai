@@ -186,6 +186,8 @@ function fixture(maximumStarts = 2) {
               assert(counts.start <= maximumStarts);
               requestEpoch = review.epoch;
               completionAttempted = false;
+              if (body.request.deferredFrom)
+                assert.equal(body.request.deferredFrom, requestId);
               if (counts.start > 1) {
                 requestId = randomUUID();
                 pollSecret = randomBytes(32).toString("hex");
@@ -201,7 +203,9 @@ function fixture(maximumStarts = 2) {
                 true,
               );
               candidateDigest = hash(body.request);
-              rolesExpiry = new Date(time + 60000).toISOString();
+              rolesExpiry = new Date(
+                time + (body.request.deferredFrom ? 7200000 : 60000),
+              ).toISOString();
               response = {
                 id: requestId,
                 pollSecret,
@@ -237,7 +241,7 @@ function fixture(maximumStarts = 2) {
                 };
                 response = {
                   status: "approved",
-                  expiresAt: new Date(time + 60000).toISOString(),
+                  expiresAt: rolesExpiry,
                   request: challenge,
                 };
               }
@@ -245,7 +249,7 @@ function fixture(maximumStarts = 2) {
             } else if (action === "complete") {
               completionAttempted = true;
               counts.complete++;
-              assert.equal(counts.complete, 1);
+              assert(counts.complete <= (maximumStarts === 4 ? 2 : 1));
               assert.equal(body.id, requestId);
               assert.equal(body.pollSecret, pollSecret);
               assert.deepEqual(body.proof.request, challenge);
@@ -408,6 +412,13 @@ function fixture(maximumStarts = 2) {
       dropComplete = true;
       preventCommit = !commits;
     },
+    allowCompletion: () => {
+      dropComplete = false;
+      preventCommit = false;
+    },
+    advance: (elapsed: number) => {
+      time += elapsed;
+    },
     wrongSettlement: () => {
       wrongSettlement = true;
     },
@@ -429,8 +440,11 @@ function fixture(maximumStarts = 2) {
   };
 }
 const signal = () => AbortSignal.timeout(4000);
-test("an expired replacement with only a confirmed start preserves both journals and admits one separately approved recovery", async () => {
-  const f = fixture(3);
+async function exerciseDeferredEnrollment(
+  outcome: "complete" | "lost-reply" | "expired",
+) {
+  const finishDeferred = outcome !== "expired";
+  const f = fixture(4);
   let native = f.make();
   try {
     const first = await native.execute({ action: "start" }, signal());
@@ -528,20 +542,82 @@ test("an expired replacement with only a confirmed start preserves both journals
     f.restartReview(360000);
     native = f.make();
     await native.execute({ action: "reconcile" }, signal());
-    native.close();
-    f.restartReview(300001);
-    native = f.make();
+    const priorArchives = f.archives();
+    const priorOperations = f.journal();
     await assert.rejects(
       () => native.execute({ action: "start" }, signal()),
       /Separate fresh native approval/,
     );
-    assert.equal(f.archives().length, 2);
-    assert.equal(f.counts.start, 3);
+    native.close();
+    f.restartReview(300001);
+    native = f.make();
+    const deferred = await native.execute({ action: "start" }, signal());
+    assert.equal(deferred.deferredOwnerReview, true);
+    assert.equal(deferred.permissionsGranted, false);
+    assert.deepEqual(f.archives().slice(0, 2), priorArchives);
+    assert.equal(f.archives().length, 3);
+    assert.equal(f.counts.start, 4);
+    f.advance(finishDeferred ? 3600000 : 7500000);
+    await assert.rejects(
+      () => native.execute({ action: "poll" }, signal()),
+      /consent required/,
+    );
+    native.close();
+    f.restartReview();
+    native = f.make();
+    if (finishDeferred) {
+      const resumed = await native.execute({ action: "status" }, signal());
+      assert.deepEqual(resumed.state, deferred.state);
+      assert.equal(resumed.originalReviewExpired, false);
+      await native.execute({ action: "start" }, signal());
+      f.allowCompletion();
+      if (outcome === "lost-reply") {
+        f.dropComplete();
+        assert.equal(
+          (await native.execute({ action: "poll" }, signal())).state.status,
+          "pending",
+        );
+        native.close();
+        f.restartReview(360000);
+        native = f.make();
+      }
+      assert.equal(
+        (await native.execute({ action: "poll" }, signal())).state.status,
+        "complete",
+      );
+      assert.equal(f.counts.complete, 2);
+    } else {
+      const settled = await native.execute({ action: "reconcile" }, signal());
+      assert.equal(settled.reconciliation, "not-committed");
+      assert.equal(settled.replacementLimitReached, true);
+      native.close();
+      f.restartReview(300001);
+      native = f.make();
+      await assert.rejects(
+        () => native.execute({ action: "start" }, signal()),
+        /Separate fresh native approval/,
+      );
+      assert.equal(f.counts.complete, 1);
+    }
+    assert.deepEqual(
+      f
+        .journal()
+        .filter((row) =>
+          priorOperations.some(
+            (prior) => prior.operationId === row.operationId,
+          ),
+        ),
+      priorOperations,
+    );
+    assert.equal(f.counts.start, 4);
   } finally {
     native.close();
     f.cleanup();
   }
-});
+}
+for (const outcome of ["complete", "lost-reply", "expired"] as const)
+  test(`deferred enrollment preserves the original operations through ${outcome}`, () =>
+    exerciseDeferredEnrollment(outcome));
 for (const outcome of [
   "not-committed",
   "committed",

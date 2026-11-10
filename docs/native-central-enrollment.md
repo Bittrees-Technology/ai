@@ -92,6 +92,18 @@ result validation and sustained installed execution still require their own evid
 The original nine CryptoDirectory receipt pairs and exhausted budgets are unaffected;
 they must not be used as fixtures or reset to demonstrate this path.
 
+### Deferred owner review after recovery
+
+When the two legacy replacements are already archived, a verified uncommitted
+start with no completion reservation can qualify for one deferred review. Roles
+requires the exact prior unreviewed request and the same signed device and
+workspace binding. A deterministic source request ID prevents duplicate starts.
+The Roles review remains open for at most two hours, while Mac consent still
+expires after five minutes. After approving in Roles, return to the Mac and
+renew consent if needed. Confirmation reuses the saved request, mutation epoch
+and shared spending ledger. A current Roles owner session is still required.
+An expired deferred review can be reconciled, and the replacement limit holds.
+
 ## Separate native gateway credential preparation
 
 After completed central-purpose enrollment, “Prepare Workflows gateway…” offers

@@ -7,6 +7,9 @@ type View = {
   state?: CentralEnrollmentStatus["state"];
   originalReviewExpiresAt?: number;
   originalReviewExpired?: boolean;
+  deferredOwnerReview?: boolean;
+  deferredReplacement?: boolean;
+  replacementLimitReached?: boolean;
   reconciliation?: CentralEnrollmentStatus["reconciliation"];
   replacementReviewReady?: CentralEnrollmentStatus["replacementReviewReady"];
   recoveryReviewExpiresAt?: number;
@@ -51,17 +54,25 @@ export function CentralEnrollment({
   const state = view?.state;
   const complete = state?.status === "complete";
   const waiting = state?.status === "pending" || state?.status === "approved";
-  const deadline = waiting
-    ? Math.min(
-        view?.originalReviewExpiresAt ?? Infinity,
-        Date.parse(state.expiresAt) || Infinity,
-      )
+  const sourceDeadline = waiting
+    ? Date.parse(state.expiresAt) || Infinity
     : Infinity;
-  const expired =
-    view?.originalReviewExpired ||
-    state?.status === "expired" ||
+  const deadline = waiting
+    ? Math.min(view?.originalReviewExpiresAt ?? Infinity, sourceDeadline)
+    : Infinity;
+  const renewConsent =
+    waiting &&
+    view?.deferredOwnerReview &&
+    Number.isFinite(sourceDeadline) &&
+    now < sourceDeadline &&
     now >= deadline;
-  const displayDeadline = view?.recoveryReviewExpiresAt ?? deadline;
+  const expired =
+    !renewConsent &&
+    (view?.originalReviewExpired ||
+      state?.status === "expired" ||
+      now >= deadline);
+  const displayDeadline =
+    view?.recoveryReviewExpiresAt ?? (renewConsent ? sourceDeadline : deadline);
   useEffect(() => {
     if (!Number.isFinite(displayDeadline)) return;
     const timer = window.setTimeout(
@@ -104,7 +115,10 @@ export function CentralEnrollment({
       // A local status read without active consent cannot supersede a known
       // expired request. Keep the existing review visible for reconciliation.
       if (active.current && action === "start") setRolesOpened(false);
-      if (active.current && (action !== "status" || result.ready || !expired))
+      if (
+        active.current &&
+        (action !== "status" || result.ready || (!expired && !renewConsent))
+      )
         setView(result);
     } catch {
       if (active.current)
@@ -170,7 +184,15 @@ export function CentralEnrollment({
             Roles confirmed the original enrollment did not complete. The Mac
             saved the outcome with the original request.
           </p>
-          {view.replacementReviewReady ? (
+          {view.deferredReplacement && (
+            <p>
+              The next Roles review can stay open for two hours. Completing it
+              still requires current consent on this Mac.
+            </p>
+          )}
+          {view.replacementLimitReached ? (
+            <p>The recovery limit for this Mac has been reached.</p>
+          ) : view.replacementReviewReady ? (
             button("Request a new review in Roles", "start")
           ) : view.recoveryReviewExpiresAt &&
             now < view.recoveryReviewExpiresAt ? (
@@ -229,7 +251,14 @@ export function CentralEnrollment({
             Approve this Mac in Roles, then return here to confirm the
             connection.
           </p>
-          {Number.isFinite(deadline) && (
+          {view.deferredOwnerReview && (
+            <p>
+              Roles keeps this request open until{" "}
+              {new Date(sourceDeadline).toLocaleTimeString()}. After approving
+              in Roles, renew Mac consent here if needed.
+            </p>
+          )}
+          {!renewConsent && Number.isFinite(deadline) && (
             <p>
               Confirm on this Mac by{" "}
               <time dateTime={new Date(deadline).toISOString()}>
@@ -253,7 +282,9 @@ export function CentralEnrollment({
             {readyToConfirm ? "Reopen Roles review" : "Open Roles review"}
           </a>
           <div>
-            {readyToConfirm ? (
+            {renewConsent && nativeReview ? (
+              button("Review this Mac to confirm", "review")
+            ) : readyToConfirm ? (
               button("Confirm connection", "poll")
             ) : (
               <button

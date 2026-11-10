@@ -42,6 +42,11 @@ const hash = (value: unknown) =>
 export type EnrollmentReview = Readonly<{
   epoch: string;
   expiresAt: number;
+  /** A deferred Roles review can use fresh consent without changing its journal epoch. */
+  originalExpiresAt?: number;
+  deferredFrom?: string;
+  sourceReviewExpiresAt?: string;
+  challengeReviewExpiresAt?: number;
   authorityId: string;
   deviceId: string;
   sourceWorkspace: string;
@@ -135,7 +140,9 @@ export class EnrollmentTransportPlan {
     if (value.operation === "start") {
       if (
         value.request.kind !== "enroll" ||
-        value.request.ownerWallet !== review.ownerWallet
+        value.request.ownerWallet !== review.ownerWallet ||
+        value.request.deferredFrom !== review.deferredFrom ||
+        review.originalExpiresAt !== undefined
       )
         throw Error("Enrollment-only scope required");
       bind(value.request);

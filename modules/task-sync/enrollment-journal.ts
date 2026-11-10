@@ -130,6 +130,19 @@ export class EnrollmentJournal {
       verifiedResponseDigest,
     );
   }
+  hasCompletion(epoch: string) {
+    this.assertCurrent();
+    const id = enrollmentOperationId(epoch, "complete");
+    const row = this.read(id);
+    if (!row) return false;
+    if (
+      row.operationId !== id ||
+      row.epoch !== epoch ||
+      row.kind !== "complete"
+    )
+      throw Error("Original enrollment completion reservation differs");
+    return true;
+  }
   close() {
     this.db.close();
   }
