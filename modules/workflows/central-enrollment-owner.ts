@@ -48,6 +48,7 @@ const handoffSchema = z.strictObject({
 export const centralEnrollmentRecordSchema = z.strictObject({
   review: reviewSchema,
   deferredFrom: z.uuid().optional(),
+  ownerRecoveryFrom: z.uuid().optional(),
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
   settlement: centralEnrollmentSettlement.optional(),
@@ -101,7 +102,7 @@ export class CentralEnrollmentOwner {
         ): void;
         replacementMode?(
           original: CentralEnrollmentRecord,
-        ): "standard" | "deferred" | "owner-approved" | null;
+        ): "standard" | "deferred" | "owner-approved" | "owner-recovery" | null;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
@@ -184,7 +185,9 @@ export class CentralEnrollmentOwner {
       throw Error("Central enrollment activation is forbidden");
     if (
       record.candidate?.kind === "enroll" &&
-      record.candidate.deferredFrom !== record.deferredFrom
+      (record.candidate.deferredFrom !== record.deferredFrom ||
+        record.candidate.ownerRecoveryFrom !== record.ownerRecoveryFrom ||
+        !!(record.deferredFrom && record.ownerRecoveryFrom))
     )
       throw Error("Deferred enrollment binding changed");
     if (
@@ -236,6 +239,8 @@ export class CentralEnrollmentOwner {
   private wireReview(): EnrollmentReview {
     const original = this.activeReview();
     const record = this.record();
+    if (record?.ownerRecoveryFrom && !record.settlement)
+      return { ...original, ownerRecoveryFrom: record.ownerRecoveryFrom };
     if (!record?.deferredFrom || record.settlement) return original;
     const current = reviewSchema.parse(this.options.current());
     if (current.epoch === original.epoch)
@@ -279,6 +284,7 @@ export class CentralEnrollmentOwner {
         const {
           originalExpiresAt: _originalExpiresAt,
           deferredFrom: _deferredFrom,
+          ownerRecoveryFrom: _ownerRecoveryFrom,
           sourceReviewExpiresAt: _sourceReviewExpiresAt,
           challengeReviewExpiresAt: _challengeReviewExpiresAt,
           ...review
@@ -366,6 +372,9 @@ export class CentralEnrollmentOwner {
       ...(record?.settlement?.outcome === "not-committed" && !replacementMode
         ? { replacementLimitReached: true }
         : {}),
+      ...(record?.handoff && replacementMode === "owner-recovery"
+        ? { ownerRecoveryPriorId: record.handoff.id }
+        : {}),
       ...(record && replacementMode === "deferred"
         ? {
             deferredReplacementExpiresAt: deferredDeadline(record),
@@ -433,6 +442,15 @@ export class CentralEnrollmentOwner {
     const deferredFrom = mode === "deferred" ? original.handoff?.id : undefined;
     if (mode === "deferred" && !deferredFrom)
       throw Error("Exact prior enrollment required for deferred review");
+    const ownerRecoveryFrom =
+      mode === "owner-recovery" ? original.handoff?.id : undefined;
+    if (mode === "owner-recovery" && !ownerRecoveryFrom)
+      throw Error("Original Roles request required for owner recovery");
+    const predecessor = ownerRecoveryFrom
+      ? { ownerRecoveryFrom }
+      : deferredFrom
+        ? { deferredFrom }
+        : {};
     const expected = hash(review);
     const current = () => {
       const live = this.options.current(),
@@ -442,7 +460,7 @@ export class CentralEnrollmentOwner {
         live.expiresAt > now &&
         live.expiresAt <= now + 300000 &&
         hash(live) === expected
-        ? { ...review, ...(deferredFrom ? { deferredFrom } : {}) }
+        ? { ...review, ...predecessor }
         : null;
     };
     const transport = this.options.session(current);
@@ -459,7 +477,7 @@ export class CentralEnrollmentOwner {
           throw Error("Original settlement changed before replacement");
         replace(original, {
           review,
-          ...(deferredFrom ? { deferredFrom } : {}),
+          ...predecessor,
         });
       });
     } catch (error) {
@@ -473,7 +491,7 @@ export class CentralEnrollmentOwner {
       deviceId: review.deviceId,
       sourceWorkspace: review.sourceWorkspace,
       ownerWallet: review.ownerWallet,
-      ...(deferredFrom ? { deferredFrom } : {}),
+      ...predecessor,
     });
     return this.summary();
   }

@@ -11,6 +11,7 @@ type View = {
   originalReviewExpired?: boolean;
   deferredOwnerReview?: boolean;
   deferredReplacement?: boolean;
+  ownerRecoveryPriorId?: string;
   deferredReplacementExpiresAt?: number;
   replacementLimitReached?: boolean;
   reconciliation?: CentralEnrollmentStatus["reconciliation"];
@@ -231,6 +232,20 @@ export function CentralEnrollment({
               still requires current consent on this Mac.
             </p>
           )}
+          {view.ownerRecoveryPriorId && (
+            <p>
+              <a
+                href={`https://roles.bittrees.org/profile?runtimeRequest=${view.ownerRecoveryPriorId}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setRolesOpened(true)}
+              >
+                Allow recovery in Roles
+              </a>
+              . After Roles verifies your sign-in, return here to send the
+              request.
+            </p>
+          )}
           {recoveryClosed ? (
             <p>
               The one-day Roles recovery window has closed. An owner-assisted
@@ -239,7 +254,11 @@ export function CentralEnrollment({
           ) : view.replacementLimitReached ? (
             <p>The recovery limit for this Mac has been reached.</p>
           ) : view.replacementReviewReady ? (
-            button("Request a new review in Roles", "start")
+            view.ownerRecoveryPriorId ? (
+              rolesOpened && button("Send one recovery request", "start")
+            ) : (
+              button("Request a new review in Roles", "start")
+            )
           ) : view.recoveryReviewExpiresAt &&
             now < view.recoveryReviewExpiresAt ? (
             <p>

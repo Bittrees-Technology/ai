@@ -43,6 +43,7 @@ const configuration = z
     }),
     commonConfiguration.extend({
       purpose: z.literal("central-workflows"),
+      ownerRecoveryFrom: z.uuid().optional(),
       allowOneNewRequestAfter: z
         .strictObject({
           operationId: z.uuid(),
@@ -215,6 +216,7 @@ export async function launchEnrollment(
       ? nativeCentralEnrollmentSessionFactory({
           ...factoryOptions,
           allowOneNewRequestAfter: config.allowOneNewRequestAfter,
+          ownerRecoveryFrom: config.ownerRecoveryFrom,
           centralStatePath: join(directory, "central-workflows.db"),
         })
       : nativeEnrollmentSessionFactory(factoryOptions);

@@ -57,6 +57,7 @@ export const centralEnrollmentStatus = z
       })
       .optional(),
     savedStartEvidence: deferredStartLookupReceipt.optional(),
+    ownerRecoveryPriorId: z.uuid().optional(),
     deferredOwnerReview: z.literal(true).optional(),
     deferredReplacement: z.literal(true).optional(),
     deferredReplacementExpiresAt: z.int().positive().optional(),
@@ -96,6 +97,8 @@ export const centralEnrollmentStatus = z
       .nullable(),
   })
   .refine((value) => {
+    if (value.ownerRecoveryPriorId && value.reconciliation !== "not-committed")
+      return false;
     if (
       ((value.replacementReviewReady &&
         !(
