@@ -9,6 +9,7 @@ type View = {
   originalReviewExpired?: boolean;
   deferredOwnerReview?: boolean;
   deferredReplacement?: boolean;
+  deferredReplacementExpiresAt?: number;
   replacementLimitReached?: boolean;
   reconciliation?: CentralEnrollmentStatus["reconciliation"];
   replacementReviewReady?: CentralEnrollmentStatus["replacementReviewReady"];
@@ -71,8 +72,16 @@ export function CentralEnrollment({
     (view?.originalReviewExpired ||
       state?.status === "expired" ||
       now >= deadline);
-  const displayDeadline =
-    view?.recoveryReviewExpiresAt ?? (renewConsent ? sourceDeadline : deadline);
+  const recoveryDeadline = view?.deferredReplacementExpiresAt ?? Infinity;
+  const recoveryClosed = now >= recoveryDeadline;
+  const displayDeadline = Math.min(
+    recoveryClosed ? Infinity : recoveryDeadline,
+    view?.recoveryReviewExpiresAt && view.recoveryReviewExpiresAt > now
+      ? view.recoveryReviewExpiresAt
+      : renewConsent
+        ? sourceDeadline
+        : deadline,
+  );
   useEffect(() => {
     if (!Number.isFinite(displayDeadline)) return;
     const timer = window.setTimeout(
@@ -184,13 +193,18 @@ export function CentralEnrollment({
             Roles confirmed the original enrollment did not complete. The Mac
             saved the outcome with the original request.
           </p>
-          {view.deferredReplacement && (
+          {view.deferredReplacement && !recoveryClosed && (
             <p>
               The next Roles review can stay open for two hours. Completing it
               still requires current consent on this Mac.
             </p>
           )}
-          {view.replacementLimitReached ? (
+          {recoveryClosed ? (
+            <p>
+              The one-day Roles recovery window has closed. An owner-assisted
+              enrollment recovery is required.
+            </p>
+          ) : view.replacementLimitReached ? (
             <p>The recovery limit for this Mac has been reached.</p>
           ) : view.replacementReviewReady ? (
             button("Request a new review in Roles", "start")
@@ -204,7 +218,12 @@ export function CentralEnrollment({
             button("Review this Mac for a new request", "review")
           ) : null}
         </>
-      ) : expired || state?.status === "held" || state?.status === "failed" ? (
+      ) : state?.status === "held" ? (
+        <p role="status">
+          The Mac saved the enrollment attempt but has no Roles approval link.
+          Setup is paused until the original request can be verified with Roles.
+        </p>
+      ) : expired || state?.status === "failed" ? (
         <>
           <p role="status">
             {expired

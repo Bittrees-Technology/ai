@@ -441,7 +441,7 @@ function fixture(maximumStarts = 2) {
 }
 const signal = () => AbortSignal.timeout(4000);
 async function exerciseDeferredEnrollment(
-  outcome: "complete" | "lost-reply" | "expired",
+  outcome: "complete" | "lost-reply" | "expired" | "stale-predecessor",
 ) {
   const finishDeferred = outcome !== "expired";
   const f = fixture(4);
@@ -551,6 +551,30 @@ async function exerciseDeferredEnrollment(
     native.close();
     f.restartReview(300001);
     native = f.make();
+    if (outcome === "stale-predecessor") {
+      const ready = await native.execute({ action: "status" }, signal());
+      const cutoff =
+        Date.parse((recovery.state as { expiresAt: string }).expiresAt) +
+        86_400_000;
+      assert.equal(ready.deferredReplacementExpiresAt, cutoff);
+      native.close();
+      // Simulate returning to an old installed app after the server eligibility window.
+      f.restartReview(11 * 86_400_000);
+      native = f.make();
+      const counts = { ...f.counts };
+      const held = await native.execute({ action: "status" }, signal());
+      assert.equal(held.deferredReplacementExpiresAt, cutoff);
+      assert.equal(held.replacementReviewReady, undefined);
+      assert.equal(held.deferredReplacement, undefined);
+      await assert.rejects(
+        () => native.execute({ action: "start" }, signal()),
+        /Separate fresh native approval/,
+      );
+      assert.deepEqual(f.counts, counts);
+      assert.deepEqual(f.journal(), priorOperations);
+      assert.deepEqual(f.archives(), priorArchives);
+      return;
+    }
     const deferred = await native.execute({ action: "start" }, signal());
     assert.equal(deferred.deferredOwnerReview, true);
     assert.equal(deferred.permissionsGranted, false);
@@ -615,7 +639,12 @@ async function exerciseDeferredEnrollment(
     f.cleanup();
   }
 }
-for (const outcome of ["complete", "lost-reply", "expired"] as const)
+for (const outcome of [
+  "complete",
+  "lost-reply",
+  "expired",
+  "stale-predecessor",
+] as const)
   test(`deferred enrollment preserves the original operations through ${outcome}`, () =>
     exerciseDeferredEnrollment(outcome));
 for (const outcome of [

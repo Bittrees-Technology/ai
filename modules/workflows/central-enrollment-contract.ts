@@ -49,6 +49,7 @@ export const centralEnrollmentStatus = z
     originalReviewExpired: z.boolean(),
     deferredOwnerReview: z.literal(true).optional(),
     deferredReplacement: z.literal(true).optional(),
+    deferredReplacementExpiresAt: z.int().positive().optional(),
     replacementLimitReached: z.literal(true).optional(),
     reconciliation: z.enum(["not-committed", "committed"]).optional(),
     replacementReviewReady: z.literal(true).optional(),
@@ -88,6 +89,7 @@ export const centralEnrollmentStatus = z
     if (
       (value.replacementReviewReady ||
         value.recoveryReviewExpiresAt ||
+        value.deferredReplacementExpiresAt ||
         value.deferredReplacement ||
         value.replacementLimitReached) &&
       value.reconciliation !== "not-committed"

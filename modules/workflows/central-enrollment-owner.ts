@@ -59,6 +59,10 @@ type NativeSession = Pick<
 >;
 const hash = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
+// Roles accepts a deferred start only within one day of the source handoff expiry.
+function deferredDeadline(record: CentralEnrollmentRecord) {
+  return record.handoff ? Date.parse(record.handoff.expiresAt) + 86_400_000 : 0;
+}
 function binding(review: EnrollmentReview) {
   const {
     epoch: _epoch,
@@ -329,7 +333,14 @@ export class CentralEnrollmentOwner {
       ...(record?.settlement?.outcome === "not-committed" && !replacementMode
         ? { replacementLimitReached: true }
         : {}),
-      ...(replacementMode === "deferred" ? { deferredReplacement: true } : {}),
+      ...(record && replacementMode === "deferred"
+        ? {
+            deferredReplacementExpiresAt: deferredDeadline(record),
+            ...(this.now() < deferredDeadline(record)
+              ? { deferredReplacement: true }
+              : {}),
+          }
+        : {}),
       ...(record && this.replacementReview(record)
         ? { replacementReviewReady: true }
         : {}),
@@ -366,6 +377,7 @@ export class CentralEnrollmentOwner {
       this.signer ||
       record.settlement?.outcome !== "not-committed" ||
       !mode ||
+      (mode === "deferred" && this.now() >= deferredDeadline(record)) ||
       fresh.epoch === record.review.epoch ||
       fresh.epoch === record.settlement.recoveryEpoch
     )
@@ -410,8 +422,11 @@ export class CentralEnrollmentOwner {
     try {
       await transport.execute({ operation: "heartbeat" }, signal);
       signal.throwIfAborted();
-      if (!current())
-        throw Error("Replacement review changed before persistence");
+      if (
+        !current() ||
+        (mode === "deferred" && this.now() >= deferredDeadline(original))
+      )
+        throw Error("Replacement review expired before persistence");
       this.options.store.atomic(() => {
         if (hash(this.record()) !== hash(original))
           throw Error("Original settlement changed before replacement");

@@ -340,3 +340,67 @@ test("the expired setup reconciles and requests separate consent before replacem
   ).toHaveAttribute("href", "https://roles.bittrees.org/review/replacement");
   expect(actions).toEqual([{ action: "reconcile" }, { action: "start" }]);
 });
+
+test("a deferred request stops being available at the Roles deadline without sending it", async ({
+  page,
+}) => {
+  const start = new Date("2026-11-21T20:00:00Z");
+  await page.clock.install({ time: start });
+  const methods: string[] = [];
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    methods.push(route.request().method());
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        reconciliation: "not-committed",
+        deferredReplacement: true,
+        replacementReviewReady: true,
+        deferredReplacementExpiresAt: start.getTime() + 60000,
+        state: { status: "expired" },
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  const request = setup.getByRole("button", {
+    name: "Request a new review in Roles",
+  });
+  await expect(request).toBeVisible();
+  await page.clock.fastForward(60000);
+  await expect(
+    setup.getByText("The one-day Roles recovery window has closed.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(request).toHaveCount(0);
+  expect(methods).toEqual(["GET"]);
+});
+
+test("a held start without a receipt explains why there is no approval link", async ({
+  page,
+}) => {
+  const methods: string[] = [];
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    methods.push(route.request().method());
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        originalReviewExpired: true,
+        state: { status: "held", message: "Start requires reconciliation" },
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  await expect(setup.getByRole("status")).toContainText(
+    "has no Roles approval link",
+  );
+  await expect(setup.getByRole("button")).toHaveCount(0);
+  expect(methods).toEqual(["GET"]);
+});
