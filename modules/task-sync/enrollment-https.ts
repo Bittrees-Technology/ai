@@ -6,11 +6,14 @@ import {
   type EnrollmentTransportPlan,
 } from "./enrollment-transport-plan.js";
 import { z } from "zod";
-import { runtimeReconciliationBody } from "./runtime-contract.js";
+import {
+  runtimeReconciliationBody,
+  deferredStartLookupBody,
+} from "./runtime-contract.js";
 type Plan = ReturnType<EnrollmentTransportPlan["prepare"]>;
 const paths = new Set([
   "https://ai.bittrees.org/api/workflows",
-  ...["start", "poll", "complete", "reconcile"].map(
+  ...["start", "poll", "complete", "reconcile", "deferred-start-readback"].map(
     (x) => "https://roles.bittrees.org/api/mcp/runtime/" + x,
   ),
 ]);
@@ -30,6 +33,8 @@ export function checkEnrollmentHTTPSPlan(plan: Plan) {
     const body = z.record(z.string(), z.unknown()).parse(plan.body);
     if ("operation" in body) throw Error("Unexpected operation override");
     if (action === "reconcile") runtimeReconciliationBody.parse(body);
+    else if (action === "deferred-start-readback")
+      deferredStartLookupBody.parse(body);
     else enrollmentOperation.parse({ operation: action, ...body });
   } else {
     const body = z.record(z.string(), z.unknown()).parse(plan.body);

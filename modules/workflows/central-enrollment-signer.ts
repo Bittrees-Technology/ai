@@ -18,6 +18,8 @@ import {
   runtimeHandoffMessage,
   runtimeReconciliationRequest,
   runtimeReconciliationMessage,
+  deferredStartLookupMessage,
+  deferredStartLookupRequest,
 } from "../task-sync/runtime-contract.js";
 
 export const centralEnrollmentSigningScope = runtimeEnrollmentSchema
@@ -79,7 +81,7 @@ export function centralEnrollmentSigner(
       throw Error("Existing central enrollment identity differs from review");
     return saved;
   };
-  const signed = (request: unknown, message: string) => {
+  const signed = <T>(request: T, message: string) => {
     const saved = identity(),
       before = lstatSync(path);
     const db = new Database(path, { readonly: true, fileMustExist: true });
@@ -169,6 +171,41 @@ export function centralEnrollmentSigner(
       )
         throw Error("Exact central enrollment handoff required");
       return signed(request, runtimeHandoffMessage(request));
+    },
+    signStartLookup(
+      operationId: string,
+      candidate: z.infer<typeof runtimeHandoffSchema>,
+    ) {
+      const review = scope();
+      if (
+        candidate.kind !== "enroll" ||
+        !candidate.deferredFrom ||
+        (
+          [
+            "deviceId",
+            "authorityId",
+            "ownerWallet",
+            "sourceWorkspace",
+            "principal",
+            "publicKey",
+          ] as const
+        ).some((field) => candidate[field] !== review[field])
+      )
+        throw Error(
+          "Original deferred candidate must match current Mac consent",
+        );
+      const request = deferredStartLookupRequest.parse({
+        version: 1,
+        audience: "https://roles.bittrees.org",
+        operationId,
+        candidateDigest: hash(candidate),
+        issuedAt: now(),
+        expiresAt: review.expiresAt,
+      });
+      return {
+        ...signed(request, deferredStartLookupMessage(request)),
+        candidate,
+      };
     },
     reconcile(raw: unknown) {
       const request = runtimeReconciliationRequest.parse(raw);

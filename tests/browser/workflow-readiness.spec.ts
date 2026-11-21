@@ -404,3 +404,75 @@ test("a held start without a receipt explains why there is no approval link", as
   await expect(setup.getByRole("button")).toHaveCount(0);
   expect(methods).toEqual(["GET"]);
 });
+
+test("the saved request is checked only after native consent and its outcome survives reload", async ({
+  page,
+}) => {
+  const operationId = "17ae26aa-10e0-4d33-a60c-b5ce7457b1da";
+  const candidateDigest = "a".repeat(64);
+  const actions: string[] = [];
+  await page.addInitScript(() => {
+    let reviews = 0;
+    Object.defineProperty(window, "webkit", {
+      value: {
+        messageHandlers: {
+          reviewWorkflowEnrollment: { postMessage: async () => ++reviews > 1 },
+        },
+      },
+    });
+  });
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    if (route.request().method() === "POST")
+      actions.push(route.request().postDataJSON().action);
+    const lookup = {
+      operationId,
+      candidateDigest,
+      availableAfter: Date.now() - 1000,
+      expiresAt: Date.now() + 300000,
+    };
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        state: { status: "held" },
+        ...(actions.length
+          ? {
+              savedStartEvidence: {
+                operationId,
+                candidateDigest,
+                checkedAt: Date.now(),
+                status: "no-start-record",
+              },
+            }
+          : { savedStartLookup: lookup }),
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  await expect(
+    setup.getByRole("link", { name: "Allow status check in Roles" }),
+  ).toHaveAttribute(
+    "href",
+    "https://roles.bittrees.org/profile?deferredStart=" +
+      operationId +
+      "&candidateDigest=" +
+      candidateDigest,
+  );
+  const check = setup.getByRole("button", { name: "Check saved request" });
+  await check.click();
+  await expect(check).toBeEnabled();
+  expect(actions).toEqual([]);
+  await check.click();
+  await expect(setup.getByRole("status")).toContainText(
+    "found no start record",
+  );
+  await page.reload();
+  await expect(setup.getByRole("status")).toContainText(
+    "found no start record",
+  );
+  await expect(check).toHaveCount(0);
+  expect(actions).toEqual(["reconcile"]);
+});
