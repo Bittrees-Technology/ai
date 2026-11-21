@@ -4,7 +4,10 @@ import { closeSync, lstatSync, openSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { nativeEnrollmentSessionFactory } from "../task-sync/enrollment-native-session.js";
 import type { EnrollmentReview } from "../task-sync/enrollment-transport-plan.js";
-import { CentralEnrollmentOwner } from "./central-enrollment-owner.js";
+import {
+  CentralEnrollmentOwner,
+  type CentralEnrollmentRecord,
+} from "./central-enrollment-owner.js";
 import { centralEnrollmentReconciliation } from "./central-enrollment-reconciliation.js";
 
 const archiveTable = `CREATE TABLE IF NOT EXISTS central_native_handoff_archive(
@@ -35,6 +38,7 @@ function ensureArchive(db: Database.Database) {
 export function nativeCentralEnrollmentSessionFactory(
   options: Parameters<typeof nativeEnrollmentSessionFactory>[0] & {
     centralStatePath: string;
+    allowOneNewRequestAfter?: { operationId: string; candidateDigest: string };
   },
 ) {
   if (
@@ -98,8 +102,20 @@ export function nativeCentralEnrollmentSessionFactory(
       const archiveCount = db.prepare(
         "SELECT count(*) AS n FROM central_native_handoff_archive WHERE id=?",
       );
-      const replacementMode = (operationKind: "start" | "complete") => {
+      const replacementMode = (original: CentralEnrollmentRecord) => {
         const { n } = archiveCount.get(id) as { n: number };
+        if (original.deferredFrom) {
+          const evidence = original.startReadback;
+          const approval = options.allowOneNewRequestAfter;
+          return n === 3 &&
+            evidence?.status === "no-start-record" &&
+            approval?.operationId === evidence.operationId &&
+            approval.candidateDigest === evidence.candidateDigest
+            ? "owner-approved"
+            : null;
+        }
+        if (original.settlement?.outcome !== "not-committed") return null;
+        const operationKind = original.settlement.operationKind ?? "complete";
         if (n === 0 || (n === 1 && operationKind === "start"))
           return "standard";
         // Only a verified start without a completion reservation can use the
@@ -130,12 +146,9 @@ export function nativeCentralEnrollmentSessionFactory(
             ).run(id, options.vault.seal(record, aad));
           },
           replace: (original, replacement) => {
-            const mode = replacementMode(
-              original.settlement?.operationKind ?? "complete",
-            );
+            const mode = replacementMode(original);
             if (
               !mode ||
-              original.deferredFrom ||
               replacement.deferredFrom !==
                 (mode === "deferred" ? original.handoff?.id : undefined)
             )

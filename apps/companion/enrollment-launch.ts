@@ -43,6 +43,12 @@ const configuration = z
     }),
     commonConfiguration.extend({
       purpose: z.literal("central-workflows"),
+      allowOneNewRequestAfter: z
+        .strictObject({
+          operationId: z.uuid(),
+          candidateDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .optional(),
       principal: z.string().regex(/^agent:[a-f0-9-]{36}$/),
       credentialId: z.string().regex(/^[a-f0-9]{64}$/),
       sourceWorkspace: z.uuid(),
@@ -205,9 +211,10 @@ export async function launchEnrollment(
     now,
   };
   const factory =
-    purpose === "central-workflows"
+    config.purpose === "central-workflows"
       ? nativeCentralEnrollmentSessionFactory({
           ...factoryOptions,
+          allowOneNewRequestAfter: config.allowOneNewRequestAfter,
           centralStatePath: join(directory, "central-workflows.db"),
         })
       : nativeEnrollmentSessionFactory(factoryOptions);

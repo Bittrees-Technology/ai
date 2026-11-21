@@ -250,6 +250,15 @@ export function CentralEnrollment({
             button("Review this Mac for a new request", "review")
           ) : null}
         </>
+      ) : view.savedStartEvidence?.status === "no-start-record" &&
+        view.replacementReviewReady ? (
+        <>
+          <p>
+            Roles confirmed it has no record of the previous request. This Mac
+            has approval for one new enrollment request.
+          </p>
+          {button("Send one new enrollment request", "start")}
+        </>
       ) : view.savedStartEvidence ? (
         <p role="status">
           {view.savedStartEvidence.status === "start-recorded"

@@ -97,7 +97,12 @@ export const centralEnrollmentStatus = z
   })
   .refine((value) => {
     if (
-      (value.replacementReviewReady ||
+      ((value.replacementReviewReady &&
+        !(
+          value.savedStartEvidence?.status === "no-start-record" &&
+          value.originalReviewExpired &&
+          value.state.status === "held"
+        )) ||
         value.recoveryReviewExpiresAt ||
         value.deferredReplacementExpiresAt ||
         value.deferredReplacement ||

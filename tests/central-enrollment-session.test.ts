@@ -257,7 +257,7 @@ function fixture(maximumStarts = 2) {
             } else if (action === "complete") {
               completionAttempted = true;
               counts.complete++;
-              assert(counts.complete <= (maximumStarts === 4 ? 2 : 1));
+              assert(counts.complete <= (maximumStarts >= 4 ? 2 : 1));
               assert.equal(body.id, requestId);
               assert.equal(body.pollSecret, pollSecret);
               assert.deepEqual(body.proof.request, challenge);
@@ -370,10 +370,14 @@ function fixture(maximumStarts = 2) {
       });
     return req;
   }) as any;
-  const make = () =>
+  const make = (allowOneNewRequestAfter?: {
+    operationId: string;
+    candidateDigest: string;
+  }) =>
     nativeCentralEnrollmentSessionFactory({
       path,
       centralStatePath: central,
+      allowOneNewRequestAfter,
       vault,
       pinnedSigner: attester.publicKey,
       credential: () => "a".repeat(64),
@@ -439,6 +443,9 @@ function fixture(maximumStarts = 2) {
       failSave = true;
       handoffWrites = 0;
     },
+    allowStart: () => {
+      dropStart = false;
+    },
     approveRead: () => {
       ownerAllowsRead = true;
     },
@@ -491,7 +498,7 @@ async function exerciseDeferredEnrollment(
     | "start-recorded",
 ) {
   const finishDeferred = outcome !== "expired";
-  const f = fixture(4);
+  const f = fixture(outcome === "no-start-record" ? 5 : 4);
   let native = f.make();
   try {
     const first = await native.execute({ action: "start" }, signal());
@@ -666,6 +673,56 @@ async function exerciseDeferredEnrollment(
       assert.deepEqual(f.counts, before);
       assert.equal(f.counts.start, 4);
       assert.deepEqual(f.journal(), originalJournal);
+      const evidence = checked.savedStartEvidence!;
+      native.close();
+      native = f.make({
+        operationId: randomUUID(),
+        candidateDigest: evidence.candidateDigest,
+      });
+      assert.equal(
+        (await native.execute({ action: "start" }, signal())).state.status,
+        "held",
+      );
+      native.close();
+      native = f.make(evidence);
+      if (outcome === "start-recorded") {
+        assert.equal(
+          (await native.execute({ action: "start" }, signal())).state.status,
+          "held",
+        );
+        assert.deepEqual(f.counts, before);
+      } else {
+        assert.equal(
+          (await native.execute({ action: "status" }, signal()))
+            .replacementReviewReady,
+          true,
+        );
+        f.allowStart();
+        const pending = await native.execute({ action: "start" }, signal());
+        assert.equal(pending.state.status, "pending");
+        assert.equal(f.counts.start, 5);
+        assert.equal(
+          f.archives().at(-1).startReadback.operationId,
+          evidence.operationId,
+        );
+        native.close();
+        f.restartReview();
+        native = f.make(evidence);
+        assert.deepEqual(
+          (await native.execute({ action: "start" }, signal())).state,
+          pending.state,
+        );
+        f.allowCompletion();
+        assert.equal(
+          (await native.execute({ action: "poll" }, signal())).state.status,
+          "complete",
+        );
+        assert.equal(f.counts.start, 5);
+        assert.deepEqual(
+          f.journal().slice(0, originalJournal.length),
+          originalJournal,
+        );
+      }
       return;
     }
     const deferred = await native.execute({ action: "start" }, signal());

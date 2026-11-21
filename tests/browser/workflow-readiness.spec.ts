@@ -411,6 +411,7 @@ test("the saved request is checked only after native consent and its outcome sur
   const operationId = "17ae26aa-10e0-4d33-a60c-b5ce7457b1da";
   const candidateDigest = "a".repeat(64);
   const actions: string[] = [];
+  let ownerApprovedNewRequest = false;
   await page.addInitScript(() => {
     let reviews = 0;
     Object.defineProperty(window, "webkit", {
@@ -437,6 +438,7 @@ test("the saved request is checked only after native consent and its outcome sur
         state: { status: "held" },
         ...(actions.length
           ? {
+              replacementReviewReady: ownerApprovedNewRequest,
               savedStartEvidence: {
                 operationId,
                 candidateDigest,
@@ -475,4 +477,12 @@ test("the saved request is checked only after native consent and its outcome sur
   );
   await expect(check).toHaveCount(0);
   expect(actions).toEqual(["reconcile"]);
+  const send = setup.getByRole("button", { name: "Send one new enrollment request" });
+  await expect(send).toHaveCount(0);
+  ownerApprovedNewRequest = true;
+  await page.reload();
+  await expect(send).toBeEnabled();
+  expect(actions).toEqual(["reconcile"]);
+  await send.click();
+  await expect.poll(() => actions.slice()).toEqual(["reconcile", "start"]);
 });

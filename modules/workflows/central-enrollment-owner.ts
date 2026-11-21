@@ -100,8 +100,8 @@ export class CentralEnrollmentOwner {
           replacement: CentralEnrollmentRecord,
         ): void;
         replacementMode?(
-          operationKind: "start" | "complete",
-        ): "standard" | "deferred" | null;
+          original: CentralEnrollmentRecord,
+        ): "standard" | "deferred" | "owner-approved" | null;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
@@ -408,24 +408,18 @@ export class CentralEnrollmentOwner {
       !this.options.store.replace ||
       this.session ||
       this.signer ||
-      record.settlement?.outcome !== "not-committed" ||
       !mode ||
       (mode === "deferred" && this.now() >= deferredDeadline(record)) ||
       fresh.epoch === record.review.epoch ||
-      fresh.epoch === record.settlement.recoveryEpoch
+      fresh.epoch === record.settlement?.recoveryEpoch ||
+      fresh.epoch === record.lastStartLookupEpoch
     )
       return null;
     this.activeReview();
     return { review: reviewSchema.parse(fresh), mode };
   }
   private replacementMode(record: CentralEnrollmentRecord) {
-    if (record.deferredFrom || record.settlement?.outcome !== "not-committed")
-      return null;
-    return (
-      this.options.store.replacementMode?.(
-        record.settlement.operationKind ?? "complete",
-      ) ?? null
-    );
+    return this.options.store.replacementMode?.(record) ?? null;
   }
   private async startReplacement(
     original: CentralEnrollmentRecord,
@@ -493,7 +487,17 @@ export class CentralEnrollmentOwner {
     this.signal = signal;
     try {
       let record = this.record();
-      if (record?.startReadback) return this.summary();
+      if (record?.startReadback) {
+        if (
+          command.action === "start" &&
+          this.replacementMode(record) === "owner-approved"
+        )
+          return await this.startReplacement(
+            record,
+            AbortSignal.any([signal, this.stop.signal]),
+          );
+        return this.summary();
+      }
       if (
         command.action === "start" &&
         record?.settlement?.outcome === "not-committed"
