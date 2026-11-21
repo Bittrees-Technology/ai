@@ -45,6 +45,7 @@ export type EnrollmentReview = Readonly<{
   /** A deferred Roles review can use fresh consent without changing its journal epoch. */
   originalExpiresAt?: number;
   deferredFrom?: string;
+  ownerRecoveryFrom?: string;
   sourceReviewExpiresAt?: string;
   challengeReviewExpiresAt?: number;
   authorityId: string;
@@ -142,6 +143,8 @@ export class EnrollmentTransportPlan {
         value.request.kind !== "enroll" ||
         value.request.ownerWallet !== review.ownerWallet ||
         value.request.deferredFrom !== review.deferredFrom ||
+        value.request.ownerRecoveryFrom !== review.ownerRecoveryFrom ||
+        !!(value.request.deferredFrom && value.request.ownerRecoveryFrom) ||
         review.originalExpiresAt !== undefined
       )
         throw Error("Enrollment-only scope required");

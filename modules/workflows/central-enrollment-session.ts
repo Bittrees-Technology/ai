@@ -38,6 +38,7 @@ function ensureArchive(db: Database.Database) {
 export function nativeCentralEnrollmentSessionFactory(
   options: Parameters<typeof nativeEnrollmentSessionFactory>[0] & {
     centralStatePath: string;
+    ownerRecoveryFrom?: string;
     allowOneNewRequestAfter?: { operationId: string; candidateDigest: string };
   },
 ) {
@@ -115,6 +116,14 @@ export function nativeCentralEnrollmentSessionFactory(
             : null;
         }
         if (original.settlement?.outcome !== "not-committed") return null;
+        if (original.ownerRecoveryFrom) return null;
+        if (
+          n === 4 &&
+          options.ownerRecoveryFrom &&
+          original.handoff?.id === options.ownerRecoveryFrom &&
+          original.settlement.operationKind === "start"
+        )
+          return "owner-recovery";
         const operationKind = original.settlement.operationKind ?? "complete";
         if (n === 0 || (n === 1 && operationKind === "start"))
           return "standard";
@@ -149,6 +158,10 @@ export function nativeCentralEnrollmentSessionFactory(
             const mode = replacementMode(original);
             if (
               !mode ||
+              replacement.ownerRecoveryFrom !==
+                (mode === "owner-recovery"
+                  ? original.handoff?.id
+                  : undefined) ||
               replacement.deferredFrom !==
                 (mode === "deferred" ? original.handoff?.id : undefined)
             )

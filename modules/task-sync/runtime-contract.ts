@@ -99,6 +99,7 @@ export const runtimeHandoffSchema = z.discriminatedUnion("kind", [
   handoffBase.extend({
     kind: z.literal("enroll"),
     deferredFrom: z.uuid().optional(),
+    ownerRecoveryFrom: z.uuid().optional(),
   }),
   handoffBase.extend({
     kind: z.literal("activate"),

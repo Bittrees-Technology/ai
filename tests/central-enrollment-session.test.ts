@@ -190,6 +190,8 @@ function fixture(maximumStarts = 2) {
               assert(counts.start <= maximumStarts);
               requestEpoch = review.epoch;
               completionAttempted = false;
+              if (counts.start === 6)
+                assert.equal(body.request.ownerRecoveryFrom, requestId);
               if (body.request.deferredFrom)
                 assert.equal(body.request.deferredFrom, requestId);
               if (counts.start > 1) {
@@ -370,14 +372,18 @@ function fixture(maximumStarts = 2) {
       });
     return req;
   }) as any;
-  const make = (allowOneNewRequestAfter?: {
-    operationId: string;
-    candidateDigest: string;
-  }) =>
+  const make = (
+    allowOneNewRequestAfter?: {
+      operationId: string;
+      candidateDigest: string;
+    },
+    ownerRecoveryFrom?: string,
+  ) =>
     nativeCentralEnrollmentSessionFactory({
       path,
       centralStatePath: central,
       allowOneNewRequestAfter,
+      ownerRecoveryFrom,
       vault,
       pinnedSigner: attester.publicKey,
       credential: () => "a".repeat(64),
@@ -496,9 +502,10 @@ async function exerciseDeferredEnrollment(
     | "stale-predecessor"
     | "no-start-record"
     | "start-recorded",
+  ownerRecovery = false,
 ) {
   const finishDeferred = outcome !== "expired";
-  const f = fixture(outcome === "no-start-record" ? 5 : 4);
+  const f = fixture(ownerRecovery ? 6 : outcome === "no-start-record" ? 5 : 4);
   let native = f.make();
   try {
     const first = await native.execute({ action: "start" }, signal());
@@ -712,6 +719,48 @@ async function exerciseDeferredEnrollment(
           (await native.execute({ action: "start" }, signal())).state,
           pending.state,
         );
+        if (ownerRecovery) {
+          const priorId = new URL(
+            (pending.state as { reviewUrl: string }).reviewUrl,
+          ).searchParams.get("runtimeRequest")!;
+          const history = f.journal();
+          const archives = f.archives();
+          native.close();
+          f.restartReview(360000);
+          native = f.make(evidence, priorId);
+          assert.equal(
+            (await native.execute({ action: "reconcile" }, signal()))
+              .reconciliation,
+            "not-committed",
+          );
+          native.close();
+          f.restartReview();
+          native = f.make(evidence, randomUUID());
+          await assert.rejects(
+            () => native.execute({ action: "start" }, signal()),
+            /Separate fresh/,
+          );
+          native.close();
+          native = f.make(evidence, priorId);
+          const received = await native.execute({ action: "start" }, signal());
+          assert.equal(received.state.status, "pending");
+          native.close();
+          f.restartReview();
+          native = f.make(evidence, priorId);
+          assert.deepEqual(
+            (await native.execute({ action: "start" }, signal())).state,
+            received.state,
+          );
+          f.allowCompletion();
+          assert.equal(
+            (await native.execute({ action: "poll" }, signal())).state.status,
+            "complete",
+          );
+          assert.equal(f.counts.start, 6);
+          assert.deepEqual(f.journal().slice(0, history.length), history);
+          assert.deepEqual(f.archives().slice(0, archives.length), archives);
+          return;
+        }
         f.allowCompletion();
         assert.equal(
           (await native.execute({ action: "poll" }, signal())).state.status,
@@ -1030,3 +1079,6 @@ test("fresh signed-device verification detects remote revocation before another 
     f.cleanup();
   }
 });
+
+test("owner recovery requires the reconciled predecessor, survives restart, and preserves all attempts", () =>
+  exerciseDeferredEnrollment("no-start-record", true));
