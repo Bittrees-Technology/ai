@@ -1,3 +1,4 @@
+import { deferredStartLookupReceipt } from "../task-sync/runtime-contract.js";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { canonical } from "../contracts/canonical-json.js";
@@ -47,8 +48,18 @@ export const centralEnrollmentStatus = z
     permissionsGranted: z.literal(false),
     originalReviewExpiresAt: z.int().positive(),
     originalReviewExpired: z.boolean(),
+    savedStartLookup: z
+      .strictObject({
+        operationId: z.uuid(),
+        candidateDigest: hex,
+        availableAfter: z.int().positive(),
+        expiresAt: z.int().positive(),
+      })
+      .optional(),
+    savedStartEvidence: deferredStartLookupReceipt.optional(),
     deferredOwnerReview: z.literal(true).optional(),
     deferredReplacement: z.literal(true).optional(),
+    deferredReplacementExpiresAt: z.int().positive().optional(),
     replacementLimitReached: z.literal(true).optional(),
     reconciliation: z.enum(["not-committed", "committed"]).optional(),
     replacementReviewReady: z.literal(true).optional(),
@@ -88,6 +99,7 @@ export const centralEnrollmentStatus = z
     if (
       (value.replacementReviewReady ||
         value.recoveryReviewExpiresAt ||
+        value.deferredReplacementExpiresAt ||
         value.deferredReplacement ||
         value.replacementLimitReached) &&
       value.reconciliation !== "not-committed"

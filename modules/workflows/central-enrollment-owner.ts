@@ -10,6 +10,7 @@ import {
   runtimeHandoffSchema,
   runtimeHandoffMessage,
   runtimeEnrollmentMessage,
+  deferredStartLookupReceipt,
 } from "../task-sync/runtime-contract.js";
 import type { EnrollmentReview } from "../task-sync/enrollment-transport-plan.js";
 import type { EnrollmentSession } from "../task-sync/enrollment-session.js";
@@ -50,6 +51,8 @@ export const centralEnrollmentRecordSchema = z.strictObject({
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
   settlement: centralEnrollmentSettlement.optional(),
+  startReadback: deferredStartLookupReceipt.optional(),
+  lastStartLookupEpoch: z.uuid().optional(),
 });
 const recordSchema = centralEnrollmentRecordSchema;
 export type CentralEnrollmentRecord = z.infer<typeof recordSchema>;
@@ -59,6 +62,10 @@ type NativeSession = Pick<
 >;
 const hash = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
+// Roles accepts a deferred start only within one day of the source handoff expiry.
+function deferredDeadline(record: CentralEnrollmentRecord) {
+  return record.handoff ? Date.parse(record.handoff.expiresAt) + 86_400_000 : 0;
+}
 function binding(review: EnrollmentReview) {
   const {
     epoch: _epoch,
@@ -162,6 +169,17 @@ export class CentralEnrollmentOwner {
     const raw = this.options.store.read();
     if (raw === null) return null;
     const record = recordSchema.parse(raw);
+    if (
+      record.startReadback &&
+      (!record.deferredFrom ||
+        !record.candidate ||
+        record.handoff ||
+        record.settlement ||
+        record.startReadback.operationId !==
+          enrollmentOperationId(record.review.epoch, "start") ||
+        record.startReadback.candidateDigest !== hash(record.candidate))
+    )
+      throw Error("Invalid saved start readback");
     if (record.candidate && record.candidate.kind !== "enroll")
       throw Error("Central enrollment activation is forbidden");
     if (
@@ -322,6 +340,25 @@ export class CentralEnrollmentOwner {
       permissionsGranted: false,
       originalReviewExpiresAt: deadline,
       originalReviewExpired: deadline <= this.now(),
+      ...(record?.deferredFrom &&
+      !record.handoff &&
+      record.candidate &&
+      !record.startReadback
+        ? {
+            savedStartLookup: {
+              operationId: enrollmentOperationId(record.review.epoch, "start"),
+              candidateDigest: hash(record.candidate),
+              availableAfter: Math.max(
+                record.review.expiresAt,
+                record.candidate.issuedAt + 180000,
+              ),
+              expiresAt: record.candidate.issuedAt + 86400000,
+            },
+          }
+        : {}),
+      ...(record?.startReadback
+        ? { savedStartEvidence: record.startReadback }
+        : {}),
       ...(deferred ? { deferredOwnerReview: true } : {}),
       ...(record?.settlement
         ? { reconciliation: record.settlement.outcome }
@@ -329,7 +366,14 @@ export class CentralEnrollmentOwner {
       ...(record?.settlement?.outcome === "not-committed" && !replacementMode
         ? { replacementLimitReached: true }
         : {}),
-      ...(replacementMode === "deferred" ? { deferredReplacement: true } : {}),
+      ...(record && replacementMode === "deferred"
+        ? {
+            deferredReplacementExpiresAt: deferredDeadline(record),
+            ...(this.now() < deferredDeadline(record)
+              ? { deferredReplacement: true }
+              : {}),
+          }
+        : {}),
       ...(record && this.replacementReview(record)
         ? { replacementReviewReady: true }
         : {}),
@@ -366,6 +410,7 @@ export class CentralEnrollmentOwner {
       this.signer ||
       record.settlement?.outcome !== "not-committed" ||
       !mode ||
+      (mode === "deferred" && this.now() >= deferredDeadline(record)) ||
       fresh.epoch === record.review.epoch ||
       fresh.epoch === record.settlement.recoveryEpoch
     )
@@ -410,8 +455,11 @@ export class CentralEnrollmentOwner {
     try {
       await transport.execute({ operation: "heartbeat" }, signal);
       signal.throwIfAborted();
-      if (!current())
-        throw Error("Replacement review changed before persistence");
+      if (
+        !current() ||
+        (mode === "deferred" && this.now() >= deferredDeadline(original))
+      )
+        throw Error("Replacement review expired before persistence");
       this.options.store.atomic(() => {
         if (hash(this.record()) !== hash(original))
           throw Error("Original settlement changed before replacement");
@@ -445,6 +493,7 @@ export class CentralEnrollmentOwner {
     this.signal = signal;
     try {
       let record = this.record();
+      if (record?.startReadback) return this.summary();
       if (
         command.action === "start" &&
         record?.settlement?.outcome === "not-committed"
@@ -454,19 +503,49 @@ export class CentralEnrollmentOwner {
           AbortSignal.any([signal, this.stop.signal]),
         );
       if (command.action === "reconcile") {
-        if (!record?.handoff || !this.options.reconcile)
+        if (
+          !record ||
+          (!record.handoff && !record.deferredFrom) ||
+          !this.options.reconcile
+        )
           throw Error(
             "Original native enrollment is unavailable for reconciliation",
           );
-        if (record.settlement || record.handoff.status === "complete")
+        if (record.settlement || record.handoff?.status === "complete")
           return this.summary();
+        if (!record.handoff) {
+          const epoch = this.options.current()?.epoch;
+          if (
+            !epoch ||
+            epoch === record.review.epoch ||
+            epoch === record.lastStartLookupEpoch
+          )
+            throw Error(
+              "A new native review is required for this saved start check",
+            );
+          this.update((saved) => {
+            if (hash(saved) !== hash(record))
+              throw Error("Saved start changed before lookup");
+            return { ...saved, lastStartLookupEpoch: epoch };
+          });
+          record = this.record()!;
+        }
         const original = record;
-        const { settlement, result } = await this.options.reconcile(
+        const checked = await this.options.reconcile(
           original,
           AbortSignal.any([signal, this.stop.signal]),
         );
         signal.throwIfAborted();
         this.activeReview();
+        if (checked.lookup) {
+          this.update((saved) => {
+            if (hash(saved) !== hash(original))
+              throw Error("Original start changed during lookup");
+            return { ...saved, startReadback: checked.lookup };
+          });
+          return this.summary();
+        }
+        const { settlement, result } = checked;
         if (this.options.current()?.epoch !== settlement.recoveryEpoch)
           throw Error("Native recovery review changed before persistence");
         this.update((saved) => {

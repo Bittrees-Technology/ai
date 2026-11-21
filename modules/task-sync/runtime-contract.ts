@@ -109,3 +109,28 @@ export const runtimeHandoffSchema = z.discriminatedUnion("kind", [
 ]);
 export const runtimeHandoffMessage = (r: unknown) =>
   "Bittrees native runtime handoff v1\n" + canonical(r);
+
+export const deferredStartLookupRequest = z.strictObject({
+  version: z.literal(1),
+  audience: z.literal("https://roles.bittrees.org"),
+  operationId: z.uuid(),
+  candidateDigest: hash,
+  issuedAt: z.int().positive(),
+  expiresAt: z.int().positive(),
+});
+export const deferredStartLookupMessage = (request: unknown) =>
+  "Bittrees owner deferred start lookup v1\n" + canonical(request);
+export const deferredStartLookupReceipt = z.strictObject({
+  version: z.literal(1),
+  operationId: z.uuid(),
+  candidateDigest: hash,
+  checkedAt: z.int().positive(),
+  status: z.enum(["no-start-record", "start-recorded"]),
+});
+export const deferredStartLookupBody = z.strictObject({
+  request: deferredStartLookupRequest,
+  candidate: runtimeHandoffSchema.refine(
+    (c) => c.kind === "enroll" && !!c.deferredFrom,
+  ),
+  signature: z.string().min(1).max(128),
+});

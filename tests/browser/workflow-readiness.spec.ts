@@ -340,3 +340,139 @@ test("the expired setup reconciles and requests separate consent before replacem
   ).toHaveAttribute("href", "https://roles.bittrees.org/review/replacement");
   expect(actions).toEqual([{ action: "reconcile" }, { action: "start" }]);
 });
+
+test("a deferred request stops being available at the Roles deadline without sending it", async ({
+  page,
+}) => {
+  const start = new Date("2026-11-21T20:00:00Z");
+  await page.clock.install({ time: start });
+  const methods: string[] = [];
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    methods.push(route.request().method());
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        reconciliation: "not-committed",
+        deferredReplacement: true,
+        replacementReviewReady: true,
+        deferredReplacementExpiresAt: start.getTime() + 60000,
+        state: { status: "expired" },
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  const request = setup.getByRole("button", {
+    name: "Request a new review in Roles",
+  });
+  await expect(request).toBeVisible();
+  await page.clock.fastForward(60000);
+  await expect(
+    setup.getByText("The one-day Roles recovery window has closed.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(request).toHaveCount(0);
+  expect(methods).toEqual(["GET"]);
+});
+
+test("a held start without a receipt explains why there is no approval link", async ({
+  page,
+}) => {
+  const methods: string[] = [];
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    methods.push(route.request().method());
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        originalReviewExpired: true,
+        state: { status: "held", message: "Start requires reconciliation" },
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  await expect(setup.getByRole("status")).toContainText(
+    "has no Roles approval link",
+  );
+  await expect(setup.getByRole("button")).toHaveCount(0);
+  expect(methods).toEqual(["GET"]);
+});
+
+test("the saved request is checked only after native consent and its outcome survives reload", async ({
+  page,
+}) => {
+  const operationId = "17ae26aa-10e0-4d33-a60c-b5ce7457b1da";
+  const candidateDigest = "a".repeat(64);
+  const actions: string[] = [];
+  await page.addInitScript(() => {
+    let reviews = 0;
+    Object.defineProperty(window, "webkit", {
+      value: {
+        messageHandlers: {
+          reviewWorkflowEnrollment: { postMessage: async () => ++reviews > 1 },
+        },
+      },
+    });
+  });
+  await page.route("**/v1/workflows/central/connection", (route) => {
+    if (route.request().method() === "POST")
+      actions.push(route.request().postDataJSON().action);
+    const lookup = {
+      operationId,
+      candidateDigest,
+      availableAfter: Date.now() - 1000,
+      expiresAt: Date.now() + 300000,
+    };
+    return route.fulfill({
+      json: {
+        available: true,
+        ready: true,
+        state: { status: "held" },
+        ...(actions.length
+          ? {
+              savedStartEvidence: {
+                operationId,
+                candidateDigest,
+                checkedAt: Date.now(),
+                status: "no-start-record",
+              },
+            }
+          : { savedStartLookup: lookup }),
+      },
+    });
+  });
+  await page.goto("/?workflow-readiness");
+  const setup = page.getByRole("region", {
+    name: "Connect this Mac to Workflows",
+  });
+  await expect(
+    setup.getByRole("link", { name: "Allow status check in Roles" }),
+  ).toHaveAttribute(
+    "href",
+    "https://roles.bittrees.org/profile?deferredStart=" +
+      operationId +
+      "&candidateDigest=" +
+      candidateDigest,
+  );
+  const check = setup.getByRole("button", { name: "Check saved request" });
+  await check.click();
+  await expect(check).toBeEnabled();
+  expect(actions).toEqual([]);
+  await check.click();
+  await expect(setup.getByRole("status")).toContainText(
+    "found no start record",
+  );
+  await page.reload();
+  await expect(setup.getByRole("status")).toContainText(
+    "found no start record",
+  );
+  await expect(check).toHaveCount(0);
+  expect(actions).toEqual(["reconcile"]);
+});

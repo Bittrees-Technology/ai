@@ -1,3 +1,4 @@
+import { deferredStartLookupReceipt } from "../task-sync/runtime-contract.js";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { z } from "zod";
@@ -84,11 +85,11 @@ export function centralEnrollmentReconciliation(options: {
     if (
       !fresh ||
       !candidate ||
-      !handoff ||
-      handoff.status === "complete" ||
+      (!handoff && !original.deferredFrom) ||
+      handoff?.status === "complete" ||
       fresh.epoch === review.epoch ||
       review.expiresAt > now() ||
-      Date.parse(handoff.expiresAt) + 120000 > now() ||
+      (handoff && Date.parse(handoff.expiresAt) + 120000 > now()) ||
       enrollmentSessionScopeDigest({
         ...fresh,
         epoch: review.epoch,
@@ -137,43 +138,10 @@ export function centralEnrollmentReconciliation(options: {
     const operation = operationSchema.parse(
       checkingStart ? readOperation(operationId) : completion,
     );
-    const session = sessionSchema.parse(
-      read(
-        "SELECT value FROM enrollment_sessions WHERE epoch=?",
-        review.epoch,
-        "enrollment-session:",
-      ),
-    );
-    const start = {
-      id: handoff.id,
-      pollSecret: handoff.pollSecret,
-      reviewUrl: handoff.reviewUrl,
-      expiresAt: handoff.expiresAt,
-    };
-    if (
-      operation.operationId !== operationId ||
-      operation.epoch !== review.epoch ||
-      operation.kind !== (checkingStart ? "start" : "complete") ||
-      (operation.state === "confirmed") !== Boolean(operation.responseDigest) ||
-      session.epoch !== review.epoch ||
-      session.scopeDigest !== enrollmentSessionScopeDigest(review) ||
-      session.requestId !== handoff.id ||
-      session.pollSecretHash !== digest(handoff.pollSecret) ||
-      digest(session.start) !== digest(start)
-    )
-      throw Error("Original enrollment journals disagree");
-    if (
-      checkingStart
-        ? operation.state !== "confirmed" ||
-          operation.responseDigest !== digest(start) ||
-          session.completion !== undefined
-        : !session.enrollmentRequestDigest ||
-          session.enrollmentRequestDigest !== digest(session.challenge)
-    )
-      throw Error("Original enrollment mutation evidence disagrees");
-    const challengeDeadline = recordChallengeDeadline(
-      original,
-      session.challengeReviewExpiresAt,
+    const savedSession = read(
+      "SELECT value FROM enrollment_sessions WHERE epoch=?",
+      review.epoch,
+      "enrollment-session:",
     );
     const signer = centralEnrollmentSigner(
       options.centralStatePath,
@@ -222,13 +190,96 @@ export function centralEnrollmentReconciliation(options: {
       options.pinnedSigner,
       now,
     );
-    verifier.verify(
-      { operation: "heartbeat" },
-      await readSource("https://ai.bittrees.org/api/workflows", {
-        action: "device",
-        input: { action: "heartbeat" },
-      }),
+    const checkDevice = async () =>
+      verifier.verify(
+        { operation: "heartbeat" },
+        await readSource("https://ai.bittrees.org/api/workflows", {
+          action: "device",
+          input: { action: "heartbeat" },
+        }),
+      );
+    if (!handoff) {
+      const emptySession = z
+        .strictObject({
+          epoch: z.uuid(),
+          scopeDigest: hex,
+          calls: z.int().positive(),
+          polls: z.int().optional(),
+        })
+        .parse(savedSession);
+      const age = now() - candidate.issuedAt;
+      if (
+        !checkingStart ||
+        operation.state !== "reserved" ||
+        operation.responseDigest ||
+        operation.epoch !== review.epoch ||
+        operation.operationId !== operationId ||
+        operation.kind !== "start" ||
+        emptySession.epoch !== review.epoch ||
+        emptySession.scopeDigest !== enrollmentSessionScopeDigest(review) ||
+        candidate.kind !== "enroll" ||
+        !original.deferredFrom ||
+        candidate.deferredFrom !== original.deferredFrom ||
+        candidate.issuedAt > review.expiresAt ||
+        candidate.issuedAt < review.expiresAt - 300000 ||
+        age < 180000 ||
+        age >= 86400000
+      )
+        throw Error(
+          "Original unresolved start and current source evidence window required",
+        );
+      await checkDevice();
+      const body = signer.signStartLookup(operationId, candidate);
+      const lookup = deferredStartLookupReceipt.parse(
+        await readSource(
+          "https://roles.bittrees.org/api/mcp/runtime/deferred-start-readback",
+          body,
+        ),
+      );
+      if (
+        lookup.operationId !== operationId ||
+        lookup.candidateDigest !== digest(candidate) ||
+        Math.abs(now() - lookup.checkedAt) > 30000 ||
+        lookup.checkedAt < body.request.issuedAt - 1000 ||
+        lookup.checkedAt >= body.request.expiresAt ||
+        now() - candidate.issuedAt >= 86400000
+      )
+        throw Error("Roles readback differs from original deferred start");
+      return { lookup };
+    }
+    const session = sessionSchema.parse(savedSession);
+    const start = {
+      id: handoff.id,
+      pollSecret: handoff.pollSecret,
+      reviewUrl: handoff.reviewUrl,
+      expiresAt: handoff.expiresAt,
+    };
+    if (
+      operation.operationId !== operationId ||
+      operation.epoch !== review.epoch ||
+      operation.kind !== (checkingStart ? "start" : "complete") ||
+      (operation.state === "confirmed") !== Boolean(operation.responseDigest) ||
+      session.epoch !== review.epoch ||
+      session.scopeDigest !== enrollmentSessionScopeDigest(review) ||
+      session.requestId !== handoff.id ||
+      session.pollSecretHash !== digest(handoff.pollSecret) ||
+      digest(session.start) !== digest(start)
+    )
+      throw Error("Original enrollment journals disagree");
+    if (
+      checkingStart
+        ? operation.state !== "confirmed" ||
+          operation.responseDigest !== digest(start) ||
+          session.completion !== undefined
+        : !session.enrollmentRequestDigest ||
+          session.enrollmentRequestDigest !== digest(session.challenge)
+    )
+      throw Error("Original enrollment mutation evidence disagrees");
+    const challengeDeadline = recordChallengeDeadline(
+      original,
+      session.challengeReviewExpiresAt,
     );
+    await checkDevice();
     const request = {
       version: 1,
       id: handoff.id,

@@ -40,7 +40,6 @@ struct EnrollmentReviewDisplay {
                   let expiry = review["expiresAt"] as? Double,
                   expiry > Date().timeIntervalSince1970 * 1000, expiry <= Date().timeIntervalSince1970 * 1000 + 300000,
                   disclosure["hosts"] as? [String] == ["ai.bittrees.org", "roles.bittrees.org"],
-                  disclosure["operations"] as? [String] == ["heartbeat", "start", "poll", "attest", "complete"],
                   disclosure["maximumDurationSeconds"] as? Int == 300,
                   disclosure["maximumCalls"] as? Int == 108,
                   disclosure["maximumPolls"] as? Int == 100,
@@ -48,6 +47,9 @@ struct EnrollmentReviewDisplay {
         let common = Set(["purpose", "hosts", "operations", "maximumDurationSeconds", "maximumCalls", "maximumPolls", "grantsWorkflowAuthority"])
         guard let purpose = disclosure["purpose"] as? String,
               ["Enroll this Mac in Roles; no workflow execution permission", "Enroll this Mac's central Workflows identity in Roles; no workflow execution permission"].contains(purpose) else { return nil }
+        let operations = ["heartbeat", "start", "poll", "attest", "complete"]
+        let expectedOperations = purpose.contains("central Workflows") ? operations + ["reconcile", "deferred-start-readback"] : operations
+        guard disclosure["operations"] as? [String] == expectedOperations else { return nil }
         let lines = publicKey.components(separatedBy: "\n")
         guard lines.count == 4, lines[0] == "-----BEGIN PUBLIC KEY-----", lines[2] == "-----END PUBLIC KEY-----", lines[3].isEmpty,
               let der = Data(base64Encoded: lines[1]), der.count == 44,

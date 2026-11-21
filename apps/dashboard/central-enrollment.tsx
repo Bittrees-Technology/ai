@@ -4,11 +4,14 @@ import type { CentralEnrollmentStatus } from "../../modules/workflows/central-en
 type View = {
   available: boolean;
   ready?: boolean;
+  savedStartLookup?: CentralEnrollmentStatus["savedStartLookup"];
+  savedStartEvidence?: CentralEnrollmentStatus["savedStartEvidence"];
   state?: CentralEnrollmentStatus["state"];
   originalReviewExpiresAt?: number;
   originalReviewExpired?: boolean;
   deferredOwnerReview?: boolean;
   deferredReplacement?: boolean;
+  deferredReplacementExpiresAt?: number;
   replacementLimitReached?: boolean;
   reconciliation?: CentralEnrollmentStatus["reconciliation"];
   replacementReviewReady?: CentralEnrollmentStatus["replacementReviewReady"];
@@ -71,8 +74,25 @@ export function CentralEnrollment({
     (view?.originalReviewExpired ||
       state?.status === "expired" ||
       now >= deadline);
-  const displayDeadline =
-    view?.recoveryReviewExpiresAt ?? (renewConsent ? sourceDeadline : deadline);
+  const recoveryDeadline = view?.deferredReplacementExpiresAt ?? Infinity;
+  const recoveryClosed = now >= recoveryDeadline;
+  const lookup = view?.savedStartLookup;
+  const lookupDeadline = lookup
+    ? now < lookup.availableAfter
+      ? lookup.availableAfter
+      : now < lookup.expiresAt
+        ? lookup.expiresAt
+        : Infinity
+    : Infinity;
+  const displayDeadline = Math.min(
+    lookupDeadline,
+    recoveryClosed ? Infinity : recoveryDeadline,
+    view?.recoveryReviewExpiresAt && view.recoveryReviewExpiresAt > now
+      ? view.recoveryReviewExpiresAt
+      : renewConsent
+        ? sourceDeadline
+        : deadline,
+  );
   useEffect(() => {
     if (!Number.isFinite(displayDeadline)) return;
     const timer = window.setTimeout(
@@ -83,7 +103,7 @@ export function CentralEnrollment({
   }, [displayDeadline]);
 
   async function act(
-    action: "review" | "start" | "poll" | "status" | "reconcile",
+    action: "review" | "start" | "poll" | "status" | "reconcile" | "lookup",
   ) {
     if (inFlight.current) return;
     if (action === "poll" && (expired || Date.now() >= deadline)) {
@@ -94,6 +114,25 @@ export function CentralEnrollment({
     setBusy(true);
     setError("");
     try {
+      if (action === "lookup") {
+        if (
+          !lookup ||
+          Date.now() < lookup.availableAfter ||
+          Date.now() >= lookup.expiresAt
+        )
+          return;
+        if (!(await nativeReview?.postMessage(null)) || !active.current) return;
+        const current: View = await api(connection);
+        if (!active.current) return;
+        setView(current);
+        if (
+          !current.ready ||
+          current.savedStartLookup?.operationId !== lookup.operationId ||
+          current.savedStartLookup.candidateDigest !== lookup.candidateDigest
+        )
+          return;
+        action = "reconcile";
+      }
       if (action === "review") {
         if (!(await nativeReview?.postMessage(null)) || !active.current) return;
         const current: View = await api(connection);
@@ -117,7 +156,9 @@ export function CentralEnrollment({
       if (active.current && action === "start") setRolesOpened(false);
       if (
         active.current &&
-        (action !== "status" || result.ready || (!expired && !renewConsent))
+        (action !== "status" ||
+          result.ready ||
+          (!expired && !renewConsent && !lookup && !view?.savedStartEvidence))
       )
         setView(result);
     } catch {
@@ -184,13 +225,18 @@ export function CentralEnrollment({
             Roles confirmed the original enrollment did not complete. The Mac
             saved the outcome with the original request.
           </p>
-          {view.deferredReplacement && (
+          {view.deferredReplacement && !recoveryClosed && (
             <p>
               The next Roles review can stay open for two hours. Completing it
               still requires current consent on this Mac.
             </p>
           )}
-          {view.replacementLimitReached ? (
+          {recoveryClosed ? (
+            <p>
+              The one-day Roles recovery window has closed. An owner-assisted
+              enrollment recovery is required.
+            </p>
+          ) : view.replacementLimitReached ? (
             <p>The recovery limit for this Mac has been reached.</p>
           ) : view.replacementReviewReady ? (
             button("Request a new review in Roles", "start")
@@ -204,7 +250,47 @@ export function CentralEnrollment({
             button("Review this Mac for a new request", "review")
           ) : null}
         </>
-      ) : expired || state?.status === "held" || state?.status === "failed" ? (
+      ) : view.savedStartEvidence ? (
+        <p role="status">
+          {view.savedStartEvidence.status === "start-recorded"
+            ? "Roles found this exact start. The Mac is missing its approval receipt. Enrollment is paused."
+            : "Roles checked this exact attempt and found no start record. The Mac saved that result. Enrollment is paused."}
+        </p>
+      ) : lookup ? (
+        <>
+          <p role="status">
+            Allow the status check in Roles, then return here to check your
+            saved request.
+          </p>
+          {now < lookup.availableAfter ? (
+            <p>The earlier request is still closing.</p>
+          ) : now >= lookup.expiresAt ? (
+            <p>The source verification window has closed.</p>
+          ) : (
+            <>
+              <a
+                href={
+                  "https://roles.bittrees.org/profile?deferredStart=" +
+                  encodeURIComponent(lookup.operationId) +
+                  "&candidateDigest=" +
+                  encodeURIComponent(lookup.candidateDigest)
+                }
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setRolesOpened(true)}
+              >
+                Allow status check in Roles
+              </a>
+              {nativeReview && button("Check saved request", "lookup")}
+            </>
+          )}
+        </>
+      ) : state?.status === "held" ? (
+        <p role="status">
+          The Mac saved the enrollment attempt but has no Roles approval link.
+          Setup is paused until the original request can be verified with Roles.
+        </p>
+      ) : expired || state?.status === "failed" ? (
         <>
           <p role="status">
             {expired

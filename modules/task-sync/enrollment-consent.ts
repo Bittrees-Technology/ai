@@ -58,6 +58,14 @@ export class EnrollmentConsent {
     const raw = this.costReview();
     const base = {
       ...baseDisclosure,
+      operations:
+        this.identityPurpose === "central-workflows"
+          ? Object.freeze([
+              ...baseDisclosure.operations,
+              "reconcile",
+              "deferred-start-readback",
+            ])
+          : baseDisclosure.operations,
       purpose:
         this.identityPurpose === "central-workflows"
           ? "Enroll this Mac's central Workflows identity in Roles; no workflow execution permission"
