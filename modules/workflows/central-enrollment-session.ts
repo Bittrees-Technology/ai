@@ -39,6 +39,7 @@ export function nativeCentralEnrollmentSessionFactory(
   options: Parameters<typeof nativeEnrollmentSessionFactory>[0] & {
     centralStatePath: string;
     ownerRecoveryFrom?: string;
+    savedCompletionId?: string;
     allowOneNewRequestAfter?: { operationId: string; candidateDigest: string };
   },
 ) {
@@ -116,7 +117,15 @@ export function nativeCentralEnrollmentSessionFactory(
             : null;
         }
         if (original.settlement?.outcome !== "not-committed") return null;
-        if (original.ownerRecoveryFrom) return null;
+        if (original.ownerRecoveryFrom) {
+          return n === 5 &&
+            !original.resumedCompletionId &&
+            original.handoff?.id === options.savedCompletionId &&
+            !!options.savedCompletionId &&
+            original.settlement.operationKind === undefined
+            ? "saved-completion"
+            : null;
+        }
         if (
           n === 4 &&
           options.ownerRecoveryFrom &&
@@ -160,6 +169,12 @@ export function nativeCentralEnrollmentSessionFactory(
               !mode ||
               replacement.ownerRecoveryFrom !==
                 (mode === "owner-recovery"
+                  ? original.handoff?.id
+                  : mode === "saved-completion"
+                    ? original.ownerRecoveryFrom
+                    : undefined) ||
+              replacement.resumedCompletionId !==
+                (mode === "saved-completion"
                   ? original.handoff?.id
                   : undefined) ||
               replacement.deferredFrom !==
