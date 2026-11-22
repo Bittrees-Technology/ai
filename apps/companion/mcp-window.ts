@@ -13,7 +13,7 @@ export function serveMcpWindow(channel: Duplex, resources: string) {
       channel.destroy();
       return;
     }
-    const child = spawn(join(resources, "MCPConnections"), [], {
+    const child = spawn(join(resources, "../Helpers/MCP Connections.app/Contents/MacOS/MCPConnections"), [], {
       stdio: ["ignore", "pipe", "ignore"],
       env: {
         HOME: process.env.HOME,
