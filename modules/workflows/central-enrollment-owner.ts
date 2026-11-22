@@ -49,6 +49,7 @@ export const centralEnrollmentRecordSchema = z.strictObject({
   review: reviewSchema,
   deferredFrom: z.uuid().optional(),
   ownerRecoveryFrom: z.uuid().optional(),
+  resumedCompletionId: z.uuid().optional(),
   candidate: runtimeHandoffSchema.optional(),
   handoff: handoffSchema.optional(),
   settlement: centralEnrollmentSettlement.optional(),
@@ -60,7 +61,8 @@ export type CentralEnrollmentRecord = z.infer<typeof recordSchema>;
 type NativeSession = Pick<
   EnrollmentSession,
   "execute" | "snapshotForNativeOwner" | "close"
->;
+> &
+  Partial<Pick<EnrollmentSession, "resumeSavedCompletion">>;
 const hash = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
 // Roles accepts a deferred start only within one day of the source handoff expiry.
@@ -102,7 +104,13 @@ export class CentralEnrollmentOwner {
         ): void;
         replacementMode?(
           original: CentralEnrollmentRecord,
-        ): "standard" | "deferred" | "owner-approved" | "owner-recovery" | null;
+        ):
+          | "standard"
+          | "deferred"
+          | "owner-approved"
+          | "owner-recovery"
+          | "saved-completion"
+          | null;
         atomic<T>(f: () => T): T;
       };
       session: (current: () => EnrollmentReview | null) => NativeSession;
@@ -127,6 +135,12 @@ export class CentralEnrollmentOwner {
           )
             throw Error("Exact central start required");
           this.update((record) => {
+            if (
+              record.resumedCompletionId &&
+              (!record.ownerRecoveryFrom ||
+                record.handoff?.id !== record.resumedCompletionId)
+            )
+              throw Error("Saved completion lost its original handoff");
             if (record.candidate && hash(record.candidate) !== hash(candidate))
               throw Error(
                 "Original central enrollment start cannot be replaced",
@@ -372,6 +386,9 @@ export class CentralEnrollmentOwner {
       ...(record?.settlement?.outcome === "not-committed" && !replacementMode
         ? { replacementLimitReached: true }
         : {}),
+      ...(record?.handoff && replacementMode === "saved-completion"
+        ? { savedCompletionId: record.handoff.id }
+        : {}),
       ...(record?.handoff && replacementMode === "owner-recovery"
         ? { ownerRecoveryPriorId: record.handoff.id }
         : {}),
@@ -436,7 +453,7 @@ export class CentralEnrollmentOwner {
   ) {
     const replacement = this.replacementReview(original);
     const replace = this.options.store.replace;
-    if (!replacement || !replace)
+    if (!replacement || !replace || replacement.mode === "saved-completion")
       throw Error("Separate fresh native approval required for a replacement");
     const { review, mode } = replacement;
     const deferredFrom = mode === "deferred" ? original.handoff?.id : undefined;
@@ -505,6 +522,61 @@ export class CentralEnrollmentOwner {
     this.signal = signal;
     try {
       let record = this.record();
+      if (command.action === "resume-completion") {
+        if (
+          !record?.handoff ||
+          !record.ownerRecoveryFrom ||
+          this.replacementMode(record) !== "saved-completion"
+        )
+          throw Error("Saved completion recovery unavailable");
+        const replacement = this.replacementReview(record),
+          previous = record;
+        if (!replacement || !this.options.store.replace)
+          throw Error("New native review required for saved completion");
+        const review = replacement.review,
+          expected = hash(review);
+        const current = () => {
+          const live = this.options.current();
+          return !this.closing &&
+            live &&
+            hash(live) === expected &&
+            live.expiresAt > this.now()
+            ? { ...review, ownerRecoveryFrom: previous.ownerRecoveryFrom }
+            : null;
+        };
+        const session = this.options.session(current);
+        try {
+          if (!session.resumeSavedCompletion)
+            throw Error("Saved completion transport unavailable");
+          const start = await session.resumeSavedCompletion(
+            previous.review,
+            record.handoff,
+            AbortSignal.any([signal, this.stop.signal]),
+          );
+          signal.throwIfAborted();
+          this.options.store.atomic(() => {
+            if (!current() || hash(this.record()) !== hash(previous))
+              throw Error("Saved request changed during review");
+            this.options.store.replace!(previous, {
+              review,
+              candidate: previous.candidate,
+              ownerRecoveryFrom: previous.ownerRecoveryFrom,
+              resumedCompletionId: start.id,
+              handoff: {
+                ...record!.handoff!,
+                ...start,
+                status: "approved",
+                message: undefined,
+              },
+            });
+          });
+        } catch (e) {
+          session.close();
+          throw e;
+        }
+        this.session = session;
+        return this.summary();
+      }
       if (record?.startReadback) {
         if (
           command.action === "start" &&

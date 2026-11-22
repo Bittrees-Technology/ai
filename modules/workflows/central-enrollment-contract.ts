@@ -7,6 +7,7 @@ export const centralEnrollmentCommand = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("start") }),
   z.strictObject({ action: z.literal("poll") }),
   z.strictObject({ action: z.literal("reconcile") }),
+  z.strictObject({ action: z.literal("resume-completion") }),
 ]);
 const agent = z.string().regex(/^agent:[a-f0-9-]{36}$/),
   hex = z.string().regex(/^[a-f0-9]{64}$/);
@@ -57,6 +58,7 @@ export const centralEnrollmentStatus = z
       })
       .optional(),
     savedStartEvidence: deferredStartLookupReceipt.optional(),
+    savedCompletionId: z.uuid().optional(),
     ownerRecoveryPriorId: z.uuid().optional(),
     deferredOwnerReview: z.literal(true).optional(),
     deferredReplacement: z.literal(true).optional(),
@@ -97,7 +99,10 @@ export const centralEnrollmentStatus = z
       .nullable(),
   })
   .refine((value) => {
-    if (value.ownerRecoveryPriorId && value.reconciliation !== "not-committed")
+    if (
+      (value.ownerRecoveryPriorId || value.savedCompletionId) &&
+      value.reconciliation !== "not-committed"
+    )
       return false;
     if (
       ((value.replacementReviewReady &&

@@ -14,6 +14,7 @@ import {
   enrollmentOperation,
   type EnrollmentReview,
 } from "./enrollment-transport-plan.js";
+import { runtimeEnrollmentSchema } from "./runtime-contract.js";
 import { EnrollmentJournal } from "./enrollment-journal.js";
 import { EnrollmentExchange } from "./enrollment-exchange.js";
 import { EnrollmentResponseVerifier } from "./enrollment-verifier.js";
@@ -46,6 +47,7 @@ type State = {
   challenge?: unknown;
   challengeReviewExpiresAt?: number;
   start?: unknown;
+  savedApproval?: { nonce: string; profileId: string; expiresAt: string };
   completion?: unknown;
 };
 /** Inactive assembly. Owner scope and dispatch are injected by trusted native code.
@@ -152,6 +154,9 @@ export class EnrollmentSession {
       ...(this.state.challengeReviewExpiresAt !== undefined
         ? { challengeReviewExpiresAt: this.state.challengeReviewExpiresAt }
         : {}),
+      ...(this.state.savedApproval
+        ? { sourceReviewExpiresAt: this.state.savedApproval.expiresAt }
+        : {}),
       ...(r.deferredFrom && this.state.start
         ? {
             sourceReviewExpiresAt: (this.state.start as { expiresAt: string })
@@ -213,10 +218,20 @@ export class EnrollmentSession {
         op.operation === "poll" &&
         (response as { status?: string }).status === "approved"
       ) {
-        if (review.deferredFrom && this.journal.hasCompletion(review.epoch))
+        if (
+          (review.deferredFrom || this.state.savedApproval) &&
+          this.journal.hasCompletion(review.epoch)
+        )
           throw Error("Original completion requires read-only reconciliation");
         const approved = validateEnrollmentPoll(response, review, this.now());
         if (approved.status !== "approved") throw Error("Expected challenge");
+        const pinned = this.state.savedApproval;
+        if (
+          pinned &&
+          (pinned.nonce !== approved.request.nonce ||
+            pinned.profileId !== approved.request.profileId)
+        )
+          throw Error("Saved owner approval changed");
         this.state = {
           ...this.state,
           challenge: approved.request,
@@ -237,6 +252,92 @@ export class EnrollmentSession {
     } finally {
       this.busy = false;
     }
+  }
+  /** Attach only a protected, reconciled handoff. A live Roles poll must supply
+   * a new approval nonce for the original owner before a new proof can be made. */
+  async resumeSavedCompletion(
+    previous: EnrollmentReview,
+    handoff: {
+      id: string;
+      pollSecret: string;
+      reviewUrl: string;
+      expiresAt: string;
+    },
+    signal: AbortSignal,
+  ) {
+    const current = this.context();
+    if (
+      !current ||
+      current.epoch === previous.epoch ||
+      Date.parse(handoff.expiresAt) >= this.now() ||
+      enrollmentSessionScopeDigest({
+        ...current,
+        epoch: previous.epoch,
+        expiresAt: previous.expiresAt,
+      }) !== enrollmentSessionScopeDigest(previous)
+    )
+      throw Error("Fresh matching Mac consent required");
+    const row = this.db
+      .prepare("SELECT value FROM enrollment_sessions WHERE epoch=?")
+      .get(previous.epoch) as { value: Buffer } | undefined;
+    if (!row) throw Error("Previous native session missing");
+    const before = this.vault.open<State>(
+      row.value,
+      "enrollment-session:" + previous.epoch,
+    );
+    const oldChallenge = runtimeEnrollmentSchema.parse(before.challenge);
+    const secretHash = hash(handoff.pollSecret);
+    if (
+      before.scopeDigest !== enrollmentSessionScopeDigest(previous) ||
+      before.requestId !== handoff.id ||
+      before.pollSecretHash !== secretHash ||
+      before.enrollmentRequestDigest !== hash(oldChallenge) ||
+      before.completion ||
+      !this.journal.hasCompletion(previous.epoch) ||
+      (this.state.requestId && this.state.requestId !== handoff.id) ||
+      this.journal.hasCompletion(current.epoch)
+    )
+      throw Error("Exact uncompleted original operation required");
+    this.state = {
+      ...this.state,
+      requestId: handoff.id,
+      pollSecretHash: secretHash,
+    };
+    this.save();
+    await this.execute({ operation: "heartbeat" }, signal);
+    const poll = validateEnrollmentPoll(
+      await this.execute(
+        { operation: "poll", id: handoff.id, pollSecret: handoff.pollSecret },
+        signal,
+      ),
+      current,
+      this.now(),
+    );
+    if (
+      poll.status !== "approved" ||
+      poll.request.profileId !== oldChallenge.profileId ||
+      poll.request.nonce === oldChallenge.nonce
+    )
+      throw Error(
+        "A new owner-approved challenge is required for the saved request",
+      );
+    const start = {
+      id: handoff.id,
+      pollSecret: handoff.pollSecret,
+      reviewUrl: handoff.reviewUrl,
+      expiresAt: poll.expiresAt,
+    };
+    this.state = {
+      ...this.state,
+      start,
+      savedApproval: {
+        nonce: poll.request.nonce,
+        profileId: poll.request.profileId,
+        expiresAt: poll.expiresAt,
+      },
+    };
+    this.save();
+    return start;
   }
   /** Trusted native orchestration only. Never publish this snapshot over IPC:
    * it contains the original polling secret and authenticated challenge. */

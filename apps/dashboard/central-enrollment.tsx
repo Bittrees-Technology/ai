@@ -12,6 +12,7 @@ type View = {
   deferredOwnerReview?: boolean;
   deferredReplacement?: boolean;
   ownerRecoveryPriorId?: string;
+  savedCompletionId?: string;
   deferredReplacementExpiresAt?: number;
   replacementLimitReached?: boolean;
   reconciliation?: CentralEnrollmentStatus["reconciliation"];
@@ -104,7 +105,14 @@ export function CentralEnrollment({
   }, [displayDeadline]);
 
   async function act(
-    action: "review" | "start" | "poll" | "status" | "reconcile" | "lookup",
+    action:
+      | "review"
+      | "start"
+      | "poll"
+      | "status"
+      | "reconcile"
+      | "lookup"
+      | "resume-completion",
   ) {
     if (inFlight.current) return;
     if (action === "poll" && (expired || Date.now() >= deadline)) {
@@ -232,6 +240,20 @@ export function CentralEnrollment({
               still requires current consent on this Mac.
             </p>
           )}
+          {view.savedCompletionId && (
+            <>
+              <a
+                href={`https://roles.bittrees.org/profile?runtimeRequest=${view.savedCompletionId}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setRolesOpened(true)}
+              >
+                Review saved completion in Roles
+              </a>
+              {rolesOpened &&
+                button("Resume this saved request", "resume-completion")}
+            </>
+          )}
           {view.ownerRecoveryPriorId && (
             <p>
               <a
@@ -246,7 +268,7 @@ export function CentralEnrollment({
               request.
             </p>
           )}
-          {recoveryClosed ? (
+          {view.savedCompletionId ? null : recoveryClosed ? (
             <p>
               The one-day Roles recovery window has closed. An owner-assisted
               enrollment recovery is required.

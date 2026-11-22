@@ -1099,6 +1099,7 @@ export function localApi({
         z.strictObject({ action: z.literal("start") }),
         z.strictObject({ action: z.literal("poll") }),
         z.strictObject({ action: z.literal("reconcile") }),
+        z.strictObject({ action: z.literal("resume-completion") }),
       ])
       .parse(req.body);
     const controller = new AbortController();

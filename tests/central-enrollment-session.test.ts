@@ -75,6 +75,7 @@ function fixture(maximumStarts = 2) {
   let requestId = randomUUID(),
     pollSecret = randomBytes(32).toString("hex");
   const profileId = randomUUID();
+  let resumedNonce: string | undefined;
   let challenge: any, result: any, candidateDigest: string, rolesExpiry: string;
   let requestEpoch = review.epoch;
   let deferredReadStatus: "start-recorded" | "no-start-record" =
@@ -247,7 +248,7 @@ function fixture(maximumStarts = 2) {
                   deviceId: review.deviceId,
                   sourceWorkspace: review.sourceWorkspace,
                   issuedAt: time,
-                  nonce: randomUUID(),
+                  nonce: resumedNonce ?? randomUUID(),
                 };
                 response = {
                   status: "approved",
@@ -259,7 +260,10 @@ function fixture(maximumStarts = 2) {
             } else if (action === "complete") {
               completionAttempted = true;
               counts.complete++;
-              assert(counts.complete <= (maximumStarts >= 4 ? 2 : 1));
+              assert(
+                counts.complete <=
+                  (resumedNonce ? 3 : maximumStarts >= 4 ? 2 : 1),
+              );
               assert.equal(body.id, requestId);
               assert.equal(body.pollSecret, pollSecret);
               assert.deepEqual(body.proof.request, challenge);
@@ -378,12 +382,14 @@ function fixture(maximumStarts = 2) {
       candidateDigest: string;
     },
     ownerRecoveryFrom?: string,
+    savedCompletionId?: string,
   ) =>
     nativeCentralEnrollmentSessionFactory({
       path,
       centralStatePath: central,
       allowOneNewRequestAfter,
       ownerRecoveryFrom,
+      savedCompletionId,
       vault,
       pinnedSigner: attester.publicKey,
       credential: () => "a".repeat(64),
@@ -445,6 +451,11 @@ function fixture(maximumStarts = 2) {
         db.close();
       }
     },
+    renewOriginalCompletion: () => {
+      resumedNonce = randomUUID();
+      rolesExpiry = new Date(time + 120000).toISOString();
+      requestEpoch = review.epoch;
+    },
     failHandoffSave: () => {
       failSave = true;
       handoffWrites = 0;
@@ -503,6 +514,7 @@ async function exerciseDeferredEnrollment(
     | "no-start-record"
     | "start-recorded",
   ownerRecovery = false,
+  savedCompletion = false,
 ) {
   const finishDeferred = outcome !== "expired";
   const f = fixture(ownerRecovery ? 6 : outcome === "no-start-record" ? 5 : 4);
@@ -751,6 +763,71 @@ async function exerciseDeferredEnrollment(
             (await native.execute({ action: "start" }, signal())).state,
             received.state,
           );
+          if (savedCompletion) {
+            const savedId = new URL(
+              (received.state as { reviewUrl: string }).reviewUrl,
+            ).searchParams.get("runtimeRequest")!;
+            f.dropComplete(false);
+            await native.execute({ action: "poll" }, signal());
+            native.close();
+            f.restartReview(360000);
+            native = f.make(evidence, priorId, savedId);
+            assert.equal(
+              (await native.execute({ action: "reconcile" }, signal()))
+                .reconciliation,
+              "not-committed",
+            );
+            const before = f.journal(),
+              oldArchives = f.archives();
+            native.close();
+            f.restartReview();
+            native = f.make(evidence, priorId, randomUUID());
+            await assert.rejects(
+              () => native.execute({ action: "resume-completion" }, signal()),
+              /unavailable/,
+            );
+            native.close();
+            native = f.make(evidence, priorId, savedId);
+            await assert.rejects(() =>
+              native.execute({ action: "resume-completion" }, signal()),
+            );
+            f.advance(4000);
+            f.renewOriginalCompletion();
+            const resumed = await native.execute(
+              { action: "resume-completion" },
+              signal(),
+            );
+            assert.equal(resumed.state.status, "approved");
+            assert.equal(
+              (resumed.state as { reviewUrl: string }).reviewUrl,
+              (received.state as { reviewUrl: string }).reviewUrl,
+            );
+            assert.deepEqual(
+              f.archives().slice(0, oldArchives.length),
+              oldArchives,
+            );
+            assert.equal(
+              f.archives().at(-1).settlement.outcome,
+              "not-committed",
+            );
+            native.close();
+            native = f.make(evidence, priorId, savedId);
+            f.advance(4000);
+            f.dropComplete(true);
+            await native.execute({ action: "poll" }, signal());
+            const completedWires = f.counts.complete;
+            native.close();
+            native = f.make(evidence, priorId, savedId);
+            f.advance(4000);
+            assert.equal(
+              (await native.execute({ action: "poll" }, signal())).state.status,
+              "complete",
+            );
+            assert.equal(f.counts.complete, completedWires);
+            assert.deepEqual(f.journal().slice(0, before.length), before);
+            assert.equal(f.counts.start, 6);
+            return;
+          }
           f.allowCompletion();
           assert.equal(
             (await native.execute({ action: "poll" }, signal())).state.status,
@@ -1082,3 +1159,6 @@ test("fresh signed-device verification detects remote revocation before another 
 
 test("owner recovery requires the reconciled predecessor, survives restart, and preserves all attempts", () =>
   exerciseDeferredEnrollment("no-start-record", true));
+
+test("saved completion uses the same handoff after verified non-commit and reconciles a lost reply after restart", () =>
+  exerciseDeferredEnrollment("no-start-record", true, true));
