@@ -5,6 +5,19 @@ struct MCPFailure: LocalizedError {
     init(_ message: String) { errorDescription = message }
 }
 
+struct MCPAccessDenied: LocalizedError {
+    let errorDescription: String?
+    init(hasToken: Bool, forbidden: Bool) {
+        if hasToken {
+            errorDescription = "Access denied. Check that your token is valid and has permission for this server."
+        } else if forbidden {
+            errorDescription = "Access denied. Use a token with permission for this server."
+        } else {
+            errorDescription = "This server requires authentication."
+        }
+    }
+}
+
 struct MCPTool: Identifiable {
     var id: String { name }
     let name: String
@@ -119,7 +132,8 @@ private final class ExactEndpoint: NSObject, URLSessionTaskDelegate {
         guard let http = raw as? HTTPURLResponse else { throw MCPFailure("Expected an HTTP response.") }
         switch http.statusCode {
         case 200..<300: break
-        case 401,403: throw MCPFailure("Access denied. Check this server’s access token and permissions.")
+        case 401,403: throw MCPAccessDenied(hasToken: !token.isEmpty, forbidden: http.statusCode == 403)
+        case 404 where sessionID == nil: throw MCPFailure("Server URL not found. Check the exact MCP URL provided by the app.")
         case 404 where sessionID != nil: throw MCPFailure("The session expired. Reconnect to the server.")
         case 300..<400: throw MCPFailure("The server redirected. Register its final endpoint directly.")
         default: throw MCPFailure("Server returned HTTP \(http.statusCode).")

@@ -11,9 +11,15 @@ class Fixture(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        assert self.headers["Authorization"] == "Bearer fixture-token"
         msg = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         method = msg["method"]
+        if self.path == "/private" and self.headers["Authorization"] != "Bearer fixture-token":
+            self.send_error(401)
+            return
+        if self.path == "/public":
+            assert self.headers["Authorization"] is None
+        else:
+            assert self.headers["Authorization"] == "Bearer fixture-token"
         if self.path == "/redirect":
             self.send_response(307)
             self.send_header("Location", "/unexpected")
