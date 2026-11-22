@@ -84,7 +84,7 @@ Messages are local records, not outbound mail or implicit model tasks. Unsent te
 
 ## Connect a Mac to an MCP server
 
-In the Mac app, open **Connections → Manage MCP connections** or choose **Bittrees AI → MCP connections** from the menu. Choose **Use Bittrees MCP** for the ecosystem directory, or paste another application's Streamable HTTP endpoint. Enter a server-issued bearer token if its tools require one. **Connect and list tools** saves the endpoint after discovery succeeds. Tokens stay in memory for that connection.
+In the Mac app, open **Connections → Manage MCP connections** or choose **Bittrees AI → MCP connections** from the menu. Choose **Connect** beside Bittrees MCP, or **Add another server…** to enter an application's Streamable HTTP URL. If the server requires a bearer token, the app asks for it for that connection. After discovery succeeds, custom servers appear under **Saved servers** for one-click reconnection. Connecting lists tools. Running one requires a separate review.
 
 Select a tool to see its input schema. Enter its arguments as a JSON object, then choose **Review tool call** and **Run tool**. Inspect the result in the native window. **Add result to local task draft** appends it to your existing draft for editing before submission. Disconnect ends local access. **Forget server** removes its saved address. An application that requires browser-based OAuth or a stdio command needs a different connection method.
 

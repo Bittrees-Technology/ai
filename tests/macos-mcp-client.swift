@@ -9,7 +9,14 @@ import Foundation
         func connection(_ route: String) throws -> MCPClient {
             try MCPClient(endpoint: MCPClient.endpointURL(root + route), token:"fixture-token")
         }
-        for mode in ["/json", "/stream"] {
+        let publicClient = try MCPClient(endpoint: MCPClient.endpointURL(root + "/public"), token: "")
+        let publicTools = try await publicClient.discover()
+        precondition(publicTools.count == 2)
+        publicClient.close()
+        let anonymous = try MCPClient(endpoint: MCPClient.endpointURL(root + "/private"), token: "")
+        do { _ = try await anonymous.discover(); preconditionFailure("Expected a token prompt") }
+        catch is MCPAccessDenied { anonymous.close() }
+        for mode in ["/json", "/stream", "/private"] {
             let client = try connection(mode)
             let tools = try await client.discover()
             precondition(tools.map(\.name) == ["echo", "fail"])
