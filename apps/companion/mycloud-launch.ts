@@ -1,3 +1,5 @@
+import { serveMcpWindow } from "./mcp-window.js";
+import { Duplex } from "node:stream";
 import { launchAssignments } from "./assignment-launch.js";
 import { Vault } from "../../modules/storage/vault.js";
 import {
@@ -69,16 +71,19 @@ async function runOfflineChild(
       ),
     ],
     {
-      stdio: "inherit",
+      stdio: ["inherit", "inherit", "inherit", "pipe"],
       env: {
         HOME: "/Users/jhineline",
         TMPDIR: process.env.TMPDIR ?? "/tmp",
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         LANG: "en_US.UTF-8",
         ...environment,
+        BITTREES_MCP_WINDOW_PIPE: "3",
       },
     },
   );
+  const channel = child.stdio[3];
+  if (channel instanceof Duplex) serveMcpWindow(channel, resources);
   const stop = () => child.kill("SIGTERM");
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

@@ -263,6 +263,11 @@ export function Connections(props: {
         Manage connected services and their access. Research and task controls
         are in Workflows.
       </p>
+      {navigator.userAgent.includes("BittreesNativeMCP/1") && (
+        <p>
+          <a href="bittrees-ai://mcp-connections">Manage MCP connections…</a>
+        </p>
+      )}
       <ConnectionSection title="CRM">
         <CrmDatasetPanel api={props.api} onError={props.onError} />
         <ConnectionCard app="crm" {...props} />

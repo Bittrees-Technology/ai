@@ -4,6 +4,8 @@ import WebKit
 // The native shell owns only its child engine. Source permissions remain in the engine.
 final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply, NSMenuItemValidation {
     var window: NSWindow!
+    var mcpWindowBusy = false
+    var mcpConnections: MCPConnectionsWindow?
     var web: WKWebView!
     var engine: Process?
     var output: Pipe?
@@ -49,6 +51,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         appMenu.addItem(withTitle: "About Bittrees AI", action: #selector(showBuildInfo), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Agent setup…", action: #selector(showAgentSetup), keyEquivalent: "")
+        appMenu.addItem(withTitle: "MCP connections…", action: #selector(showMCPConnections), keyEquivalent: "")
         if workflowSetupControl() != nil {
             appMenu.addItem(withTitle: "Review workflow identity…", action: #selector(reviewWorkflowIdentity), keyEquivalent: "")
         }
@@ -105,6 +108,51 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         } else if recoveryPreview { showRecoveryStart() } else { startEngine() }
 #endif
     }
+    @objc func showMCPConnections() {
+        guard !quitting, !recovery.busy, window.attachedSheet == nil else { return }
+        if ProcessInfo.processInfo.environment["BITTREES_MCP_WINDOW_PIPE"] == "3" {
+            guard !mcpWindowBusy else { return }
+            mcpWindowBusy = true
+            Task {
+                defer { mcpWindowBusy = false }
+                var received: String?
+                do {
+                    received = try await Task.detached { try MCPWindowChannel.receiveSelection() }.value
+                    if let received { try await insertMCPResult(received) }
+                } catch {
+                    let alert = NSAlert()
+                    alert.messageText = "MCP connections"
+                    alert.informativeText = error.localizedDescription
+                    alert.addButton(withTitle:"OK")
+                    if received != nil { alert.addButton(withTitle:"Copy result") }
+                    if alert.runModal() == .alertSecondButtonReturn, let received {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(received, forType:.string)
+                    }
+                }
+            }
+            return
+        }
+        if mcpConnections?.window?.isVisible != true {
+            mcpConnections = MCPConnectionsWindow { [weak self] evidence in
+                guard let self else { throw MCPFailure("Local app closed.") }
+                try await self.insertMCPResult(evidence)
+            }
+        }
+        mcpConnections?.showWindow(nil)
+        mcpConnections?.window?.makeKeyAndOrderFront(nil)
+    }
+    @MainActor func insertMCPResult(_ evidence: String) async throws {
+        guard ready, let page = web.url, local(page) else { throw MCPFailure("Open and pair the local dashboard first.") }
+        let inserted = try await web.callAsyncJavaScript(
+            "return !window.dispatchEvent(new CustomEvent('bittrees-mcp-draft', { detail: evidence, cancelable: true }))",
+            arguments:["evidence": evidence], in:nil, contentWorld:.page
+        )
+        guard inserted as? Bool == true else {
+            throw MCPFailure("Open a paired, idle dashboard with room in its task draft (32,000 characters).")
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
     @objc func showAgentSetup() {
         guard !quitting, window != nil, window.attachedSheet == nil else { return }
         if workflowOnboarding == nil {
@@ -136,6 +184,7 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         web?.uiDelegate = nil
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "reviewWorkflowEnrollment", contentWorld: .page)
         let config = WKWebViewConfiguration()
+        config.applicationNameForUserAgent = "BittreesNativeMCP/1"
         if ProcessInfo.processInfo.environment["BITTREES_ENROLLMENT_PURPOSE"] == "central-workflows",
            enrollmentControl() != nil {
             config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "reviewWorkflowEnrollment")
@@ -463,6 +512,12 @@ final class Companion: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
+        if url.absoluteString == "bittrees-ai://mcp-connections" {
+            decisionHandler(.cancel)
+            if action.navigationType == .linkActivated, action.sourceFrame.isMainFrame,
+               let origin = action.sourceFrame.request.url, local(origin) { showMCPConnections() }
+            return
+        }
         if url.absoluteString == "bittrees-ai://review-central-identity" {
             decisionHandler(.cancel)
             if action.navigationType == .linkActivated, action.sourceFrame.isMainFrame,
