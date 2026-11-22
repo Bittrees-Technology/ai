@@ -82,6 +82,14 @@ The local Inbox supports inbox discovery, recent conversation previews, bounded 
 Messages are local records, not outbound mail or implicit model tasks. Unsent text survives switching dashboard sections while the page remains open, but not a reload. An unchanged failed save reuses its idempotency key. The conversation list currently shows the 100 most recent conversations; full export retains all records. Browser visual/keyboard acceptance remains pending.
 
 
+## Connect a Mac to an MCP server
+
+In the Mac app, open **Connections → Manage MCP connections** or choose **Bittrees AI → MCP connections** from the menu. Choose **Use Bittrees MCP** for the ecosystem directory, or paste another application's Streamable HTTP endpoint. Enter a server-issued bearer token if its tools require one. **Connect and list tools** saves the endpoint after discovery succeeds. Tokens stay in memory for that connection.
+
+Select a tool to see its input schema. Enter its arguments as a JSON object, then choose **Review tool call** and **Run tool**. Inspect the result in the native window. **Add result to local task draft** appends it to your existing draft for editing before submission. Disconnect ends local access. **Forget server** removes its saved address. An application that requires browser-based OAuth or a stdio command needs a different connection method.
+
+The guarded Mac build opens the server picker in a separate native process. The offline engine receives only results the operator chooses to use. Server registration grants no Roles, CRM, or Workflows permissions.
+
 ## CRM connection pilot
 
 The Connections panel can initiate source-owned CRM consent using a one-time PKCE challenge. The user selects records, reviews read-only scope and expiry in CRM, then pastes the short-lived code into the companion. Source activation remains disabled by default in CRM; this release does not enable it. A source operator must separately enable that pilot. Record loading and local draft creation require explicit user actions. Reviewed-write modules are available for integration; publication controls and external-source memory remain pending.

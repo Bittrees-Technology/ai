@@ -140,6 +140,20 @@ function App() {
     [candidate, setCandidate] = useState(""),
     [candidateType, setCandidateType] = useState("fact"),
     [deleteText, setDeleteText] = useState("");
+  useEffect(() => {
+    if (!paired || busy) return;
+    function appendMcpResult(event: Event) {
+      const evidence = (event as CustomEvent<unknown>).detail;
+      if (typeof evidence !== "string") return;
+      const draft = [prompt, evidence].filter(Boolean).join("\n\n");
+      if (draft.length > 32000) return;
+      setPrompt(draft);
+      setPage("Tasks");
+      event.preventDefault(); // Acknowledge insertion to the native window.
+    }
+    window.addEventListener("bittrees-mcp-draft", appendMcpResult);
+    return () => window.removeEventListener("bittrees-mcp-draft", appendMcpResult);
+  }, [paired, busy, prompt]);
   const epoch = useRef(0);
   const backupUrl = useRef<string | null>(null);
   useEffect(
