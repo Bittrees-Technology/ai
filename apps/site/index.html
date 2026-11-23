@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Bittrees AI is a macOS application for running local AI models, reviewing drafts and managing saved context."
+      content="Explore the Bittrees AI development preview for Apple Silicon Macs: local models, setup, privacy, download verification and support."
     />
-    <title>Bittrees AI for macOS</title>
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <title>Bittrees AI for macOS | Development Preview</title>
+    <link rel="canonical" href="https://ai.bittrees.org/" />
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
@@ -74,6 +76,15 @@
             </p>
           </li>
           <li>
+            <h3>Open the local workspace</h3>
+            <p>
+              On the pairing screen, choose Bittrees AI → Copy pairing code from
+              the macOS menu bar. Paste it into Pairing code and choose Open
+              workspace. The code is single-use and expires after ten minutes;
+              restarting the app creates a new one.
+            </p>
+          </li>
+          <li>
             <h3>Configure app access</h3>
             <p>
               Start with sample data. Each app connection requires its own setup
@@ -131,14 +142,40 @@
       </section>
       <section id="support" aria-labelledby="support-title">
         <h2 id="support-title">Support</h2>
+        <h3>Choosing model settings</h3>
+        <p>
+          In Models, you can adjust the context budget, reply limit and
+          Variation. Larger requests may need more memory and time. The
+          <a
+            href="https://github.com/Bittrees-Technology/ai/blob/main/docs/model-profile-settings.md"
+            rel="noreferrer"
+            >model settings guide</a
+          >
+          explains how saved profiles apply to future work; existing tasks keep
+          their chosen profile unless you change it.
+        </p>
+        <h3>Checking for a newer preview</h3>
+        <p>
+          The paired workspace can notify you about eligible releases while it
+          is open. Downloads are your choice; there is no automatic installer.
+          Follow the download verification and backup steps before upgrading.
+          Read
+          <a
+            href="https://github.com/Bittrees-Technology/ai/blob/main/docs/release-notifications.md"
+            rel="noreferrer"
+            >how release notices work</a
+          >.
+        </p>
+        <h3>Reporting a problem</h3>
         <p>
           <a
             href="https://github.com/Bittrees-Technology/ai/issues"
             rel="noreferrer"
             >View issues or report a problem</a
-          >. Include your app version and steps using sample data. Reports are
-          public: leave out messages, credentials, pairing details and recovery
-          codes.
+          >. Find your source revision in Bittrees AI → About Bittrees AI, and
+          include it with your app version and steps using sample data. Reports
+          are public: leave out messages, credentials, pairing details and
+          recovery codes.
         </p>
         <p>
           <a href="https://github.com/Bittrees-Technology/ai" rel="noreferrer"
@@ -151,6 +188,7 @@
     <footer>
       <span>Bittrees AI</span
       ><a href="https://bittrees.org" rel="noreferrer">Bittrees</a>
+      <a href="https://index.bittrees.org/" rel="noreferrer">Ecosystem</a>
     </footer>
   </body>
 </html>

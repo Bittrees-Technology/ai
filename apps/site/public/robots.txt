@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /administration
+
+Sitemap: https://ai.bittrees.org/sitemap.xml
