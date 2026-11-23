@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { publicIPv4 } from "../research/public-pages.js";
 import { z } from "zod";
+import { requireSynchronousPairingAdmission } from "./initial-pairing-admission.js";
 import {
   INITIAL_PAIRING_START,
   INITIAL_PAIRING_POLL,
@@ -59,7 +60,7 @@ export class InitialPairingHTTPS {
     signal: AbortSignal,
   ): Promise<unknown> => {
     const body = checkInitialPairingHTTPSInput(plan, this.context());
-    this.admit();
+    requireSynchronousPairingAdmission(() => this.admit());
     signal.throwIfAborted();
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
     const url = new URL(plan.url);
@@ -85,7 +86,7 @@ export class InitialPairingHTTPS {
       },
     );
     bounded.throwIfAborted();
-    this.admit();
+    requireSynchronousPairingAdmission(() => this.admit());
     if (
       !addresses.length ||
       addresses.some(
@@ -146,7 +147,7 @@ export class InitialPairingHTTPS {
           res.on("end", () => {
             try {
               bounded.throwIfAborted();
-              this.admit();
+              requireSynchronousPairingAdmission(() => this.admit());
               resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
             } catch (e) {
               reject(e);

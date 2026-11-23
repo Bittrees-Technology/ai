@@ -76,8 +76,26 @@ function fixture() {
       };
     },
   };
-  return { state, actions: new NativeInitialPairingReviewActions(options) };
+  return {
+    state,
+    options,
+    actions: new NativeInitialPairingReviewActions(options),
+  };
 }
+test("async source verdict cannot reach session creation from native review", async () => {
+  const f = fixture();
+  const actions = new NativeInitialPairingReviewActions({
+    ...f.options,
+    admitSource: async () => {},
+  });
+  const p = actions.prepare();
+  await assert.rejects(
+    actions.approve({ reviewId: p.review.reviewId, digest: p.digest }),
+    /synchronous/,
+  );
+  assert.equal(f.state.created, 0);
+  await actions.close();
+});
 test("preparing exact metadata scope creates no session, source action or authority", async () => {
   const f = fixture(),
     p = f.actions.prepare();
