@@ -496,15 +496,7 @@ test("source-blocked feeds cannot publish and a read-only connection cannot requ
     .getByRole("button", { name: "Cancel publication review" })
     .click();
   await cancelled;
-  // Finish connection-panel cleanup before replacing its routed server fixture.
-  // Unrouting a mounted panel can interrupt its page-exit cancellation in WebKit.
-  const relayCancelled = page.waitForResponse(
-    (r) =>
-      r.url().endsWith("/private-relay/cancel-review") &&
-      r.request().method() === "POST",
-  );
-  await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await relayCancelled;
+  await expect(review).toHaveCount(0);
   // Independent authority fixtures get independent pages; do not replace a
   // routed server underneath an already mounted workspace and its pending reads.
   const readerPage = await context.newPage();
